@@ -1,0 +1,3 @@
+SUPABASE_URL=https://xzeakifampttrqqhhibu.supabase.co
+SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh6ZWFraWZhbXB0dHJxcWhoaWJ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY1MzA5MjAsImV4cCI6MjA4MjEwNjkyMH0.ptUx8hZzTNLFvLCzBgA0Lo0BJYk4YSn_SVF-qbVcEwo
+DATABASE_URL=postgresql://postgres:[5Hardworkers]@db.xzeakifampttrqqhhibu.supabase.co:5432/postgres
