@@ -19,6 +19,10 @@ import {
   cn,
 } from "@/lib/utils";
 import { Loader2, TrendingUp, DollarSign } from "lucide-react";
+import { toast } from "sonner";
+
+// Quick stake presets for fast entry
+const STAKE_PRESETS = [10, 25, 50, 100] as const;
 
 // Map sportsbook names to button variants
 const sportsbookVariants: Record<string, any> = {
@@ -87,7 +91,6 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
 
     try {
       await createBet.mutateAsync({
-        date: new Date().toISOString(),
         sportsbook: formData.sportsbook,
         sport: formData.sport,
         event: formData.event || `${formData.sport} Game`,
@@ -108,9 +111,16 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
         sport: formData.sport,
       });
 
+      toast.success("Bet logged!", {
+        description: `+${formatCurrency(ev.evTotal)} EV on ${formData.sportsbook}`,
+      });
+
       onSuccess?.();
     } catch (error) {
       console.error("Failed to create bet:", error);
+      toast.error("Failed to log bet", {
+        description: "Check your connection and try again",
+      });
     }
   };
 
@@ -169,14 +179,14 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
             </div>
           </div>
 
-          {/* Event and Market - Row layout on larger screens */}
+          {/* Selection and Market - Row layout on larger screens */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-medium mb-2 block">
-                Event (optional)
+                Selection Name
               </label>
               <Input
-                placeholder="Chiefs @ Raiders"
+                placeholder="e.g. Lakers -5, Bills SGP, LeBron Over"
                 value={formData.event}
                 onChange={(e) => updateField("event", e.target.value)}
               />
@@ -256,6 +266,21 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
                 className="text-lg font-mono"
                 step="0.01"
               />
+              {/* Quick stake presets */}
+              <div className="flex gap-1 mt-2">
+                {STAKE_PRESETS.map((preset) => (
+                  <Button
+                    key={preset}
+                    type="button"
+                    variant={formData.stake === String(preset) ? "default" : "outline"}
+                    size="sm"
+                    className="flex-1 h-8 text-xs"
+                    onClick={() => updateField("stake", String(preset))}
+                  >
+                    ${preset}
+                  </Button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -327,7 +352,7 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground flex items-center gap-2">
                   <DollarSign className="h-4 w-4" />
-                  Win Payout
+                  {formData.promo_type === "bonus_bet" ? "Winnings" : "Win Payout"}
                 </span>
                 <span className="font-medium">
                   {formatCurrency(ev.winPayout)}

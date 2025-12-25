@@ -6,12 +6,15 @@ CREATE TABLE public.bets (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now()) NOT NULL,
     
-    -- When the bet was placed / game date
-    date TIMESTAMP WITH TIME ZONE NOT NULL,
+    -- Event date (game day) - defaults to today, editable in Advanced
+    event_date DATE DEFAULT CURRENT_DATE NOT NULL,
+    
+    -- Settlement timestamp - auto-set when result changes from pending
+    settled_at TIMESTAMP WITH TIME ZONE,
     
     -- Event details
     sport TEXT NOT NULL,           -- NFL, NBA, MLB, NHL, NCAAF, NCAAB, UFC, etc.
-    event TEXT NOT NULL,           -- "Chiefs @ Raiders" or "UFC 300 Main Event"
+    event TEXT NOT NULL,           -- "Lakers -5" or "Bills SGP" (the selection)
     market TEXT NOT NULL,          -- ML, Spread, Total, SGP, Prop
     sportsbook TEXT NOT NULL,      -- DraftKings, FanDuel, BetMGM, etc.
     
@@ -37,7 +40,8 @@ CREATE TABLE public.bets (
 );
 
 -- Create indexes for common queries
-CREATE INDEX idx_bets_date ON public.bets(date DESC);
+CREATE INDEX idx_bets_event_date ON public.bets(event_date DESC);
+CREATE INDEX idx_bets_created_at ON public.bets(created_at DESC);
 CREATE INDEX idx_bets_sportsbook ON public.bets(sportsbook);
 CREATE INDEX idx_bets_sport ON public.bets(sport);
 CREATE INDEX idx_bets_result ON public.bets(result);

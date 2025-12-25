@@ -72,7 +72,8 @@ def build_bet_response(row: dict, k_factor: float) -> BetResponse:
     return BetResponse(
         id=row["id"],
         created_at=row["created_at"],
-        date=row["date"],
+        event_date=row["event_date"],
+        settled_at=row.get("settled_at"),
         sport=row["sport"],
         event=row["event"],
         market=row["market"],
@@ -108,7 +109,6 @@ def create_bet(bet: BetCreate):
     db = get_db()
     
     data = {
-        "date": bet.date.isoformat(),
         "sport": bet.sport,
         "event": bet.event,
         "market": bet.market,
@@ -122,6 +122,10 @@ def create_bet(bet: BetCreate):
         "payout_override": bet.payout_override,
         "result": BetResult.PENDING.value,
     }
+    
+    # Only include event_date if provided, otherwise let DB default to today
+    if bet.event_date:
+        data["event_date"] = bet.event_date.isoformat()
     
     result = db.table("bets").insert(data).execute()
     
@@ -142,7 +146,7 @@ def get_bets(
     """Get all bets with optional filters."""
     db = get_db()
     
-    query = db.table("bets").select("*").order("date", desc=True)
+    query = db.table("bets").select("*").order("created_at", desc=True)
     
     if sport:
         query = query.eq("sport", sport)
@@ -178,8 +182,6 @@ def update_bet(bet_id: str, bet: BetUpdate):
     
     # Build update data, excluding None values
     data = {}
-    if bet.date is not None:
-        data["date"] = bet.date.isoformat()
     if bet.sport is not None:
         data["sport"] = bet.sport
     if bet.event is not None:
@@ -202,8 +204,15 @@ def update_bet(bet_id: str, bet: BetUpdate):
         data["notes"] = bet.notes
     if bet.result is not None:
         data["result"] = bet.result.value
+        # Auto-set settled_at when result changes from pending
+        # First check if current result is pending
+        current = db.table("bets").select("result").eq("id", bet_id).execute()
+        if current.data and current.data[0]["result"] == "pending" and bet.result.value != "pending":
+            data["settled_at"] = datetime.utcnow().isoformat()
     if bet.payout_override is not None:
         data["payout_override"] = bet.payout_override
+    if bet.event_date is not None:
+        data["event_date"] = bet.event_date.isoformat()
     
     if not data:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -221,7 +230,15 @@ def update_bet_result(bet_id: str, result: BetResult):
     """Quick endpoint to just update bet result (win/loss)."""
     db = get_db()
     
-    response = db.table("bets").update({"result": result.value}).eq("id", bet_id).execute()
+    # Build update data
+    update_data = {"result": result.value}
+    
+    # Auto-set settled_at when changing from pending to settled
+    current = db.table("bets").select("result").eq("id", bet_id).execute()
+    if current.data and current.data[0]["result"] == "pending" and result.value != "pending":
+        update_data["settled_at"] = datetime.utcnow().isoformat()
+    
+    response = db.table("bets").update(update_data).eq("id", bet_id).execute()
     
     if not response.data:
         raise HTTPException(status_code=404, detail="Bet not found")

@@ -14,7 +14,8 @@ export type BetResult = "pending" | "win" | "loss" | "push" | "void";
 export interface Bet {
   id: string;
   created_at: string;
-  date: string;
+  event_date: string;
+  settled_at: string | null;
   sport: string;
   event: string;
   market: string;
@@ -34,7 +35,6 @@ export interface Bet {
 }
 
 export interface BetCreate {
-  date: string;
   sport: string;
   event: string;
   market: string;
@@ -46,10 +46,10 @@ export interface BetCreate {
   winnings_cap?: number;
   notes?: string;
   payout_override?: number;
+  event_date?: string;
 }
 
 export interface BetUpdate {
-  date?: string;
   sport?: string;
   event?: string;
   market?: string;
@@ -62,6 +62,7 @@ export interface BetUpdate {
   notes?: string;
   result?: BetResult;
   payout_override?: number;
+  event_date?: string;
 }
 
 export interface Settings {

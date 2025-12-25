@@ -40,3 +40,6 @@ htmlcov/
 # Misc
 *.bak
 *.tmp
+
+# AI Agent Instructions (personal use only)
+.github/copilot-instructions.md

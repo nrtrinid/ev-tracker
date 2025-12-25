@@ -4,7 +4,7 @@ Define the data structures for bets and API requests/responses.
 """
 
 from pydantic import BaseModel, Field
-from datetime import datetime
+from datetime import datetime, date
 from enum import Enum
 
 
@@ -30,7 +30,6 @@ class BetResult(str, Enum):
 
 class BetCreate(BaseModel):
     """Schema for creating a new bet."""
-    date: datetime
     sport: str
     event: str
     market: str  # ML, Spread, Total, SGP, Prop
@@ -41,6 +40,7 @@ class BetCreate(BaseModel):
     boost_percent: float | None = None  # For custom boosts
     winnings_cap: float | None = None
     notes: str | None = None
+    event_date: date | None = None  # Defaults to today if not provided
     
     # Optional override for edge cases
     payout_override: float | None = None
@@ -48,7 +48,6 @@ class BetCreate(BaseModel):
 
 class BetUpdate(BaseModel):
     """Schema for updating an existing bet."""
-    date: datetime | None = None
     sport: str | None = None
     event: str | None = None
     market: str | None = None
@@ -61,13 +60,15 @@ class BetUpdate(BaseModel):
     notes: str | None = None
     result: BetResult | None = None
     payout_override: float | None = None
+    event_date: date | None = None  # Allow correction in Edit modal
 
 
 class BetResponse(BaseModel):
     """Schema for bet data returned from API."""
     id: str
     created_at: datetime
-    date: datetime
+    event_date: date
+    settled_at: datetime | None
     sport: str
     event: str
     market: str
