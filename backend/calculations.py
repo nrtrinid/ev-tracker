@@ -3,6 +3,9 @@ EV Calculation Engine
 Ports the Excel spreadsheet formulas to Python.
 """
 
+# Default vig to account for book edge when we only have one side of the market
+DEFAULT_VIG = 0.045
+
 def american_to_decimal(american_odds: float) -> float:
     """
     Convert American odds to Decimal odds.
@@ -92,10 +95,10 @@ def calculate_ev(
         # You're not risking real money, just potential winnings
         ev_per_dollar = 1 - (1 / decimal_odds)
         
-    elif promo_type == "no_sweat":
-        # EV = stake × K × (1 - 1/decimal_odds)
-        # If you lose, you get a bonus bet worth K × stake
-        ev_per_dollar = k_factor * (1 - (1 / decimal_odds))
+    elif promo_type in ("no_sweat", "promo_qualifier"):
+        # No-sweat and promo qualifiers: small negative EV due to vig on the initial leg
+        # User logs the resulting bonus bet separately when received
+        ev_per_dollar = -DEFAULT_VIG
         
     elif promo_type in ("boost_30", "boost_50", "boost_100", "boost_custom"):
         # EV = (stake / decimal_odds) × min(boost% × (decimal_odds - 1), cap/stake)

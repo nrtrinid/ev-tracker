@@ -183,10 +183,10 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-medium mb-2 block">
-                Selection Name
+                Selection Name <span className="text-muted-foreground font-normal">(optional)</span>
               </label>
               <Input
-                placeholder="e.g. Lakers -5, Bills SGP, LeBron Over"
+                placeholder="e.g. Lakers, Chiefs -3, LeBron 25+ pts"
                 value={formData.event}
                 onChange={(e) => updateField("event", e.target.value)}
               />
@@ -439,8 +439,9 @@ function calculateEVClient(
   let evPerDollar: number;
   if (promoType === "bonus_bet") {
     evPerDollar = 1 - 1 / decimalOdds;
-  } else if (promoType === "no_sweat") {
-    evPerDollar = kFactor * (1 - 1 / decimalOdds);
+  } else if (promoType === "no_sweat" || promoType === "promo_qualifier") {
+    // No-sweat and promo qualifiers: 0 EV (user logs bonus bet separately when received)
+    evPerDollar = 0;
   } else if (promoType.startsWith("boost")) {
     const winProb = 1 / decimalOdds;
     let potentialExtra = effectiveBoost * (decimalOdds - 1);

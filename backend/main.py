@@ -140,7 +140,7 @@ def get_bets(
     sport: str | None = None,
     sportsbook: str | None = None,
     result: BetResult | None = None,
-    limit: int = 100,
+    limit: int = 1000,
     offset: int = 0,
 ):
     """Get all bets with optional filters."""

@@ -4,6 +4,7 @@ export type PromoType =
   | "standard"
   | "bonus_bet"
   | "no_sweat"
+  | "promo_qualifier"
   | "boost_30"
   | "boost_50"
   | "boost_100"
@@ -134,6 +135,7 @@ export const PROMO_TYPES: { value: PromoType; label: string }[] = [
   { value: "standard", label: "Standard" },
   { value: "bonus_bet", label: "Bonus Bet" },
   { value: "no_sweat", label: "No-Sweat" },
+  { value: "promo_qualifier", label: "Promo Qualifier" },
   { value: "boost_30", label: "30% Boost" },
   { value: "boost_50", label: "50% Boost" },
   { value: "boost_100", label: "100% Boost" },

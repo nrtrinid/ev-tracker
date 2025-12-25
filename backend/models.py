@@ -13,6 +13,7 @@ class PromoType(str, Enum):
     STANDARD = "standard"
     BONUS_BET = "bonus_bet"
     NO_SWEAT = "no_sweat"
+    PROMO_QUALIFIER = "promo_qualifier"
     BOOST_30 = "boost_30"
     BOOST_50 = "boost_50"
     BOOST_100 = "boost_100"
