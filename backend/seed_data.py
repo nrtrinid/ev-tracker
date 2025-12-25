@@ -27,24 +27,47 @@ TEAMS = {
 }
 
 def generate_odds(promo_type=None):
-    """Generate realistic American odds.
-
-    Promo hunters will lean into plus-money for promos to maximize EV.
-    """
-    is_promo = promo_type in {"bonus_bet", "no_sweat", "promo_qualifier"}
-
-    if is_promo:
-        # Skew toward underdogs/longer shots for promos
-        if random.random() < 0.7:
-            return random.randint(150, 400)  # underdog
+    """Generate realistic American odds tuned to promo strategy."""
+    # Bonus bets: maximize upside, target +300 to +500 with a small long-tail
+    if promo_type == "bonus_bet":
+        r = random.random()
+        if r < 0.70:
+            return random.randint(300, 500)
+        elif r < 0.90:
+            return random.randint(200, 299)
         else:
-            return random.randint(-250, -105)  # modest favorite
+            return random.randint(501, 600)
+
+    # No-sweats / qualifiers: insured leg, but still prefer plus-money with moderate tails
+    if promo_type in {"no_sweat", "promo_qualifier"}:
+        r = random.random()
+        if r < 0.60:
+            return random.randint(180, 320)
+        elif r < 0.85:
+            return random.randint(321, 450)
+        else:
+            return random.randint(-120, 179)  # occasional smaller favorite to reduce variance
+
+    # Boosts: best value in mid dogs; allow some longer shots
+    if promo_type and promo_type.startswith("boost"):
+        r = random.random()
+        if r < 0.60:
+            return random.randint(200, 350)
+        elif r < 0.85:
+            return random.randint(351, 500)
+        else:
+            return random.randint(150, 199)
+
+    # Standard bets: realistic mix near even, slight dog lean
+    r = random.random()
+    if r < 0.25:
+        return random.randint(-150, -101)  # Small favorites
+    elif r < 0.50:
+        return random.randint(100, 150)    # Small underdogs
+    elif r < 0.75:
+        return random.randint(151, 250)
     else:
-        # Regular bets: slight lean to modest dogs but balanced
-        if random.random() < 0.55:
-            return random.randint(105, 300)
-        else:
-            return random.randint(-300, -105)
+        return random.randint(-250, -151)
 
 def generate_stake(promo_type):
     """Generate realistic stake based on promo type."""

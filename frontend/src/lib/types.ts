@@ -96,6 +96,35 @@ export interface EVCalculation {
   win_payout: number;
 }
 
+// Transaction types
+export type TransactionType = "deposit" | "withdrawal";
+
+export interface Transaction {
+  id: string;
+  created_at: string;
+  sportsbook: string;
+  type: TransactionType;
+  amount: number;
+  notes: string | null;
+}
+
+export interface TransactionCreate {
+  sportsbook: string;
+  type: TransactionType;
+  amount: number;
+  notes?: string;
+}
+
+export interface Balance {
+  sportsbook: string;
+  deposits: number;
+  withdrawals: number;
+  net_deposits: number;
+  profit: number;
+  pending: number;
+  balance: number;
+}
+
 // Constants
 export const SPORTSBOOKS = [
   "DraftKings",
@@ -133,9 +162,9 @@ export const MARKETS = [
 
 export const PROMO_TYPES: { value: PromoType; label: string }[] = [
   { value: "standard", label: "Standard" },
-  { value: "bonus_bet", label: "Bonus Bet" },
   { value: "no_sweat", label: "No-Sweat" },
   { value: "promo_qualifier", label: "Promo Qualifier" },
+  { value: "bonus_bet", label: "Bonus Bet" },
   { value: "boost_30", label: "30% Boost" },
   { value: "boost_50", label: "50% Boost" },
   { value: "boost_100", label: "100% Boost" },

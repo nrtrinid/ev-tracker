@@ -2,46 +2,35 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Import fonts - warm sans-serif + friendly monospace */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --primary: 221.2 83.2% 53.3%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83.2% 53.3%;
-    --radius: 0.5rem;
-  }
-
-  .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 48%;
+    /* Analog Warmth - vintage field notebook aesthetic */
+    --background: 40 33% 97%;      /* Warm off-white #FAF8F5 */
+    --foreground: 36 30% 13%;      /* Dark charcoal-brown #2C2416 */
+    --card: 35 26% 91%;            /* Slightly darker cream #F0EBE3 */
+    --card-foreground: 36 30% 13%;
+    --primary: 43 49% 56%;         /* Warm amber #C4A35A */
+    --primary-foreground: 36 30% 13%;
+    --secondary: 35 20% 88%;
+    --secondary-foreground: 36 30% 13%;
+    --muted: 35 20% 88%;
+    --muted-foreground: 30 16% 37%; /* Warm gray #6B5E4F */
+    --accent: 43 49% 56%;
+    --accent-foreground: 36 30% 13%;
+    --destructive: 18 56% 47%;     /* Dusty terracotta #B85C38 */
+    --destructive-foreground: 40 33% 97%;
+    --border: 34 22% 82%;          /* Light tan #DDD5C7 */
+    --input: 34 22% 82%;
+    --ring: 43 49% 56%;
+    --radius: 0.5rem;              /* 8px rounded corners */
+    
+    /* Semantic colors */
+    --profit: 134 26% 39%;         /* Muted forest green #4A7C59 */
+    --loss: 18 56% 47%;            /* Dusty terracotta #B85C38 */
+    --pending: 43 49% 56%;         /* Warm amber */
   }
 }
 
@@ -49,8 +38,35 @@
   * {
     @apply border-border;
   }
+  
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+  
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    position: relative;
+  }
+  
+  /* Paper grain texture overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0.35;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  }
+  
+  /* Friendly monospace for numbers - tabular for ledger alignment */
+  .font-mono {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-feature-settings: 'ss01' on, 'ss02' on, 'tnum' on;
+    font-variant-numeric: tabular-nums;
   }
 }
 
@@ -63,4 +79,271 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+  
+  /* Open book binding shadow - for main layout container only */
+  .binding-shadow {
+    box-shadow: 
+      inset 8px 0 12px -6px rgba(44, 36, 22, 0.08),
+      inset 2px 0 4px -2px rgba(44, 36, 22, 0.04);
+  }
+  
+  /* Card hover - subtle lift like paper */
+  .card-hover {
+    @apply transition-all duration-200;
+  }
+  .card-hover:hover {
+    box-shadow: 0 2px 8px rgba(44, 36, 22, 0.06);
+    border-color: hsl(var(--primary) / 0.4);
+  }
+  
+  /* Ink stamp style for status badges - imperfect, like real stamps */
+  .stamp {
+    @apply font-bold tracking-wider uppercase text-xs;
+    letter-spacing: 0.1em;
+    mix-blend-mode: multiply;
+    border: 2px solid currentColor;
+    padding: 3px 10px;
+    opacity: 0.85;
+    position: relative;
+  }
+  .stamp::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: currentColor;
+    opacity: 0.08;
+  }
+  .stamp-win {
+    @apply stamp;
+    transform: rotate(-2deg);
+  }
+  .stamp-loss {
+    @apply stamp;
+    transform: rotate(2deg);
+  }
+  .stamp-push {
+    @apply stamp;
+    transform: rotate(-1deg);
+  }
+  .stamp-void {
+    @apply stamp;
+    transform: rotate(1deg);
+    border-style: dashed;
+  }
+  
+  /* Date stamp - vintage boxed date */
+  .date-stamp {
+    @apply font-mono text-xs font-medium px-2 py-0.5;
+    border: 1px solid currentColor;
+    transform: rotate(-0.5deg);
+    mix-blend-mode: multiply;
+    opacity: 0.8;
+  }
+  
+  /* Manila folder tabs */
+  .folder-tab {
+    @apply relative font-medium transition-all duration-150;
+    border-radius: 6px 6px 0 0;
+    margin-bottom: -1px;
+  }
+  .folder-tab-active {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-bottom-color: hsl(var(--card));
+    box-shadow: 0 -2px 4px rgba(44, 36, 22, 0.04);
+    z-index: 10;
+  }
+  .folder-tab-inactive {
+    background: hsl(var(--muted));
+    border: 1px solid transparent;
+    opacity: 0.7;
+  }
+  .folder-tab-inactive:hover {
+    opacity: 1;
+    background: hsl(var(--secondary));
+  }
+  
+  /* Ruled notebook lines for notes */
+  .ruled-lines {
+    background-image: repeating-linear-gradient(
+      transparent,
+      transparent 23px,
+      hsl(var(--border) / 0.5) 23px,
+      hsl(var(--border) / 0.5) 24px
+    );
+    background-position: 0 8px;
+    line-height: 24px;
+  }
+  
+  /* Tactile button style */
+  .tactile-btn {
+    @apply transition-all duration-150;
+    box-shadow: 0 1px 3px rgba(44, 36, 22, 0.08);
+  }
+  .tactile-btn:hover {
+    box-shadow: 0 2px 6px rgba(44, 36, 22, 0.1);
+  }
+  .tactile-btn:active {
+    box-shadow: inset 0 1px 2px rgba(44, 36, 22, 0.08);
+    transform: translateY(1px);
+  }
+  
+  /* Soft shadow utility */
+  .shadow-soft {
+    box-shadow: 0 2px 8px rgba(44, 36, 22, 0.05);
+  }
+}
+
+/* Smooth transitions */
+@layer base {
+  button, a, input {
+    @apply transition-colors duration-150;
+  }
+}
+
+/* Animations */
+@keyframes slide-up {
+  from { 
+    opacity: 0; 
+    transform: translateY(8px); 
+  }
+  to { 
+    opacity: 1; 
+    transform: translateY(0); 
+  }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.25s ease-out;
+}
+
+/* Warm scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(var(--background));
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+/* Toast Styling - Warm Analog Aesthetic */
+[data-sonner-toaster] {
+  --toast-background: hsl(var(--card));
+  --toast-foreground: hsl(var(--card-foreground));
+  --toast-border: hsl(var(--border));
+}
+
+/* Toast base styling */
+[data-sonner-toast] {
+  background: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: 0.5rem;
+  box-shadow: 0 2px 8px rgba(44, 36, 22, 0.08);
+  color: hsl(var(--foreground)) !important;
+  font-family: 'Inter', system-ui, sans-serif;
+  padding: 12px 16px !important;
+}
+
+/* Close button - universal styling */
+[data-sonner-toast] [data-close-button] {
+  background: transparent !important;
+  border: none !important;
+  padding: 4px !important;
+  margin-left: 8px !important;
+  cursor: pointer !important;
+  opacity: 0.6;
+  transition: opacity 150ms;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+[data-sonner-toast] [data-close-button]:hover {
+  opacity: 1;
+}
+
+/* Success toast */
+[data-sonner-toast][data-type="success"] {
+  border-color: #4A7C59 !important;
+  border-left: 3px solid #4A7C59 !important;
+}
+
+[data-sonner-toast][data-type="success"] [data-close-button] {
+  color: #4A7C59 !important;
+}
+
+/* Error toast */
+[data-sonner-toast][data-type="error"] {
+  border-color: #B85C38 !important;
+  border-left: 3px solid #B85C38 !important;
+}
+
+[data-sonner-toast][data-type="error"] [data-close-button] {
+  color: #B85C38 !important;
+}
+
+/* Info/default toast */
+[data-sonner-toast][data-type="default"] {
+  border-color: #C4A35A !important;
+  border-left: 3px solid #C4A35A !important;
+}
+
+[data-sonner-toast][data-type="default"] [data-close-button] {
+  color: #C4A35A !important;
+}
+
+/* Toast action button - undo button styling */
+[data-sonner-toast] button[data-button],
+[data-sonner-toast] [role="button"] {
+  background: transparent !important;
+  color: hsl(var(--foreground)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  padding: 4px 12px !important;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: all 150ms;
+  cursor: pointer;
+}
+
+[data-sonner-toast] button[data-button]:hover,
+[data-sonner-toast] [role="button"]:hover {
+  background: hsl(var(--muted)) !important;
+  border-color: hsl(var(--primary)) !important;
+  color: hsl(var(--primary)) !important;
+}
+
+/* Success toast button */
+[data-sonner-toast][data-type="success"] button[data-button],
+[data-sonner-toast][data-type="success"] [role="button"] {
+  border-color: #4A7C59 !important;
+  color: #4A7C59 !important;
+}
+
+[data-sonner-toast][data-type="success"] button[data-button]:hover,
+[data-sonner-toast][data-type="success"] [role="button"]:hover {
+  background: rgba(74, 124, 89, 0.1) !important;
+  border-color: #4A7C59 !important;
+}
+
+/* Error toast button */
+[data-sonner-toast][data-type="error"] button[data-button],
+[data-sonner-toast][data-type="error"] [role="button"] {
+  border-color: #B85C38 !important;
+  color: #B85C38 !important;
+}
+
+[data-sonner-toast][data-type="error"] button[data-button]:hover,
+[data-sonner-toast][data-type="error"] [role="button"]:hover {
+  background: rgba(184, 92, 56, 0.1) !important;
+  border-color: #B85C38 !important;
 }

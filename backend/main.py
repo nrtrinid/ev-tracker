@@ -11,7 +11,8 @@ from dotenv import load_dotenv
 
 from models import (
     BetCreate, BetUpdate, BetResponse, BetResult, PromoType,
-    SettingsUpdate, SettingsResponse, SummaryResponse
+    SettingsUpdate, SettingsResponse, SummaryResponse,
+    TransactionCreate, TransactionResponse, BalanceResponse
 )
 from calculations import american_to_decimal, calculate_ev, calculate_real_profit
 
@@ -338,6 +339,134 @@ def get_summary():
         profit_by_sportsbook={k: round(v, 2) for k, v in profit_by_sportsbook.items()},
         ev_by_sport={k: round(v, 2) for k, v in ev_by_sport.items()},
     )
+
+
+# ============ Transactions ============
+
+@app.post("/transactions", response_model=TransactionResponse, status_code=201)
+def create_transaction(transaction: TransactionCreate):
+    """Create a new deposit or withdrawal."""
+    db = get_db()
+    
+    data = {
+        "sportsbook": transaction.sportsbook,
+        "type": transaction.type.value,
+        "amount": transaction.amount,
+        "notes": transaction.notes,
+    }
+    
+    result = db.table("transactions").insert(data).execute()
+    
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to create transaction")
+    
+    row = result.data[0]
+    return TransactionResponse(
+        id=row["id"],
+        created_at=row["created_at"],
+        sportsbook=row["sportsbook"],
+        type=row["type"],
+        amount=row["amount"],
+        notes=row.get("notes"),
+    )
+
+
+@app.get("/transactions", response_model=list[TransactionResponse])
+def list_transactions(sportsbook: str | None = None):
+    """List all transactions, optionally filtered by sportsbook."""
+    db = get_db()
+    
+    query = db.table("transactions").select("*").order("created_at", desc=True)
+    
+    if sportsbook:
+        query = query.eq("sportsbook", sportsbook)
+    
+    result = query.execute()
+    
+    return [
+        TransactionResponse(
+            id=row["id"],
+            created_at=row["created_at"],
+            sportsbook=row["sportsbook"],
+            type=row["type"],
+            amount=row["amount"],
+            notes=row.get("notes"),
+        )
+        for row in result.data
+    ]
+
+
+@app.delete("/transactions/{transaction_id}", status_code=204)
+def delete_transaction(transaction_id: str):
+    """Delete a transaction."""
+    db = get_db()
+    
+    result = db.table("transactions").delete().eq("id", transaction_id).execute()
+    
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+
+@app.get("/balances", response_model=list[BalanceResponse])
+def get_balances():
+    """Get computed balance for each sportsbook."""
+    db = get_db()
+    k_factor = user_settings["k_factor"]
+    
+    # Get all transactions
+    tx_result = db.table("transactions").select("*").execute()
+    transactions = tx_result.data or []
+    
+    # Get all bets for profit calculation
+    bets_result = db.table("bets").select("*").execute()
+    bets = bets_result.data or []
+    
+    # Aggregate by sportsbook
+    sportsbook_data = {}
+    
+    # Process transactions
+    for tx in transactions:
+        book = tx["sportsbook"]
+        if book not in sportsbook_data:
+            sportsbook_data[book] = {"deposits": 0, "withdrawals": 0, "profit": 0, "pending": 0}
+        
+        if tx["type"] == "deposit":
+            sportsbook_data[book]["deposits"] += float(tx["amount"])
+        else:
+            sportsbook_data[book]["withdrawals"] += float(tx["amount"])
+    
+    # Process bets for profit and pending
+    for row in bets:
+        book = row["sportsbook"]
+        if book not in sportsbook_data:
+            sportsbook_data[book] = {"deposits": 0, "withdrawals": 0, "profit": 0, "pending": 0}
+        
+        bet = build_bet_response(row, k_factor)
+        
+        if bet.result == BetResult.PENDING:
+            # For pending bets, add stake as pending exposure
+            sportsbook_data[book]["pending"] += bet.stake
+        elif bet.real_profit is not None:
+            # For settled bets, add to profit
+            sportsbook_data[book]["profit"] += bet.real_profit
+    
+    # Build response
+    balances = []
+    for book, data in sorted(sportsbook_data.items()):
+        net_deposits = data["deposits"] - data["withdrawals"]
+        balance = net_deposits + data["profit"] - data["pending"]
+        
+        balances.append(BalanceResponse(
+            sportsbook=book,
+            deposits=round(data["deposits"], 2),
+            withdrawals=round(data["withdrawals"], 2),
+            net_deposits=round(net_deposits, 2),
+            profit=round(data["profit"], 2),
+            pending=round(data["pending"], 2),
+            balance=round(balance, 2),
+        ))
+    
+    return balances
 
 
 # ============ Settings ============

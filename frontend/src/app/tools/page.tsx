@@ -5,8 +5,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn, americanToDecimal, formatPercent } from "@/lib/utils";
-import { Calculator, ArrowLeft, TrendingUp, AlertCircle, CheckCircle } from "lucide-react";
-import Link from "next/link";
+import { Calculator, TrendingUp, AlertCircle, CheckCircle } from "lucide-react";
 
 // Calculate hold % from two American odds
 function calculateHold(odds1: number, odds2: number): {
@@ -60,10 +59,10 @@ function calculateHold(odds1: number, odds2: number): {
 }
 
 const qualityConfig = {
-  excellent: { label: "Excellent", color: "text-green-600", bg: "bg-green-50", desc: "Sharp line, great for +EV" },
-  good: { label: "Good", color: "text-blue-600", bg: "bg-blue-50", desc: "Solid market, reasonable vig" },
-  fair: { label: "Fair", color: "text-yellow-600", bg: "bg-yellow-50", desc: "Average hold, acceptable" },
-  poor: { label: "Poor", color: "text-red-600", bg: "bg-red-50", desc: "High vig, less favorable" },
+  excellent: { label: "Excellent", color: "text-[#4A7C59]", bg: "bg-[#4A7C59]/10", desc: "Sharp line, great for +EV" },
+  good: { label: "Good", color: "text-[#4A7C59]", bg: "bg-[#4A7C59]/5", desc: "Solid market, reasonable vig" },
+  fair: { label: "Fair", color: "text-[#C4A35A]", bg: "bg-[#C4A35A]/10", desc: "Average hold, acceptable" },
+  poor: { label: "Poor", color: "text-[#B85C38]", bg: "bg-[#B85C38]/10", desc: "High vig, less favorable" },
 };
 
 export default function ToolsPage() {
@@ -82,21 +81,9 @@ export default function ToolsPage() {
 
   return (
     <main className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b sticky top-0 bg-background/95 backdrop-blur z-10">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center gap-3">
-            <Link href="/" className="text-muted-foreground hover:text-foreground transition-colors">
-              <ArrowLeft className="h-5 w-5" />
-            </Link>
-            <h1 className="text-xl font-bold">Tools</h1>
-          </div>
-        </div>
-      </header>
-
       <div className="container mx-auto px-4 py-6 space-y-6 max-w-md">
         {/* Hold Calculator */}
-        <Card>
+        <Card className="card-hover">
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2">
               <Calculator className="h-5 w-5 text-muted-foreground" />
@@ -188,7 +175,7 @@ export default function ToolsPage() {
             {/* Empty State */}
             {!result && (
               <div className="text-center py-6 text-muted-foreground">
-                <Calculator className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <div className="text-3xl mb-2">📐</div>
                 <p className="text-sm">Enter both odds to calculate</p>
                 <p className="text-xs mt-1">Use American format (e.g., +150, -110)</p>
               </div>
@@ -199,7 +186,7 @@ export default function ToolsPage() {
               <Button
                 variant="ghost"
                 size="sm"
-                className="w-full text-muted-foreground"
+                className="w-full text-muted-foreground hover:text-foreground"
                 onClick={() => { setOdds1(""); setOdds2(""); }}
               >
                 Clear

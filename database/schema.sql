@@ -70,3 +70,21 @@ CREATE POLICY "Allow all access" ON public.settings
 
 -- Insert default settings row
 INSERT INTO public.settings (id) VALUES (1);
+
+-- Transactions table for deposit/withdrawal tracking
+CREATE TABLE public.transactions (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now()) NOT NULL,
+    sportsbook TEXT NOT NULL,
+    type TEXT NOT NULL CHECK (type IN ('deposit', 'withdrawal')),
+    amount NUMERIC NOT NULL,
+    notes TEXT
+);
+
+CREATE INDEX idx_transactions_sportsbook ON public.transactions(sportsbook);
+CREATE INDEX idx_transactions_created_at ON public.transactions(created_at DESC);
+
+ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Allow all access" ON public.transactions
+    FOR ALL USING (true) WITH CHECK (true);

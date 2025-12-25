@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,6 +23,9 @@ import { toast } from "sonner";
 
 // Quick stake presets for fast entry
 const STAKE_PRESETS = [10, 25, 50, 100] as const;
+
+// Default vig to account for book edge
+const DEFAULT_VIG = 0.045;
 
 // Map sportsbook names to button variants
 const sportsbookVariants: Record<string, any> = {
@@ -66,6 +69,7 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
   const [formData, setFormData] = useState<BetFormData>(initialFormData);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const createBet = useCreateBet();
+  const oddsInputRef = useRef<HTMLInputElement>(null);
 
   // Calculate EV in real-time
   const oddsNum = parseFloat(formData.odds) || 0;
@@ -129,9 +133,16 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
   };
 
   return (
-    <Card>
+    <Card className="card-hover">
       <CardHeader className="pb-4">
-        <CardTitle className="text-lg">New Bet</CardTitle>
+        <CardTitle className="text-lg flex items-center justify-between">
+          <span className="flex items-center gap-2">
+            New Bet
+          </span>
+          <span className="text-xs font-normal text-muted-foreground">
+            Tap stats for analytics
+          </span>
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -171,7 +182,11 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
                   type="button"
                   variant={formData.sport === sport ? "default" : "outline"}
                   size="sm"
-                  onClick={() => updateField("sport", sport)}
+                  onClick={() => {
+                    updateField("sport", sport);
+                    // Auto-focus odds input for faster entry
+                    setTimeout(() => oddsInputRef.current?.focus(), 50);
+                  }}
                 >
                   {sport}
                 </Button>
@@ -213,7 +228,7 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
           <div>
             <label className="text-sm font-medium mb-2 block">Promo Type</label>
             <div className="flex flex-wrap gap-2">
-              {PROMO_TYPES.filter((p) => p.value !== "standard").map((promo) => (
+              {PROMO_TYPES.map((promo) => (
                 <Button
                   key={promo.value}
                   type="button"
@@ -224,13 +239,16 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
                   className={cn(
                     promo.value === "bonus_bet" &&
                       formData.promo_type === promo.value &&
-                      "bg-green-600 hover:bg-green-700",
+                      "bg-[#C4A35A] hover:bg-[#B8963E] text-[#2C2416]",
                     promo.value === "no_sweat" &&
                       formData.promo_type === promo.value &&
-                      "bg-blue-600 hover:bg-blue-700",
+                      "bg-[#4A7C59] hover:bg-[#3D6B4A] text-white",
+                    promo.value === "promo_qualifier" &&
+                      formData.promo_type === promo.value &&
+                      "bg-[#B85C38] hover:bg-[#A04E2E] text-white",
                     promo.value.startsWith("boost") &&
                       formData.promo_type === promo.value &&
-                      "bg-purple-600 hover:bg-purple-700"
+                      "bg-[#C4A35A] hover:bg-[#B8963E] text-[#2C2416]"
                   )}
                   onClick={() =>
                     updateField("promo_type", promo.value as PromoType)
@@ -249,6 +267,7 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
                 Odds (American)
               </label>
               <Input
+                ref={oddsInputRef}
                 type="number"
                 placeholder="+150 or -110"
                 value={formData.odds}
@@ -327,6 +346,7 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
                   placeholder="Optional notes"
                   value={formData.notes}
                   onChange={(e) => updateField("notes", e.target.value)}
+                  className="ruled-lines"
                 />
               </div>
             </div>
@@ -334,7 +354,12 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
 
           {/* Real-time EV Display */}
           {oddsNum !== 0 && stakeNum > 0 && (
-            <div className="rounded-lg bg-muted p-4 space-y-2">
+            <div className={cn(
+              "rounded-lg p-4 space-y-2 border",
+              ev.evTotal > 0 
+                ? "bg-[#4A7C59]/10 border-[#4A7C59]/30" 
+                : "bg-[#B85C38]/10 border-[#B85C38]/30"
+            )}>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground flex items-center gap-2">
                   <TrendingUp className="h-4 w-4" />
@@ -342,11 +367,11 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
                 </span>
                 <span
                   className={cn(
-                    "text-xl font-bold",
-                    ev.evTotal > 0 ? "text-green-600" : "text-red-600"
+                    "text-xl font-bold font-mono",
+                    ev.evTotal > 0 ? "text-[#4A7C59]" : "text-[#B85C38]"
                   )}
                 >
-                  {formatCurrency(ev.evTotal)}
+                  {ev.evTotal >= 0 ? "+" : ""}{formatCurrency(ev.evTotal)}
                 </span>
               </div>
               <div className="flex items-center justify-between text-sm">
@@ -354,7 +379,7 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
                   <DollarSign className="h-4 w-4" />
                   {formData.promo_type === "bonus_bet" ? "Winnings" : "Win Payout"}
                 </span>
-                <span className="font-medium">
+                <span className="font-medium font-mono">
                   {formatCurrency(ev.winPayout)}
                 </span>
               </div>
@@ -374,7 +399,10 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
           {/* Submit Button */}
           <Button
             type="submit"
-            className="w-full h-12 text-lg"
+            className={cn(
+              "w-full h-14 text-lg font-semibold transition-all tactile-btn",
+              ev.evTotal > 0 && "bg-[#4A7C59] hover:bg-[#3D6B4A] text-white"
+            )}
             disabled={
               !formData.sportsbook ||
               !formData.sport ||
@@ -439,18 +467,20 @@ function calculateEVClient(
   let evPerDollar: number;
   if (promoType === "bonus_bet") {
     evPerDollar = 1 - 1 / decimalOdds;
-  } else if (promoType === "no_sweat" || promoType === "promo_qualifier") {
-    // No-sweat and promo qualifiers: 0 EV (user logs bonus bet separately when received)
-    evPerDollar = 0;
+  } else if (promoType === "no_sweat" || promoType === "promo_qualifier" || promoType === "standard") {
+    // Standard, no-sweat, and promo qualifiers: account for typical vig (-4.5%)
+    // User logs bonus bet separately when received for no-sweat/qualifier
+    evPerDollar = -DEFAULT_VIG;
   } else if (promoType.startsWith("boost")) {
     const winProb = 1 / decimalOdds;
     let potentialExtra = effectiveBoost * (decimalOdds - 1);
     if (winningsCap) {
       potentialExtra = Math.min(potentialExtra, winningsCap / stake);
     }
-    evPerDollar = winProb * potentialExtra;
+    const boostValue = winProb * potentialExtra;
+    evPerDollar = boostValue - DEFAULT_VIG;  // Boost adds value, but you still pay vig
   } else {
-    evPerDollar = 0;
+    evPerDollar = -DEFAULT_VIG;
   }
 
   return {

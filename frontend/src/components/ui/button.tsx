@@ -4,28 +4,28 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 active:translate-y-px",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        default: "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm hover:shadow",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90",
         outline:
-          "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
+          "border border-input bg-background hover:bg-muted hover:text-foreground",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        ghost: "hover:bg-accent hover:text-accent-foreground",
+        ghost: "hover:bg-muted hover:text-foreground",
         link: "text-primary underline-offset-4 hover:underline",
-        // Sportsbook variants
-        draftkings: "bg-draftkings text-white hover:bg-draftkings/90",
-        fanduel: "bg-fanduel text-white hover:bg-fanduel/90",
-        betmgm: "bg-betmgm text-black hover:bg-betmgm/90",
-        caesars: "bg-caesars text-white hover:bg-caesars/90",
-        espnbet: "bg-espnbet text-white hover:bg-espnbet/90",
-        fanatics: "bg-fanatics text-white hover:bg-fanatics/90",
-        hardrock: "bg-hardrock text-black hover:bg-hardrock/90",
-        bet365: "bg-bet365 text-white hover:bg-bet365/90",
+        // Sportsbook variants - more muted, tactile labels
+        draftkings: "bg-draftkings/90 text-white hover:bg-draftkings shadow-sm",
+        fanduel: "bg-fanduel/90 text-white hover:bg-fanduel shadow-sm",
+        betmgm: "bg-betmgm/90 text-[#2C2416] hover:bg-betmgm shadow-sm",
+        caesars: "bg-caesars/90 text-white hover:bg-caesars shadow-sm",
+        espnbet: "bg-espnbet/90 text-white hover:bg-espnbet shadow-sm",
+        fanatics: "bg-fanatics/90 text-white hover:bg-fanatics shadow-sm",
+        hardrock: "bg-hardrock/90 text-white hover:bg-hardrock shadow-sm",
+        bet365: "bg-bet365/90 text-white hover:bg-bet365 shadow-sm",
       },
       size: {
         default: "h-10 px-4 py-2",

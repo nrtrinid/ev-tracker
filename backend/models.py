@@ -119,3 +119,38 @@ class SummaryResponse(BaseModel):
     ev_by_sportsbook: dict[str, float]
     profit_by_sportsbook: dict[str, float]
     ev_by_sport: dict[str, float]
+
+
+class TransactionType(str, Enum):
+    """Transaction types for bankroll tracking."""
+    DEPOSIT = "deposit"
+    WITHDRAWAL = "withdrawal"
+
+
+class TransactionCreate(BaseModel):
+    """Schema for creating a transaction."""
+    sportsbook: str
+    type: TransactionType
+    amount: float = Field(gt=0)
+    notes: str | None = None
+
+
+class TransactionResponse(BaseModel):
+    """Schema for transaction data returned from API."""
+    id: str
+    created_at: datetime
+    sportsbook: str
+    type: TransactionType
+    amount: float
+    notes: str | None
+
+
+class BalanceResponse(BaseModel):
+    """Per-sportsbook balance."""
+    sportsbook: str
+    deposits: float
+    withdrawals: float
+    net_deposits: float  # deposits - withdrawals
+    profit: float        # from betting
+    pending: float       # pending exposure
+    balance: float       # net_deposits + profit - pending

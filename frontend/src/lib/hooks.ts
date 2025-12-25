@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api";
-import type { BetCreate, BetUpdate, BetResult, PromoType } from "@/lib/types";
+import type { BetCreate, BetUpdate, BetResult, PromoType, TransactionCreate } from "@/lib/types";
 
 // Query keys
 export const queryKeys = {
@@ -8,6 +8,8 @@ export const queryKeys = {
   bet: (id: string) => ["bets", id] as const,
   summary: ["summary"] as const,
   settings: ["settings"] as const,
+  transactions: ["transactions"] as const,
+  balances: ["balances"] as const,
 };
 
 // ============ Bets Hooks ============
@@ -151,5 +153,47 @@ export function useEVCalculation(params: {
     queryFn: () => api.calculateEV(params!),
     enabled: !!params && params.odds_american !== 0 && params.stake > 0,
     staleTime: Infinity, // EV calculations are deterministic
+  });
+}
+
+// ============ Transactions Hooks ============
+
+export function useTransactions(sportsbook?: string) {
+  return useQuery({
+    queryKey: [...queryKeys.transactions, sportsbook],
+    queryFn: () => api.getTransactions(sportsbook),
+  });
+}
+
+export function useCreateTransaction() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (transaction: TransactionCreate) => api.createTransaction(transaction),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.transactions });
+      queryClient.invalidateQueries({ queryKey: queryKeys.balances });
+    },
+  });
+}
+
+export function useDeleteTransaction() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => api.deleteTransaction(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.transactions });
+      queryClient.invalidateQueries({ queryKey: queryKeys.balances });
+    },
+  });
+}
+
+// ============ Balances Hook ============
+
+export function useBalances() {
+  return useQuery({
+    queryKey: queryKeys.balances,
+    queryFn: api.getBalances,
   });
 }

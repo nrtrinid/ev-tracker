@@ -101,8 +101,8 @@ def calculate_ev(
         ev_per_dollar = -DEFAULT_VIG
         
     elif promo_type in ("boost_30", "boost_50", "boost_100", "boost_custom"):
-        # EV = (stake / decimal_odds) × min(boost% × (decimal_odds - 1), cap/stake)
-        # The boost only provides value proportional to win probability
+        # EV = (stake / decimal_odds) × min(boost% × (decimal_odds - 1), cap/stake) - vig
+        # The boost provides value, but you still pay vig on the underlying market
         win_probability = 1 / decimal_odds
         potential_extra = effective_boost * (decimal_odds - 1)
         
@@ -111,11 +111,13 @@ def calculate_ev(
         else:
             capped_extra = potential_extra
             
-        ev_per_dollar = win_probability * capped_extra
+        boost_value = win_probability * capped_extra
+        ev_per_dollar = boost_value - DEFAULT_VIG
         
     else:
-        # Standard bet: EV is 0 for fair odds (we assume user finds +EV spots)
-        ev_per_dollar = 0.0
+        # Standard bet: account for typical vig (-4.5% EV)
+        # User logs these when they believe they have information edge
+        ev_per_dollar = -DEFAULT_VIG
     
     ev_total = stake * ev_per_dollar
     

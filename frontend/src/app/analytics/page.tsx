@@ -3,7 +3,6 @@
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn, formatCurrency, formatPercent } from "@/lib/utils";
 import { 
-  ArrowLeft, 
   TrendingUp, 
   TrendingDown, 
   Trophy, 
@@ -13,9 +12,8 @@ import {
   PieChart as PieChartIcon,
   Activity
 } from "lucide-react";
-import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { getBets, getSummary } from "@/lib/api";
+import { getBets, getSummary, getBalances } from "@/lib/api";
 import { 
   BarChart, 
   Bar, 
@@ -35,19 +33,19 @@ import {
 } from "recharts";
 import type { Bet } from "@/lib/types";
 
-// Sportsbook colors for charts
+// Sportsbook colors for charts (authentic brand colors)
 const SPORTSBOOK_COLORS: Record<string, string> = {
-  DraftKings: "#53d337",
-  FanDuel: "#1493ff",
-  BetMGM: "#c4a962",
-  Caesars: "#0a2240",
-  "ESPN Bet": "#d00",
-  Fanatics: "#004687",
-  "Hard Rock": "#000",
-  bet365: "#027b5b",
+  DraftKings: "#4CBB17",
+  FanDuel: "#0E7ACA",
+  BetMGM: "#C5A562",
+  Caesars: "#C49A6C",
+  "ESPN Bet": "#ED174C",
+  Fanatics: "#0047BB",
+  "Hard Rock": "#FDB913",
+  bet365: "#00843D",
 };
 
-const CHART_COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16"];
+const CHART_COLORS = ["#4A7C59", "#C4A35A", "#6B5E4F", "#B85C38", "#8B7355", "#7A9E7E", "#D4C4A8", "#9B8A7B"];
 
 export default function AnalyticsPage() {
   const { data: summary, isLoading: summaryLoading } = useQuery({
@@ -58,6 +56,11 @@ export default function AnalyticsPage() {
   const { data: bets, isLoading: betsLoading } = useQuery({
     queryKey: ["bets"],
     queryFn: () => getBets(),
+  });
+
+  const { data: balances, isLoading: balancesLoading } = useQuery({
+    queryKey: ["balances"],
+    queryFn: getBalances,
   });
 
   const isLoading = summaryLoading || betsLoading;
@@ -162,67 +165,46 @@ export default function AnalyticsPage() {
 
   return (
     <main className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b sticky top-0 bg-background/95 backdrop-blur z-10">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center gap-3">
-            <Link href="/" className="text-muted-foreground hover:text-foreground transition-colors">
-              <ArrowLeft className="h-5 w-5" />
-            </Link>
-            <h1 className="text-xl font-bold">Analytics</h1>
-          </div>
-        </div>
-      </header>
-
       <div className="container mx-auto px-4 py-6 space-y-6 max-w-4xl">
         {isLoading ? (
           <div className="text-center py-12 text-muted-foreground">
-            <Activity className="h-8 w-8 mx-auto mb-2 animate-pulse" />
+            <Activity className="h-8 w-8 mx-auto mb-2 animate-pulse text-[#C4A35A]" />
             <p>Loading analytics...</p>
           </div>
         ) : (
           <>
             {/* HERO: Performance Status with Z-Score */}
             <Card className={cn(
-              "border-2",
-              zScore === null ? "border-muted" :
-              zScore >= 1.5 ? "border-green-500 bg-green-50/50" :
-              zScore >= 0.5 ? "border-green-400 bg-green-50/30" :
-              zScore >= -0.5 ? "border-blue-400 bg-blue-50/30" :
-              zScore >= -1.5 ? "border-yellow-400 bg-yellow-50/30" :
-              "border-red-500 bg-red-50/30"
+              "border card-hover",
+              zScore === null ? "border-border" :
+              zScore >= 1.5 ? "border-[#4A7C59]/50 bg-[#4A7C59]/10" :
+              zScore >= 0.5 ? "border-[#4A7C59]/30 bg-[#4A7C59]/5" :
+              zScore >= -0.5 ? "border-[#C4A35A]/30 bg-[#C4A35A]/5" :
+              zScore >= -1.5 ? "border-[#B85C38]/30 bg-[#B85C38]/5" :
+              "border-[#B85C38]/50 bg-[#B85C38]/10"
             )}>
               <CardContent className="pt-6 pb-4">
                 <div className="text-center">
-                  <p className="text-sm text-muted-foreground mb-1">Performance Status</p>
-                  <div className="flex items-center justify-center gap-3">
-                    <span className="text-4xl">
-                      {zScore === null ? "📊" :
-                       zScore >= 1.5 ? "🔥" :
-                       zScore >= 0.5 ? "📈" :
-                       zScore >= -0.5 ? "✓" :
-                       zScore >= -1.5 ? "📉" : "🥶"}
-                    </span>
-                    <div>
-                      <p className={cn(
-                        "text-2xl font-bold",
-                        zScore === null ? "text-muted-foreground" :
-                        zScore >= 0.5 ? "text-green-600" :
-                        zScore >= -0.5 ? "text-blue-600" :
-                        "text-red-600"
-                      )}>
-                        {zScore === null ? "Need more data" :
-                         zScore >= 1.5 ? "Running Hot!" :
-                         zScore >= 0.5 ? "Above Average" :
-                         zScore >= -0.5 ? "On Track" :
-                         zScore >= -1.5 ? "Below Average" : "Running Cold"}
+                  <p className="text-sm text-muted-foreground mb-2 uppercase tracking-wide">Performance Status</p>
+                  <div>
+                    <p className={cn(
+                      "text-2xl font-bold",
+                      zScore === null ? "text-muted-foreground" :
+                      zScore >= 0.5 ? "text-[#4A7C59]" :
+                      zScore >= -0.5 ? "text-[#C4A35A]" :
+                      "text-[#B85C38]"
+                    )}>
+                      {zScore === null ? "Need more data" :
+                       zScore >= 1.5 ? "Running Hot" :
+                       zScore >= 0.5 ? "Above Average" :
+                       zScore >= -0.5 ? "On Track" :
+                       zScore >= -1.5 ? "Below Average" : "Running Cold"}
+                    </p>
+                    {zScore !== null && (
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Z-Score: <span className="font-mono">{zScore.toFixed(2)}</span> ({zScore >= 0 ? "+" : ""}{formatCurrency(settledProfit - settledEV)} vs expected)
                       </p>
-                      {zScore !== null && (
-                        <p className="text-sm text-muted-foreground">
-                          Z-Score: {zScore.toFixed(2)} ({zScore >= 0 ? "+" : ""}{formatCurrency(settledProfit - settledEV)} vs expected)
-                        </p>
-                      )}
-                    </div>
+                    )}
                   </div>
                 </div>
               </CardContent>
@@ -230,34 +212,34 @@ export default function AnalyticsPage() {
 
             {/* Key Numbers - The 4 Things That Matter */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <Card>
+              <Card className="card-hover">
                 <CardContent className="pt-4 pb-3 text-center">
-                  <p className="text-xs text-muted-foreground">Real Profit</p>
-                  <p className={cn("text-2xl font-bold", (summary?.total_real_profit || 0) >= 0 ? "text-green-600" : "text-red-600")}>
-                    {formatCurrency(summary?.total_real_profit || 0)}
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Real Profit</p>
+                  <p className={cn("text-2xl font-bold font-mono", (summary?.total_real_profit || 0) >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+                    {(summary?.total_real_profit || 0) >= 0 ? "+" : ""}{formatCurrency(summary?.total_real_profit || 0)}
                   </p>
                 </CardContent>
               </Card>
-              <Card>
+              <Card className="card-hover">
                 <CardContent className="pt-4 pb-3 text-center">
-                  <p className="text-xs text-muted-foreground">Total EV</p>
-                  <p className="text-2xl font-bold text-blue-600">
-                    {formatCurrency(summary?.total_ev || 0)}
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Total EV</p>
+                  <p className="text-2xl font-bold font-mono text-[#C4A35A]">
+                    +{formatCurrency(summary?.total_ev || 0)}
                   </p>
                 </CardContent>
               </Card>
-              <Card>
+              <Card className="card-hover">
                 <CardContent className="pt-4 pb-3 text-center">
                   <p className="text-xs text-muted-foreground">Record</p>
-                  <p className="text-2xl font-bold">
+                  <p className="text-2xl font-bold font-mono">
                     {summary?.win_count || 0}–{summary?.loss_count || 0}
                   </p>
                 </CardContent>
               </Card>
-              <Card>
+              <Card className="card-hover">
                 <CardContent className="pt-4 pb-3 text-center">
                   <p className="text-xs text-muted-foreground">Win Rate</p>
-                  <p className="text-2xl font-bold">
+                  <p className="text-2xl font-bold font-mono">
                     {summary?.win_rate ? formatPercent(summary.win_rate) : "—"}
                   </p>
                   <p className="text-xs text-muted-foreground">
@@ -269,17 +251,17 @@ export default function AnalyticsPage() {
 
             {/* Cumulative EV vs Profit Chart */}
             {cumulativeData.length > 1 && (
-              <Card>
+              <Card className="card-hover">
                 <CardHeader className="pb-2">
                   <h2 className="font-semibold">EV vs Reality (Settled Bets)</h2>
                   <p className="text-xs text-muted-foreground">
-                    Blue = what math says you should have • Green = what you actually have
+                    Gold = expected EV • Green = actual profit
                   </p>
                 </CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={250}>
                     <ComposedChart data={cumulativeData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                       <XAxis 
                         dataKey="date" 
                         fontSize={10} 
@@ -287,17 +269,18 @@ export default function AnalyticsPage() {
                         textAnchor="end" 
                         height={60}
                         interval="preserveStartEnd"
+                        stroke="hsl(var(--muted-foreground))"
                       />
-                      <YAxis tickFormatter={(v) => `$${v}`} fontSize={11} />
+                      <YAxis tickFormatter={(v) => `$${v}`} fontSize={11} stroke="hsl(var(--muted-foreground))" />
                       <Tooltip 
                         formatter={(value: number, name: string) => [
-                          formatCurrency(value), 
-                          name === "cumulativeEV" ? "Expected" : "Actual"
+                          formatCurrency(value),
+                          name
                         ]}
                         labelFormatter={(label) => label}
                       />
-                      <Line type="monotone" dataKey="cumulativeEV" stroke="#3b82f6" strokeWidth={2} dot={false} name="cumulativeEV" />
-                      <Line type="monotone" dataKey="cumulativeProfit" stroke="#10b981" strokeWidth={2} dot={false} name="cumulativeProfit" />
+                      <Line type="monotone" dataKey="cumulativeEV" stroke="#C4A35A" strokeWidth={2} dot={false} name="Expected EV" />
+                      <Line type="monotone" dataKey="cumulativeProfit" stroke="#4A7C59" strokeWidth={2} dot={false} name="Actual Profit" />
                     </ComposedChart>
                   </ResponsiveContainer>
                 </CardContent>
@@ -371,7 +354,7 @@ export default function AnalyticsPage() {
                             <Tooltip formatter={(value: number) => formatCurrency(value)} />
                             <Bar dataKey="profit" radius={[0, 4, 4, 0]}>
                               {sportsbookChartData.map((entry, index) => (
-                                <Cell key={index} fill={entry.profit >= 0 ? "#10b981" : "#ef4444"} />
+                                <Cell key={index} fill={entry.profit >= 0 ? "#4A7C59" : "#B85C38"} />
                               ))}
                             </Bar>
                           </BarChart>
@@ -428,6 +411,71 @@ export default function AnalyticsPage() {
                     </CardContent>
                   </Card>
                 </div>
+
+                {/* Per-Sportsbook Balances */}
+                <Card>
+                  <CardHeader className="pb-2">
+                    <h3 className="font-semibold text-sm">Sportsbook Balances</h3>
+                    <p className="text-xs text-muted-foreground">Add deposits/withdrawals on the Settings page</p>
+                  </CardHeader>
+                  <CardContent>
+                    {balances && balances.length > 0 ? (
+                      <div className="overflow-x-auto -mx-4 px-4">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b text-xs text-muted-foreground">
+                              <th className="text-left py-2 font-medium">Book</th>
+                              <th className="text-right py-2 font-medium">Deposits</th>
+                              <th className="text-right py-2 font-medium">Withdrawals</th>
+                              <th className="text-right py-2 font-medium">Profit</th>
+                              <th className="text-right py-2 font-medium">Pending</th>
+                              <th className="text-right py-2 font-medium">Balance</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {balances.map((b) => (
+                              <tr key={b.sportsbook} className="border-b border-border hover:bg-muted/50">
+                                <td className="py-2 font-medium">{b.sportsbook}</td>
+                                <td className="text-right py-2 text-[#4A7C59] font-medium">{formatCurrency(b.deposits)}</td>
+                                <td className="text-right py-2 text-[#B85C38] font-medium">{formatCurrency(b.withdrawals)}</td>
+                                <td className={cn("text-right py-2", b.profit >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+                                  {formatCurrency(b.profit)}
+                                </td>
+                                <td className="text-right py-2 text-muted-foreground">{formatCurrency(b.pending)}</td>
+                                <td className={cn("text-right py-2 font-semibold", b.balance >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+                                  {formatCurrency(b.balance)}
+                                </td>
+                              </tr>
+                            ))}
+                            {/* Totals row */}
+                            <tr className="bg-muted/50 font-semibold">
+                              <td className="py-2">Total</td>
+                              <td className="text-right py-2 text-[#4A7C59] font-semibold">
+                                {formatCurrency(balances.reduce((sum, b) => sum + b.deposits, 0))}
+                              </td>
+                              <td className="text-right py-2 text-[#B85C38] font-semibold">
+                                {formatCurrency(balances.reduce((sum, b) => sum + b.withdrawals, 0))}
+                              </td>
+                              <td className={cn("text-right py-2", balances.reduce((sum, b) => sum + b.profit, 0) >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+                                {formatCurrency(balances.reduce((sum, b) => sum + b.profit, 0))}
+                              </td>
+                              <td className="text-right py-2 text-muted-foreground">
+                                {formatCurrency(balances.reduce((sum, b) => sum + b.pending, 0))}
+                              </td>
+                              <td className={cn("text-right py-2", balances.reduce((sum, b) => sum + b.balance, 0) >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+                                {formatCurrency(balances.reduce((sum, b) => sum + b.balance, 0))}
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground text-center py-4">
+                        No deposits recorded yet. Add your first deposit on the Settings page.
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
               </div>
             </details>
             </Card>
@@ -470,10 +518,10 @@ function StatCard({
     displayValue = "—";
   } else if (format === "currency" && typeof value === "number") {
     displayValue = formatCurrency(value);
-    if (colorize) colorClass = value >= 0 ? "text-green-600" : "text-red-600";
+    if (colorize) colorClass = value >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]";
   } else if (format === "percent" && typeof value === "number") {
     displayValue = formatPercent(value);
-    if (colorize) colorClass = value >= 1 ? "text-green-600" : value < 0.8 ? "text-red-600" : "text-foreground";
+    if (colorize) colorClass = value >= 1 ? "text-[#4A7C59]" : value < 0.8 ? "text-[#B85C38]" : "text-[#8B7355]";
   } else if (format === "number" && typeof value === "number") {
     displayValue = value.toLocaleString();
   } else {

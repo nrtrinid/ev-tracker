@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
@@ -28,42 +28,48 @@ import {
   Pencil,
   MoreHorizontal,
   RotateCcw,
+  History,
 } from "lucide-react";
 import { toast } from "sonner";
 
 const resultConfig: Record<
   BetResult,
-  { label: string; color: string; bgColor: string; icon: React.ReactNode }
+  { label: string; color: string; bgColor: string; icon: React.ReactNode; stampClass: string }
 > = {
   pending: {
     label: "Pending",
-    color: "text-yellow-600",
-    bgColor: "bg-yellow-50",
-    icon: <Clock className="h-4 w-4" />,
+    color: "text-[#C4A35A]",
+    bgColor: "bg-[#C4A35A]/10",
+    icon: <Clock className="h-3.5 w-3.5" />,
+    stampClass: "stamp",
   },
   win: {
     label: "Win",
-    color: "text-green-600",
-    bgColor: "bg-green-50",
-    icon: <Check className="h-4 w-4" />,
+    color: "text-[#4A7C59]",
+    bgColor: "bg-[#4A7C59]/20",
+    icon: <Check className="h-3.5 w-3.5" />,
+    stampClass: "stamp-win",
   },
   loss: {
     label: "Loss",
-    color: "text-red-600",
-    bgColor: "bg-red-50",
-    icon: <X className="h-4 w-4" />,
+    color: "text-[#B85C38]",
+    bgColor: "bg-[#B85C38]/20",
+    icon: <X className="h-3.5 w-3.5" />,
+    stampClass: "stamp-loss",
   },
   push: {
     label: "Push",
-    color: "text-gray-600",
-    bgColor: "bg-gray-50",
-    icon: <Minus className="h-4 w-4" />,
+    color: "text-[#6B5E4F]",
+    bgColor: "bg-[#6B5E4F]/15",
+    icon: <Minus className="h-3.5 w-3.5" />,
+    stampClass: "stamp-push",
   },
   void: {
     label: "Void",
-    color: "text-gray-600",
-    bgColor: "bg-gray-50",
-    icon: <Minus className="h-4 w-4" />,
+    color: "text-[#6B5E4F]",
+    bgColor: "bg-[#6B5E4F]/15",
+    icon: <Minus className="h-3.5 w-3.5" />,
+    stampClass: "stamp",
   },
 };
 
@@ -90,6 +96,18 @@ const sportsbookTextColors: Record<string, string> = {
   bet365: "text-bet365",
 };
 
+// ============ PROMO TYPE DISPLAY CONFIG ============
+const promoTypeConfig: Record<string, { short: string; bg: string; text: string }> = {
+  standard: { short: "Std", bg: "bg-[#DDD5C7]", text: "text-[#6B5E4F]" },
+  bonus_bet: { short: "BB", bg: "bg-[#7A9E7E]/20", text: "text-[#2C2416]" },
+  no_sweat: { short: "NS", bg: "bg-[#4A7C59]/15", text: "text-[#4A7C59]" },
+  promo_qualifier: { short: "PQ", bg: "bg-[#B85C38]/15", text: "text-[#B85C38]" },
+  boost_30: { short: "30%", bg: "bg-[#C4A35A]/20", text: "text-[#8B7355]" },
+  boost_50: { short: "50%", bg: "bg-[#C4A35A]/20", text: "text-[#8B7355]" },
+  boost_100: { short: "100%", bg: "bg-[#C4A35A]/20", text: "text-[#8B7355]" },
+  boost_custom: { short: "Boost", bg: "bg-[#C4A35A]/20", text: "text-[#8B7355]" },
+};
+
 // ============ SHARED BET CARD BASE ============
 // Consistent layout for both Pending and History views
 interface BetCardBaseProps {
@@ -104,6 +122,12 @@ function BetCardBase({ bet, headerRight, footer, showProfit = false, timeDisplay
   const [expanded, setExpanded] = useState(false);
   const borderColor = sportsbookColors[bet.sportsbook] || "bg-gray-400";
   const textColor = sportsbookTextColors[bet.sportsbook] || "text-gray-600";
+  const promoConfig = promoTypeConfig[bet.promo_type] || { short: "?", bg: "bg-gray-100", text: "text-gray-600" };
+  
+  // For custom boost, show actual boost percentage
+  const promoLabel = bet.promo_type === "boost_custom" && bet.boost_percent 
+    ? `${bet.boost_percent}%`
+    : promoConfig.short;
 
   // Format time based on display mode
   const timeText = timeDisplay === "relative" 
@@ -113,7 +137,7 @@ function BetCardBase({ bet, headerRight, footer, showProfit = false, timeDisplay
     : null;
 
   return (
-    <div className="border rounded-lg overflow-hidden flex">
+    <div className="border rounded-lg overflow-hidden flex card-hover bg-card">
       {/* Colored left border for sportsbook branding */}
       <div className={cn("w-1 shrink-0", borderColor)} />
       
@@ -121,20 +145,30 @@ function BetCardBase({ bet, headerRight, footer, showProfit = false, timeDisplay
         {/* Header - Selection first, sportsbook in subtitle */}
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
-            {/* Primary: Selection name + time */}
+            {/* Primary: Selection name + date stamp for history */}
             <div className="flex items-center gap-2">
               <p className="font-semibold text-sm leading-tight">{bet.event}</p>
-              {timeText && (
-                <span className="text-xs text-muted-foreground shrink-0">• {timeText}</span>
+              {timeDisplay === "date" && (
+                <span className="date-stamp text-muted-foreground shrink-0">
+                  {formatShortDate(bet.event_date)}
+                </span>
+              )}
+              {timeDisplay === "relative" && (
+                <span className="text-xs text-muted-foreground shrink-0">• {formatRelativeTime(bet.created_at)}</span>
               )}
             </div>
-            {/* Secondary: Sportsbook (colored) • Sport • Market */}
-            <div className="flex items-center gap-1.5 mt-1">
+            {/* Secondary: Sportsbook (colored) • Promo Badge • Sport • Market */}
+            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
               <span className={cn("w-2 h-2 rounded-full shrink-0", borderColor)} />
-              <span className="text-xs truncate">
-                <span className={cn("font-semibold", textColor)}>{bet.sportsbook}</span>
-                <span className="text-muted-foreground"> • {bet.sport} • {bet.market}</span>
+              <span className={cn("font-semibold text-xs", textColor)}>{bet.sportsbook}</span>
+              <span className={cn(
+                "px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none",
+                promoConfig.bg,
+                promoConfig.text
+              )}>
+                {promoLabel}
               </span>
+              <span className="text-xs text-muted-foreground">{bet.sport} • {bet.market}</span>
             </div>
           </div>
           {headerRight}
@@ -144,35 +178,35 @@ function BetCardBase({ bet, headerRight, footer, showProfit = false, timeDisplay
       <div className="grid grid-cols-4 gap-4 text-sm">
         <div>
           <p className="text-muted-foreground text-xs">Odds</p>
-          <p className="font-mono font-medium">{formatOdds(bet.odds_american)}</p>
+          <p className="font-mono font-semibold">{formatOdds(bet.odds_american)}</p>
         </div>
         <div>
           <p className="text-muted-foreground text-xs">Stake</p>
-          <p className="font-medium">{formatCurrency(bet.stake)}</p>
+          <p className="font-mono font-medium">{formatCurrency(bet.stake)}</p>
         </div>
         <div>
           <p className="text-muted-foreground text-xs">EV</p>
-          <p className={cn("font-medium", bet.ev_total > 0 ? "text-green-600" : "text-red-600")}>
-            {formatCurrency(bet.ev_total)}
+          <p className={cn("font-mono font-semibold", bet.ev_total > 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+            {bet.ev_total >= 0 ? "+" : ""}{formatCurrency(bet.ev_total)}
           </p>
         </div>
         <div>
           <p className="text-muted-foreground text-xs">{showProfit ? "Profit" : "To Win"}</p>
           <p
             className={cn(
-              "font-medium",
+              "font-mono font-semibold",
               showProfit
                 ? bet.real_profit === null
                   ? "text-muted-foreground"
                   : bet.real_profit >= 0
-                  ? "text-green-600"
-                  : "text-red-600"
+                  ? "text-[#4A7C59]"
+                  : "text-[#B85C38]"
                 : "text-foreground"
             )}
           >
             {showProfit
               ? bet.real_profit !== null
-                ? formatCurrency(bet.real_profit)
+                ? (bet.real_profit >= 0 ? "+" : "") + formatCurrency(bet.real_profit)
                 : "—"
               : formatCurrency(bet.win_payout - bet.stake)}
           </p>
@@ -229,8 +263,8 @@ function BetCardBase({ bet, headerRight, footer, showProfit = false, timeDisplay
           </div>
           {bet.notes && (
             <div className="text-sm mt-3">
-              <p className="text-muted-foreground text-xs">Notes</p>
-              <p>{bet.notes}</p>
+              <p className="text-muted-foreground text-xs mb-1">Notes</p>
+              <p className="ruled-lines pl-2 py-1 min-h-[24px]">{bet.notes}</p>
             </div>
           )}
         </div>
@@ -366,6 +400,14 @@ interface HistoryCardProps {
 function HistoryCard({ bet, onEdit, onResultChange }: HistoryCardProps) {
   const deleteBet = useDeleteBet();
   const config = resultConfig[bet.result];
+  
+  // Random stamp rotation for realistic hand-stamped look - re-randomizes when result changes
+  const [randomRotation, setRandomRotation] = useState(Math.floor(Math.random() * 7) - 3);
+  
+  // Re-randomize when result changes (like applying a new stamp)
+  useEffect(() => {
+    setRandomRotation(Math.floor(Math.random() * 7) - 3);
+  }, [bet.result]);
 
   const handleDelete = () => {
     deleteBet.mutate(bet.id, {
@@ -376,9 +418,11 @@ function HistoryCard({ bet, onEdit, onResultChange }: HistoryCardProps) {
 
   const headerRight = (
     <div className="flex items-center gap-2">
-      {/* Result Badge */}
-      <div className={cn("flex items-center gap-1 px-2 py-1 rounded text-xs font-medium", config.color, config.bgColor)}>
-        {config.icon}
+      {/* Result Badge - Ink Stamp Style with random rotation */}
+      <div 
+        className={cn(config.color, config.stampClass)}
+        style={{ transform: `rotate(${randomRotation}deg)` }}
+      >
         {config.label}
       </div>
       {/* Actions Menu */}
@@ -539,47 +583,66 @@ export function BetList() {
 
   return (
     <>
-      <Card>
+      <Card className="overflow-visible">
         <CardHeader className="pb-3">
-          {/* Two-way toggle: Pending | History */}
-          <div className="flex rounded-lg bg-muted p-1">
-            <Button
-              variant={activeTab === "pending" ? "default" : "ghost"}
-              size="sm"
-              className={cn("flex-1 h-9", activeTab === "pending" && "shadow-sm")}
+          {/* Manila folder tabs: Pending | History */}
+          <div className="flex gap-1 -mx-2 -mt-2 mb-2">
+            <button
+              className={cn(
+                "folder-tab px-4 py-2 flex items-center gap-2",
+                activeTab === "pending" ? "folder-tab-active" : "folder-tab-inactive"
+              )}
               onClick={() => setActiveTab("pending")}
             >
-              <Clock className="h-4 w-4 mr-2" />
+              <Clock className="h-4 w-4" />
               Pending
               {pendingBets.length > 0 && (
-                <span className="ml-2 bg-yellow-100 text-yellow-800 px-1.5 py-0.5 rounded text-xs font-medium">
+                <span className={cn(
+                  "text-xs font-mono font-semibold px-1.5 rounded",
+                  activeTab === "pending" 
+                    ? "bg-[#C4A35A]/20 text-[#8B7355]" 
+                    : "bg-[#C4A35A]/10 text-[#8B7355]/70"
+                )}>
                   {pendingBets.length}
                 </span>
               )}
-            </Button>
-            <Button
-              variant={activeTab === "history" ? "default" : "ghost"}
-              size="sm"
-              className={cn("flex-1 h-9", activeTab === "history" && "shadow-sm")}
+            </button>
+            <button
+              className={cn(
+                "folder-tab px-4 py-2 flex items-center gap-2",
+                activeTab === "history" ? "folder-tab-active" : "folder-tab-inactive"
+              )}
               onClick={() => setActiveTab("history")}
             >
+              <History className="h-4 w-4" />
               History
-              <span className="ml-2 text-muted-foreground text-xs">({settledBets.length})</span>
-            </Button>
+              <span className={cn(
+                "text-xs font-mono",
+                activeTab === "history" ? "text-muted-foreground" : "text-muted-foreground/50"
+              )}>
+                ({settledBets.length})
+              </span>
+            </button>
           </div>
 
           {/* Summary stats for pending tab */}
           {activeTab === "pending" && pendingBets.length > 0 && (
             <div className="flex justify-between text-sm text-muted-foreground pt-3">
               <span>
-                <span className="font-medium text-foreground">
+                <span className="font-mono font-medium text-foreground">
                   {formatCurrency(pendingBets.reduce((s, b) => s + b.stake, 0))}
                 </span>{" "}
                 at risk
               </span>
               <span>
-                <span className="font-medium text-green-600">
-                  +{formatCurrency(pendingBets.reduce((s, b) => s + b.ev_total, 0))}
+                <span className={cn(
+                  "font-mono font-medium",
+                  pendingBets.reduce((s, b) => s + b.ev_total, 0) >= 0 
+                    ? "text-[#4A7C59]" 
+                    : "text-[#B85C38]"
+                )}>
+                  {pendingBets.reduce((s, b) => s + b.ev_total, 0) >= 0 ? "+" : ""}
+                  {formatCurrency(pendingBets.reduce((s, b) => s + b.ev_total, 0))}
                 </span>{" "}
                 expected
               </span>
@@ -591,9 +654,11 @@ export function BetList() {
           {activeTab === "pending" && (
             <>
               {pendingBets.length === 0 ? (
-                <p className="text-center text-muted-foreground py-8">
-                  No pending bets. All caught up! 🎉
-                </p>
+                <div className="text-center py-10">
+                  <Clock className="h-8 w-8 mx-auto mb-3 text-muted-foreground/40" />
+                  <p className="text-muted-foreground font-medium">No pending bets</p>
+                  <p className="text-sm text-muted-foreground/60 mt-1">Find some +EV lines and get started</p>
+                </div>
               ) : (
                 pendingBets.map((bet) => (
                   <PendingCard
@@ -610,7 +675,11 @@ export function BetList() {
           {activeTab === "history" && (
             <>
               {settledBets.length === 0 ? (
-                <p className="text-center text-muted-foreground py-8">No bet history yet.</p>
+                <div className="text-center py-10">
+                  <History className="h-8 w-8 mx-auto mb-3 text-muted-foreground/40" />
+                  <p className="text-muted-foreground font-medium">No history yet</p>
+                  <p className="text-sm text-muted-foreground/60 mt-1">Settled bets will appear here</p>
+                </div>
               ) : (
                 settledBets.map((bet) => (
                   <HistoryCard

@@ -290,6 +290,7 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
                   placeholder="Optional notes"
                   value={formData.notes}
                   onChange={(e) => updateField("notes", e.target.value)}
+                  className="ruled-lines"
                 />
               </div>
             </div>

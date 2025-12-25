@@ -7,6 +7,9 @@ import type {
   Summary,
   EVCalculation,
   PromoType,
+  Transaction,
+  TransactionCreate,
+  Balance,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -122,4 +125,28 @@ export async function calculateEV(params: {
   }
 
   return fetchAPI<EVCalculation>(`/calculate-ev?${searchParams.toString()}`);
+}
+
+// ============ Transactions API ============
+
+export async function getTransactions(sportsbook?: string): Promise<Transaction[]> {
+  const params = sportsbook ? `?sportsbook=${encodeURIComponent(sportsbook)}` : "";
+  return fetchAPI<Transaction[]>(`/transactions${params}`);
+}
+
+export async function createTransaction(transaction: TransactionCreate): Promise<Transaction> {
+  return fetchAPI<Transaction>("/transactions", {
+    method: "POST",
+    body: JSON.stringify(transaction),
+  });
+}
+
+export async function deleteTransaction(id: string): Promise<void> {
+  await fetch(`${API_URL}/transactions/${id}`, { method: "DELETE" });
+}
+
+// ============ Balances API ============
+
+export async function getBalances(): Promise<Balance[]> {
+  return fetchAPI<Balance[]>("/balances");
 }
