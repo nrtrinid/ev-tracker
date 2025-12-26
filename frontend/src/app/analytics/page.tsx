@@ -308,11 +308,15 @@ export default function AnalyticsPage() {
     ? (settledProfit - settledEV) / standardDeviation 
     : null;
   
+  // Calculate filtered totals
+  const filteredTotalEV = filteredBets.reduce((sum, b) => sum + b.ev_total, 0);
+  const filteredRealProfit = settledBets.reduce((sum, b) => sum + (b.real_profit || 0), 0);
+  
   // EV Conversion (Real Profit / Settled EV)
-  const evConversion = settledEV > 0 ? ((summary?.total_real_profit || 0) / settledEV) : null;
+  const evConversion = settledEV > 0 ? (filteredRealProfit / settledEV) : null;
   
   // ROI based on settled cash
-  const settledROI = totalSettledStake > 0 ? ((summary?.total_real_profit || 0) / totalSettledStake) : null;
+  const settledROI = totalSettledStake > 0 ? (filteredRealProfit / totalSettledStake) : null;
   
   // Fun Metrics Calculations
   // Biggest Win
@@ -345,42 +349,60 @@ export default function AnalyticsPage() {
     .reduce((sum, b) => sum + b.win_payout, 0);
   const bonusEfficiency = bonusStaked > 0 ? (bonusReturns / bonusStaked) * 100 : null;
 
-  // Prepare chart data
-  const sportsbookChartData = summary 
-    ? Object.entries(summary.ev_by_sportsbook)
-        .map(([name, ev]) => ({
-          name: name.replace("ESPN Bet", "ESPN").replace("Hard Rock", "HR"),
-          ev: ev,
-          profit: summary.profit_by_sportsbook[name] || 0,
-          color: SPORTSBOOK_COLORS[name] || "#888",
-        }))
-        .sort((a, b) => b.ev - a.ev)
-    : [];
+  // Prepare chart data from FILTERED bets
+  const sportsbookChartData = useMemo(() => {
+    const evBySportsbook: Record<string, number> = {};
+    const profitBySportsbook: Record<string, number> = {};
+    
+    filteredBets.forEach(bet => {
+      evBySportsbook[bet.sportsbook] = (evBySportsbook[bet.sportsbook] || 0) + bet.ev_total;
+      if (bet.result !== "pending" && bet.real_profit !== null) {
+        profitBySportsbook[bet.sportsbook] = (profitBySportsbook[bet.sportsbook] || 0) + bet.real_profit;
+      }
+    });
+    
+    return Object.entries(evBySportsbook)
+      .map(([name, ev]) => ({
+        name: name.replace("ESPN Bet", "ESPN").replace("Hard Rock", "HR"),
+        ev,
+        profit: profitBySportsbook[name] || 0,
+        color: SPORTSBOOK_COLORS[name] || "#888",
+      }))
+      .sort((a, b) => b.ev - a.ev);
+  }, [filteredBets]);
 
-  const sportChartData = summary
-    ? Object.entries(summary.ev_by_sport)
-        .map(([name, ev], i) => ({
-          name,
-          value: ev,
-          color: CHART_COLORS[i % CHART_COLORS.length],
-        }))
-        .sort((a, b) => b.value - a.value)
-    : [];
+  const sportChartData = useMemo(() => {
+    const evBySport: Record<string, number> = {};
+    
+    filteredBets.forEach(bet => {
+      evBySport[bet.sport] = (evBySport[bet.sport] || 0) + bet.ev_total;
+    });
+    
+    return Object.entries(evBySport)
+      .map(([name, ev], i) => ({
+        name,
+        value: ev,
+        color: CHART_COLORS[i % CHART_COLORS.length],
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [filteredBets]);
 
-  // Bets by promo type
-  const promoTypeData = bets
-    ? Object.entries(
-        bets.reduce((acc, bet) => {
-          const label = formatPromoType(bet.promo_type);
-          acc[label] = (acc[label] || 0) + 1;
-          return acc;
-        }, {} as Record<string, number>)
-      ).map(([name, value], i) => ({
+  // Bets by promo type (from filtered bets)
+  const promoTypeData = useMemo(() => {
+    const counts: Record<string, number> = {};
+    
+    filteredBets.forEach(bet => {
+      const label = formatPromoType(bet.promo_type);
+      counts[label] = (counts[label] || 0) + 1;
+    });
+    
+    return Object.entries(counts)
+      .map(([name, value], i) => ({
         name,
         value,
         color: CHART_COLORS[i % CHART_COLORS.length],
-      }))
-    : [];
+      }));
+  }, [filteredBets]);
 
   // Cumulative EV vs Real Profit over time (by date)
   const cumulativeData = settledBets.length > 0
@@ -537,8 +559,8 @@ export default function AnalyticsPage() {
               <Card className="card-hover">
                 <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">Real Profit</p>
-                  <p className={cn("text-xl sm:text-2xl font-bold font-mono leading-tight", (summary?.total_real_profit || 0) >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
-                    {(summary?.total_real_profit || 0) >= 0 ? "+" : ""}{formatCurrency(summary?.total_real_profit || 0)}
+                  <p className={cn("text-xl sm:text-2xl font-bold font-mono leading-tight", filteredRealProfit >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+                    {filteredRealProfit >= 0 ? "+" : ""}{formatCurrency(filteredRealProfit)}
                   </p>
                 </CardContent>
               </Card>
@@ -546,7 +568,7 @@ export default function AnalyticsPage() {
                 <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">Total EV</p>
                   <p className="text-xl sm:text-2xl font-bold font-mono text-[#C4A35A] leading-tight">
-                    +{formatCurrency(summary?.total_ev || 0)}
+                    +{formatCurrency(filteredTotalEV)}
                   </p>
                 </CardContent>
               </Card>
