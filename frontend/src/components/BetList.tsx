@@ -515,7 +515,6 @@ function HistoryCard({ bet, onEdit, onResultChange }: HistoryCardProps) {
 }
 
 // ============ HISTORY FILTER TYPES ============
-type HistoryFilter = "all" | "wins" | "losses";
 type BetTypeFilter = "all" | "cash" | "bonus";
 
 // ============ MAIN BET LIST ============
@@ -525,7 +524,6 @@ export function BetList() {
   const updateResult = useUpdateBetResult();
   const [editingBet, setEditingBet] = useState<Bet | null>(null);
   const [activeTab, setActiveTab] = useState<"pending" | "history">("pending");
-  const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("all");
   
   // Filter drawer state
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
@@ -645,19 +643,7 @@ export function BetList() {
   // Apply book and type filters first, then split by status
   const filteredBets = bets?.filter(bet => matchesSportsbook(bet) && matchesBetType(bet)) || [];
   const pendingBets = filteredBets.filter((bet) => bet.result === "pending");
-  const allSettledBets = filteredBets.filter((bet) => bet.result !== "pending");
-  
-  // Apply additional history filter (wins/losses)
-  const settledBets = allSettledBets.filter((bet) => {
-    switch (historyFilter) {
-      case "wins":
-        return bet.result === "win";
-      case "losses":
-        return bet.result === "loss";
-      default:
-        return true;
-    }
-  });
+  const settledBets = filteredBets.filter((bet) => bet.result !== "pending");
   
   // Counts for the current sportsbook selection (before type filter, for accurate numbers)
   const booksWithBetType = bets?.filter(matchesSportsbook) || [];
@@ -705,7 +691,7 @@ export function BetList() {
                 "text-xs font-mono",
                 activeTab === "history" ? "text-muted-foreground" : "text-muted-foreground/50"
               )}>
-                ({allSettledBets.length})
+                ({settledBets.length})
               </span>
             </button>
             </div>
@@ -765,31 +751,6 @@ export function BetList() {
             </div>
           )}
 
-          {/* History Quick Filters - Outcome only */}
-          {activeTab === "history" && allSettledBets.length > 0 && (
-            <div className="flex flex-wrap gap-2 pt-1">
-              {([
-                { key: "all", label: "All" },
-                { key: "wins", label: "Wins" },
-                { key: "losses", label: "Losses" },
-              ] as const).map(({ key, label }) => (
-                <button
-                  key={key}
-                  onClick={() => setHistoryFilter(key)}
-                  className={cn(
-                    "px-3 py-1.5 rounded-full text-xs font-medium transition-colors",
-                    historyFilter === key
-                      ? "bg-foreground text-background shadow-sm"
-                      : "bg-muted text-muted-foreground hover:bg-secondary"
-                  )}
-                >
-                  {label}
-                  {key === "wins" && ` (${allSettledBets.filter(b => b.result === "win").length})`}
-                  {key === "losses" && ` (${allSettledBets.filter(b => b.result === "loss").length})`}
-                </button>
-              ))}
-            </div>
-          )}
 
           {/* Summary stats for pending tab */}
           {activeTab === "pending" && pendingBets.length > 0 && (
@@ -840,7 +801,7 @@ export function BetList() {
 
           {activeTab === "history" && (
             <>
-              {allSettledBets.length === 0 ? (
+              {settledBets.length === 0 ? (
                 <div className="text-center py-10">
                   <History className="h-8 w-8 mx-auto mb-3 text-muted-foreground/40" />
                   <p className="text-muted-foreground font-medium">No history yet</p>
