@@ -267,76 +267,76 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
         </Button>
 
         {expanded && (
-          <div className="pt-2 border-t">
-            <div className="grid grid-cols-2 gap-4 text-sm">
+          <div className="pt-3 border-t border-border">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3">
               {/* Required Win % - always show */}
               <div>
-                <p className="text-muted-foreground text-xs">Req. Win %</p>
-                <p className="font-mono">{(impliedProb * 100).toFixed(1)}%</p>
+                <p className="text-muted-foreground text-xs mb-0.5">Req. Win %</p>
+                <p className="font-mono text-sm text-foreground">{(impliedProb * 100).toFixed(1)}%</p>
               </div>
               {/* Pending: Vig | Settled: EV per $ */}
               {mode === "pending" ? (
                 <div>
-                  <p className="text-muted-foreground text-xs">Vig</p>
-                  <p className="font-mono">{(displayVig * 100).toFixed(1)}%</p>
+                  <p className="text-muted-foreground text-xs mb-0.5">Vig</p>
+                  <p className="font-mono text-sm text-foreground">{(displayVig * 100).toFixed(1)}%</p>
                 </div>
               ) : (
                 <div>
-                  <p className="text-muted-foreground text-xs">EV per $</p>
-                  <p className="font-mono">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
+                  <p className="text-muted-foreground text-xs mb-0.5">EV per $</p>
+                  <p className="font-mono text-sm text-foreground">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
                 </div>
               )}
               {/* Pending: EV per $ | Settled: Event Date */}
               {mode === "pending" ? (
                 <div>
-                  <p className="text-muted-foreground text-xs">EV per $</p>
-                  <p className="font-mono">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
+                  <p className="text-muted-foreground text-xs mb-0.5">EV per $</p>
+                  <p className="font-mono text-sm text-foreground">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
                 </div>
               ) : (
                 <div>
-                  <p className="text-muted-foreground text-xs">Event Date</p>
-                  <p className="font-medium">{formatShortDate(bet.event_date)}</p>
+                  <p className="text-muted-foreground text-xs mb-0.5">Event Date</p>
+                  <p className="font-medium text-sm text-foreground">{formatShortDate(bet.event_date)}</p>
                 </div>
               )}
-              {/* Pending: Event Date | Settled: Win Payout (closer to profit - right column) */}
+              {/* Pending: Event Date | Settled: Win Payout */}
               {mode === "pending" ? (
                 <div>
-                  <p className="text-muted-foreground text-xs">Event Date</p>
-                  <p className="font-medium">{formatShortDate(bet.event_date)}</p>
+                  <p className="text-muted-foreground text-xs mb-0.5">Event Date</p>
+                  <p className="font-medium text-sm text-foreground">{formatShortDate(bet.event_date)}</p>
                 </div>
               ) : (
                 <div>
-                  <p className="text-muted-foreground text-xs">Win Payout</p>
-                  <p className="font-mono">{formatCurrency(bet.win_payout)}</p>
+                  <p className="text-muted-foreground text-xs mb-0.5">Win Payout</p>
+                  <p className="font-mono text-sm text-foreground">{formatCurrency(bet.win_payout)}</p>
                 </div>
               )}
               {/* Logged */}
               <div>
-                <p className="text-muted-foreground text-xs">Logged</p>
-                <p className="font-medium">{formatFullDateTime(bet.created_at)}</p>
+                <p className="text-muted-foreground text-xs mb-0.5">Logged</p>
+                <p className="font-medium text-sm text-foreground">{formatFullDateTime(bet.created_at)}</p>
               </div>
               {/* Settled - settled only */}
               {bet.settled_at && (
                 <div>
-                  <p className="text-muted-foreground text-xs">Settled</p>
-                  <p className="font-medium">{formatFullDateTime(bet.settled_at)}</p>
+                  <p className="text-muted-foreground text-xs mb-0.5">Settled</p>
+                  <p className="font-medium text-sm text-foreground">{formatFullDateTime(bet.settled_at)}</p>
+                </div>
+              )}
+              {/* Opposing Odds - if present */}
+              {bet.opposing_odds && (
+                <div className="col-span-2">
+                  <p className="text-muted-foreground text-xs mb-0.5">Opposing Line</p>
+                  <p className="font-mono text-sm text-foreground">{formatOdds(bet.opposing_odds)}</p>
+                </div>
+              )}
+              {/* Notes - if present */}
+              {bet.notes && (
+                <div className="col-span-2">
+                  <p className="text-muted-foreground text-xs mb-0.5">Notes</p>
+                  <p className="text-sm text-foreground leading-relaxed pl-2 border-l-2 border-border">{bet.notes}</p>
                 </div>
               )}
             </div>
-            {/* Opposing Odds - if present */}
-            {bet.opposing_odds && (
-              <div className="col-span-2">
-                <p className="text-muted-foreground text-xs">Opposing Line</p>
-                <p className="font-mono text-xs">{formatOdds(bet.opposing_odds)}</p>
-              </div>
-            )}
-            {/* Notes - if present */}
-            {bet.notes && (
-              <div className="col-span-2 text-sm mt-3">
-                <p className="text-muted-foreground text-xs mb-1">Notes</p>
-                <p className="ruled-lines pl-2 py-1 min-h-[24px]">{bet.notes}</p>
-              </div>
-            )}
           </div>
         )}
       </div>
