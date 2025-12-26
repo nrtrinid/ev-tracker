@@ -203,6 +203,7 @@ function BetCardBase({ bet, headerRight, footer, showProfit = false, timeDisplay
                   : "text-[#B85C38]"
                 : "text-foreground"
             )}
+              style={{ whiteSpace: "nowrap" }}
           >
             {showProfit
               ? bet.real_profit !== null

@@ -215,7 +215,7 @@ export default function AnalyticsPage() {
               <Card className="card-hover">
                 <CardContent className="pt-4 pb-3 text-center">
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">Real Profit</p>
-                  <p className={cn("text-2xl font-bold font-mono", (summary?.total_real_profit || 0) >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+                  <p className={cn("text-2xl font-bold font-mono whitespace-nowrap leading-tight", (summary?.total_real_profit || 0) >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
                     {(summary?.total_real_profit || 0) >= 0 ? "+" : ""}{formatCurrency(summary?.total_real_profit || 0)}
                   </p>
                 </CardContent>
@@ -223,7 +223,7 @@ export default function AnalyticsPage() {
               <Card className="card-hover">
                 <CardContent className="pt-4 pb-3 text-center">
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">Total EV</p>
-                  <p className="text-2xl font-bold font-mono text-[#C4A35A]">
+                  <p className="text-2xl font-bold font-mono text-[#C4A35A] whitespace-nowrap leading-tight">
                     +{formatCurrency(summary?.total_ev || 0)}
                   </p>
                 </CardContent>
@@ -421,48 +421,48 @@ export default function AnalyticsPage() {
                   <CardContent>
                     {balances && balances.length > 0 ? (
                       <div className="overflow-x-auto -mx-4 px-4">
-                        <table className="w-full text-sm">
+                        <table className="w-full min-w-[560px] text-sm">
                           <thead>
                             <tr className="border-b text-xs text-muted-foreground">
-                              <th className="text-left py-2 font-medium">Book</th>
-                              <th className="text-right py-2 font-medium">Deposits</th>
-                              <th className="text-right py-2 font-medium">Withdrawals</th>
-                              <th className="text-right py-2 font-medium">Profit</th>
-                              <th className="text-right py-2 font-medium">Pending</th>
-                              <th className="text-right py-2 font-medium">Balance</th>
+                              <th className="text-left py-1.5 sm:py-2 font-medium whitespace-nowrap">Book</th>
+                              <th className="text-right py-1.5 sm:py-2 font-medium whitespace-nowrap">Deposits</th>
+                              <th className="text-right py-1.5 sm:py-2 font-medium whitespace-nowrap">Withdrawals</th>
+                              <th className="text-right py-1.5 sm:py-2 font-medium whitespace-nowrap">Profit</th>
+                              <th className="text-right py-1.5 sm:py-2 font-medium whitespace-nowrap">Pending</th>
+                              <th className="text-right py-1.5 sm:py-2 font-medium whitespace-nowrap">Balance</th>
                             </tr>
                           </thead>
                           <tbody>
                             {balances.map((b) => (
                               <tr key={b.sportsbook} className="border-b border-border hover:bg-muted/50">
-                                <td className="py-2 font-medium">{b.sportsbook}</td>
-                                <td className="text-right py-2 text-[#4A7C59] font-medium">{formatCurrency(b.deposits)}</td>
-                                <td className="text-right py-2 text-[#B85C38] font-medium">{formatCurrency(b.withdrawals)}</td>
-                                <td className={cn("text-right py-2", b.profit >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+                                <td className="py-1.5 sm:py-2 font-medium whitespace-nowrap">{b.sportsbook}</td>
+                                <td className="text-right py-1.5 sm:py-2 text-[#4A7C59] font-medium whitespace-nowrap">{formatCurrency(b.deposits)}</td>
+                                <td className="text-right py-1.5 sm:py-2 text-[#B85C38] font-medium whitespace-nowrap">{formatCurrency(b.withdrawals)}</td>
+                                <td className={cn("text-right py-1.5 sm:py-2 whitespace-nowrap", b.profit >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
                                   {formatCurrency(b.profit)}
                                 </td>
-                                <td className="text-right py-2 text-muted-foreground">{formatCurrency(b.pending)}</td>
-                                <td className={cn("text-right py-2 font-semibold", b.balance >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+                                <td className="text-right py-1.5 sm:py-2 text-muted-foreground whitespace-nowrap">{formatCurrency(b.pending)}</td>
+                                <td className={cn("text-right py-1.5 sm:py-2 font-semibold whitespace-nowrap", b.balance >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
                                   {formatCurrency(b.balance)}
                                 </td>
                               </tr>
                             ))}
                             {/* Totals row */}
                             <tr className="bg-muted/50 font-semibold">
-                              <td className="py-2">Total</td>
-                              <td className="text-right py-2 text-[#4A7C59] font-semibold">
+                              <td className="py-1.5 sm:py-2 whitespace-nowrap">Total</td>
+                              <td className="text-right py-1.5 sm:py-2 text-[#4A7C59] font-semibold whitespace-nowrap">
                                 {formatCurrency(balances.reduce((sum, b) => sum + b.deposits, 0))}
                               </td>
-                              <td className="text-right py-2 text-[#B85C38] font-semibold">
+                              <td className="text-right py-1.5 sm:py-2 text-[#B85C38] font-semibold whitespace-nowrap">
                                 {formatCurrency(balances.reduce((sum, b) => sum + b.withdrawals, 0))}
                               </td>
-                              <td className={cn("text-right py-2", balances.reduce((sum, b) => sum + b.profit, 0) >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+                              <td className={cn("text-right py-1.5 sm:py-2 whitespace-nowrap", balances.reduce((sum, b) => sum + b.profit, 0) >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
                                 {formatCurrency(balances.reduce((sum, b) => sum + b.profit, 0))}
                               </td>
-                              <td className="text-right py-2 text-muted-foreground">
+                              <td className="text-right py-1.5 sm:py-2 text-muted-foreground whitespace-nowrap">
                                 {formatCurrency(balances.reduce((sum, b) => sum + b.pending, 0))}
                               </td>
-                              <td className={cn("text-right py-2", balances.reduce((sum, b) => sum + b.balance, 0) >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+                              <td className={cn("text-right py-1.5 sm:py-2 whitespace-nowrap", balances.reduce((sum, b) => sum + b.balance, 0) >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
                                 {formatCurrency(balances.reduce((sum, b) => sum + b.balance, 0))}
                               </td>
                             </tr>
