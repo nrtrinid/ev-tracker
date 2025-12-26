@@ -268,75 +268,112 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
 
         {expanded && (
           <div className="pt-3 border-t border-border">
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-              {/* Required Win % - always show */}
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+              {mode === "pending" ? (
+                <>
+                  {/* PENDING LAYOUT: Prioritize market data (Opposing Line) near Odds */}
+                  {/* Slot 1: Opposing Line (if present) or Req. Win % */}
+                  {bet.opposing_odds ? (
+                    <div>
+                      <p className="text-muted-foreground text-xs mb-0.5">Opposing Line</p>
+                      <p className="font-mono text-sm text-foreground">{formatOdds(bet.opposing_odds)}</p>
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="text-muted-foreground text-xs mb-0.5">Req. Win %</p>
+                      <p className="font-mono text-sm text-foreground">{(impliedProb * 100).toFixed(1)}%</p>
+                    </div>
+                  )}
+                  {/* Slot 2: Req. Win % (if Opposing Line present) or Vig */}
+                  {bet.opposing_odds ? (
+                    <div>
+                      <p className="text-muted-foreground text-xs mb-0.5">Req. Win %</p>
+                      <p className="font-mono text-sm text-foreground">{(impliedProb * 100).toFixed(1)}%</p>
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="text-muted-foreground text-xs mb-0.5">Vig</p>
+                      <p className="font-mono text-sm text-foreground">{(displayVig * 100).toFixed(1)}%</p>
+                    </div>
+                  )}
+                  {/* Slot 3: Vig (if Opposing Line present) or EV per $ */}
+                  {bet.opposing_odds ? (
+                    <div>
+                      <p className="text-muted-foreground text-xs mb-0.5">Vig</p>
+                      <p className="font-mono text-sm text-foreground">{(displayVig * 100).toFixed(1)}%</p>
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="text-muted-foreground text-xs mb-0.5">EV per $</p>
+                      <p className="font-mono text-sm text-foreground">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
+                    </div>
+                  )}
+                  {/* Slot 4: EV per $ (if Opposing Line present) or empty */}
+                  {bet.opposing_odds && (
+                    <div>
+                      <p className="text-muted-foreground text-xs mb-0.5">EV per $</p>
+                      <p className="font-mono text-sm text-foreground">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {/* SETTLED LAYOUT: Prioritize financial data (Win Payout) near Profit */}
+                  {/* Slot 1: Req. Win % - Stable anchor (Top Left) */}
+                  <div>
+                    <p className="text-muted-foreground text-xs mb-0.5">Req. Win %</p>
+                    <p className="font-mono text-sm text-foreground">{(impliedProb * 100).toFixed(1)}%</p>
+                  </div>
+                  {/* Slot 2: Win Payout - Directly under Profit (Top Right) */}
+                  <div>
+                    <p className="text-muted-foreground text-xs mb-0.5">Win Payout</p>
+                    <p className="font-mono text-sm text-foreground">{formatCurrency(bet.win_payout)}</p>
+                  </div>
+                  {/* Slot 3: EV per $ */}
+                  <div>
+                    <p className="text-muted-foreground text-xs mb-0.5">EV per $</p>
+                    <p className="font-mono text-sm text-foreground">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
+                  </div>
+                  {/* Slot 4: Opposing Line (if present, demoted) */}
+                  {bet.opposing_odds ? (
+                    <div>
+                      <p className="text-muted-foreground text-xs mb-0.5">Opposing Line</p>
+                      <p className="font-mono text-sm text-foreground">{formatOdds(bet.opposing_odds)}</p>
+                    </div>
+                  ) : (
+                    <div>
+                      {/* Empty slot if no opposing line */}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            
+            {/* Dates Section - Pushed to bottom, full width */}
+            <div className="mt-3 pt-3 border-t border-border grid grid-cols-2 gap-x-4 gap-y-2">
               <div>
-                <p className="text-muted-foreground text-xs mb-0.5">Req. Win %</p>
-                <p className="font-mono text-sm text-foreground">{(impliedProb * 100).toFixed(1)}%</p>
+                <p className="text-muted-foreground text-xs mb-0.5">Event Date</p>
+                <p className="font-medium text-sm text-foreground">{formatShortDate(bet.event_date)}</p>
               </div>
-              {/* Pending: Vig | Settled: EV per $ */}
-              {mode === "pending" ? (
-                <div>
-                  <p className="text-muted-foreground text-xs mb-0.5">Vig</p>
-                  <p className="font-mono text-sm text-foreground">{(displayVig * 100).toFixed(1)}%</p>
-                </div>
-              ) : (
-                <div>
-                  <p className="text-muted-foreground text-xs mb-0.5">EV per $</p>
-                  <p className="font-mono text-sm text-foreground">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
-                </div>
-              )}
-              {/* Pending: EV per $ | Settled: Event Date */}
-              {mode === "pending" ? (
-                <div>
-                  <p className="text-muted-foreground text-xs mb-0.5">EV per $</p>
-                  <p className="font-mono text-sm text-foreground">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
-                </div>
-              ) : (
-                <div>
-                  <p className="text-muted-foreground text-xs mb-0.5">Event Date</p>
-                  <p className="font-medium text-sm text-foreground">{formatShortDate(bet.event_date)}</p>
-                </div>
-              )}
-              {/* Pending: Event Date | Settled: Win Payout */}
-              {mode === "pending" ? (
-                <div>
-                  <p className="text-muted-foreground text-xs mb-0.5">Event Date</p>
-                  <p className="font-medium text-sm text-foreground">{formatShortDate(bet.event_date)}</p>
-                </div>
-              ) : (
-                <div>
-                  <p className="text-muted-foreground text-xs mb-0.5">Win Payout</p>
-                  <p className="font-mono text-sm text-foreground">{formatCurrency(bet.win_payout)}</p>
-                </div>
-              )}
-              {/* Logged */}
               <div>
                 <p className="text-muted-foreground text-xs mb-0.5">Logged</p>
                 <p className="font-medium text-sm text-foreground">{formatFullDateTime(bet.created_at)}</p>
               </div>
-              {/* Settled - settled only */}
               {bet.settled_at && (
-                <div>
+                <div className="col-span-2">
                   <p className="text-muted-foreground text-xs mb-0.5">Settled</p>
                   <p className="font-medium text-sm text-foreground">{formatFullDateTime(bet.settled_at)}</p>
                 </div>
               )}
-              {/* Opposing Odds - if present */}
-              {bet.opposing_odds && (
-                <div className="col-span-2">
-                  <p className="text-muted-foreground text-xs mb-0.5">Opposing Line</p>
-                  <p className="font-mono text-sm text-foreground">{formatOdds(bet.opposing_odds)}</p>
-                </div>
-              )}
-              {/* Notes - if present */}
-              {bet.notes && (
-                <div className="col-span-2">
-                  <p className="text-muted-foreground text-xs mb-0.5">Notes</p>
-                  <p className="text-sm text-foreground leading-relaxed pl-2 border-l-2 border-border">{bet.notes}</p>
-                </div>
-              )}
             </div>
+            
+            {/* Notes - Full width at bottom */}
+            {bet.notes && (
+              <div className="mt-3 pt-3 border-t border-border">
+                <p className="text-muted-foreground text-xs mb-0.5">Notes</p>
+                <p className="text-sm text-foreground leading-relaxed pl-2 border-l-2 border-border">{bet.notes}</p>
+              </div>
+            )}
           </div>
         )}
       </div>
