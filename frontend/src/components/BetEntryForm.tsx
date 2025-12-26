@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,11 +24,18 @@ import { toast } from "sonner";
 // Quick stake presets for fast entry
 const STAKE_PRESETS = [10, 25, 50] as const;
 
-// Default vig to account for book edge
-const DEFAULT_VIG = 0.045;
+// Smart vig defaults based on market type
+const MARKET_VIG: Record<string, number> = {
+  ML: 0.045,      // Standard markets: 4.5%
+  Spread: 0.045,
+  Total: 0.045,
+  Prop: 0.07,     // Juiced markets: 7%
+  Futures: 0.07,
+  SGP: 0.12,      // Exotic markets: 12%
+};
 
 // Map sportsbook names to button variants
-const sportsbookVariants: Record<string, any> = {
+const sportsbookVariants: Record<string, string> = {
   DraftKings: "draftkings",
   FanDuel: "fanduel",
   BetMGM: "betmgm",
@@ -49,6 +56,7 @@ interface BetFormData {
   stake: string;
   boost_percent: string;
   winnings_cap: string;
+  opposing_odds: string;
   notes: string;
 }
 
@@ -62,6 +70,7 @@ const initialFormData: BetFormData = {
   stake: "",
   boost_percent: "",
   winnings_cap: "",
+  opposing_odds: "",
   notes: "",
 };
 
@@ -76,6 +85,18 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
   const stakeNum = parseFloat(formData.stake) || 0;
   const boostPercentNum = parseFloat(formData.boost_percent) || 0;
   const winningsCapNum = parseFloat(formData.winnings_cap) || 0;
+  const opposingOddsNum = parseFloat(formData.opposing_odds) || 0;
+
+  // Get smart vig default based on market
+  const defaultVig = MARKET_VIG[formData.market] || 0.045;
+
+  // Calculate actual vig if opposing odds provided
+  const calculatedVig = opposingOddsNum !== 0 
+    ? calculateHoldFromOdds(oddsNum, opposingOddsNum)
+    : null;
+
+  // Use calculated vig if available, otherwise smart default
+  const effectiveVig = calculatedVig !== null ? calculatedVig : defaultVig;
 
   // Client-side EV calculation for instant feedback
   const ev = calculateEVClient(
@@ -83,7 +104,8 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
     stakeNum,
     formData.promo_type,
     boostPercentNum,
-    winningsCapNum || undefined
+    winningsCapNum || undefined,
+    effectiveVig
   );
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -156,7 +178,7 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
                   type="button"
                   variant={
                     formData.sportsbook === book
-                      ? sportsbookVariants[book]
+                      ? (sportsbookVariants[book] as any)
                       : "outline"
                   }
                   size="sm"
@@ -194,34 +216,28 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
             </div>
           </div>
 
-          {/* Selection and Market - Row layout on larger screens */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="text-sm font-medium mb-2 block">
-                Selection Name <span className="text-muted-foreground font-normal">(optional)</span>
-              </label>
-              <Input
-                placeholder="e.g. Lakers, Chiefs -3, LeBron 25+ pts"
-                value={formData.event}
-                onChange={(e) => updateField("event", e.target.value)}
-              />
+          {/* Market Selection */}
+          <div>
+            <label className="text-sm font-medium mb-2 block">Market</label>
+            <div className="flex flex-wrap gap-2">
+              {MARKETS.map((market) => (
+                <Button
+                  key={market}
+                  type="button"
+                  variant={formData.market === market ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => updateField("market", market)}
+                >
+                  {market}
+                </Button>
+              ))}
             </div>
-            <div>
-              <label className="text-sm font-medium mb-2 block">Market</label>
-              <div className="flex flex-wrap gap-2">
-                {MARKETS.map((market) => (
-                  <Button
-                    key={market}
-                    type="button"
-                    variant={formData.market === market ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => updateField("market", market)}
-                  >
-                    {market}
-                  </Button>
-                ))}
-              </div>
-            </div>
+            {/* Show vig hint for non-standard markets */}
+            {(formData.market === "Prop" || formData.market === "Futures" || formData.market === "SGP") && (
+              <p className="text-xs text-muted-foreground mt-1.5">
+                {formData.market === "SGP" ? "12%" : "7%"} default vig for {formData.market}
+              </p>
+            )}
           </div>
 
           {/* Promo Type */}
@@ -328,20 +344,56 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
           </button>
 
           {showAdvanced && (
-            <div className="space-y-4 pt-2">
+            <div className="space-y-4 pt-2 border-t border-dashed">
+              {/* Selection Name */}
               <div>
                 <label className="text-sm font-medium mb-2 block">
-                  Winnings Cap ($)
+                  Selection Name <span className="text-muted-foreground font-normal">(optional)</span>
+                </label>
+                <Input
+                  placeholder="e.g. Lakers, Chiefs -3, LeBron 25+ pts"
+                  value={formData.event}
+                  onChange={(e) => updateField("event", e.target.value)}
+                />
+              </div>
+
+              {/* Opposing Odds - For precise vig calculation */}
+              <div>
+                <label className="text-sm font-medium mb-2 block">
+                  Opposing Line <span className="text-muted-foreground font-normal">(optional)</span>
                 </label>
                 <Input
                   type="number"
-                  placeholder="Optional max bonus winnings"
+                  placeholder="e.g. -180 for the other side"
+                  value={formData.opposing_odds}
+                  onChange={(e) => updateField("opposing_odds", e.target.value)}
+                  className="font-mono"
+                />
+                {calculatedVig !== null && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Calculated hold: {(calculatedVig * 100).toFixed(1)}% (overrides {(defaultVig * 100).toFixed(1)}% default)
+                  </p>
+                )}
+              </div>
+
+              {/* Winnings Cap */}
+              <div>
+                <label className="text-sm font-medium mb-2 block">
+                  Winnings Cap ($) <span className="text-muted-foreground font-normal">(optional)</span>
+                </label>
+                <Input
+                  type="number"
+                  placeholder="Max bonus winnings"
                   value={formData.winnings_cap}
                   onChange={(e) => updateField("winnings_cap", e.target.value)}
                 />
               </div>
+
+              {/* Notes */}
               <div>
-                <label className="text-sm font-medium mb-2 block">Notes</label>
+                <label className="text-sm font-medium mb-2 block">
+                  Notes <span className="text-muted-foreground font-normal">(optional)</span>
+                </label>
                 <Input
                   placeholder="Optional notes"
                   value={formData.notes}
@@ -390,8 +442,12 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
                 </span>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Decimal Odds</span>
-                <span className="font-mono">{ev.decimalOdds.toFixed(3)}</span>
+                <span className="text-muted-foreground">
+                  Vig {calculatedVig !== null ? "(calculated)" : `(${formData.market} default)`}
+                </span>
+                <span className="font-mono text-muted-foreground">
+                  {(effectiveVig * 100).toFixed(1)}%
+                </span>
               </div>
             </div>
           )}
@@ -426,6 +482,21 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
   );
 }
 
+// Calculate hold from two American odds
+function calculateHoldFromOdds(odds1: number, odds2: number): number | null {
+  if (odds1 === 0 || odds2 === 0) return null;
+  if (Math.abs(odds1) < 100 || Math.abs(odds2) < 100) return null;
+  
+  const decimal1 = americanToDecimal(odds1);
+  const decimal2 = americanToDecimal(odds2);
+  
+  const impliedProb1 = 1 / decimal1;
+  const impliedProb2 = 1 / decimal2;
+  
+  const hold = (impliedProb1 + impliedProb2) - 1;
+  return hold > 0 ? hold : null;
+}
+
 // Client-side EV calculation for instant feedback
 function calculateEVClient(
   oddsAmerican: number,
@@ -433,7 +504,7 @@ function calculateEVClient(
   promoType: PromoType,
   boostPercent: number = 0,
   winningsCap?: number,
-  kFactor: number = 0.78
+  vig: number = 0.045
 ): { evPerDollar: number; evTotal: number; winPayout: number; decimalOdds: number } {
   if (oddsAmerican === 0 || stake <= 0) {
     return { evPerDollar: 0, evTotal: 0, winPayout: 0, decimalOdds: 0 };
@@ -463,14 +534,13 @@ function calculateEVClient(
     winPayout = stake * decimalOdds;
   }
 
-  // Calculate EV per dollar
+  // Calculate EV per dollar using the effective vig
   let evPerDollar: number;
   if (promoType === "bonus_bet") {
     evPerDollar = 1 - 1 / decimalOdds;
   } else if (promoType === "no_sweat" || promoType === "promo_qualifier" || promoType === "standard") {
-    // Standard, no-sweat, and promo qualifiers: account for typical vig (-4.5%)
-    // User logs bonus bet separately when received for no-sweat/qualifier
-    evPerDollar = -DEFAULT_VIG;
+    // Standard, no-sweat, and promo qualifiers: account for vig
+    evPerDollar = -vig;
   } else if (promoType.startsWith("boost")) {
     const winProb = 1 / decimalOdds;
     let potentialExtra = effectiveBoost * (decimalOdds - 1);
@@ -478,9 +548,9 @@ function calculateEVClient(
       potentialExtra = Math.min(potentialExtra, winningsCap / stake);
     }
     const boostValue = winProb * potentialExtra;
-    evPerDollar = boostValue - DEFAULT_VIG;  // Boost adds value, but you still pay vig
+    evPerDollar = boostValue - vig;
   } else {
-    evPerDollar = -DEFAULT_VIG;
+    evPerDollar = -vig;
   }
 
   return {

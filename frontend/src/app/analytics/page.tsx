@@ -210,40 +210,51 @@ export default function AnalyticsPage() {
               </CardContent>
             </Card>
 
-            {/* Key Numbers - The 4 Things That Matter */}
+            {/* Key Numbers - The 4 Things That Matter for EV Bettors */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <Card className="card-hover">
-                <CardContent className="pt-4 pb-3 text-center">
+                <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">Real Profit</p>
-                  <p className={cn("text-2xl font-bold font-mono whitespace-nowrap leading-tight", (summary?.total_real_profit || 0) >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+                  <p className={cn("text-xl sm:text-2xl font-bold font-mono leading-tight", (summary?.total_real_profit || 0) >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
                     {(summary?.total_real_profit || 0) >= 0 ? "+" : ""}{formatCurrency(summary?.total_real_profit || 0)}
                   </p>
                 </CardContent>
               </Card>
               <Card className="card-hover">
-                <CardContent className="pt-4 pb-3 text-center">
+                <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">Total EV</p>
-                  <p className="text-2xl font-bold font-mono text-[#C4A35A] whitespace-nowrap leading-tight">
+                  <p className="text-xl sm:text-2xl font-bold font-mono text-[#C4A35A] leading-tight">
                     +{formatCurrency(summary?.total_ev || 0)}
                   </p>
                 </CardContent>
               </Card>
               <Card className="card-hover">
-                <CardContent className="pt-4 pb-3 text-center">
-                  <p className="text-xs text-muted-foreground">Record</p>
-                  <p className="text-2xl font-bold font-mono">
-                    {summary?.win_count || 0}–{summary?.loss_count || 0}
+                <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">EV Conversion</p>
+                  <p className={cn(
+                    "text-xl sm:text-2xl font-bold font-mono leading-tight",
+                    evConversion === null ? "text-muted-foreground" :
+                    evConversion >= 1.2 ? "text-[#4A7C59]" :
+                    evConversion >= 0.8 ? "text-foreground" :
+                    "text-[#B85C38]"
+                  )}>
+                    {evConversion !== null ? `${(evConversion * 100).toFixed(0)}%` : "—"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {evConversion !== null && evConversion >= 1.1 ? "running hot" : 
+                     evConversion !== null && evConversion <= 0.9 ? "running cold" : 
+                     evConversion !== null ? "on track" : ""}
                   </p>
                 </CardContent>
               </Card>
               <Card className="card-hover">
-                <CardContent className="pt-4 pb-3 text-center">
-                  <p className="text-xs text-muted-foreground">Win Rate</p>
-                  <p className="text-2xl font-bold font-mono">
-                    {summary?.win_rate ? formatPercent(summary.win_rate) : "—"}
+                <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Pending EV</p>
+                  <p className="text-xl sm:text-2xl font-bold font-mono text-[#C4A35A] leading-tight">
+                    +{formatCurrency(pendingEV)}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    (exp: {expectedWinRate ? formatPercent(expectedWinRate) : "—"})
+                    {pendingBets.length} bet{pendingBets.length !== 1 ? "s" : ""}
                   </p>
                 </CardContent>
               </Card>
@@ -478,15 +489,6 @@ export default function AnalyticsPage() {
                 </Card>
               </div>
             </details>
-            </Card>
-
-            {/* Z-Score Explanation Card */}
-            <Card className="bg-muted/50">
-              <CardContent className="py-4">
-                <p className="text-sm text-muted-foreground text-center">
-                  💡 <strong>Z-Score Guide:</strong> ±0.5 = normal variance • ±1.5 = notable hot/cold streak • ±2.0 = rare run
-                </p>
-              </CardContent>
             </Card>
           </>
         )}

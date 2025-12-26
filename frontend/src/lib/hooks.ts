@@ -182,7 +182,33 @@ export function useDeleteTransaction() {
 
   return useMutation({
     mutationFn: (id: string) => api.deleteTransaction(id),
-    onSuccess: () => {
+    // Optimistic update for instant feedback
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.transactions });
+      await queryClient.cancelQueries({ queryKey: queryKeys.balances });
+
+      const previousTransactions = queryClient.getQueryData(queryKeys.transactions);
+      const previousBalances = queryClient.getQueryData(queryKeys.balances);
+
+      // Optimistically remove the transaction
+      queryClient.setQueryData(queryKeys.transactions, (old: any) => {
+        if (!old) return old;
+        return old.filter((tx: any) => tx.id !== id);
+      });
+
+      return { previousTransactions, previousBalances };
+    },
+    onError: (_, __, context) => {
+      // Rollback on error
+      if (context?.previousTransactions) {
+        queryClient.setQueryData(queryKeys.transactions, context.previousTransactions);
+      }
+      if (context?.previousBalances) {
+        queryClient.setQueryData(queryKeys.balances, context.previousBalances);
+      }
+    },
+    onSettled: () => {
+      // Refetch to ensure consistency
       queryClient.invalidateQueries({ queryKey: queryKeys.transactions });
       queryClient.invalidateQueries({ queryKey: queryKeys.balances });
     },

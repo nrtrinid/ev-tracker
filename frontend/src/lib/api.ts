@@ -142,7 +142,29 @@ export async function createTransaction(transaction: TransactionCreate): Promise
 }
 
 export async function deleteTransaction(id: string): Promise<void> {
-  await fetch(`${API_URL}/transactions/${id}`, { method: "DELETE" });
+  const res = await fetch(`${API_URL}/transactions/${id}`, { 
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+  
+  // res.ok is true for status codes 200-299 (includes 204 No Content)
+  // 204 No Content means success with no response body - just return
+  if (res.ok) {
+    return;
+  }
+  
+  // Only throw error for actual failures (4xx, 5xx)
+  // Try to get error message from response body
+  let errorMessage = `API error: ${res.status}`;
+  try {
+    const error = await res.json();
+    errorMessage = error.detail || errorMessage;
+  } catch {
+    // If JSON parsing fails, use status code
+  }
+  throw new Error(errorMessage);
 }
 
 // ============ Balances API ============

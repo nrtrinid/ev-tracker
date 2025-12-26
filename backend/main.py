@@ -27,9 +27,9 @@ app = FastAPI(
 # CORS - allow frontend to call API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=["*"],  # Allow all origins for development
+    allow_credentials=False,  # Must be False when allow_origins=["*"]
+    allow_methods=["*"],  # Allow all HTTP methods including DELETE
     allow_headers=["*"],
 )
 
@@ -396,7 +396,7 @@ def list_transactions(sportsbook: str | None = None):
     ]
 
 
-@app.delete("/transactions/{transaction_id}", status_code=204)
+@app.delete("/transactions/{transaction_id}")
 def delete_transaction(transaction_id: str):
     """Delete a transaction."""
     db = get_db()
@@ -405,6 +405,9 @@ def delete_transaction(transaction_id: str):
     # Supabase delete returns an empty list when nothing is deleted; treat non-200 as error
     if result.status_code and result.status_code >= 400:
         raise HTTPException(status_code=500, detail="Failed to delete transaction")
+    
+    # Return 200 with JSON body instead of 204 No Content for better CORS compatibility
+    return {"deleted": True, "id": transaction_id}
 
 
 @app.get("/balances", response_model=list[BalanceResponse])

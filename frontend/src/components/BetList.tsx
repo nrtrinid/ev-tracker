@@ -519,7 +519,7 @@ export function BetList() {
         onSuccess: () => {
           const toastMessage =
             newResult === "win"
-              ? "🎉 Marked as Win"
+              ? "Marked as Win"
               : newResult === "loss"
               ? "Marked as Loss"
               : newResult === "push"

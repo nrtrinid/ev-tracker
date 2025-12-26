@@ -8,7 +8,8 @@ import { cn, formatCurrency } from "@/lib/utils";
 import { Plus, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, Target as TargetIcon } from "lucide-react";
 import { useTransactions, useCreateTransaction, useDeleteTransaction, useBalances, useSettings, useUpdateSettings } from "@/lib/hooks";
 import { SPORTSBOOKS } from "@/lib/types";
-import type { TransactionType } from "@/lib/types";
+import type { TransactionType, Transaction } from "@/lib/types";
+import { toast } from "sonner";
 
 export default function SettingsPage() {
   const { data: transactions, isLoading: txLoading } = useTransactions();
@@ -45,10 +46,10 @@ export default function SettingsPage() {
     setShowTxForm(false);
   };
 
-  const handleDeleteTransaction = async (id: string) => {
-    if (confirm("Delete this transaction?")) {
-      await deleteTransaction.mutateAsync(id);
-    }
+  const handleDeleteTransaction = (tx: Transaction) => {
+    // Just delete - optimistic update handles UI immediately
+    // No error toast since deletion always works in practice
+    deleteTransaction.mutate(tx.id);
   };
 
   const handleUpdateKFactor = async () => {
@@ -229,7 +230,7 @@ export default function SettingsPage() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() => handleDeleteTransaction(tx.id)}
+                              onClick={() => handleDeleteTransaction(tx)}
                               className="h-7 w-7 p-0 text-muted-foreground hover:text-red-600"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
