@@ -215,17 +215,21 @@ export default function AnalyticsPage() {
               <Card className="card-hover">
                 <CardContent className="pt-4 pb-3 text-center">
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">Real Profit</p>
-                  <p className={cn("text-2xl font-bold font-mono whitespace-nowrap leading-tight", (summary?.total_real_profit || 0) >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
-                    {(summary?.total_real_profit || 0) >= 0 ? "+" : ""}{formatCurrency(summary?.total_real_profit || 0)}
-                  </p>
+                  <div className="overflow-hidden">
+                    <p className={cn("text-2xl font-bold font-mono leading-tight", (summary?.total_real_profit || 0) >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+                      {(summary?.total_real_profit || 0) >= 0 ? "+" : ""}{formatCurrency(summary?.total_real_profit || 0)}
+                    </p>
+                  </div>
                 </CardContent>
               </Card>
               <Card className="card-hover">
                 <CardContent className="pt-4 pb-3 text-center">
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">Total EV</p>
-                  <p className="text-2xl font-bold font-mono text-[#C4A35A] whitespace-nowrap leading-tight">
-                    +{formatCurrency(summary?.total_ev || 0)}
-                  </p>
+                  <div className="overflow-hidden">
+                    <p className="text-2xl font-bold font-mono text-[#C4A35A] leading-tight">
+                      +{formatCurrency(summary?.total_ev || 0)}
+                    </p>
+                  </div>
                 </CardContent>
               </Card>
               <Card className="card-hover">
