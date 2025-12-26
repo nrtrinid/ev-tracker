@@ -255,7 +255,6 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
                 <div>
                   <p className="text-muted-foreground text-xs">Vig</p>
                   <p className="font-mono">{(MARKET_VIG[bet.market] || 0.045) * 100}%</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">House edge</p>
                 </div>
               ) : (
                 <div>
