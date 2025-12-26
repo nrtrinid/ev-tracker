@@ -400,11 +400,11 @@ def list_transactions(sportsbook: str | None = None):
 def delete_transaction(transaction_id: str):
     """Delete a transaction."""
     db = get_db()
-    
     result = db.table("transactions").delete().eq("id", transaction_id).execute()
-    
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    # Supabase delete returns an empty list when nothing is deleted; treat non-200 as error
+    if result.status_code and result.status_code >= 400:
+        raise HTTPException(status_code=500, detail="Failed to delete transaction")
 
 
 @app.get("/balances", response_model=list[BalanceResponse])
