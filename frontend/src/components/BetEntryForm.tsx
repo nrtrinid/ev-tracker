@@ -22,7 +22,7 @@ import { Loader2, TrendingUp, DollarSign } from "lucide-react";
 import { toast } from "sonner";
 
 // Quick stake presets for fast entry
-const STAKE_PRESETS = [10, 25, 50, 100] as const;
+const STAKE_PRESETS = [10, 25, 50] as const;
 
 // Default vig to account for book edge
 const DEFAULT_VIG = 0.045;
