@@ -129,7 +129,7 @@ function calculateImpliedProb(oddsAmerican: number): number {
 }
 
 // ============ SHARED BET CARD BASE ============
-// Context-aware layout: Pending (Analysis Mode) vs Settled (Accounting Mode)
+// Compact layout with context-aware data row
 interface BetCardBaseProps {
   bet: Bet;
   headerRight: React.ReactNode;
@@ -141,132 +141,80 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
   const [expanded, setExpanded] = useState(false);
   const borderColor = sportsbookColors[bet.sportsbook] || "bg-gray-400";
   const textColor = sportsbookTextColors[bet.sportsbook] || "text-gray-600";
+  const promoConfig = promoTypeConfig[bet.promo_type] || { short: "Std", bg: "bg-[#DDD5C7]", text: "text-[#6B5E4F]" };
   
-  // Promo badge config
-  const isBonus = bet.promo_type === "bonus_bet";
-  const isBoost = bet.promo_type.startsWith("boost");
-  const boostLabel = bet.promo_type === "boost_custom" && bet.boost_percent 
-    ? `${bet.boost_percent}% Boost`
-    : bet.promo_type === "boost_30" ? "30% Boost"
-    : bet.promo_type === "boost_50" ? "50% Boost"
-    : bet.promo_type === "boost_100" ? "100% Boost"
-    : "Boost";
+  // Short promo label (BB, 30%, etc.)
+  const promoLabel = bet.promo_type === "boost_custom" && bet.boost_percent 
+    ? `${bet.boost_percent}%`
+    : promoConfig.short;
+  
+  // Only show promo badge if not standard
+  const showPromoBadge = bet.promo_type !== "standard";
 
-  // Calculate implied probability and EV%
+  // Calculate implied probability
   const impliedProb = calculateImpliedProb(bet.odds_american);
-  const evPercent = bet.stake > 0 ? (bet.ev_total / bet.stake) * 100 : 0;
 
   return (
-    <div className="border border-border rounded-lg overflow-hidden flex bg-muted/30">
+    <div className="border rounded-lg overflow-hidden flex card-hover bg-card">
       {/* Colored left border for sportsbook branding */}
       <div className={cn("w-1 shrink-0", borderColor)} />
       
-      <div className="flex-1 p-3 space-y-2.5">
-        {/* ROW 1: Header (Identity & Context) */}
-        <div className="flex items-center justify-between gap-2">
-          {/* Left: Sportsbook + Promo Badge */}
-          <div className="flex items-center gap-2 min-w-0">
-            <span className={cn("w-2.5 h-2.5 rounded-full shrink-0", borderColor)} />
-            <span className={cn("font-semibold text-xs", textColor)}>{bet.sportsbook}</span>
-            {isBonus && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#7A9E7E]/20 text-[#4A7C59]">
-                Bonus Bet
-              </span>
-            )}
-            {isBoost && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#C4A35A]/20 text-[#8B7355]">
-                {boostLabel}
-              </span>
-            )}
-          </div>
-          {/* Right: Stake + Actions */}
-          <div className="flex items-center gap-2">
-            <div className="text-right">
-              <span className="text-[10px] text-muted-foreground">Stake</span>
-              <p className="font-mono font-semibold text-sm leading-none">{formatCurrency(bet.stake)}</p>
-            </div>
-            {headerRight}
-          </div>
-        </div>
-
-        {/* ROW 2: The Main Event (Selection) */}
-        <div className="space-y-0.5">
-          <p className="text-xs text-muted-foreground">{bet.sport} • {bet.market}</p>
-          <p className="font-semibold text-sm text-foreground leading-tight">{bet.event}</p>
-          {bet.notes && (
-            <p className="text-[11px] text-muted-foreground italic">{bet.notes}</p>
-          )}
-        </div>
-
-        {/* ROW 3: The Data Grid (Context-Sensitive) */}
-        <div className="grid grid-cols-3 gap-3 pt-1">
-          {mode === "pending" ? (
-            <>
-              {/* PENDING: Analysis Mode */}
-              {/* Slot 1: Odds */}
-              <div>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Odds</p>
-                <p className="font-mono font-bold text-sm">{formatOdds(bet.odds_american)}</p>
-              </div>
-              {/* Slot 2: Metrics */}
-              <div>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Implied</p>
-                <p className="font-mono text-sm text-muted-foreground">
-                  {(impliedProb * 100).toFixed(0)}%
-                </p>
-              </div>
-              {/* Slot 3: Value */}
-              <div className="text-right">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">To Win</p>
-                <p className="font-mono font-semibold text-sm text-[#4A7C59]">
-                  {formatCurrency(bet.win_payout)}
-                </p>
-                {evPercent > 0 && (
-                  <span className="text-[10px] font-mono text-[#4A7C59]">
-                    +{evPercent.toFixed(1)}% EV
-                  </span>
-                )}
-              </div>
-            </>
-          ) : (
-            <>
-              {/* SETTLED: Accounting Mode */}
-              {/* Slot 1: Odds */}
-              <div>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Odds</p>
-                <p className="font-mono font-bold text-sm">{formatOdds(bet.odds_american)}</p>
-              </div>
-              {/* Slot 2: Result */}
-              <div>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Result</p>
-                <p className={cn(
-                  "font-bold text-sm",
-                  bet.result === "win" ? "text-[#4A7C59]" :
-                  bet.result === "loss" ? "text-muted-foreground" :
-                  "text-muted-foreground"
+      <div className="flex-1 p-4 space-y-3">
+        {/* Header: Event name as title + actions */}
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            {/* Primary: Event name */}
+            <p className="font-semibold text-sm leading-tight">{bet.event}</p>
+            {/* Secondary: Sportsbook [Badge] Sport Market */}
+            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+              <span className={cn("w-2 h-2 rounded-full shrink-0", borderColor)} />
+              <span className={cn("font-semibold text-xs", textColor)}>{bet.sportsbook}</span>
+              {showPromoBadge && (
+                <span className={cn(
+                  "px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none",
+                  promoConfig.bg,
+                  promoConfig.text
                 )}>
-                  {bet.result === "win" ? "WON" : 
-                   bet.result === "loss" ? "LOST" : 
-                   bet.result === "push" ? "PUSH" : "VOID"}
-                </p>
-              </div>
-              {/* Slot 3: Reconciliation */}
-              <div className="text-right">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Profit</p>
-                <p className={cn(
-                  "font-mono font-bold text-sm",
-                  bet.real_profit !== null && bet.real_profit >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]"
-                )}>
-                  {bet.real_profit !== null
-                    ? (bet.real_profit >= 0 ? "+" : "") + formatCurrency(bet.real_profit)
-                    : "—"}
-                </p>
-                <span className="text-[10px] text-muted-foreground">
-                  Payout: {formatCurrency(bet.result === "win" ? bet.win_payout : bet.result === "push" ? bet.stake : 0)}
+                  {promoLabel}
                 </span>
-              </div>
-            </>
-          )}
+              )}
+              <span className="text-xs text-muted-foreground">{bet.sport} • {bet.market}</span>
+            </div>
+          </div>
+          {headerRight}
+        </div>
+
+        {/* Data Row: Odds, Stake, EV, To Win/Profit */}
+        <div className="grid grid-cols-4 gap-4 text-sm">
+          <div>
+            <p className="text-muted-foreground text-xs">Odds</p>
+            <p className="font-mono font-semibold">{formatOdds(bet.odds_american)}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground text-xs">Stake</p>
+            <p className="font-mono font-medium">{formatCurrency(bet.stake)}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground text-xs">EV</p>
+            <p className={cn("font-mono font-semibold", bet.ev_total >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+              {bet.ev_total >= 0 ? "+" : ""}{formatCurrency(bet.ev_total)}
+            </p>
+          </div>
+          <div>
+            <p className="text-muted-foreground text-xs">{mode === "settled" ? "Profit" : "To Win"}</p>
+            <p className={cn(
+              "font-mono font-semibold",
+              mode === "settled"
+                ? bet.real_profit !== null && bet.real_profit >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]"
+                : "text-foreground"
+            )} style={{ whiteSpace: "nowrap" }}>
+              {mode === "settled"
+                ? bet.real_profit !== null
+                  ? (bet.real_profit >= 0 ? "+" : "") + formatCurrency(bet.real_profit)
+                  : "—"
+                : formatCurrency(bet.win_payout)}
+            </p>
+          </div>
         </div>
 
         {/* Footer - Varies by card type */}
@@ -276,7 +224,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
         <Button
           size="sm"
           variant="ghost"
-          className="w-full text-xs text-muted-foreground h-7"
+          className="w-full text-xs text-muted-foreground"
           onClick={() => setExpanded(!expanded)}
         >
           {expanded ? "Hide details" : "View details"}
@@ -284,39 +232,50 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
         </Button>
 
         {expanded && (
-          <div className="pt-2 border-t border-border">
-            <div className="grid grid-cols-2 gap-3 text-sm">
+          <div className="pt-2 border-t">
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              {/* Implied Probability - always show */}
               <div>
-                <p className="text-muted-foreground text-[10px] uppercase">Promo Type</p>
-                <p className="font-medium text-xs capitalize">{bet.promo_type.replace("_", " ")}</p>
+                <p className="text-muted-foreground text-xs">Implied Prob</p>
+                <p className="font-mono">{(impliedProb * 100).toFixed(1)}%</p>
               </div>
+              {/* EV per $ - always show */}
               <div>
-                <p className="text-muted-foreground text-[10px] uppercase">Win Payout</p>
-                <p className="font-mono text-xs">{formatCurrency(bet.win_payout)}</p>
+                <p className="text-muted-foreground text-xs">EV per $</p>
+                <p className="font-mono">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
               </div>
+              {/* Win Payout - settled only */}
+              {mode === "settled" && (
+                <div>
+                  <p className="text-muted-foreground text-xs">Win Payout</p>
+                  <p className="font-mono">{formatCurrency(bet.win_payout)}</p>
+                </div>
+              )}
+              {/* Event Date */}
               <div>
-                <p className="text-muted-foreground text-[10px] uppercase">Decimal Odds</p>
-                <p className="font-mono text-xs">{bet.odds_decimal.toFixed(3)}</p>
+                <p className="text-muted-foreground text-xs">Event Date</p>
+                <p className="font-medium">{formatShortDate(bet.event_date)}</p>
               </div>
+              {/* Logged */}
               <div>
-                <p className="text-muted-foreground text-[10px] uppercase">EV per $</p>
-                <p className="font-mono text-xs">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
+                <p className="text-muted-foreground text-xs">Logged</p>
+                <p className="font-medium">{formatFullDateTime(bet.created_at)}</p>
               </div>
-              <div>
-                <p className="text-muted-foreground text-[10px] uppercase">Event Date</p>
-                <p className="font-mono text-xs">{formatShortDate(bet.event_date)}</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground text-[10px] uppercase">Logged</p>
-                <p className="text-xs">{formatFullDateTime(bet.created_at)}</p>
-              </div>
+              {/* Settled - settled only */}
               {bet.settled_at && (
-                <div className="col-span-2">
-                  <p className="text-muted-foreground text-[10px] uppercase">Settled</p>
-                  <p className="text-xs">{formatFullDateTime(bet.settled_at)}</p>
+                <div>
+                  <p className="text-muted-foreground text-xs">Settled</p>
+                  <p className="font-medium">{formatFullDateTime(bet.settled_at)}</p>
                 </div>
               )}
             </div>
+            {/* Notes - if present */}
+            {bet.notes && (
+              <div className="text-sm mt-3">
+                <p className="text-muted-foreground text-xs mb-1">Notes</p>
+                <p className="ruled-lines pl-2 py-1 min-h-[24px]">{bet.notes}</p>
+              </div>
+            )}
           </div>
         )}
       </div>

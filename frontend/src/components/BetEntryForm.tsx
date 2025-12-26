@@ -313,7 +313,7 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
                 className="text-lg font-mono"
                 step="0.01"
               />
-              {/* Quick stake presets */}
+              {/* Quick stake presets - directly under stake field */}
               <div className="flex gap-1 mt-2">
                 {STAKE_PRESETS.map((preset) => (
                   <Button
