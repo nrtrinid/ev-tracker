@@ -23,7 +23,7 @@ import {
 import { useBets, useUpdateBetResult, useDeleteBet, useBalances } from "@/lib/hooks";
 import { EditBetModal } from "@/components/EditBetModal";
 import type { Bet, BetResult } from "@/lib/types";
-import { formatCurrency, formatOdds, cn, formatRelativeTime, formatShortDate, formatFullDateTime } from "@/lib/utils";
+import { formatCurrency, formatOdds, cn, formatRelativeTime, formatShortDate, formatFullDateTime, americanToDecimal } from "@/lib/utils";
 import {
   Check,
   X,
@@ -151,14 +151,6 @@ function calculateHoldFromOdds(odds1: number, odds2: number): number | null {
   
   const hold = (impliedProb1 + impliedProb2) - 1;
   return hold > 0 ? hold : null;
-}
-
-function americanToDecimal(american: number): number {
-  if (american >= 100) {
-    return 1 + (american / 100);
-  } else {
-    return 1 + (100 / Math.abs(american));
-  }
 }
 
 // ============ SHARED BET CARD BASE ============
