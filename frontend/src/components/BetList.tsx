@@ -118,6 +118,17 @@ const promoTypeConfig: Record<string, { short: string; bg: string; text: string 
   boost_custom: { short: "Boost", bg: "bg-[#C4A35A]/20", text: "text-[#8B7355]" },
 };
 
+// ============ MARKET VIG DEFAULTS ============
+const MARKET_VIG: Record<string, number> = {
+  ML: 0.045,
+  Spread: 0.045,
+  Total: 0.045,
+  Parlay: 0.12,
+  Prop: 0.07,
+  Futures: 0.07,
+  SGP: 0.12,
+};
+
 // ============ HELPER FUNCTIONS ============
 function calculateImpliedProb(oddsAmerican: number): number {
   if (oddsAmerican === 0) return 0;
@@ -234,28 +245,49 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
         {expanded && (
           <div className="pt-2 border-t">
             <div className="grid grid-cols-2 gap-4 text-sm">
-              {/* Implied Probability - always show */}
+              {/* Implied Probability - always show with description */}
               <div>
                 <p className="text-muted-foreground text-xs">Implied Prob</p>
                 <p className="font-mono">{(impliedProb * 100).toFixed(1)}%</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Book's win chance</p>
               </div>
-              {/* EV per $ - always show */}
-              <div>
-                <p className="text-muted-foreground text-xs">EV per $</p>
-                <p className="font-mono">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
-              </div>
-              {/* Win Payout - settled only */}
-              {mode === "settled" && (
+              {/* Pending: Vig | Settled: EV per $ */}
+              {mode === "pending" ? (
+                <div>
+                  <p className="text-muted-foreground text-xs">Vig</p>
+                  <p className="font-mono">{(MARKET_VIG[bet.market] || 0.045) * 100}%</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">House edge</p>
+                </div>
+              ) : (
+                <div>
+                  <p className="text-muted-foreground text-xs">EV per $</p>
+                  <p className="font-mono">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
+                </div>
+              )}
+              {/* Pending: EV per $ | Settled: Event Date */}
+              {mode === "pending" ? (
+                <div>
+                  <p className="text-muted-foreground text-xs">EV per $</p>
+                  <p className="font-mono">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
+                </div>
+              ) : (
+                <div>
+                  <p className="text-muted-foreground text-xs">Event Date</p>
+                  <p className="font-medium">{formatShortDate(bet.event_date)}</p>
+                </div>
+              )}
+              {/* Pending: Event Date | Settled: Win Payout (closer to profit - right column) */}
+              {mode === "pending" ? (
+                <div>
+                  <p className="text-muted-foreground text-xs">Event Date</p>
+                  <p className="font-medium">{formatShortDate(bet.event_date)}</p>
+                </div>
+              ) : (
                 <div>
                   <p className="text-muted-foreground text-xs">Win Payout</p>
                   <p className="font-mono">{formatCurrency(bet.win_payout)}</p>
                 </div>
               )}
-              {/* Event Date */}
-              <div>
-                <p className="text-muted-foreground text-xs">Event Date</p>
-                <p className="font-medium">{formatShortDate(bet.event_date)}</p>
-              </div>
               {/* Logged */}
               <div>
                 <p className="text-muted-foreground text-xs">Logged</p>
