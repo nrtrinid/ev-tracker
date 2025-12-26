@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { cn, americanToDecimal, formatPercent } from "@/lib/utils";
+import { cn, americanToDecimal, formatPercent, decimalToAmerican } from "@/lib/utils";
 import { Calculator, TrendingUp, AlertCircle, CheckCircle, ArrowLeftRight, Gift } from "lucide-react";
 
 // ============ HOLD CALCULATOR LOGIC ============
@@ -75,24 +75,7 @@ const qualityConfig = {
 };
 
 // ============ ODDS CONVERTER LOGIC ============
-
-function americanToDecimalConvert(american: number): number {
-  if (american === 0) return 0;
-  if (american >= 100) {
-    return 1 + (american / 100);
-  } else {
-    return 1 + (100 / Math.abs(american));
-  }
-}
-
-function decimalToAmerican(decimal: number): number {
-  if (decimal === 0 || decimal === 1) return 0;
-  if (decimal >= 2) {
-    return Math.round((decimal - 1) * 100);
-  } else {
-    return Math.round(-100 / (decimal - 1));
-  }
-}
+// Note: americanToDecimal, decimalToAmerican imported from @/lib/utils
 
 function decimalToImplied(decimal: number): number {
   if (decimal === 0) return 0;
@@ -132,7 +115,7 @@ export default function ToolsPage() {
     if (lastEdited === "american") {
       const americanNum = parseFloat(american);
       if (americanNum !== 0 && !isNaN(americanNum) && Math.abs(americanNum) >= 100) {
-        const dec = americanToDecimalConvert(americanNum);
+        const dec = americanToDecimal(americanNum);
         setDecimal(dec.toFixed(3));
         setImplied(decimalToImplied(dec).toFixed(2));
       } else if (american === "" || american === "-" || american === "+") {

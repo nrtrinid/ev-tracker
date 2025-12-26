@@ -15,7 +15,8 @@ import type { Bet, PromoType } from "@/lib/types";
 import { SPORTSBOOKS, SPORTS, MARKETS, PROMO_TYPES } from "@/lib/types";
 import { 
   cn, 
-  americanToDecimal
+  americanToDecimal,
+  calculateHoldFromOdds,
 } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -414,20 +415,5 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
       </DialogContent>
     </Dialog>
   );
-}
-
-// Calculate hold from two American odds
-function calculateHoldFromOdds(odds1: number, odds2: number): number | null {
-  if (odds1 === 0 || odds2 === 0) return null;
-  if (Math.abs(odds1) < 100 || Math.abs(odds2) < 100) return null;
-  
-  const decimal1 = americanToDecimal(odds1);
-  const decimal2 = americanToDecimal(odds2);
-  
-  const impliedProb1 = 1 / decimal1;
-  const impliedProb2 = 1 / decimal2;
-  
-  const hold = (impliedProb1 + impliedProb2) - 1;
-  return hold > 0 ? hold : null;
 }
 

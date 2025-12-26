@@ -23,7 +23,7 @@ import {
 import { useBets, useUpdateBetResult, useDeleteBet, useBalances } from "@/lib/hooks";
 import { EditBetModal } from "@/components/EditBetModal";
 import type { Bet, BetResult } from "@/lib/types";
-import { formatCurrency, formatOdds, cn, formatRelativeTime, formatShortDate, formatFullDateTime, americanToDecimal } from "@/lib/utils";
+import { formatCurrency, formatOdds, cn, formatRelativeTime, formatShortDate, formatFullDateTime, americanToDecimal, decimalToAmerican, calculateImpliedProb, calculateHoldFromOdds } from "@/lib/utils";
 import {
   Check,
   X,
@@ -130,36 +130,7 @@ const MARKET_VIG: Record<string, number> = {
 };
 
 // ============ HELPER FUNCTIONS ============
-function calculateImpliedProb(oddsAmerican: number): number {
-  if (oddsAmerican === 0) return 0;
-  if (oddsAmerican > 0) {
-    return 100 / (oddsAmerican + 100);
-  } else {
-    return Math.abs(oddsAmerican) / (Math.abs(oddsAmerican) + 100);
-  }
-}
-
-function calculateHoldFromOdds(odds1: number, odds2: number): number | null {
-  if (odds1 === 0 || odds2 === 0) return null;
-  if (Math.abs(odds1) < 100 || Math.abs(odds2) < 100) return null;
-  
-  const decimal1 = americanToDecimal(odds1);
-  const decimal2 = americanToDecimal(odds2);
-  
-  const impliedProb1 = 1 / decimal1;
-  const impliedProb2 = 1 / decimal2;
-  
-  const hold = (impliedProb1 + impliedProb2) - 1;
-  return hold > 0 ? hold : null;
-}
-
-function decimalToAmerican(decimal: number): number {
-  if (decimal >= 2.0) {
-    return Math.round((decimal - 1) * 100);
-  } else {
-    return Math.round(-100 / (decimal - 1));
-  }
-}
+// Note: calculateImpliedProb, calculateHoldFromOdds, decimalToAmerican imported from @/lib/utils
 
 function calculateBoostedOdds(originalOdds: number, boostPercent: number | null, promoType: string): number | null {
   // Check if this is a boost promo type

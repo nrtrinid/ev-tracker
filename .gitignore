@@ -43,3 +43,6 @@ htmlcov/
 
 # AI Agent Instructions (personal use only)
 .github/copilot-instructions.md
+
+# Secrets (NEVER commit)
+supabase keys

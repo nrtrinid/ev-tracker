@@ -1,6 +1,17 @@
-# EV Tracker
+# EV Tracker v1.5
 
 A modern web app for tracking sports betting Expected Value (EV) from sportsbook promos.
+
+## What's New in v1.5
+
+- **Rapid Fire Bet Logging**: New bottom sheet drawer with batch mode for fast bet entry
+- **Opposing Odds Support**: Input opposing line for accurate vig calculation
+- **Boosted Odds Display**: Visual strikethrough showing original → boosted odds
+- **Smart Vig Defaults**: Automatic vig based on market type (ML/Spread: 4.5%, Props: 7%, SGP: 12%)
+- **Improved Analytics**: Filter by timeframe, sportsbook, bet type, and sport
+- **Context-Aware Bet Cards**: Different info displayed for pending vs settled bets
+- **Hold Calculator & Odds Converter**: Built-in tools for quick calculations
+- **Cleaner Codebase**: Consolidated shared utilities, removed redundant code
 
 ## Tech Stack
 
