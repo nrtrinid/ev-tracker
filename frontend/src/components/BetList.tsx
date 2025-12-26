@@ -13,6 +13,13 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetClose,
+} from "@/components/ui/sheet";
 import { useBets, useUpdateBetResult, useDeleteBet, useBalances } from "@/lib/hooks";
 import { EditBetModal } from "@/components/EditBetModal";
 import type { Bet, BetResult } from "@/lib/types";
@@ -31,6 +38,7 @@ import {
   History,
   Target,
   Wallet,
+  SlidersHorizontal,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -507,7 +515,7 @@ function HistoryCard({ bet, onEdit, onResultChange }: HistoryCardProps) {
 }
 
 // ============ HISTORY FILTER TYPES ============
-type HistoryFilter = "all" | "wins" | "losses" | "bonus";
+type HistoryFilter = "all" | "wins" | "losses";
 type BetTypeFilter = "all" | "cash" | "bonus";
 
 // ============ MAIN BET LIST ============
@@ -519,9 +527,16 @@ export function BetList() {
   const [activeTab, setActiveTab] = useState<"pending" | "history">("pending");
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("all");
   
-  // New: Book Ribbon + Type Filter
+  // Filter drawer state
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [selectedBook, setSelectedBook] = useState<string>("all");
   const [betTypeFilter, setBetTypeFilter] = useState<BetTypeFilter>("all");
+  
+  // Count active filters for badge
+  const activeFilterCount = [
+    selectedBook !== "all",
+    betTypeFilter !== "all",
+  ].filter(Boolean).length;
   
   // Get unique sportsbooks from bets
   const uniqueBooks = useMemo(() => {
@@ -535,6 +550,12 @@ export function BetList() {
     if (selectedBook === "all" || !balances) return null;
     return balances.find(b => b.sportsbook === selectedBook) || null;
   }, [selectedBook, balances]);
+  
+  // Clear all filters
+  const clearFilters = () => {
+    setSelectedBook("all");
+    setBetTypeFilter("all");
+  };
 
   // Handle result change with undo toast
   const handleResultChange = (bet: Bet, newResult: BetResult, previousResult: BetResult) => {
@@ -626,15 +647,13 @@ export function BetList() {
   const pendingBets = filteredBets.filter((bet) => bet.result === "pending");
   const allSettledBets = filteredBets.filter((bet) => bet.result !== "pending");
   
-  // Apply additional history filter (wins/losses/bonus)
+  // Apply additional history filter (wins/losses)
   const settledBets = allSettledBets.filter((bet) => {
     switch (historyFilter) {
       case "wins":
         return bet.result === "win";
       case "losses":
         return bet.result === "loss";
-      case "bonus":
-        return bet.promo_type === "bonus_bet";
       default:
         return true;
     }
@@ -649,83 +668,10 @@ export function BetList() {
     <>
       <Card className="overflow-visible">
         <CardHeader className="pb-3">
-          {/* Book Ribbon - Primary Navigation */}
-          <div className="flex items-center gap-2 -mx-2 -mt-2 mb-3 overflow-x-auto pb-2 no-scrollbar">
-            <button
-              onClick={() => setSelectedBook("all")}
-              className={cn(
-                "flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap",
-                selectedBook === "all"
-                  ? "bg-foreground text-background shadow-sm"
-                  : "bg-muted text-muted-foreground hover:bg-secondary"
-              )}
-            >
-              All Books
-            </button>
-            {uniqueBooks.map((book) => (
-              <button
-                key={book}
-                onClick={() => setSelectedBook(book)}
-                className={cn(
-                  "flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap",
-                  selectedBook === book
-                    ? `${sportsbookColors[book] || "bg-foreground"} text-white shadow-sm`
-                    : "bg-muted text-muted-foreground hover:bg-secondary"
-                )}
-              >
-                {book}
-              </button>
-            ))}
-          </div>
-          
-          {/* Balance Summary when specific book is selected */}
-          {selectedBook !== "all" && selectedBalance && (
-            <div className="flex items-center gap-4 px-3 py-2 mb-3 rounded-lg bg-muted/50 border border-border">
-              <Wallet className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-                <span>
-                  <span className="text-muted-foreground">Balance:</span>{" "}
-                  <span className="font-mono font-semibold text-foreground">
-                    {formatCurrency(selectedBalance.profit + selectedBalance.net_deposits)}
-                  </span>
-                </span>
-                {pendingForBook.length > 0 && (
-                  <span>
-                    <span className="text-muted-foreground">Pending:</span>{" "}
-                    <span className="font-mono font-semibold text-[#C4A35A]">
-                      {formatCurrency(pendingForBook.reduce((s, b) => s + b.stake, 0))}
-                    </span>
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
-          
-          {/* Secondary: Bet Type Toggle */}
-          <div className="flex items-center gap-2 mb-3">
-            <span className="text-xs text-muted-foreground mr-1">Type:</span>
-            {([
-              { key: "all", label: "All" },
-              { key: "cash", label: "Cash" },
-              { key: "bonus", label: "Bonus" },
-            ] as const).map(({ key, label }) => (
-              <button
-                key={key}
-                onClick={() => setBetTypeFilter(key)}
-                className={cn(
-                  "px-2.5 py-1 rounded text-xs font-medium transition-colors",
-                  betTypeFilter === key
-                    ? "bg-foreground text-background"
-                    : "bg-muted text-muted-foreground hover:bg-secondary"
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          
-          {/* Manila folder tabs: Pending | History */}
-          <div className="flex gap-1 -mx-2 mb-2">
+          {/* Compact Header: Tabs + Filter Button */}
+          <div className="flex items-center justify-between -mx-2 -mt-2 mb-2">
+            {/* Manila folder tabs: Pending | History */}
+            <div className="flex gap-1">
             <button
               className={cn(
                 "folder-tab px-4 py-2 flex items-center gap-2",
@@ -762,16 +708,70 @@ export function BetList() {
                 ({allSettledBets.length})
               </span>
             </button>
+            </div>
+            
+            {/* Filter Button with Badge */}
+            <button
+              onClick={() => setFilterDrawerOpen(true)}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
+                activeFilterCount > 0
+                  ? "bg-foreground text-background"
+                  : "bg-muted text-muted-foreground hover:bg-secondary"
+              )}
+            >
+              <SlidersHorizontal className="h-4 w-4" />
+              Filter
+              {activeFilterCount > 0 && (
+                <span className="ml-0.5 px-1.5 py-0.5 text-xs rounded-full bg-background text-foreground">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
           </div>
+          
+          {/* Active Filter Summary (shows when filters applied) */}
+          {activeFilterCount > 0 && (
+            <div className="flex items-center gap-2 px-3 py-2 mb-2 rounded-lg bg-muted/50 border border-border">
+              <div className="flex flex-wrap items-center gap-2 text-sm flex-1">
+                {selectedBook !== "all" && (
+                  <span className={cn(
+                    "px-2 py-0.5 rounded-full text-xs font-medium text-white",
+                    sportsbookColors[selectedBook] || "bg-foreground"
+                  )}>
+                    {selectedBook}
+                  </span>
+                )}
+                {betTypeFilter !== "all" && (
+                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-muted-foreground/20 text-muted-foreground">
+                    {betTypeFilter === "bonus" ? "Bonus Bets" : "Cash Bets"}
+                  </span>
+                )}
+                {selectedBook !== "all" && selectedBalance && (
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    Balance: <span className="font-mono font-semibold text-foreground">{formatCurrency(selectedBalance.profit + selectedBalance.net_deposits)}</span>
+                    {pendingForBook.length > 0 && (
+                      <> · Pending: <span className="font-mono font-semibold text-[#C4A35A]">{formatCurrency(pendingForBook.reduce((s, b) => s + b.stake, 0))}</span></>
+                    )}
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={clearFilters}
+                className="p-1 rounded hover:bg-muted-foreground/10 text-muted-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
 
-          {/* History Quick Filters */}
+          {/* History Quick Filters - Outcome only */}
           {activeTab === "history" && allSettledBets.length > 0 && (
-            <div className="flex flex-wrap gap-2 pt-2">
+            <div className="flex flex-wrap gap-2 pt-1">
               {([
                 { key: "all", label: "All" },
                 { key: "wins", label: "Wins" },
                 { key: "losses", label: "Losses" },
-                { key: "bonus", label: "Bonus Bets" },
               ] as const).map(({ key, label }) => (
                 <button
                   key={key}
@@ -786,7 +786,6 @@ export function BetList() {
                   {label}
                   {key === "wins" && ` (${allSettledBets.filter(b => b.result === "win").length})`}
                   {key === "losses" && ` (${allSettledBets.filter(b => b.result === "loss").length})`}
-                  {key === "bonus" && ` (${allSettledBets.filter(b => b.promo_type === "bonus_bet").length})`}
                 </button>
               ))}
             </div>
@@ -867,6 +866,93 @@ export function BetList() {
           )}
         </CardContent>
       </Card>
+
+      {/* Filter Drawer (Bottom Sheet) */}
+      <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
+        <SheetContent side="bottom" className="px-6 pb-8">
+          <SheetHeader className="pb-4">
+            <div className="flex items-center justify-between">
+              <SheetTitle>Filter Bets</SheetTitle>
+              {activeFilterCount > 0 && (
+                <button
+                  onClick={clearFilters}
+                  className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Clear all
+                </button>
+              )}
+            </div>
+          </SheetHeader>
+          
+          <div className="space-y-6">
+            {/* Sportsbook Selector */}
+            <div>
+              <h3 className="text-sm font-medium mb-3">Sportsbook</h3>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => setSelectedBook("all")}
+                  className={cn(
+                    "px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                    selectedBook === "all"
+                      ? "bg-foreground text-background shadow-sm"
+                      : "bg-muted text-muted-foreground hover:bg-secondary"
+                  )}
+                >
+                  All Books
+                </button>
+                {uniqueBooks.map((book) => (
+                  <button
+                    key={book}
+                    onClick={() => setSelectedBook(book)}
+                    className={cn(
+                      "px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                      selectedBook === book
+                        ? `${sportsbookColors[book] || "bg-foreground"} text-white shadow-sm`
+                        : "bg-muted text-muted-foreground hover:bg-secondary"
+                    )}
+                  >
+                    {book}
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            {/* Bet Type Selector */}
+            <div>
+              <h3 className="text-sm font-medium mb-3">Bet Type</h3>
+              <div className="flex flex-wrap gap-2">
+                {([
+                  { key: "all", label: "All Bets" },
+                  { key: "cash", label: "Cash Bets" },
+                  { key: "bonus", label: "Bonus & Boosts" },
+                ] as const).map(({ key, label }) => (
+                  <button
+                    key={key}
+                    onClick={() => setBetTypeFilter(key)}
+                    className={cn(
+                      "px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                      betTypeFilter === key
+                        ? "bg-foreground text-background shadow-sm"
+                        : "bg-muted text-muted-foreground hover:bg-secondary"
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          
+          {/* Apply Button */}
+          <div className="pt-6">
+            <SheetClose asChild>
+              <Button className="w-full" size="lg">
+                Apply Filters
+              </Button>
+            </SheetClose>
+          </div>
+        </SheetContent>
+      </Sheet>
 
       {/* Edit Modal */}
       <EditBetModal
