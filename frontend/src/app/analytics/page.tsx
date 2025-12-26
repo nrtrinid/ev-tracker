@@ -1,7 +1,16 @@
 "use client";
 
+import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { cn, formatCurrency, formatPercent } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetClose,
+} from "@/components/ui/sheet";
+import { cn, formatCurrency, formatPercent, formatOdds } from "@/lib/utils";
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -10,7 +19,9 @@ import {
   DollarSign,
   BarChart3,
   PieChart as PieChartIcon,
-  Activity
+  Activity,
+  X,
+  SlidersHorizontal
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { getBets, getSummary, getBalances } from "@/lib/api";
@@ -33,6 +44,140 @@ import {
 } from "recharts";
 import type { Bet } from "@/lib/types";
 
+// Filter options
+const TIMEFRAME_OPTIONS = ["All Time", "YTD", "Last 30 Days", "Last 7 Days"] as const;
+const BET_TYPE_OPTIONS = ["All Types", "Bonus Bets", "Boosts", "Standard"] as const;
+const SPORT_OPTIONS = ["All Sports", "NFL", "NBA", "MLB", "NHL", "NCAAF", "NCAAB", "Soccer", "Tennis", "UFC"] as const;
+
+type TimeframeOption = typeof TIMEFRAME_OPTIONS[number];
+type BetTypeOption = typeof BET_TYPE_OPTIONS[number];
+type SportOption = typeof SPORT_OPTIONS[number];
+type SportsbookOption = "All Books" | string;
+
+// Filter Pill component
+function FilterPill({ 
+  label, 
+  active, 
+  onClick 
+}: { 
+  label: string; 
+  active: boolean; 
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "px-3 py-1.5 rounded-full text-sm font-medium transition-colors",
+        active 
+          ? "bg-foreground text-background shadow-sm" 
+          : "bg-muted text-muted-foreground hover:bg-secondary"
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
+// Filter bar component
+function AnalyticsFilterBar({
+  timeframe,
+  setTimeframe,
+  betType,
+  setBetType,
+  sport,
+  setSport,
+  sportsbook,
+  setSportsbook,
+  sportsbookOptions,
+  hasActiveFilters,
+  onClearFilters,
+}: {
+  timeframe: TimeframeOption;
+  setTimeframe: (v: TimeframeOption) => void;
+  betType: BetTypeOption;
+  setBetType: (v: BetTypeOption) => void;
+  sport: SportOption;
+  setSport: (v: SportOption) => void;
+  sportsbook: SportsbookOption;
+  setSportsbook: (v: SportsbookOption) => void;
+  sportsbookOptions: string[];
+  hasActiveFilters: boolean;
+  onClearFilters: () => void;
+}) {
+  return (
+    <div className="space-y-3">
+      {/* Timeframe */}
+      <div className="flex flex-wrap gap-2 items-center">
+        <span className="text-xs text-muted-foreground font-medium w-16">Time:</span>
+        {TIMEFRAME_OPTIONS.map((option) => (
+          <FilterPill
+            key={option}
+            label={option}
+            active={timeframe === option}
+            onClick={() => setTimeframe(option)}
+          />
+        ))}
+      </div>
+      
+      {/* Sportsbook */}
+      <div className="flex flex-wrap gap-2 items-center">
+        <span className="text-xs text-muted-foreground font-medium w-16">Book:</span>
+        <FilterPill
+          label="All Books"
+          active={sportsbook === "All Books"}
+          onClick={() => setSportsbook("All Books")}
+        />
+        {sportsbookOptions.map((option) => (
+          <FilterPill
+            key={option}
+            label={option}
+            active={sportsbook === option}
+            onClick={() => setSportsbook(option)}
+          />
+        ))}
+      </div>
+      
+      {/* Bet Type */}
+      <div className="flex flex-wrap gap-2 items-center">
+        <span className="text-xs text-muted-foreground font-medium w-16">Type:</span>
+        {BET_TYPE_OPTIONS.map((option) => (
+          <FilterPill
+            key={option}
+            label={option}
+            active={betType === option}
+            onClick={() => setBetType(option)}
+          />
+        ))}
+      </div>
+      
+      {/* Sport */}
+      <div className="flex flex-wrap gap-2 items-center">
+        <span className="text-xs text-muted-foreground font-medium w-16">Sport:</span>
+        {SPORT_OPTIONS.map((option) => (
+          <FilterPill
+            key={option}
+            label={option}
+            active={sport === option}
+            onClick={() => setSport(option)}
+          />
+        ))}
+      </div>
+
+      {/* Clear filters */}
+      {hasActiveFilters && (
+        <button
+          onClick={onClearFilters}
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <X className="h-3 w-3" />
+          Clear filters
+        </button>
+      )}
+    </div>
+  );
+}
+
 // Sportsbook colors for charts (authentic brand colors)
 const SPORTSBOOK_COLORS: Record<string, string> = {
   DraftKings: "#4CBB17",
@@ -48,6 +193,29 @@ const SPORTSBOOK_COLORS: Record<string, string> = {
 const CHART_COLORS = ["#4A7C59", "#C4A35A", "#6B5E4F", "#B85C38", "#8B7355", "#7A9E7E", "#D4C4A8", "#9B8A7B"];
 
 export default function AnalyticsPage() {
+  // Filter state
+  const [timeframe, setTimeframe] = useState<TimeframeOption>("All Time");
+  const [betType, setBetType] = useState<BetTypeOption>("All Types");
+  const [sport, setSport] = useState<SportOption>("All Sports");
+  const [sportsbook, setSportsbook] = useState<SportsbookOption>("All Books");
+  const [filterOpen, setFilterOpen] = useState(false);
+
+  const activeFilterCount = [
+    timeframe !== "All Time",
+    betType !== "All Types",
+    sport !== "All Sports",
+    sportsbook !== "All Books",
+  ].filter(Boolean).length;
+
+  const hasActiveFilters = activeFilterCount > 0;
+
+  const clearFilters = () => {
+    setTimeframe("All Time");
+    setBetType("All Types");
+    setSport("All Sports");
+    setSportsbook("All Books");
+  };
+
   const { data: summary, isLoading: summaryLoading } = useQuery({
     queryKey: ["summary"],
     queryFn: getSummary,
@@ -65,9 +233,56 @@ export default function AnalyticsPage() {
 
   const isLoading = summaryLoading || betsLoading;
 
-  // Calculate additional metrics from bets
-  const settledBets = bets?.filter(b => b.result !== "pending") || [];
-  const pendingBets = bets?.filter(b => b.result === "pending") || [];
+  // Get unique sportsbooks for filter options
+  const sportsbookOptions = useMemo(() => {
+    if (!bets) return [];
+    return Array.from(new Set(bets.map(b => b.sportsbook))).sort();
+  }, [bets]);
+
+  // Apply filters to bets
+  const filteredBets = useMemo(() => {
+    if (!bets) return [];
+    
+    return bets.filter(bet => {
+      // Timeframe filter
+      const betDate = new Date(bet.created_at);
+      const now = new Date();
+      let dateMatch = true;
+      
+      if (timeframe === "Last 7 Days") {
+        const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        dateMatch = betDate >= weekAgo;
+      } else if (timeframe === "Last 30 Days") {
+        const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        dateMatch = betDate >= monthAgo;
+      } else if (timeframe === "YTD") {
+        const startOfYear = new Date(now.getFullYear(), 0, 1);
+        dateMatch = betDate >= startOfYear;
+      }
+      
+      // Sportsbook filter
+      const bookMatch = sportsbook === "All Books" || bet.sportsbook === sportsbook;
+      
+      // Bet type filter
+      let typeMatch = true;
+      if (betType === "Bonus Bets") {
+        typeMatch = bet.promo_type === "bonus_bet";
+      } else if (betType === "Boosts") {
+        typeMatch = bet.promo_type.startsWith("boost");
+      } else if (betType === "Standard") {
+        typeMatch = bet.promo_type === "standard" || bet.promo_type === "no_sweat" || bet.promo_type === "promo_qualifier";
+      }
+      
+      // Sport filter
+      const sportMatch = sport === "All Sports" || bet.sport === sport;
+      
+      return dateMatch && bookMatch && typeMatch && sportMatch;
+    });
+  }, [bets, timeframe, sportsbook, betType, sport]);
+
+  // Calculate metrics from filtered bets
+  const settledBets = filteredBets.filter(b => b.result !== "pending");
+  const pendingBets = filteredBets.filter(b => b.result === "pending");
   
   // Total stake risked (settled bets only for ROI calc)
   const totalSettledStake = settledBets.reduce((sum, b) => sum + b.stake, 0);
@@ -99,9 +314,36 @@ export default function AnalyticsPage() {
   // ROI based on settled cash
   const settledROI = totalSettledStake > 0 ? ((summary?.total_real_profit || 0) / totalSettledStake) : null;
   
-  // Expected win % (based on average implied probability of bets taken)
-  const totalImpliedProb = settledBets.reduce((sum, b) => sum + (1 / b.odds_decimal), 0);
-  const expectedWinRate = settledBets.length > 0 ? (totalImpliedProb / settledBets.length) : null;
+  // Fun Metrics Calculations
+  // Biggest Win
+  const biggestWin = settledBets
+    .filter(b => b.real_profit !== null && b.real_profit > 0)
+    .reduce((max, b) => (b.real_profit! > (max?.real_profit || 0)) ? b : max, null as Bet | null);
+  
+  // Win Rate
+  const wins = settledBets.filter(b => b.result === "win").length;
+  const totalSettled = settledBets.length;
+  const actualWinRate = totalSettled > 0 ? (wins / totalSettled) * 100 : null;
+  const expectedWinRate = totalSettled > 0 
+    ? (settledBets.reduce((sum, b) => sum + (1 / b.odds_decimal), 0) / totalSettled) * 100
+    : null;
+  
+  // Profit Factor
+  const grossWinnings = settledBets
+    .filter(b => b.result === "win" && b.real_profit !== null)
+    .reduce((sum, b) => sum + (b.real_profit || 0), 0);
+  const grossLosses = settledBets
+    .filter(b => b.result === "loss")
+    .reduce((sum, b) => sum + b.stake, 0);
+  const profitFactor = grossLosses > 0 ? grossWinnings / grossLosses : null;
+  
+  // Bonus Efficiency
+  const bonusBets = settledBets.filter(b => b.promo_type === "bonus_bet");
+  const bonusStaked = bonusBets.reduce((sum, b) => sum + b.stake, 0);
+  const bonusReturns = bonusBets
+    .filter(b => b.result === "win")
+    .reduce((sum, b) => sum + b.win_payout, 0);
+  const bonusEfficiency = bonusStaked > 0 ? (bonusReturns / bonusStaked) * 100 : null;
 
   // Prepare chart data
   const sportsbookChartData = summary 
@@ -173,6 +415,86 @@ export default function AnalyticsPage() {
           </div>
         ) : (
           <>
+            {/* Filter Button - Floating at top right */}
+            <div className="flex justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setFilterOpen(true)}
+                className={cn(
+                  "gap-2",
+                  hasActiveFilters && "border-foreground bg-foreground/5"
+                )}
+              >
+                <SlidersHorizontal className="h-4 w-4" />
+                Filter
+                {hasActiveFilters && (
+                  <span className="bg-foreground text-background text-xs font-semibold px-1.5 py-0.5 rounded-full">
+                    {activeFilterCount}
+                  </span>
+                )}
+              </Button>
+            </div>
+
+            {/* Filter Sheet (Drawer) */}
+            <Sheet open={filterOpen} onOpenChange={setFilterOpen}>
+              <SheetContent side="bottom" className="p-6">
+                <SheetHeader className="p-0 pb-4">
+                  <SheetTitle>Filter Analytics</SheetTitle>
+                </SheetHeader>
+                <AnalyticsFilterBar
+                  timeframe={timeframe}
+                  setTimeframe={setTimeframe}
+                  betType={betType}
+                  setBetType={setBetType}
+                  sport={sport}
+                  setSport={setSport}
+                  sportsbook={sportsbook}
+                  setSportsbook={setSportsbook}
+                  sportsbookOptions={sportsbookOptions}
+                  hasActiveFilters={hasActiveFilters}
+                  onClearFilters={clearFilters}
+                />
+                <div className="flex gap-3 pt-6">
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    onClick={clearFilters}
+                    disabled={!hasActiveFilters}
+                  >
+                    Clear All
+                  </Button>
+                  <SheetClose asChild>
+                    <Button className="flex-1">
+                      Apply Filters
+                    </Button>
+                  </SheetClose>
+                </div>
+              </SheetContent>
+            </Sheet>
+
+            {/* Active Filters Summary (optional inline indicator) */}
+            {hasActiveFilters && (
+              <div className="flex flex-wrap gap-2 items-center">
+                <span className="text-xs text-muted-foreground">Showing:</span>
+                {timeframe !== "All Time" && (
+                  <span className="px-2 py-1 bg-muted rounded-full text-xs font-medium">{timeframe}</span>
+                )}
+                {betType !== "All Types" && (
+                  <span className="px-2 py-1 bg-muted rounded-full text-xs font-medium">{betType}</span>
+                )}
+                {sport !== "All Sports" && (
+                  <span className="px-2 py-1 bg-muted rounded-full text-xs font-medium">{sport}</span>
+                )}
+                <button
+                  onClick={clearFilters}
+                  className="text-xs text-muted-foreground hover:text-foreground underline"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
+
             {/* HERO: Performance Status with Z-Score */}
             <Card className={cn(
               "border card-hover",
@@ -239,11 +561,6 @@ export default function AnalyticsPage() {
                     "text-[#B85C38]"
                   )}>
                     {evConversion !== null ? `${(evConversion * 100).toFixed(0)}%` : "—"}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {evConversion !== null && evConversion >= 1.1 ? "running hot" : 
-                     evConversion !== null && evConversion <= 0.9 ? "running cold" : 
-                     evConversion !== null ? "on track" : ""}
                   </p>
                 </CardContent>
               </Card>
@@ -319,7 +636,93 @@ export default function AnalyticsPage() {
                       <StatCard label="Pending Exposure" value={totalPendingStake} format="currency" subtitle={`${pendingBets.length} bets`} />
                       <StatCard label="Pending EV" value={pendingEV} format="currency" colorize />
                       <StatCard label="Cash Risked" value={totalSettledStake} format="currency" subtitle="Settled" />
-                      <StatCard label="ROI" value={settledROI} format="percent" colorize />
+                      <StatCard 
+                        label="ROI" 
+                        value={settledROI} 
+                        format="percent" 
+                        subtitle={
+                          settledROI !== null
+                            ? settledROI > 0.15
+                              ? "High Efficiency"
+                              : settledROI > 0
+                              ? "Drifting"
+                              : "Leaking"
+                            : undefined
+                        }
+                        className={
+                          settledROI !== null
+                            ? settledROI > 0.15
+                              ? "text-[#4A7C59]"
+                              : settledROI > 0
+                              ? "text-[#C4A35A]"
+                              : "text-[#B85C38]"
+                            : ""
+                        }
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Fun Metrics Row */}
+                <Card>
+                  <CardHeader className="pb-2">
+                    <h3 className="font-semibold text-sm">Fun Metrics</h3>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {/* Biggest Win */}
+                      <div className="rounded-lg bg-muted border border-border p-3">
+                        <p className="text-xs text-muted-foreground">Biggest Win</p>
+                        <p className="text-lg font-bold text-foreground">
+                          {biggestWin ? `+${formatCurrency(biggestWin.real_profit || 0)}` : "—"}
+                        </p>
+                        {biggestWin && (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {biggestWin.event.length > 20 
+                              ? `${biggestWin.event.substring(0, 20)}...` 
+                              : biggestWin.event} @ {formatOdds(biggestWin.odds_american)}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Win Rate */}
+                      <div className="rounded-lg bg-muted border border-border p-3">
+                        <p className="text-xs text-muted-foreground">Win Rate</p>
+                        <p className="text-lg font-bold text-foreground">
+                          {actualWinRate !== null ? `${actualWinRate.toFixed(1)}%` : "—"}
+                        </p>
+                        {actualWinRate !== null && expectedWinRate !== null && (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Exp: {expectedWinRate.toFixed(1)}% ({actualWinRate > expectedWinRate ? "Running Hot" : "Running Cold"})
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Profit Factor */}
+                      <div className="rounded-lg bg-muted border border-border p-3">
+                        <p className="text-xs text-muted-foreground">Profit Factor</p>
+                        <p className="text-lg font-bold text-foreground">
+                          {profitFactor !== null ? `${profitFactor.toFixed(2)} PF` : "—"}
+                        </p>
+                        {profitFactor !== null && (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            ${profitFactor.toFixed(2)} earned per $1 lost
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Bonus Efficiency */}
+                      <div className="rounded-lg bg-muted border border-border p-3">
+                        <p className="text-xs text-muted-foreground">Bonus Efficiency</p>
+                        <p className="text-lg font-bold text-foreground">
+                          {bonusEfficiency !== null ? `${bonusEfficiency.toFixed(0)}% Conversion` : "—"}
+                        </p>
+                        {bonusEfficiency !== null && (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            +{formatCurrency(bonusReturns)} washed from {formatCurrency(bonusStaked)}
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </CardContent>
                 </Card>

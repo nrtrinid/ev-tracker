@@ -29,6 +29,7 @@ const MARKET_VIG: Record<string, number> = {
   ML: 0.045,      // Standard markets: 4.5%
   Spread: 0.045,
   Total: 0.045,
+  Parlay: 0.12,   // Parlays: 12% (similar to SGP)
   Prop: 0.07,     // Juiced markets: 7%
   Futures: 0.07,
   SGP: 0.12,      // Exotic markets: 12%
@@ -60,12 +61,22 @@ interface BetFormData {
   notes: string;
 }
 
+// Get sticky promo type from localStorage or default to standard
+const getStickyPromoType = (): PromoType => {
+  if (typeof window === "undefined") return "standard";
+  const stored = localStorage.getItem("ev-tracker-promo-type");
+  if (stored && PROMO_TYPES.some(p => p.value === stored)) {
+    return stored as PromoType;
+  }
+  return "standard";
+};
+
 const initialFormData: BetFormData = {
   sportsbook: "",
   sport: "",
   event: "",
   market: "ML",
-  promo_type: "bonus_bet",
+  promo_type: getStickyPromoType(),
   odds: "",
   stake: "",
   boost_percent: "",
@@ -130,11 +141,12 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
         notes: formData.notes || undefined,
       });
 
-      // Reset form but keep sportsbook and sport for quick re-entry
+      // Reset form but keep sportsbook, sport, and promo_type for quick re-entry
       setFormData({
         ...initialFormData,
         sportsbook: formData.sportsbook,
         sport: formData.sport,
+        promo_type: formData.promo_type, // Keep sticky promo type
       });
 
       toast.success("Bet logged!", {
@@ -198,7 +210,7 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
           <div>
             <label className="text-sm font-medium mb-2 block">Sport</label>
             <div className="flex flex-wrap gap-2">
-              {SPORTS.slice(0, 7).map((sport) => (
+              {SPORTS.map((sport) => (
                 <Button
                   key={sport}
                   type="button"
@@ -255,7 +267,7 @@ export function BetEntryForm({ onSuccess }: { onSuccess?: () => void }) {
                   className={cn(
                     promo.value === "bonus_bet" &&
                       formData.promo_type === promo.value &&
-                      "bg-[#C4A35A] hover:bg-[#B8963E] text-[#2C2416]",
+                      "bg-[#7A9E7E]/20 hover:bg-[#7A9E7E]/30 text-[#2C2416] border-[#7A9E7E]/40",
                     promo.value === "no_sweat" &&
                       formData.promo_type === promo.value &&
                       "bg-[#4A7C59] hover:bg-[#3D6B4A] text-white",

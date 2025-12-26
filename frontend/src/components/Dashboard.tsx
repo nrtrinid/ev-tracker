@@ -82,11 +82,6 @@ export function Dashboard() {
             )}>
               {evConversion !== null ? `${(evConversion * 100).toFixed(0)}%` : "—"}
             </p>
-            <p className="text-[10px] text-muted-foreground">
-              {evConversion !== null && evConversion >= 1.1 ? "running hot" : 
-               evConversion !== null && evConversion <= 0.9 ? "running cold" : 
-               evConversion !== null ? "on track" : ""}
-            </p>
           </CardContent>
         </Card>
 

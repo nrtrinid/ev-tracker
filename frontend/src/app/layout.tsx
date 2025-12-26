@@ -30,7 +30,7 @@ export default function RootLayout({
         <Toaster 
           position="top-center" 
           richColors 
-          closeButton 
+          closeButton={false}
           icons={{
             success: <></>,
             error: <></>,

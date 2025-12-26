@@ -250,31 +250,8 @@
   box-shadow: 0 2px 8px rgba(44, 36, 22, 0.08);
   color: hsl(var(--foreground)) !important;
   font-family: 'Inter', system-ui, sans-serif;
-  padding: 12px 40px 12px 16px !important; /* Extra padding-right for close button */
+  padding: 12px 16px !important;
   position: relative !important;
-}
-
-/* Close button - universal styling */
-[data-sonner-toast] [data-close-button] {
-  background: transparent !important;
-  border: none !important;
-  padding: 4px !important;
-  margin: 0 !important;
-  cursor: pointer !important;
-  opacity: 0.6;
-  transition: opacity 150ms;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: absolute !important;
-  top: 8px !important;
-  right: 6px !important;
-  width: 24px !important;
-  height: 24px !important;
-}
-
-[data-sonner-toast] [data-close-button]:hover {
-  opacity: 1;
 }
 
 /* Success toast */
@@ -283,28 +260,16 @@
   border-left: 3px solid #4A7C59 !important;
 }
 
-[data-sonner-toast][data-type="success"] [data-close-button] {
-  color: #4A7C59 !important;
-}
-
 /* Error toast */
 [data-sonner-toast][data-type="error"] {
   border-color: #B85C38 !important;
   border-left: 3px solid #B85C38 !important;
 }
 
-[data-sonner-toast][data-type="error"] [data-close-button] {
-  color: #B85C38 !important;
-}
-
 /* Info/default toast */
 [data-sonner-toast][data-type="default"] {
   border-color: #C4A35A !important;
   border-left: 3px solid #C4A35A !important;
-}
-
-[data-sonner-toast][data-type="default"] [data-close-button] {
-  color: #C4A35A !important;
 }
 
 /* Toast action button - undo button styling */

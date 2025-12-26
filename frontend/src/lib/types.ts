@@ -147,7 +147,6 @@ export const SPORTS = [
   "UFC",
   "Soccer",
   "Tennis",
-  "Golf",
   "Other",
 ] as const;
 
@@ -155,6 +154,7 @@ export const MARKETS = [
   "ML",
   "Spread",
   "Total",
+  "Parlay",
   "SGP",
   "Prop",
   "Futures",
