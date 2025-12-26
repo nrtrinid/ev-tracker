@@ -153,6 +153,48 @@ function calculateHoldFromOdds(odds1: number, odds2: number): number | null {
   return hold > 0 ? hold : null;
 }
 
+function decimalToAmerican(decimal: number): number {
+  if (decimal >= 2.0) {
+    return Math.round((decimal - 1) * 100);
+  } else {
+    return Math.round(-100 / (decimal - 1));
+  }
+}
+
+function calculateBoostedOdds(originalOdds: number, boostPercent: number | null, promoType: string): number | null {
+  // Check if this is a boost promo type
+  const isBoost = promoType.startsWith("boost");
+  if (!isBoost) return null;
+  
+  // Determine effective boost percentage
+  let effectiveBoost = 0;
+  if (promoType === "boost_30") {
+    effectiveBoost = 0.3;
+  } else if (promoType === "boost_50") {
+    effectiveBoost = 0.5;
+  } else if (promoType === "boost_100") {
+    effectiveBoost = 1.0;
+  } else if (promoType === "boost_custom") {
+    if (boostPercent === null || boostPercent === 0) return null;
+    effectiveBoost = boostPercent / 100;
+  } else {
+    return null;
+  }
+  
+  // Calculate boosted decimal odds
+  // Formula matches backend: base_winnings = stake * (decimal - 1)
+  // extra_winnings = base_winnings * boost
+  // total_payout = stake + base_winnings + extra_winnings
+  // effective_decimal = total_payout / stake = 1 + base_winnings/stake + extra_winnings/stake
+  // = 1 + (decimal - 1) + (decimal - 1) * boost = 1 + (decimal - 1) * (1 + boost)
+  const originalDecimal = americanToDecimal(originalOdds);
+  const baseProfit = originalDecimal - 1;
+  const boostedProfit = baseProfit * (1 + effectiveBoost);
+  const boostedDecimal = 1 + boostedProfit;
+  
+  return decimalToAmerican(boostedDecimal);
+}
+
 // ============ SHARED BET CARD BASE ============
 // Compact layout with context-aware data row
 interface BetCardBaseProps {
@@ -223,7 +265,25 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
         <div className="grid grid-cols-4 gap-4 text-sm">
           <div>
             <p className="text-muted-foreground text-xs">Odds</p>
-            <p className="font-mono font-semibold">{formatOdds(bet.odds_american)}</p>
+            {(() => {
+              const boostedOdds = calculateBoostedOdds(
+                bet.odds_american,
+                bet.boost_percent,
+                bet.promo_type
+              );
+              
+              if (boostedOdds) {
+                return (
+                  <p className="font-mono font-semibold">
+                    <span className="line-through text-muted-foreground/60 mr-1.5">
+                      {formatOdds(bet.odds_american)}
+                    </span>
+                    <span className="text-foreground">{formatOdds(boostedOdds)}</span>
+                  </p>
+                );
+              }
+              return <p className="font-mono font-semibold">{formatOdds(bet.odds_american)}</p>;
+            })()}
           </div>
           <div>
             <p className="text-muted-foreground text-xs">Stake</p>
@@ -269,21 +329,22 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
         {expanded && (
           <div className="pt-3 border-t border-border">
             <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+              {/* Slot 1: Opposing Line (if available) - Always Top Left */}
+              {bet.opposing_odds ? (
+                <div>
+                  <p className="text-muted-foreground text-xs mb-0.5">Opposing Line</p>
+                  <p className="font-mono text-sm text-foreground">{formatOdds(bet.opposing_odds)}</p>
+                </div>
+              ) : (
+                <div>
+                  <p className="text-muted-foreground text-xs mb-0.5">Req. Win %</p>
+                  <p className="font-mono text-sm text-foreground">{(impliedProb * 100).toFixed(1)}%</p>
+                </div>
+              )}
+              
               {mode === "pending" ? (
                 <>
-                  {/* PENDING LAYOUT: Prioritize market data (Opposing Line) near Odds */}
-                  {/* Slot 1: Opposing Line (if present) or Req. Win % */}
-                  {bet.opposing_odds ? (
-                    <div>
-                      <p className="text-muted-foreground text-xs mb-0.5">Opposing Line</p>
-                      <p className="font-mono text-sm text-foreground">{formatOdds(bet.opposing_odds)}</p>
-                    </div>
-                  ) : (
-                    <div>
-                      <p className="text-muted-foreground text-xs mb-0.5">Req. Win %</p>
-                      <p className="font-mono text-sm text-foreground">{(impliedProb * 100).toFixed(1)}%</p>
-                    </div>
-                  )}
+                  {/* PENDING LAYOUT */}
                   {/* Slot 2: Req. Win % (if Opposing Line present) or Vig */}
                   {bet.opposing_odds ? (
                     <div>
@@ -319,30 +380,28 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
               ) : (
                 <>
                   {/* SETTLED LAYOUT: Prioritize financial data (Win Payout) near Profit */}
-                  {/* Slot 1: Req. Win % - Stable anchor (Top Left) */}
-                  <div>
-                    <p className="text-muted-foreground text-xs mb-0.5">Req. Win %</p>
-                    <p className="font-mono text-sm text-foreground">{(impliedProb * 100).toFixed(1)}%</p>
-                  </div>
                   {/* Slot 2: Win Payout - Directly under Profit (Top Right) */}
                   <div>
                     <p className="text-muted-foreground text-xs mb-0.5">Win Payout</p>
                     <p className="font-mono text-sm text-foreground">{formatCurrency(bet.win_payout)}</p>
                   </div>
-                  {/* Slot 3: EV per $ */}
-                  <div>
-                    <p className="text-muted-foreground text-xs mb-0.5">EV per $</p>
-                    <p className="font-mono text-sm text-foreground">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
-                  </div>
-                  {/* Slot 4: Opposing Line (if present, demoted) */}
+                  {/* Slot 3: Req. Win % (if Opposing Line present) or EV per $ */}
                   {bet.opposing_odds ? (
                     <div>
-                      <p className="text-muted-foreground text-xs mb-0.5">Opposing Line</p>
-                      <p className="font-mono text-sm text-foreground">{formatOdds(bet.opposing_odds)}</p>
+                      <p className="text-muted-foreground text-xs mb-0.5">Req. Win %</p>
+                      <p className="font-mono text-sm text-foreground">{(impliedProb * 100).toFixed(1)}%</p>
                     </div>
                   ) : (
                     <div>
-                      {/* Empty slot if no opposing line */}
+                      <p className="text-muted-foreground text-xs mb-0.5">EV per $</p>
+                      <p className="font-mono text-sm text-foreground">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
+                    </div>
+                  )}
+                  {/* Slot 4: EV per $ (if Opposing Line present) or empty */}
+                  {bet.opposing_odds && (
+                    <div>
+                      <p className="text-muted-foreground text-xs mb-0.5">EV per $</p>
+                      <p className="font-mono text-sm text-foreground">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
                     </div>
                   )}
                 </>
