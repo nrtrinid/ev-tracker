@@ -357,7 +357,7 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
             <label className="text-xs font-medium text-muted-foreground mb-2 block">
               Promo Type
             </label>
-            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 pt-0.5">
               {PROMO_TYPES.map((promo) => (
                 <button
                   key={promo.value}
