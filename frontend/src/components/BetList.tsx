@@ -245,11 +245,10 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
         {expanded && (
           <div className="pt-2 border-t">
             <div className="grid grid-cols-2 gap-4 text-sm">
-              {/* Implied Probability - always show with description */}
+              {/* Required Win % - always show */}
               <div>
-                <p className="text-muted-foreground text-xs">Implied Prob</p>
+                <p className="text-muted-foreground text-xs">Req. Win %</p>
                 <p className="font-mono">{(impliedProb * 100).toFixed(1)}%</p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">Book's win chance</p>
               </div>
               {/* Pending: Vig | Settled: EV per $ */}
               {mode === "pending" ? (

@@ -306,26 +306,25 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
                 onChange={(e) => updateField("stake", e.target.value)}
                 className="h-12 text-lg font-mono text-center"
               />
+              {/* Quick Stake Presets - directly under stake field */}
+              <div className="flex gap-2 mt-2">
+                {[10, 25, 50].map((amount) => (
+                  <button
+                    key={amount}
+                    type="button"
+                    onClick={() => updateField("stake", amount.toString())}
+                    className={cn(
+                      "flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                      formState.stake === amount.toString()
+                        ? "bg-foreground text-background"
+                        : "bg-muted text-muted-foreground hover:bg-secondary"
+                    )}
+                  >
+                    ${amount}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-
-          {/* Quick Stake Presets */}
-          <div className="flex gap-2 mb-4">
-            {[10, 25, 50, 100].map((amount) => (
-              <button
-                key={amount}
-                type="button"
-                onClick={() => updateField("stake", amount.toString())}
-                className={cn(
-                  "flex-1 py-2 rounded-lg text-sm font-medium transition-colors",
-                  formState.stake === amount.toString()
-                    ? "bg-foreground text-background"
-                    : "bg-muted text-muted-foreground hover:bg-secondary"
-                )}
-              >
-                ${amount}
-              </button>
-            ))}
           </div>
 
           {/* Market Selection */}
