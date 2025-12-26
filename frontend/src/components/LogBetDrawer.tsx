@@ -64,7 +64,7 @@ interface FormState {
   // Advanced fields
   opposing_odds: string;
   boost_percent: string;
-  winnings_cap: string;
+  payout_override: string;
   notes: string;
 }
 
@@ -94,7 +94,7 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
     event: "",
     opposing_odds: "",
     boost_percent: "",
-    winnings_cap: "",
+    payout_override: "",
     notes: "",
   });
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -122,7 +122,7 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
   const stakeNum = parseFloat(formState.stake) || 0;
   const opposingOddsNum = parseFloat(formState.opposing_odds) || 0;
   const boostPercentNum = parseFloat(formState.boost_percent) || 0;
-  const winningsCapNum = parseFloat(formState.winnings_cap) || 0;
+  const payoutOverrideNum = parseFloat(formState.payout_override) || 0;
 
   // Get smart vig default based on market
   const defaultVig = MARKET_VIG[formState.market] || 0.045;
@@ -141,7 +141,7 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
     stakeNum,
     formState.promo_type,
     boostPercentNum,
-    winningsCapNum || undefined,
+    payoutOverrideNum || undefined,
     effectiveVig
   );
 
@@ -189,7 +189,7 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
           event: "",
           opposing_odds: "",
           boost_percent: prev.promo_type === "boost_custom" ? prev.boost_percent : "", // Keep boost if using custom
-          winnings_cap: "",
+          payout_override: "",
           notes: "",
         }));
         setTimeout(() => {
@@ -208,7 +208,7 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
           event: "",
           opposing_odds: "",
           boost_percent: "",
-          winnings_cap: "",
+          payout_override: "",
           notes: "",
         });
       }
@@ -455,21 +455,21 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
                 </p>
               </div>
 
-              {/* Winnings Cap */}
+              {/* Payout Override */}
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-                  Winnings Cap
+                  Payout Override
                 </label>
                 <Input
                   type="text"
                   inputMode="decimal"
-                  placeholder="e.g. 500"
-                  value={formState.winnings_cap}
-                  onChange={(e) => updateField("winnings_cap", e.target.value)}
+                  placeholder={ev.winPayout > 0 ? `Calculated: ${ev.winPayout.toFixed(2)}` : "e.g. 35.50"}
+                  value={formState.payout_override}
+                  onChange={(e) => updateField("payout_override", e.target.value)}
                   className="h-10"
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  Max payout limit (for capped promos)
+                  Override if the book's payout differs from calculated
                 </p>
               </div>
 
@@ -563,7 +563,7 @@ function calculateEVClient(
   stake: number,
   promoType: PromoType,
   boostPercent: number = 0,
-  winningsCap?: number,
+  payoutOverride?: number,
   vig: number = 0.045
 ): { evTotal: number; winPayout: number } {
   if (oddsAmerican === 0 || stake <= 0) {
@@ -594,19 +594,15 @@ function calculateEVClient(
 
   if (promoType === "bonus_bet") {
     // Bonus bet: stake not returned on win
-    winPayout = stake * (decimalOdds - 1);
-    // Apply cap if set
-    if (winningsCap && winPayout > winningsCap) {
-      winPayout = winningsCap;
-    }
+    const calculatedPayout = stake * (decimalOdds - 1);
+    // Use override if provided, otherwise calculated
+    winPayout = payoutOverride || calculatedPayout;
     evTotal = fairProb * winPayout; // No risk on bonus bet
   } else {
     // Standard or boosted bet
-    winPayout = stake * decimalOdds;
-    // Apply cap if set
-    if (winningsCap && (winPayout - stake) > winningsCap) {
-      winPayout = stake + winningsCap;
-    }
+    const calculatedPayout = stake * decimalOdds;
+    // Use override if provided, otherwise calculated
+    winPayout = payoutOverride || calculatedPayout;
     const profit = winPayout - stake;
     evTotal = (fairProb * profit) - ((1 - fairProb) * stake);
   }
