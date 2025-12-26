@@ -171,7 +171,7 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
         odds_american: oddsNum,
         stake: stakeNum,
         boost_percent: formState.promo_type === "boost_custom" ? boostPercentNum : undefined,
-        winnings_cap: winningsCapNum || undefined,
+        payout_override: payoutOverrideNum || undefined,
         notes: formState.notes || undefined,
       });
 
@@ -213,9 +213,11 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
         });
       }
     } catch (error) {
+      console.error("Failed to log bet:", error);
+      const errorMessage = error instanceof Error ? error.message : "Check your connection and try again";
       toast.error("Failed to log bet", {
         id: toastId,
-        description: "Check your connection and try again",
+        description: errorMessage,
       });
     }
   };
