@@ -28,6 +28,7 @@ export interface Bet {
   boost_percent: number | null;
   winnings_cap: number | null;
   notes: string | null;
+  opposing_odds: number | null;
   result: BetResult;
   win_payout: number;
   ev_per_dollar: number;
@@ -47,6 +48,7 @@ export interface BetCreate {
   winnings_cap?: number;
   notes?: string;
   payout_override?: number;
+  opposing_odds?: number;
   event_date?: string;
 }
 
@@ -63,6 +65,7 @@ export interface BetUpdate {
   notes?: string;
   result?: BetResult;
   payout_override?: number;
+  opposing_odds?: number;
   event_date?: string;
 }
 

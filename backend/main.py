@@ -49,7 +49,14 @@ user_settings = {
 
 def build_bet_response(row: dict, k_factor: float) -> BetResponse:
     """Convert database row to BetResponse with calculated fields."""
+    from calculations import calculate_hold_from_odds
+    
     decimal_odds = american_to_decimal(row["odds_american"])
+    
+    # Calculate vig from opposing_odds if present, otherwise use default
+    vig = None
+    if row.get("opposing_odds"):
+        vig = calculate_hold_from_odds(row["odds_american"], row["opposing_odds"])
     
     ev_result = calculate_ev(
         stake=row["stake"],
@@ -58,6 +65,7 @@ def build_bet_response(row: dict, k_factor: float) -> BetResponse:
         k_factor=k_factor,
         boost_percent=row.get("boost_percent"),
         winnings_cap=row.get("winnings_cap"),
+        vig=vig,
     )
     
     # Use payout override if present
@@ -86,6 +94,7 @@ def build_bet_response(row: dict, k_factor: float) -> BetResponse:
         boost_percent=row.get("boost_percent"),
         winnings_cap=row.get("winnings_cap"),
         notes=row.get("notes"),
+        opposing_odds=row.get("opposing_odds"),
         result=row["result"],
         win_payout=win_payout,
         ev_per_dollar=ev_result["ev_per_dollar"],
@@ -121,6 +130,7 @@ def create_bet(bet: BetCreate):
         "winnings_cap": bet.winnings_cap,
         "notes": bet.notes,
         "payout_override": bet.payout_override,
+        "opposing_odds": bet.opposing_odds,
         "result": BetResult.PENDING.value,
     }
     
@@ -212,6 +222,8 @@ def update_bet(bet_id: str, bet: BetUpdate):
             data["settled_at"] = datetime.utcnow().isoformat()
     if bet.payout_override is not None:
         data["payout_override"] = bet.payout_override
+    if bet.opposing_odds is not None:
+        data["opposing_odds"] = bet.opposing_odds
     if bet.event_date is not None:
         data["event_date"] = bet.event_date.isoformat()
     

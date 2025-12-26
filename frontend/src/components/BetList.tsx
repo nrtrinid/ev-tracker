@@ -139,6 +139,28 @@ function calculateImpliedProb(oddsAmerican: number): number {
   }
 }
 
+function calculateHoldFromOdds(odds1: number, odds2: number): number | null {
+  if (odds1 === 0 || odds2 === 0) return null;
+  if (Math.abs(odds1) < 100 || Math.abs(odds2) < 100) return null;
+  
+  const decimal1 = americanToDecimal(odds1);
+  const decimal2 = americanToDecimal(odds2);
+  
+  const impliedProb1 = 1 / decimal1;
+  const impliedProb2 = 1 / decimal2;
+  
+  const hold = (impliedProb1 + impliedProb2) - 1;
+  return hold > 0 ? hold : null;
+}
+
+function americanToDecimal(american: number): number {
+  if (american >= 100) {
+    return 1 + (american / 100);
+  } else {
+    return 1 + (100 / Math.abs(american));
+  }
+}
+
 // ============ SHARED BET CARD BASE ============
 // Compact layout with context-aware data row
 interface BetCardBaseProps {
@@ -164,6 +186,16 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
 
   // Calculate implied probability
   const impliedProb = calculateImpliedProb(bet.odds_american);
+  
+  // Calculate vig from opposing odds if present
+  const calculatedVig = bet.opposing_odds 
+    ? calculateHoldFromOdds(bet.odds_american, bet.opposing_odds)
+    : null;
+  
+  // Use calculated vig or default based on market
+  const displayVig = calculatedVig !== null 
+    ? calculatedVig 
+    : (MARKET_VIG[bet.market] || 0.045);
 
   return (
     <div className="border rounded-lg overflow-hidden flex card-hover bg-card">
@@ -254,7 +286,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
               {mode === "pending" ? (
                 <div>
                   <p className="text-muted-foreground text-xs">Vig</p>
-                  <p className="font-mono">{(MARKET_VIG[bet.market] || 0.045) * 100}%</p>
+                  <p className="font-mono">{(displayVig * 100).toFixed(1)}%</p>
                 </div>
               ) : (
                 <div>
@@ -299,9 +331,16 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
                 </div>
               )}
             </div>
+            {/* Opposing Odds - if present */}
+            {bet.opposing_odds && (
+              <div className="col-span-2">
+                <p className="text-muted-foreground text-xs">Opposing Line</p>
+                <p className="font-mono text-xs">{formatOdds(bet.opposing_odds)}</p>
+              </div>
+            )}
             {/* Notes - if present */}
             {bet.notes && (
-              <div className="text-sm mt-3">
+              <div className="col-span-2 text-sm mt-3">
                 <p className="text-muted-foreground text-xs mb-1">Notes</p>
                 <p className="ruled-lines pl-2 py-1 min-h-[24px]">{bet.notes}</p>
               </div>

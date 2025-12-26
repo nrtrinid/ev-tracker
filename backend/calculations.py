@@ -34,6 +34,26 @@ def decimal_to_american(decimal_odds: float) -> int:
         return round(-100 / (decimal_odds - 1))
 
 
+def calculate_hold_from_odds(odds1: float, odds2: float) -> float | None:
+    """
+    Calculate hold (vig) from two American odds.
+    Returns the hold percentage, or None if invalid.
+    """
+    if odds1 == 0 or odds2 == 0:
+        return None
+    if abs(odds1) < 100 or abs(odds2) < 100:
+        return None
+    
+    decimal1 = american_to_decimal(odds1)
+    decimal2 = american_to_decimal(odds2)
+    
+    implied_prob1 = 1 / decimal1
+    implied_prob2 = 1 / decimal2
+    
+    hold = (implied_prob1 + implied_prob2) - 1
+    return hold if hold > 0 else None
+
+
 def calculate_ev(
     stake: float,
     decimal_odds: float,
@@ -41,6 +61,7 @@ def calculate_ev(
     k_factor: float = 0.78,
     boost_percent: float | None = None,
     winnings_cap: float | None = None,
+    vig: float | None = None,
 ) -> dict:
     """
     Calculate Expected Value based on promo type.
@@ -89,6 +110,9 @@ def calculate_ev(
         # Standard or no-sweat: normal payout
         win_payout = stake * decimal_odds
     
+    # Use provided vig or default
+    effective_vig = vig if vig is not None else DEFAULT_VIG
+    
     # Calculate EV per dollar based on promo type
     if promo_type == "bonus_bet":
         # EV = stake × (1 - 1/decimal_odds)
@@ -98,7 +122,7 @@ def calculate_ev(
     elif promo_type in ("no_sweat", "promo_qualifier"):
         # No-sweat and promo qualifiers: small negative EV due to vig on the initial leg
         # User logs the resulting bonus bet separately when received
-        ev_per_dollar = -DEFAULT_VIG
+        ev_per_dollar = -effective_vig
         
     elif promo_type in ("boost_30", "boost_50", "boost_100", "boost_custom"):
         # EV = (stake / decimal_odds) × min(boost% × (decimal_odds - 1), cap/stake) - vig
@@ -112,12 +136,12 @@ def calculate_ev(
             capped_extra = potential_extra
             
         boost_value = win_probability * capped_extra
-        ev_per_dollar = boost_value - DEFAULT_VIG
+        ev_per_dollar = boost_value - effective_vig
         
     else:
-        # Standard bet: account for typical vig (-4.5% EV)
+        # Standard bet: account for vig
         # User logs these when they believe they have information edge
-        ev_per_dollar = -DEFAULT_VIG
+        ev_per_dollar = -effective_vig
     
     ev_total = stake * ev_per_dollar
     

@@ -42,6 +42,7 @@ class BetCreate(BaseModel):
     winnings_cap: float | None = None
     notes: str | None = None
     event_date: date | None = None  # Defaults to today if not provided
+    opposing_odds: float | None = None  # For accurate vig calculation
     
     # Optional override for edge cases
     payout_override: float | None = None
@@ -61,6 +62,7 @@ class BetUpdate(BaseModel):
     notes: str | None = None
     result: BetResult | None = None
     payout_override: float | None = None
+    opposing_odds: float | None = None  # For accurate vig calculation
     event_date: date | None = None  # Allow correction in Edit modal
 
 
@@ -81,6 +83,7 @@ class BetResponse(BaseModel):
     boost_percent: float | None
     winnings_cap: float | None
     notes: str | None
+    opposing_odds: float | None
     result: BetResult
     
     # Calculated fields

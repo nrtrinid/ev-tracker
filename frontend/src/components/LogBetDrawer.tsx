@@ -172,6 +172,7 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
         stake: stakeNum,
         boost_percent: formState.promo_type === "boost_custom" ? boostPercentNum : undefined,
         payout_override: payoutOverrideNum || undefined,
+        opposing_odds: opposingOddsNum || undefined,
         notes: formState.notes || undefined,
       });
 
