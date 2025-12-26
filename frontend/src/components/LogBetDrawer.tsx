@@ -61,6 +61,11 @@ interface FormState {
   odds: string;
   stake: string;
   event: string;
+  // Advanced fields
+  opposing_odds: string;
+  boost_percent: string;
+  winnings_cap: string;
+  notes: string;
 }
 
 // Get sticky values from localStorage
@@ -87,6 +92,10 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
     odds: "",
     stake: "",
     event: "",
+    opposing_odds: "",
+    boost_percent: "",
+    winnings_cap: "",
+    notes: "",
   });
   const [showAdvanced, setShowAdvanced] = useState(false);
   
@@ -111,13 +120,29 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
   // Parse numeric values
   const oddsNum = parseFloat(formState.odds) || 0;
   const stakeNum = parseFloat(formState.stake) || 0;
+  const opposingOddsNum = parseFloat(formState.opposing_odds) || 0;
+  const boostPercentNum = parseFloat(formState.boost_percent) || 0;
+  const winningsCapNum = parseFloat(formState.winnings_cap) || 0;
+
+  // Get smart vig default based on market
+  const defaultVig = MARKET_VIG[formState.market] || 0.045;
+
+  // Calculate actual vig if opposing odds provided
+  const calculatedVig = opposingOddsNum !== 0 
+    ? calculateHoldFromOdds(oddsNum, opposingOddsNum)
+    : null;
+
+  // Use calculated vig if available, otherwise smart default
+  const effectiveVig = calculatedVig !== null ? calculatedVig : defaultVig;
 
   // Calculate EV for display
   const ev = calculateEVClient(
     oddsNum,
     stakeNum,
     formState.promo_type,
-    MARKET_VIG[formState.market] || 0.045
+    boostPercentNum,
+    winningsCapNum || undefined,
+    effectiveVig
   );
 
   const updateField = (field: keyof FormState, value: string) => {
@@ -145,6 +170,9 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
         promo_type: formState.promo_type,
         odds_american: oddsNum,
         stake: stakeNum,
+        boost_percent: formState.promo_type === "boost_custom" ? boostPercentNum : undefined,
+        winnings_cap: winningsCapNum || undefined,
+        notes: formState.notes || undefined,
       });
 
       toast.success("Bet logged!", {
@@ -153,12 +181,16 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
       });
 
       if (keepOpen) {
-        // Batch mode: Clear odds/stake, keep sportsbook/sport, focus odds
+        // Batch mode: Clear bet-specific fields, keep sportsbook/sport/market/promo
         setFormState(prev => ({
           ...prev,
           odds: "",
           stake: "",
           event: "",
+          opposing_odds: "",
+          boost_percent: prev.promo_type === "boost_custom" ? prev.boost_percent : "", // Keep boost if using custom
+          winnings_cap: "",
+          notes: "",
         }));
         setTimeout(() => {
           oddsInputRef.current?.focus();
@@ -174,6 +206,10 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
           odds: "",
           stake: "",
           event: "",
+          opposing_odds: "",
+          boost_percent: "",
+          winnings_cap: "",
+          notes: "",
         });
       }
     } catch (error) {
@@ -342,6 +378,39 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
             </div>
           </div>
 
+          {/* Vig Hint */}
+          <div className="text-xs text-muted-foreground mb-3 flex items-center gap-2">
+            <span>
+              Using {calculatedVig !== null ? "calculated" : "default"} vig:{" "}
+              <span className="font-mono font-medium">
+                {(effectiveVig * 100).toFixed(1)}%
+              </span>
+              {calculatedVig === null && (
+                <span className="text-muted-foreground/70"> ({formState.market})</span>
+              )}
+            </span>
+          </div>
+
+          {/* Custom Boost Percent (shows when boost_custom selected) */}
+          {formState.promo_type === "boost_custom" && (
+            <div className="mb-4">
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                Boost Percentage
+              </label>
+              <Input
+                type="text"
+                inputMode="decimal"
+                placeholder="e.g. 75"
+                value={formState.boost_percent}
+                onChange={(e) => updateField("boost_percent", e.target.value)}
+                className="h-10"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Enter the boost % (e.g., 75 for a 75% profit boost)
+              </p>
+            </div>
+          )}
+
           {/* Advanced Options Toggle */}
           <button
             type="button"
@@ -349,20 +418,71 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
             className="flex items-center gap-1 text-xs text-muted-foreground mb-3"
           >
             {showAdvanced ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-            {showAdvanced ? "Hide" : "Show"} advanced
+            {showAdvanced ? "Hide" : "Show"} advanced options
           </button>
 
           {showAdvanced && (
-            <div className="space-y-3 mb-4">
+            <div className="space-y-3 mb-4 p-3 rounded-lg bg-muted/50 border border-border">
+              {/* Event */}
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-                  Event (optional)
+                  Event
                 </label>
                 <Input
                   type="text"
                   placeholder="Lions vs Bears"
                   value={formState.event}
                   onChange={(e) => updateField("event", e.target.value)}
+                  className="h-10"
+                />
+              </div>
+
+              {/* Opposing Odds (for accurate vig) */}
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                  Opposing Odds
+                </label>
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="-180"
+                  value={formState.opposing_odds}
+                  onChange={(e) => updateField("opposing_odds", e.target.value)}
+                  className="h-10"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Enter opposing line for accurate vig calculation
+                </p>
+              </div>
+
+              {/* Winnings Cap */}
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                  Winnings Cap
+                </label>
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="e.g. 500"
+                  value={formState.winnings_cap}
+                  onChange={(e) => updateField("winnings_cap", e.target.value)}
+                  className="h-10"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Max payout limit (for capped promos)
+                </p>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                  Notes
+                </label>
+                <Input
+                  type="text"
+                  placeholder="Any additional context..."
+                  value={formState.notes}
+                  onChange={(e) => updateField("notes", e.target.value)}
                   className="h-10"
                 />
               </div>
@@ -422,19 +542,51 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
   );
 }
 
+// Calculate hold from two American odds
+function calculateHoldFromOdds(odds1: number, odds2: number): number | null {
+  if (odds1 === 0 || odds2 === 0) return null;
+  if (Math.abs(odds1) < 100 || Math.abs(odds2) < 100) return null;
+  
+  const decimal1 = americanToDecimal(odds1);
+  const decimal2 = americanToDecimal(odds2);
+  
+  const impliedProb1 = 1 / decimal1;
+  const impliedProb2 = 1 / decimal2;
+  
+  const hold = (impliedProb1 + impliedProb2) - 1;
+  return hold > 0 ? hold : null;
+}
+
 // Client-side EV calculation
 function calculateEVClient(
   oddsAmerican: number,
   stake: number,
   promoType: PromoType,
+  boostPercent: number = 0,
+  winningsCap?: number,
   vig: number = 0.045
 ): { evTotal: number; winPayout: number } {
   if (oddsAmerican === 0 || stake <= 0) {
     return { evTotal: 0, winPayout: 0 };
   }
 
-  const decimalOdds = americanToDecimal(oddsAmerican);
-  const impliedProb = 1 / decimalOdds;
+  let decimalOdds = americanToDecimal(oddsAmerican);
+  
+  // Apply boost if applicable
+  let effectiveBoost = 0;
+  if (promoType === "boost_30") effectiveBoost = 0.3;
+  else if (promoType === "boost_50") effectiveBoost = 0.5;
+  else if (promoType === "boost_100") effectiveBoost = 1.0;
+  else if (promoType === "boost_custom") effectiveBoost = boostPercent / 100;
+  
+  if (effectiveBoost > 0) {
+    // Boost applies to profit portion only
+    const baseProfit = decimalOdds - 1;
+    const boostedProfit = baseProfit * (1 + effectiveBoost);
+    decimalOdds = 1 + boostedProfit;
+  }
+  
+  const impliedProb = 1 / americanToDecimal(oddsAmerican); // Use unboosted for fair prob
   const fairProb = impliedProb / (1 + vig);
 
   let winPayout: number;
@@ -443,11 +595,18 @@ function calculateEVClient(
   if (promoType === "bonus_bet") {
     // Bonus bet: stake not returned on win
     winPayout = stake * (decimalOdds - 1);
-    const fairWinProb = fairProb;
-    evTotal = (fairWinProb * winPayout) - 0; // No risk on bonus bet
+    // Apply cap if set
+    if (winningsCap && winPayout > winningsCap) {
+      winPayout = winningsCap;
+    }
+    evTotal = fairProb * winPayout; // No risk on bonus bet
   } else {
-    // Standard bet
+    // Standard or boosted bet
     winPayout = stake * decimalOdds;
+    // Apply cap if set
+    if (winningsCap && (winPayout - stake) > winningsCap) {
+      winPayout = stake + winningsCap;
+    }
     const profit = winPayout - stake;
     evTotal = (fairProb * profit) - ((1 - fairProb) * stake);
   }
