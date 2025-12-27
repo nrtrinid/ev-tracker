@@ -389,11 +389,11 @@ export default function AnalyticsPage() {
     const totalEV = Object.values(evBySport).reduce((sum, v) => sum + Math.abs(v), 0);
     let otherEV = 0;
     
-    // Group slices < 8% into "Other"
+    // Group slices < 5% into "Other"
     const mainSlices = Object.entries(evBySport)
       .filter(([_, ev]) => {
         const percent = Math.abs(ev) / totalEV;
-        if (percent < 0.08 && totalEV > 0) {
+        if (percent < 0.05 && totalEV > 0) {
           otherEV += ev;
           return false;
         }
@@ -430,11 +430,11 @@ export default function AnalyticsPage() {
     const total = Object.values(counts).reduce((sum, v) => sum + v, 0);
     let otherCount = 0;
     
-    // Group slices < 8% into "Other"
+    // Group slices < 5% into "Other"
     const mainSlices = Object.entries(counts)
       .filter(([_, count]) => {
         const percent = count / total;
-        if (percent < 0.08 && total > 0) {
+        if (percent < 0.05 && total > 0) {
           otherCount += count;
           return false;
         }
@@ -899,11 +899,11 @@ export default function AnalyticsPage() {
                             </Pie>
                             <Tooltip formatter={(value: number) => formatCurrency(value)} />
                             <Legend 
-                              formatter={(value, entry: any) => {
-                                // Get name from payload or value
-                                const name = entry?.payload?.name || entry?.value || value;
-                                return name;
-                              }}
+                              payload={sportChartData.map((entry) => ({
+                                value: entry.name,
+                                type: "square" as const,
+                                color: entry.color,
+                              }))}
                               wrapperStyle={{ fontSize: '11px' }}
                             />
                           </PieChart>
@@ -946,11 +946,11 @@ export default function AnalyticsPage() {
                             </Pie>
                             <Tooltip />
                             <Legend 
-                              formatter={(value, entry: any) => {
-                                // Get name from payload or value
-                                const name = entry?.payload?.name || entry?.value || value;
-                                return name;
-                              }}
+                              payload={promoTypeData.map((entry) => ({
+                                value: entry.name,
+                                type: "square" as const,
+                                color: entry.color,
+                              }))}
                               wrapperStyle={{ fontSize: '11px' }}
                             />
                           </PieChart>
