@@ -861,16 +861,16 @@ export default function AnalyticsPage() {
                               cx="50%" 
                               cy="45%" 
                               outerRadius={55} 
-                              label={({ index, percent }) => {
-                                const entry = sportChartData[index];
-                                if (!entry) return "";
-                                return `${entry.name} ${(percent * 100).toFixed(0)}%`;
+                              label={({ payload, percent }) => {
+                                // Access name from payload (the original data entry)
+                                const name = payload?.name || "";
+                                return `${name} ${(percent * 100).toFixed(0)}%`;
                               }} 
                               labelLine={false} 
                               fontSize={10}
                             >
                               {sportChartData.map((entry, index) => (
-                                <Cell key={index} fill={entry.color} />
+                                <Cell key={index} fill={entry.color} name={entry.name} />
                               ))}
                             </Pie>
                             <Tooltip formatter={(value: number) => formatCurrency(value)} />
@@ -908,16 +908,16 @@ export default function AnalyticsPage() {
                               cx="50%" 
                               cy="45%" 
                               outerRadius={55} 
-                              label={({ index }) => {
-                                const entry = promoTypeData[index];
-                                if (!entry) return "";
-                                return `${entry.name}: ${entry.value}`;
+                              label={({ payload }) => {
+                                const name = payload?.name || "";
+                                const value = payload?.value || 0;
+                                return `${name}: ${value}`;
                               }} 
                               labelLine={false} 
                               fontSize={10}
                             >
                               {promoTypeData.map((entry, index) => (
-                                <Cell key={index} fill={entry.color} />
+                                <Cell key={index} fill={entry.color} name={entry.name} />
                               ))}
                             </Pie>
                             <Tooltip />
