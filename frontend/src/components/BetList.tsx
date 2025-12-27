@@ -232,9 +232,11 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
           {headerRight}
         </div>
 
-        {/* Data Row: Odds, Stake, EV, To Win/Profit */}
-        <div className="grid grid-cols-4 gap-4 text-sm">
-          <div>
+        {/* Data Grid: 2x2 on mobile, 4-col on desktop */}
+        {/* Mobile: Row 1 = Math (Odds, EV), Row 2 = Money (Stake, To Win) */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3 md:gap-y-0 text-sm">
+          {/* Odds - Col 1 on mobile, Col 1 on desktop */}
+          <div className="order-1 md:order-1">
             <p className="text-muted-foreground text-xs">Odds</p>
             {(() => {
               const boostedOdds = calculateBoostedOdds(
@@ -245,28 +247,31 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
               
               if (boostedOdds) {
                 return (
-                  <p className="font-mono font-semibold">
-                    <span className="line-through text-muted-foreground/60 mr-1.5">
+                  <div className="font-mono font-semibold flex flex-col md:flex-row md:items-baseline">
+                    <span className="line-through text-muted-foreground/60 text-xs md:mr-1.5">
                       {formatOdds(bet.odds_american)}
                     </span>
                     <span className="text-foreground">{formatOdds(boostedOdds)}</span>
-                  </p>
+                  </div>
                 );
               }
               return <p className="font-mono font-semibold">{formatOdds(bet.odds_american)}</p>;
             })()}
           </div>
-          <div>
-            <p className="text-muted-foreground text-xs">Stake</p>
-            <p className="font-mono font-medium">{formatCurrency(bet.stake)}</p>
-          </div>
-          <div>
+          {/* EV - Col 2 on mobile, Col 3 on desktop */}
+          <div className="order-2 md:order-3">
             <p className="text-muted-foreground text-xs">EV</p>
             <p className={cn("font-mono font-semibold", bet.ev_total >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
               {bet.ev_total >= 0 ? "+" : ""}{formatCurrency(bet.ev_total)}
             </p>
           </div>
-          <div>
+          {/* Stake - Col 1 on mobile row 2, Col 2 on desktop */}
+          <div className="order-3 md:order-2">
+            <p className="text-muted-foreground text-xs">Stake</p>
+            <p className="font-mono font-medium">{formatCurrency(bet.stake)}</p>
+          </div>
+          {/* To Win/Profit - Col 2 on mobile row 2, Col 4 on desktop */}
+          <div className="order-4 md:order-4">
             <p className="text-muted-foreground text-xs">{mode === "settled" ? "Profit" : "To Win"}</p>
             <p className={cn(
               "font-mono font-semibold",
@@ -500,26 +505,38 @@ function PendingCard({ bet, onEdit, onResultChange }: PendingCardProps) {
     </DropdownMenu>
   );
 
+  const handleWin = () => {
+    // Haptic feedback on mobile
+    if (typeof navigator !== "undefined" && navigator.vibrate) {
+      navigator.vibrate(10);
+    }
+    onResultChange(bet, "win", "pending");
+  };
+
+  const handleLoss = () => {
+    // Haptic feedback on mobile
+    if (typeof navigator !== "undefined" && navigator.vibrate) {
+      navigator.vibrate(10);
+    }
+    onResultChange(bet, "loss", "pending");
+  };
+
   const footer = (
-    <div className="flex gap-3 pt-2">
-      <Button
-        size="lg"
-        variant="outline"
-        className="flex-1 h-12 text-green-600 border-green-200 hover:bg-green-50 hover:text-green-700 hover:border-green-300"
-        onClick={() => onResultChange(bet, "win", "pending")}
+    <div className="flex gap-2 pt-2 border-t border-border mt-1">
+      <button
+        className="flex-1 h-8 min-h-[44px] flex items-center justify-center gap-1.5 text-sm font-medium rounded-md text-emerald-600 border border-emerald-200 bg-emerald-50/30 hover:bg-emerald-100/50 active:bg-emerald-100 transition-colors"
+        onClick={handleWin}
       >
-        <Check className="h-5 w-5 mr-2" />
+        <Check className="h-4 w-4" />
         Won
-      </Button>
-      <Button
-        size="lg"
-        variant="outline"
-        className="flex-1 h-12 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700 hover:border-red-300"
-        onClick={() => onResultChange(bet, "loss", "pending")}
+      </button>
+      <button
+        className="flex-1 h-8 min-h-[44px] flex items-center justify-center gap-1.5 text-sm font-medium rounded-md text-rose-600 border border-rose-200 bg-rose-50/30 hover:bg-rose-100/50 active:bg-rose-100 transition-colors"
+        onClick={handleLoss}
       >
-        <X className="h-5 w-5 mr-2" />
+        <X className="h-4 w-4" />
         Lost
-      </Button>
+      </button>
     </div>
   );
 
@@ -780,13 +797,35 @@ export function BetList() {
     <>
       <Card className="overflow-visible">
         <CardHeader className="pb-3">
-          {/* Compact Header: Tabs + Filter Button */}
-          <div className="flex items-center justify-between -mx-2 -mt-2 mb-2">
-            {/* Manila folder tabs: Pending | History */}
-            <div className="flex gap-1">
+          {/* Row 1: Title + Filter Button */}
+          <div className="flex items-center justify-between -mx-2 -mt-2 mb-3">
+            <h2 className="text-lg font-semibold px-2">Tracker</h2>
+            
+            {/* Filter Button with Badge */}
+            <button
+              onClick={() => setFilterDrawerOpen(true)}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
+                activeFilterCount > 0
+                  ? "bg-foreground text-background"
+                  : "bg-muted text-muted-foreground hover:bg-secondary"
+              )}
+            >
+              <SlidersHorizontal className="h-4 w-4" />
+              <span className="hidden sm:inline">Filter</span>
+              {activeFilterCount > 0 && (
+                <span className="ml-0.5 px-1.5 py-0.5 text-xs rounded-full bg-background text-foreground">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+          </div>
+          
+          {/* Row 2: Full-width Tabs */}
+          <div className="flex gap-1 -mx-2 mb-2">
             <button
               className={cn(
-                "folder-tab px-4 py-2 flex items-center gap-2",
+                "folder-tab flex-1 px-4 py-2.5 flex items-center justify-center gap-2",
                 activeTab === "pending" ? "folder-tab-active" : "folder-tab-inactive"
               )}
               onClick={() => setActiveTab("pending")}
@@ -806,7 +845,7 @@ export function BetList() {
             </button>
             <button
               className={cn(
-                "folder-tab px-4 py-2 flex items-center gap-2",
+                "folder-tab flex-1 px-4 py-2.5 flex items-center justify-center gap-2",
                 activeTab === "history" ? "folder-tab-active" : "folder-tab-inactive"
               )}
               onClick={() => setActiveTab("history")}
@@ -819,26 +858,6 @@ export function BetList() {
               )}>
                 ({settledBets.length})
               </span>
-            </button>
-            </div>
-            
-            {/* Filter Button with Badge */}
-            <button
-              onClick={() => setFilterDrawerOpen(true)}
-              className={cn(
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
-                activeFilterCount > 0
-                  ? "bg-foreground text-background"
-                  : "bg-muted text-muted-foreground hover:bg-secondary"
-              )}
-            >
-              <SlidersHorizontal className="h-4 w-4" />
-              Filter
-              {activeFilterCount > 0 && (
-                <span className="ml-0.5 px-1.5 py-0.5 text-xs rounded-full bg-background text-foreground">
-                  {activeFilterCount}
-                </span>
-              )}
             </button>
           </div>
           
