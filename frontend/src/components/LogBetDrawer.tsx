@@ -199,7 +199,8 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
           notes: "",
         }));
         setTimeout(() => {
-          oddsInputRef.current?.focus();
+          const input = document.querySelector('[data-odds-input]') as HTMLInputElement;
+          input?.focus();
         }, 50);
       } else {
         // Single mode: Close drawer and reset

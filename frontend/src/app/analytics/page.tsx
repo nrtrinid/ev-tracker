@@ -389,11 +389,11 @@ export default function AnalyticsPage() {
     const totalEV = Object.values(evBySport).reduce((sum, v) => sum + Math.abs(v), 0);
     let otherEV = 0;
     
-    // Group slices < 12% into "Other"
+    // Group slices < 5% into "Other"
     const mainSlices = Object.entries(evBySport)
       .filter(([_, ev]) => {
         const percent = Math.abs(ev) / totalEV;
-        if (percent < 0.12 && totalEV > 0) {
+        if (percent < 0.05 && totalEV > 0) {
           otherEV += ev;
           return false;
         }
@@ -430,11 +430,11 @@ export default function AnalyticsPage() {
     const total = Object.values(counts).reduce((sum, v) => sum + v, 0);
     let otherCount = 0;
     
-    // Group slices < 12% into "Other"
+    // Group slices < 5% into "Other"
     const mainSlices = Object.entries(counts)
       .filter(([_, count]) => {
         const percent = count / total;
-        if (percent < 0.12 && total > 0) {
+        if (percent < 0.05 && total > 0) {
           otherCount += count;
           return false;
         }
@@ -883,12 +883,11 @@ export default function AnalyticsPage() {
                               cx="50%" 
                               cy="50%" 
                               outerRadius={60} 
-                              label={({ name, percent }) => {
-                                // Always show label for "Other", show others if percent >= 3%
-                                if (name === "Other" || percent >= 0.03) {
-                                  return `${name} ${(percent * 100).toFixed(0)}%`;
-                                }
-                                return "";
+                              label={({ index, percent }) => {
+                                const entry = sportChartData[index];
+                                if (!entry) return "";
+                                // Always show label
+                                return `${entry.name} ${(percent * 100).toFixed(0)}%`;
                               }} 
                               labelLine={false} 
                               fontSize={10}
@@ -930,12 +929,11 @@ export default function AnalyticsPage() {
                               cx="50%" 
                               cy="50%" 
                               outerRadius={60} 
-                              label={({ name, value, percent }) => {
-                                // Always show label for "Other", show others if percent >= 3%
-                                if (name === "Other" || percent >= 0.03) {
-                                  return `${name}: ${value}`;
-                                }
-                                return "";
+                              label={({ index }) => {
+                                const entry = promoTypeData[index];
+                                if (!entry) return "";
+                                // Always show label
+                                return `${entry.name}: ${entry.value}`;
                               }} 
                               labelLine={false} 
                               fontSize={10}
