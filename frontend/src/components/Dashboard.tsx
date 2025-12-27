@@ -71,7 +71,7 @@ export function Dashboard() {
           <CardContent className="p-4 flex flex-col items-center justify-center">
             <div className="flex items-center gap-1.5 text-muted-foreground mb-1">
               <Activity className="h-3.5 w-3.5" />
-              <span className="text-xs font-medium uppercase tracking-wide">Conversion</span>
+              <span className="text-xs font-medium uppercase tracking-wide">EV Conversion</span>
             </div>
             <p className={cn(
               "text-xl sm:text-2xl font-bold font-mono tracking-tight",
