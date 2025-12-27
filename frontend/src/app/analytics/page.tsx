@@ -667,7 +667,7 @@ export default function AnalyticsPage() {
                         tickFormatter={(v) => `$${v}`} 
                         fontSize={11} 
                         stroke="hsl(var(--muted-foreground))"
-                        width={60}
+                        width={45}
                       />
                       <Tooltip 
                         formatter={(value: number, name: string) => [
