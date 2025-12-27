@@ -104,10 +104,10 @@ export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>
             type="button"
             onClick={handleToggleSign}
             className={cn(
-              "h-12 w-12 flex items-center justify-center rounded-l-md border border-r-0 border-input bg-muted font-mono text-lg font-semibold transition-colors shrink-0",
+              "h-12 w-10 flex items-center justify-center rounded-l-md border-r border-input bg-background font-mono text-base font-medium transition-all shrink-0",
               isPositive
-                ? "text-emerald-600 hover:bg-emerald-50/50"
-                : "text-rose-600 hover:bg-rose-50/50"
+                ? "text-[#4A7C59] hover:bg-[#4A7C59]/5 hover:border-[#4A7C59]/20"
+                : "text-[#B85C38] hover:bg-[#B85C38]/5 hover:border-[#B85C38]/20"
             )}
             tabIndex={-1}
           >
