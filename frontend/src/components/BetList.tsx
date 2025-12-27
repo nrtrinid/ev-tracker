@@ -20,7 +20,8 @@ import {
   SheetTitle,
   SheetClose,
 } from "@/components/ui/sheet";
-import { useBets, useUpdateBetResult, useDeleteBet, useBalances } from "@/lib/hooks";
+import { useBets, useUpdateBetResult, useDeleteBet, useCreateBet, useBalances } from "@/lib/hooks";
+import { Skeleton } from "@/components/ui/skeleton";
 import { EditBetModal } from "@/components/EditBetModal";
 import type { Bet, BetResult } from "@/lib/types";
 import { formatCurrency, formatOdds, cn, formatRelativeTime, formatShortDate, formatFullDateTime, americanToDecimal, decimalToAmerican, calculateImpliedProb, calculateHoldFromOdds } from "@/lib/utils";
@@ -422,17 +423,10 @@ interface PendingCardProps {
   bet: Bet;
   onEdit: (bet: Bet) => void;
   onResultChange: (bet: Bet, result: BetResult, previousResult: BetResult) => void;
+  onDelete: (bet: Bet) => void;
 }
 
-function PendingCard({ bet, onEdit, onResultChange }: PendingCardProps) {
-  const deleteBet = useDeleteBet();
-
-  const handleDelete = () => {
-    deleteBet.mutate(bet.id, {
-      onSuccess: () => toast.success("Bet deleted"),
-      onError: () => toast.error("Failed to delete bet"),
-    });
-  };
+function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps) {
 
   const headerRight = (
     <DropdownMenu>
@@ -497,7 +491,7 @@ function PendingCard({ bet, onEdit, onResultChange }: PendingCardProps) {
           </DropdownMenuSubContent>
         </DropdownMenuSub>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={handleDelete} className="text-red-600">
+        <DropdownMenuItem onClick={() => onDelete(bet)} className="text-red-600">
           <Trash2 className="h-4 w-4 mr-2" />
           Delete
         </DropdownMenuItem>
@@ -549,10 +543,10 @@ interface HistoryCardProps {
   bet: Bet;
   onEdit: (bet: Bet) => void;
   onResultChange: (bet: Bet, result: BetResult, previousResult: BetResult) => void;
+  onDelete: (bet: Bet) => void;
 }
 
-function HistoryCard({ bet, onEdit, onResultChange }: HistoryCardProps) {
-  const deleteBet = useDeleteBet();
+function HistoryCard({ bet, onEdit, onResultChange, onDelete }: HistoryCardProps) {
   const config = resultConfig[bet.result];
   
   // Random stamp rotation for realistic hand-stamped look - re-randomizes when result changes
@@ -562,13 +556,6 @@ function HistoryCard({ bet, onEdit, onResultChange }: HistoryCardProps) {
   useEffect(() => {
     setRandomRotation(Math.floor(Math.random() * 7) - 3);
   }, [bet.result]);
-
-  const handleDelete = () => {
-    deleteBet.mutate(bet.id, {
-      onSuccess: () => toast.success("Bet deleted"),
-      onError: () => toast.error("Failed to delete bet"),
-    });
-  };
 
   const headerRight = (
     <div className="flex items-center gap-2">
@@ -642,7 +629,7 @@ function HistoryCard({ bet, onEdit, onResultChange }: HistoryCardProps) {
             </DropdownMenuSubContent>
           </DropdownMenuSub>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={handleDelete} className="text-red-600">
+          <DropdownMenuItem onClick={() => onDelete(bet)} className="text-red-600">
             <Trash2 className="h-4 w-4 mr-2" />
             Delete
           </DropdownMenuItem>
@@ -665,6 +652,8 @@ export function BetList() {
   const { data: bets, isLoading, error } = useBets();
   const { data: balances } = useBalances();
   const updateResult = useUpdateBetResult();
+  const deleteBet = useDeleteBet();
+  const createBet = useCreateBet();
   const [editingBet, setEditingBet] = useState<Bet | null>(null);
   const [activeTab, setActiveTab] = useState<"pending" | "history">("pending");
   
@@ -746,13 +735,84 @@ export function BetList() {
     );
   };
 
+  // Handle delete with undo toast
+  const handleDeleteWithUndo = (bet: Bet) => {
+    // Store bet data for potential undo
+    const betData = {
+      sport: bet.sport,
+      event: bet.event,
+      market: bet.market,
+      sportsbook: bet.sportsbook,
+      promo_type: bet.promo_type,
+      odds_american: bet.odds_american,
+      stake: bet.stake,
+      boost_percent: bet.boost_percent || undefined,
+      winnings_cap: bet.winnings_cap || undefined,
+      notes: bet.notes || undefined,
+      opposing_odds: bet.opposing_odds || undefined,
+      event_date: bet.event_date || undefined,
+    };
+
+    deleteBet.mutate(bet.id, {
+      onSuccess: () => {
+        toast("Bet deleted", {
+          description: `${bet.sportsbook} • ${formatCurrency(bet.stake)}`,
+          duration: 5000,
+          action: {
+            label: "Undo",
+            onClick: () => {
+              createBet.mutate(betData, {
+                onSuccess: () => toast.success("Bet restored"),
+                onError: () => toast.error("Failed to restore bet"),
+              });
+            },
+          },
+        });
+      },
+      onError: () => {
+        toast.error("Failed to delete bet");
+      },
+    });
+  };
+
   if (isLoading) {
     return (
-      <Card>
-        <CardContent className="py-8 text-center text-muted-foreground">
-          Loading bets...
-        </CardContent>
-      </Card>
+      <div className="space-y-3">
+        {/* Skeleton cards */}
+        {[1, 2, 3].map((i) => (
+          <Card key={i}>
+            <CardHeader className="pb-2 pt-3 px-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Skeleton className="h-5 w-5 rounded" />
+                  <Skeleton className="h-4 w-24" />
+                </div>
+                <Skeleton className="h-5 w-12" />
+              </div>
+            </CardHeader>
+            <CardContent className="px-4 pb-3 pt-0">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div>
+                  <Skeleton className="h-3 w-10 mb-1" />
+                  <Skeleton className="h-5 w-14" />
+                </div>
+                <div>
+                  <Skeleton className="h-3 w-8 mb-1" />
+                  <Skeleton className="h-5 w-12" />
+                </div>
+                <div>
+                  <Skeleton className="h-3 w-10 mb-1" />
+                  <Skeleton className="h-5 w-16" />
+                </div>
+                <div>
+                  <Skeleton className="h-3 w-12 mb-1" />
+                  <Skeleton className="h-5 w-14" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
     );
   }
 
@@ -938,6 +998,7 @@ export function BetList() {
                     bet={bet}
                     onEdit={setEditingBet}
                     onResultChange={handleResultChange}
+                    onDelete={handleDeleteWithUndo}
                   />
                 ))
               )}
@@ -965,6 +1026,7 @@ export function BetList() {
                     bet={bet}
                     onEdit={setEditingBet}
                     onResultChange={handleResultChange}
+                    onDelete={handleDeleteWithUndo}
                   />
                 ))
               )}

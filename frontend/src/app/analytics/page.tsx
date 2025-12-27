@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Sheet,
   SheetContent,
@@ -492,9 +493,52 @@ export default function AnalyticsPage() {
       
       <div className="container mx-auto px-4 py-6 space-y-6 max-w-4xl">
         {isLoading ? (
-          <div className="text-center py-12 text-muted-foreground">
-            <Activity className="h-8 w-8 mx-auto mb-2 animate-pulse text-[#C4A35A]" />
-            <p>Loading analytics...</p>
+          <div className="space-y-6">
+            {/* Summary Cards Skeleton */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {[1, 2, 3, 4].map((i) => (
+                <Card key={i}>
+                  <CardContent className="p-4">
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <Skeleton className="h-3.5 w-3.5 rounded" />
+                      <Skeleton className="h-3 w-16" />
+                    </div>
+                    <Skeleton className="h-7 w-20" />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+            
+            {/* Chart Skeletons */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Card>
+                <CardHeader className="pb-2">
+                  <Skeleton className="h-5 w-32" />
+                </CardHeader>
+                <CardContent>
+                  <Skeleton className="h-[200px] w-full rounded" />
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <Skeleton className="h-5 w-28" />
+                </CardHeader>
+                <CardContent>
+                  <Skeleton className="h-[200px] w-full rounded" />
+                </CardContent>
+              </Card>
+            </div>
+            
+            {/* Line Chart Skeleton */}
+            <Card>
+              <CardHeader className="pb-2">
+                <Skeleton className="h-5 w-40" />
+                <Skeleton className="h-3 w-56 mt-1" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-[200px] w-full rounded" />
+              </CardContent>
+            </Card>
           </div>
         ) : (
           <>
