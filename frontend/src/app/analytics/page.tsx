@@ -483,8 +483,8 @@ export default function AnalyticsPage() {
 
   return (
     <main className="min-h-screen bg-background">
-      {/* Sticky Filter Bar - Outside container for proper positioning */}
-      <div className="sticky top-0 z-10 w-full py-3 bg-background border-b border-border shadow-sm">
+      {/* Sticky Filter Bar - Positioned below TopNav (56px) */}
+      <div className="sticky top-14 z-10 w-full py-3 bg-[#FAF8F5] border-b border-border shadow-sm">
         <div className="container mx-auto px-4 max-w-4xl">
           <div className="flex justify-between items-center">
             <h1 className="text-lg font-semibold">Analytics</h1>
