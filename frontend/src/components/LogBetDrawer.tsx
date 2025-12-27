@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SmartOddsInput, type SmartOddsInputRef } from "@/components/SmartOddsInput";
 import {
   Sheet,
   SheetContent,
@@ -100,7 +101,8 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
   });
   const [showAdvanced, setShowAdvanced] = useState(false);
   
-  const oddsInputRef = useRef<HTMLInputElement>(null);
+  const oddsInputRef = useRef<SmartOddsInputRef>(null);
+  const opposingOddsInputRef = useRef<SmartOddsInputRef>(null);
   const createBet = useCreateBet();
 
   // Initialize sticky values on mount
@@ -113,15 +115,17 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
       }));
       // Focus odds input after a short delay to let drawer animate
       setTimeout(() => {
-        oddsInputRef.current?.focus();
+        // Focus the actual input element inside SmartOddsInput
+        const input = document.querySelector('[data-odds-input]') as HTMLInputElement;
+        input?.focus();
       }, 300);
     }
   }, [open]);
 
-  // Parse numeric values
-  const oddsNum = parseFloat(formState.odds) || 0;
+  // Parse numeric values - get signed values from SmartOddsInput refs
+  const oddsNum = oddsInputRef.current?.getSignedValue() || 0;
   const stakeNum = parseFloat(formState.stake) || 0;
-  const opposingOddsNum = parseFloat(formState.opposing_odds) || 0;
+  const opposingOddsNum = opposingOddsInputRef.current?.getSignedValue() || 0;
   const boostPercentNum = parseFloat(formState.boost_percent) || 0;
   const payoutOverrideNum = parseFloat(formState.payout_override) || 0;
 
@@ -284,20 +288,15 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
 
           {/* Odds & Stake - Side by Side */}
           <div className="grid grid-cols-2 gap-3 mb-4">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-                Odds
-              </label>
-              <Input
-                ref={oddsInputRef}
-                type="text"
-                inputMode="numeric"
-                placeholder="+150"
-                value={formState.odds}
-                onChange={(e) => updateField("odds", e.target.value)}
-                className="h-12 text-lg font-mono text-center"
-              />
-            </div>
+            <SmartOddsInput
+              ref={oddsInputRef}
+              value={formState.odds}
+              onChange={(value) => updateField("odds", value)}
+              placeholder="150"
+              defaultSign="+"
+              label="Odds"
+              className="[&_input]:h-12 [&_input]:text-lg"
+            />
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
                 Stake
@@ -442,16 +441,14 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
 
               {/* Opposing Odds (for accurate vig) */}
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-                  Opposing Odds
-                </label>
-                <Input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="-180"
+                <SmartOddsInput
+                  ref={opposingOddsInputRef}
                   value={formState.opposing_odds}
-                  onChange={(e) => updateField("opposing_odds", e.target.value)}
-                  className="h-10"
+                  onChange={(value) => updateField("opposing_odds", value)}
+                  placeholder="180"
+                  defaultSign="-"
+                  label="Opposing Odds"
+                  className="[&_input]:h-10"
                 />
                 <p className="text-xs text-muted-foreground mt-1">
                   Enter opposing line for accurate vig calculation

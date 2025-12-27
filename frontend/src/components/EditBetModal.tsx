@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SmartOddsInput, type SmartOddsInputRef } from "@/components/SmartOddsInput";
 import {
   Dialog,
   DialogContent,
@@ -53,7 +54,8 @@ interface EditBetModalProps {
 export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
   const updateBet = useUpdateBet();
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const oddsInputRef = useRef<HTMLInputElement>(null);
+  const oddsInputRef = useRef<SmartOddsInputRef>(null);
+  const opposingOddsInputRef = useRef<SmartOddsInputRef>(null);
 
   const [formData, setFormData] = useState({
     sportsbook: "",
@@ -79,11 +81,11 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
         event: bet.event,
         market: bet.market,
         promo_type: bet.promo_type,
-        odds: String(bet.odds_american),
+        odds: String(Math.abs(bet.odds_american)),
         stake: String(bet.stake),
         boost_percent: bet.boost_percent ? String(bet.boost_percent) : "",
         winnings_cap: bet.winnings_cap ? String(bet.winnings_cap) : "",
-        opposing_odds: "",
+        opposing_odds: bet.opposing_odds ? String(Math.abs(bet.opposing_odds)) : "",
         notes: bet.notes || "",
         event_date: bet.event_date || "",
       });
@@ -96,9 +98,9 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
-  const oddsNum = parseFloat(formData.odds) || 0;
+  const oddsNum = oddsInputRef.current?.getSignedValue() || 0;
   const stakeNum = parseFloat(formData.stake) || 0;
-  const opposingOddsNum = parseFloat(formData.opposing_odds) || 0;
+  const opposingOddsNum = opposingOddsInputRef.current?.getSignedValue() || 0;
 
   // Get smart vig default based on market
   const defaultVig = MARKET_VIG[formData.market] || 0.045;
@@ -266,19 +268,15 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
 
           {/* Odds and Stake */}
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-sm font-medium mb-2 block">
-                Odds (American)
-              </label>
-              <Input
-                ref={oddsInputRef}
-                type="number"
-                placeholder="+150 or -110"
-                value={formData.odds}
-                onChange={(e) => updateField("odds", e.target.value)}
-                className="text-lg font-mono"
-              />
-            </div>
+            <SmartOddsInput
+              ref={oddsInputRef}
+              value={formData.odds}
+              onChange={(value) => updateField("odds", value)}
+              placeholder="150"
+              defaultSign="+"
+              label="Odds (American)"
+              className="[&_input]:text-lg"
+            />
             <div>
               <label className="text-sm font-medium mb-2 block">Stake ($)</label>
               <Input
@@ -332,15 +330,14 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
 
               {/* Opposing Odds - For precise vig calculation */}
               <div>
-                <label className="text-sm font-medium mb-2 block">
-                  Opposing Line <span className="text-muted-foreground font-normal">(optional)</span>
-                </label>
-                <Input
-                  type="number"
-                  placeholder="e.g. -180 for the other side"
+                <SmartOddsInput
+                  ref={opposingOddsInputRef}
                   value={formData.opposing_odds}
-                  onChange={(e) => updateField("opposing_odds", e.target.value)}
-                  className="font-mono"
+                  onChange={(value) => updateField("opposing_odds", value)}
+                  placeholder="180"
+                  defaultSign="-"
+                  label="Opposing Line (optional)"
+                  className="[&_input]:font-mono"
                 />
                 {calculatedVig !== null && (
                   <p className="text-xs text-muted-foreground mt-1">
