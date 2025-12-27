@@ -426,10 +426,10 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
 
           {showAdvanced && (
             <div className="space-y-3 mb-4 p-3 rounded-lg bg-muted/50 border border-border">
-              {/* Event */}
+              {/* Proposition */}
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-                  Event
+                  Proposition
                 </label>
                 <Input
                   type="text"

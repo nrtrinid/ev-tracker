@@ -322,7 +322,7 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
               {/* Selection Name */}
               <div>
                 <label className="text-sm font-medium mb-2 block">
-                  Selection Name <span className="text-muted-foreground font-normal">(optional)</span>
+                  Proposition <span className="text-muted-foreground font-normal">(optional)</span>
                 </label>
                 <Input
                   placeholder="e.g. Lakers, Chiefs -3, LeBron 25+ pts"
