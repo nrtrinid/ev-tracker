@@ -61,7 +61,7 @@ export function Dashboard() {
               <span className="text-xs font-medium uppercase tracking-wide">Total EV</span>
             </div>
             <p className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-[#C4A35A]">
-              +{formatCurrency(summary.total_ev)}
+              {summary.total_ev >= 0 ? "+" : ""}{formatCurrency(summary.total_ev)}
             </p>
           </CardContent>
         </Card>
@@ -93,7 +93,7 @@ export function Dashboard() {
               <span className="text-xs font-medium uppercase tracking-wide">Pending</span>
             </div>
             <p className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-[#C4A35A]">
-              +{formatCurrency(pendingEV)}
+              {pendingEV >= 0 ? "+" : ""}{formatCurrency(pendingEV)}
             </p>
             <p className="text-[10px] text-muted-foreground">
               {pendingBets.length} bet{pendingBets.length !== 1 ? "s" : ""}

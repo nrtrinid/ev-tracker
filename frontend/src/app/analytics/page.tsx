@@ -631,7 +631,7 @@ export default function AnalyticsPage() {
                 <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">Pending EV</p>
                   <p className="text-xl sm:text-2xl font-bold font-mono text-[#C4A35A] leading-tight">
-                    +{formatCurrency(pendingEV)}
+                    {pendingEV >= 0 ? "+" : ""}{formatCurrency(pendingEV)}
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {pendingBets.length} bet{pendingBets.length !== 1 ? "s" : ""}

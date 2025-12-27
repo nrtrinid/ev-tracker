@@ -183,7 +183,7 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
 
       toast.success("Bet logged!", {
         id: toastId,
-        description: `+${formatCurrency(ev.evTotal)} EV on ${formState.sportsbook}`,
+        description: `${ev.evTotal >= 0 ? "+" : ""}${formatCurrency(ev.evTotal)} EV on ${formState.sportsbook}`,
       });
 
       if (keepOpen) {
