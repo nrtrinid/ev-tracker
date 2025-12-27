@@ -418,7 +418,7 @@ export default function AnalyticsPage() {
     return mainSlices;
   }, [filteredBets]);
 
-  // Bets by promo type (from filtered bets)
+  // Bets by promo type (from filtered bets) - no "Other" grouping since there are limited types
   const promoTypeData = useMemo(() => {
     const counts: Record<string, number> = {};
     
@@ -427,35 +427,13 @@ export default function AnalyticsPage() {
       counts[label] = (counts[label] || 0) + 1;
     });
     
-    const total = Object.values(counts).reduce((sum, v) => sum + v, 0);
-    let otherCount = 0;
-    
-    // Group slices < 5% into "Other"
-    const mainSlices = Object.entries(counts)
-      .filter(([_, count]) => {
-        const percent = count / total;
-        if (percent < 0.05 && total > 0) {
-          otherCount += count;
-          return false;
-        }
-        return true;
-      })
+    return Object.entries(counts)
       .map(([name, value], i) => ({
         name,
         value,
         color: CHART_COLORS[i % CHART_COLORS.length],
-      }));
-    
-    // Add "Other" slice if needed
-    if (otherCount > 0) {
-      mainSlices.push({
-        name: "Other",
-        value: otherCount,
-        color: "#E7E5E4", // stone-200
-      });
-    }
-    
-    return mainSlices;
+      }))
+      .sort((a, b) => b.value - a.value);
   }, [filteredBets]);
 
   // Cumulative EV vs Real Profit over time (by date)
@@ -874,19 +852,18 @@ export default function AnalyticsPage() {
                     </CardHeader>
                     <CardContent>
                       {sportChartData.length > 0 ? (
-                        <ResponsiveContainer width="100%" height={200}>
+                        <ResponsiveContainer width="100%" height={220}>
                           <PieChart>
                             <Pie 
                               data={sportChartData} 
                               dataKey="value" 
                               nameKey="name" 
                               cx="50%" 
-                              cy="50%" 
-                              outerRadius={60} 
+                              cy="45%" 
+                              outerRadius={55} 
                               label={({ index, percent }) => {
                                 const entry = sportChartData[index];
                                 if (!entry) return "";
-                                // Always show label
                                 return `${entry.name} ${(percent * 100).toFixed(0)}%`;
                               }} 
                               labelLine={false} 
@@ -903,7 +880,9 @@ export default function AnalyticsPage() {
                                 type: "square" as const,
                                 color: entry.color,
                               }))}
-                              wrapperStyle={{ fontSize: '11px' }}
+                              wrapperStyle={{ fontSize: '10px', paddingTop: '8px' }}
+                              layout="horizontal"
+                              align="center"
                             />
                           </PieChart>
                         </ResponsiveContainer>
@@ -920,19 +899,18 @@ export default function AnalyticsPage() {
                     </CardHeader>
                     <CardContent>
                       {promoTypeData.length > 0 ? (
-                        <ResponsiveContainer width="100%" height={200}>
+                        <ResponsiveContainer width="100%" height={220}>
                           <PieChart>
                             <Pie 
                               data={promoTypeData} 
                               dataKey="value" 
                               nameKey="name" 
                               cx="50%" 
-                              cy="50%" 
-                              outerRadius={60} 
+                              cy="45%" 
+                              outerRadius={55} 
                               label={({ index }) => {
                                 const entry = promoTypeData[index];
                                 if (!entry) return "";
-                                // Always show label
                                 return `${entry.name}: ${entry.value}`;
                               }} 
                               labelLine={false} 
@@ -949,7 +927,9 @@ export default function AnalyticsPage() {
                                 type: "square" as const,
                                 color: entry.color,
                               }))}
-                              wrapperStyle={{ fontSize: '11px' }}
+                              wrapperStyle={{ fontSize: '10px', paddingTop: '8px' }}
+                              layout="horizontal"
+                              align="center"
                             />
                           </PieChart>
                         </ResponsiveContainer>
