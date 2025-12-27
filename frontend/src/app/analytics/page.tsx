@@ -883,7 +883,13 @@ export default function AnalyticsPage() {
                               cx="50%" 
                               cy="50%" 
                               outerRadius={60} 
-                              label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} 
+                              label={({ name, percent }) => {
+                                // Always show label for "Other", show others if percent >= 3%
+                                if (name === "Other" || percent >= 0.03) {
+                                  return `${name} ${(percent * 100).toFixed(0)}%`;
+                                }
+                                return "";
+                              }} 
                               labelLine={false} 
                               fontSize={10}
                             >
@@ -894,8 +900,9 @@ export default function AnalyticsPage() {
                             <Tooltip formatter={(value: number) => formatCurrency(value)} />
                             <Legend 
                               formatter={(value, entry: any) => {
-                                const name = entry?.payload?.name || value;
-                                return name === "Other" ? "Other" : name;
+                                // Get name from payload or value
+                                const name = entry?.payload?.name || entry?.value || value;
+                                return name;
                               }}
                               wrapperStyle={{ fontSize: '11px' }}
                             />
@@ -923,7 +930,13 @@ export default function AnalyticsPage() {
                               cx="50%" 
                               cy="50%" 
                               outerRadius={60} 
-                              label={({ name, value }) => `${name}: ${value}`} 
+                              label={({ name, value, percent }) => {
+                                // Always show label for "Other", show others if percent >= 3%
+                                if (name === "Other" || percent >= 0.03) {
+                                  return `${name}: ${value}`;
+                                }
+                                return "";
+                              }} 
                               labelLine={false} 
                               fontSize={10}
                             >
@@ -934,8 +947,9 @@ export default function AnalyticsPage() {
                             <Tooltip />
                             <Legend 
                               formatter={(value, entry: any) => {
-                                const name = entry?.payload?.name || value;
-                                return name === "Other" ? "Other" : name;
+                                // Get name from payload or value
+                                const name = entry?.payload?.name || entry?.value || value;
+                                return name;
                               }}
                               wrapperStyle={{ fontSize: '11px' }}
                             />
