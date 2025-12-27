@@ -483,6 +483,32 @@ export default function AnalyticsPage() {
 
   return (
     <main className="min-h-screen bg-background">
+      {/* Sticky Filter Bar - Outside container for proper positioning */}
+      <div className="sticky top-0 z-10 w-full py-3 bg-background border-b border-border shadow-sm">
+        <div className="container mx-auto px-4 max-w-4xl">
+          <div className="flex justify-between items-center">
+            <h1 className="text-lg font-semibold">Analytics</h1>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setFilterOpen(true)}
+              className={cn(
+                "gap-2",
+                hasActiveFilters && "border-foreground bg-foreground/5"
+              )}
+            >
+              <SlidersHorizontal className="h-4 w-4" />
+              <span className="hidden sm:inline">Filter</span>
+              {hasActiveFilters && (
+                <span className="bg-foreground text-background text-xs font-semibold px-1.5 py-0.5 rounded-full">
+                  {activeFilterCount}
+                </span>
+              )}
+            </Button>
+          </div>
+        </div>
+      </div>
+      
       <div className="container mx-auto px-4 py-6 space-y-6 max-w-4xl">
         {isLoading ? (
           <div className="text-center py-12 text-muted-foreground">
@@ -491,29 +517,6 @@ export default function AnalyticsPage() {
           </div>
         ) : (
           <>
-            {/* Sticky Filter Bar */}
-            <div className="sticky top-0 z-10 -mx-4 px-4 py-3 bg-background border-b border-transparent transition-shadow [&:has(+_:hover)]:border-border" style={{ backgroundColor: "hsl(40, 33%, 97%)" }}>
-              <div className="flex justify-between items-center">
-                <h1 className="text-lg font-semibold">Analytics</h1>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setFilterOpen(true)}
-                  className={cn(
-                    "gap-2",
-                    hasActiveFilters && "border-foreground bg-foreground/5"
-                  )}
-                >
-                  <SlidersHorizontal className="h-4 w-4" />
-                  <span className="hidden sm:inline">Filter</span>
-                  {hasActiveFilters && (
-                    <span className="bg-foreground text-background text-xs font-semibold px-1.5 py-0.5 rounded-full">
-                      {activeFilterCount}
-                    </span>
-                  )}
-                </Button>
-              </div>
-            </div>
 
             {/* Filter Sheet (Drawer) */}
             <Sheet open={filterOpen} onOpenChange={setFilterOpen}>
@@ -625,7 +628,7 @@ export default function AnalyticsPage() {
                 <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">Total EV</p>
                   <p className="text-xl sm:text-2xl font-bold font-mono text-[#C4A35A] leading-tight">
-                    +{formatCurrency(filteredTotalEV)}
+                    {filteredTotalEV >= 0 ? "+" : ""}{formatCurrency(filteredTotalEV)}
                   </p>
                 </CardContent>
               </Card>
@@ -667,7 +670,7 @@ export default function AnalyticsPage() {
                 </CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={200} className="md:!h-[250px]">
-                    <ComposedChart data={cumulativeData}>
+                    <ComposedChart data={cumulativeData} margin={{ left: 0, right: 10, top: 5, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                       <XAxis 
                         dataKey="date" 
@@ -679,7 +682,12 @@ export default function AnalyticsPage() {
                         tickCount={5}
                         stroke="hsl(var(--muted-foreground))"
                       />
-                      <YAxis tickFormatter={(v) => `$${v}`} fontSize={11} stroke="hsl(var(--muted-foreground))" />
+                      <YAxis 
+                        tickFormatter={(v) => `$${v}`} 
+                        fontSize={11} 
+                        stroke="hsl(var(--muted-foreground))"
+                        width={60}
+                      />
                       <Tooltip 
                         formatter={(value: number, name: string) => [
                           formatCurrency(value),
@@ -874,6 +882,10 @@ export default function AnalyticsPage() {
                               ))}
                             </Pie>
                             <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                            <Legend 
+                              formatter={(value, entry: any) => entry?.payload?.name || value}
+                              wrapperStyle={{ fontSize: '11px' }}
+                            />
                           </PieChart>
                         </ResponsiveContainer>
                       ) : (
@@ -897,6 +909,10 @@ export default function AnalyticsPage() {
                               ))}
                             </Pie>
                             <Tooltip />
+                            <Legend 
+                              formatter={(value, entry: any) => entry?.payload?.name || value}
+                              wrapperStyle={{ fontSize: '11px' }}
+                            />
                           </PieChart>
                         </ResponsiveContainer>
                       ) : (
@@ -1049,3 +1065,4 @@ function formatPromoType(promo: string): string {
   };
   return map[promo] || promo;
 }
+
