@@ -248,7 +248,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
               if (boostedOdds) {
                 return (
                   <div className="font-mono font-semibold flex flex-col md:flex-row md:items-baseline">
-                    <span className="line-through text-muted-foreground/60 text-xs md:mr-1.5">
+                    <span className="line-through text-muted-foreground/60 md:mr-1.5">
                       {formatOdds(bet.odds_american)}
                     </span>
                     <span className="text-foreground">{formatOdds(boostedOdds)}</span>
