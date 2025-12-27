@@ -388,34 +388,32 @@ export default function AnalyticsPage() {
     
     const totalEV = Object.values(evBySport).reduce((sum, v) => sum + Math.abs(v), 0);
     let otherEV = 0;
+    const otherSports: string[] = [];
     
     // Group slices < 5% into "Other"
-    const mainSlices = Object.entries(evBySport)
-      .filter(([_, ev]) => {
-        const percent = Math.abs(ev) / totalEV;
-        if (percent < 0.05 && totalEV > 0) {
-          otherEV += ev;
-          return false;
-        }
-        return true;
-      })
+    const mainEntries = Object.entries(evBySport).filter(([name, ev]) => {
+      const percent = Math.abs(ev) / totalEV;
+      if (percent < 0.05 && totalEV > 0) {
+        otherEV += ev;
+        otherSports.push(name);
+        return false;
+      }
+      return true;
+    });
+    
+    // Add "Other" as a regular entry if there are grouped sports
+    if (otherEV !== 0) {
+      mainEntries.push(["Other", otherEV]);
+    }
+    
+    // Now map with colors and sort
+    return mainEntries
       .map(([name, ev], i) => ({
         name,
         value: ev,
-        color: CHART_COLORS[i % CHART_COLORS.length],
+        color: name === "Other" ? "#E7E5E4" : CHART_COLORS[i % CHART_COLORS.length],
       }))
       .sort((a, b) => b.value - a.value);
-    
-    // Add "Other" slice if needed
-    if (otherEV !== 0) {
-      mainSlices.push({
-        name: "Other",
-        value: otherEV,
-        color: "#E7E5E4", // stone-200
-      });
-    }
-    
-    return mainSlices;
   }, [filteredBets]);
 
   // Bets by promo type (from filtered bets) - no "Other" grouping since there are limited types
