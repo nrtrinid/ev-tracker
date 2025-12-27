@@ -197,7 +197,10 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
                   size="sm"
                   onClick={() => {
                     updateField("sport", sport);
-                    setTimeout(() => oddsInputRef.current?.focus(), 50);
+                    setTimeout(() => {
+                      const input = document.querySelector('[data-odds-input]') as HTMLInputElement;
+                      input?.focus();
+                    }, 50);
                   }}
                 >
                   {sport}
