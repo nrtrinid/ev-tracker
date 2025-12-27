@@ -414,7 +414,7 @@ export default function AnalyticsPage() {
       largeSlices.push({
         name: "Other",
         value: otherValue,
-        color: "#D6D3D1", // stone-300 for better visibility
+        color: "#78716C", // stone-500 for better contrast
       });
     }
     
