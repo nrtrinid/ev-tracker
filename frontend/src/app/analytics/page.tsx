@@ -876,14 +876,27 @@ export default function AnalyticsPage() {
                       {sportChartData.length > 0 ? (
                         <ResponsiveContainer width="100%" height={200}>
                           <PieChart>
-                            <Pie data={sportChartData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={60} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false} fontSize={10}>
+                            <Pie 
+                              data={sportChartData} 
+                              dataKey="value" 
+                              nameKey="name" 
+                              cx="50%" 
+                              cy="50%" 
+                              outerRadius={60} 
+                              label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} 
+                              labelLine={false} 
+                              fontSize={10}
+                            >
                               {sportChartData.map((entry, index) => (
                                 <Cell key={index} fill={entry.color} />
                               ))}
                             </Pie>
                             <Tooltip formatter={(value: number) => formatCurrency(value)} />
                             <Legend 
-                              formatter={(value, entry: any) => entry?.payload?.name || value}
+                              formatter={(value, entry: any) => {
+                                const name = entry?.payload?.name || value;
+                                return name === "Other" ? "Other" : name;
+                              }}
                               wrapperStyle={{ fontSize: '11px' }}
                             />
                           </PieChart>
@@ -903,14 +916,27 @@ export default function AnalyticsPage() {
                       {promoTypeData.length > 0 ? (
                         <ResponsiveContainer width="100%" height={200}>
                           <PieChart>
-                            <Pie data={promoTypeData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={60} label={({ name, value }) => `${name}: ${value}`} labelLine={false} fontSize={10}>
+                            <Pie 
+                              data={promoTypeData} 
+                              dataKey="value" 
+                              nameKey="name" 
+                              cx="50%" 
+                              cy="50%" 
+                              outerRadius={60} 
+                              label={({ name, value }) => `${name}: ${value}`} 
+                              labelLine={false} 
+                              fontSize={10}
+                            >
                               {promoTypeData.map((entry, index) => (
                                 <Cell key={index} fill={entry.color} />
                               ))}
                             </Pie>
                             <Tooltip />
                             <Legend 
-                              formatter={(value, entry: any) => entry?.payload?.name || value}
+                              formatter={(value, entry: any) => {
+                                const name = entry?.payload?.name || value;
+                                return name === "Other" ? "Other" : name;
+                              }}
                               wrapperStyle={{ fontSize: '11px' }}
                             />
                           </PieChart>

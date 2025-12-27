@@ -990,15 +990,15 @@ export function BetList() {
             </div>
           </SheetHeader>
           
-          <div className="space-y-6">
-            {/* Sportsbook Selector */}
+          <div className="space-y-4">
+            {/* Sportsbook Selector - Horizontal Scroll */}
             <div>
-              <h3 className="text-sm font-medium mb-3">Sportsbook</h3>
-              <div className="flex flex-wrap gap-2">
+              <span className="text-xs text-muted-foreground font-medium block mb-2">Sportsbook</span>
+              <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
                 <button
                   onClick={() => setSelectedBook("all")}
                   className={cn(
-                    "px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                    "px-3 py-1.5 rounded-full text-sm font-medium transition-colors whitespace-nowrap shrink-0",
                     selectedBook === "all"
                       ? "bg-foreground text-background shadow-sm"
                       : "bg-muted text-muted-foreground hover:bg-secondary"
@@ -1011,7 +1011,7 @@ export function BetList() {
                     key={book}
                     onClick={() => setSelectedBook(book)}
                     className={cn(
-                      "px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                      "px-3 py-1.5 rounded-full text-sm font-medium transition-colors whitespace-nowrap shrink-0",
                       selectedBook === book
                         ? `${sportsbookColors[book] || "bg-foreground"} text-white shadow-sm`
                         : "bg-muted text-muted-foreground hover:bg-secondary"
@@ -1023,10 +1023,10 @@ export function BetList() {
               </div>
             </div>
             
-            {/* Bet Type Selector */}
+            {/* Bet Type Selector - Horizontal Scroll */}
             <div>
-              <h3 className="text-sm font-medium mb-3">Bet Type</h3>
-              <div className="flex flex-wrap gap-2">
+              <span className="text-xs text-muted-foreground font-medium block mb-2">Bet Type</span>
+              <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
                 {([
                   { key: "all", label: "All Bets" },
                   { key: "cash", label: "Cash Bets" },
@@ -1036,7 +1036,7 @@ export function BetList() {
                     key={key}
                     onClick={() => setBetTypeFilter(key)}
                     className={cn(
-                      "px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                      "px-3 py-1.5 rounded-full text-sm font-medium transition-colors whitespace-nowrap shrink-0",
                       betTypeFilter === key
                         ? "bg-foreground text-background shadow-sm"
                         : "bg-muted text-muted-foreground hover:bg-secondary"
