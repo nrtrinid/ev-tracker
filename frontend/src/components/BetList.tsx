@@ -524,14 +524,14 @@ function PendingCard({ bet, onEdit, onResultChange }: PendingCardProps) {
   const footer = (
     <div className="flex gap-2 pt-2 border-t border-border mt-1">
       <button
-        className="flex-1 h-8 min-h-[44px] flex items-center justify-center gap-1.5 text-sm font-medium rounded-md text-emerald-600 border border-emerald-200 bg-emerald-50/30 hover:bg-emerald-100/50 active:bg-emerald-100 transition-colors"
+        className="flex-1 h-8 min-h-[44px] flex items-center justify-center gap-1.5 text-sm font-medium rounded-md text-[#4A7C59] border border-[#4A7C59]/30 bg-[#4A7C59]/10 hover:bg-[#4A7C59]/20 active:bg-[#4A7C59]/25 transition-colors"
         onClick={handleWin}
       >
         <Check className="h-4 w-4" />
         Won
       </button>
       <button
-        className="flex-1 h-8 min-h-[44px] flex items-center justify-center gap-1.5 text-sm font-medium rounded-md text-rose-600 border border-rose-200 bg-rose-50/30 hover:bg-rose-100/50 active:bg-rose-100 transition-colors"
+        className="flex-1 h-8 min-h-[44px] flex items-center justify-center gap-1.5 text-sm font-medium rounded-md text-[#B85C38] border border-[#B85C38]/30 bg-[#B85C38]/10 hover:bg-[#B85C38]/20 active:bg-[#B85C38]/25 transition-colors"
         onClick={handleLoss}
       >
         <X className="h-4 w-4" />
