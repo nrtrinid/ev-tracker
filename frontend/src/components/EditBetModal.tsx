@@ -322,10 +322,10 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
               {/* Selection Name */}
               <div>
                 <label className="text-sm font-medium mb-2 block">
-                  Proposition <span className="text-muted-foreground font-normal">(optional)</span>
+                  Selection Name <span className="text-muted-foreground font-normal">(optional)</span>
                 </label>
                 <Input
-                  placeholder="e.g. Lakers, Chiefs -3, LeBron 25+ pts"
+                  placeholder="e.g. Ravens -3, Jokic 25+ Pts, Oilers ML"
                   value={formData.event}
                   onChange={(e) => updateField("event", e.target.value)}
                 />

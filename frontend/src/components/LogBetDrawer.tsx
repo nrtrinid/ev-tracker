@@ -426,14 +426,14 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
 
           {showAdvanced && (
             <div className="space-y-3 mb-4 p-3 rounded-lg bg-muted/50 border border-border">
-              {/* Proposition */}
+              {/* Selection Name */}
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-                  Proposition
+                  Selection Name
                 </label>
                 <Input
                   type="text"
-                  placeholder="Lions vs Bears"
+                  placeholder="e.g. Ravens -3, Jokic 25+ Pts, Oilers ML"
                   value={formState.event}
                   onChange={(e) => updateField("event", e.target.value)}
                   className="h-10"
