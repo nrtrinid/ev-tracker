@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn, formatCurrency } from "@/lib/utils";
 import { Plus, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, Target as TargetIcon } from "lucide-react";
 import { useTransactions, useCreateTransaction, useDeleteTransaction, useBalances, useSettings, useUpdateSettings } from "@/lib/hooks";
@@ -68,7 +69,56 @@ export default function SettingsPage() {
     <main className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-6 space-y-6 max-w-2xl">
         {isLoading ? (
-          <div className="text-center py-12 text-muted-foreground">Loading...</div>
+          <div className="space-y-6">
+            {/* K-Factor Setting Skeleton */}
+            <Card>
+              <CardHeader className="pb-2">
+                <div className="flex items-center gap-2">
+                  <Skeleton className="h-4 w-4 rounded" />
+                  <Skeleton className="h-5 w-48" />
+                </div>
+                <Skeleton className="h-4 w-64 mt-1" />
+              </CardHeader>
+              <CardContent>
+                <div className="flex gap-2">
+                  <Skeleton className="h-10 flex-1" />
+                  <Skeleton className="h-10 w-20" />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Transactions Section Skeleton */}
+            <Card>
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Skeleton className="h-4 w-4 rounded" />
+                    <Skeleton className="h-5 w-40" />
+                  </div>
+                  <Skeleton className="h-8 w-16" />
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <Skeleton className="h-4 w-32 mb-2" />
+                  <div className="space-y-2">
+                    {[1, 2, 3].map((i) => (
+                      <div key={i} className="flex items-center justify-between p-2 rounded border">
+                        <div className="flex items-center gap-3">
+                          <Skeleton className="h-4 w-4 rounded-full" />
+                          <div>
+                            <Skeleton className="h-4 w-24 mb-1" />
+                            <Skeleton className="h-3 w-32" />
+                          </div>
+                        </div>
+                        <Skeleton className="h-4 w-16" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         ) : (
           <>
             {/* K-Factor Setting */}

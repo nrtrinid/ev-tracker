@@ -494,6 +494,17 @@ export default function AnalyticsPage() {
       <div className="container mx-auto px-4 py-6 space-y-6 max-w-4xl">
         {isLoading ? (
           <div className="space-y-6">
+            {/* Z-Score Hero Card Skeleton */}
+            <Card>
+              <CardContent className="pt-6 pb-4">
+                <div className="text-center space-y-2">
+                  <Skeleton className="h-4 w-32 mx-auto" />
+                  <Skeleton className="h-7 w-40 mx-auto" />
+                  <Skeleton className="h-4 w-48 mx-auto" />
+                </div>
+              </CardContent>
+            </Card>
+
             {/* Summary Cards Skeleton */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {[1, 2, 3, 4].map((i) => (
