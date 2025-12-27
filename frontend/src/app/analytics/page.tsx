@@ -386,14 +386,39 @@ export default function AnalyticsPage() {
       evBySport[bet.sport] = (evBySport[bet.sport] || 0) + bet.ev_total;
     });
     
-    // Show all sports without grouping into "Other"
-    return Object.entries(evBySport)
-      .map(([name, ev], i) => ({
-        name,
-        value: ev,
-        color: CHART_COLORS[i % CHART_COLORS.length],
-      }))
-      .sort((a, b) => b.value - a.value);
+    const totalEV = Object.values(evBySport).reduce((sum, v) => sum + Math.abs(v), 0);
+    if (totalEV === 0) return [];
+    
+    // Separate large and small slices
+    const largeSlices: Array<{ name: string; value: number; color: string }> = [];
+    let otherValue = 0;
+    
+    // Sort entries by value first
+    const sortedEntries = Object.entries(evBySport).sort((a, b) => b[1] - a[1]);
+    
+    sortedEntries.forEach(([name, ev], i) => {
+      const percent = Math.abs(ev) / totalEV;
+      if (percent >= 0.05) {
+        largeSlices.push({
+          name,
+          value: ev,
+          color: CHART_COLORS[largeSlices.length % CHART_COLORS.length],
+        });
+      } else {
+        otherValue += ev;
+      }
+    });
+    
+    // Add "Other" slice at the end if there are small slices
+    if (otherValue !== 0) {
+      largeSlices.push({
+        name: "Other",
+        value: otherValue,
+        color: "#D6D3D1", // stone-300 for better visibility
+      });
+    }
+    
+    return largeSlices;
   }, [filteredBets]);
 
   // Bets by promo type (from filtered bets) - no "Other" grouping since there are limited types
