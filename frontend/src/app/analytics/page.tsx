@@ -68,7 +68,7 @@ function FilterPill({
     <button
       onClick={onClick}
       className={cn(
-        "px-3 py-1.5 rounded-full text-sm font-medium transition-colors",
+        "px-3 py-1.5 rounded-full text-sm font-medium transition-colors whitespace-nowrap shrink-0",
         active 
           ? "bg-foreground text-background shadow-sm" 
           : "bg-muted text-muted-foreground hover:bg-secondary"
@@ -106,62 +106,70 @@ function AnalyticsFilterBar({
   onClearFilters: () => void;
 }) {
   return (
-    <div className="space-y-3">
-      {/* Timeframe */}
-      <div className="flex flex-wrap gap-2 items-center">
-        <span className="text-xs text-muted-foreground font-medium w-16">Time:</span>
-        {TIMEFRAME_OPTIONS.map((option) => (
-          <FilterPill
-            key={option}
-            label={option}
-            active={timeframe === option}
-            onClick={() => setTimeframe(option)}
-          />
-        ))}
+    <div className="space-y-4">
+      {/* Timeframe - Horizontal Scroll */}
+      <div>
+        <span className="text-xs text-muted-foreground font-medium block mb-2">Time</span>
+        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+          {TIMEFRAME_OPTIONS.map((option) => (
+            <FilterPill
+              key={option}
+              label={option}
+              active={timeframe === option}
+              onClick={() => setTimeframe(option)}
+            />
+          ))}
+        </div>
       </div>
       
-      {/* Sportsbook */}
-      <div className="flex flex-wrap gap-2 items-center">
-        <span className="text-xs text-muted-foreground font-medium w-16">Book:</span>
-        <FilterPill
-          label="All Books"
-          active={sportsbook === "All Books"}
-          onClick={() => setSportsbook("All Books")}
-        />
-        {sportsbookOptions.map((option) => (
+      {/* Sportsbook - Horizontal Scroll */}
+      <div>
+        <span className="text-xs text-muted-foreground font-medium block mb-2">Book</span>
+        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
           <FilterPill
-            key={option}
-            label={option}
-            active={sportsbook === option}
-            onClick={() => setSportsbook(option)}
+            label="All Books"
+            active={sportsbook === "All Books"}
+            onClick={() => setSportsbook("All Books")}
           />
-        ))}
+          {sportsbookOptions.map((option) => (
+            <FilterPill
+              key={option}
+              label={option}
+              active={sportsbook === option}
+              onClick={() => setSportsbook(option)}
+            />
+          ))}
+        </div>
       </div>
       
-      {/* Bet Type */}
-      <div className="flex flex-wrap gap-2 items-center">
-        <span className="text-xs text-muted-foreground font-medium w-16">Type:</span>
-        {BET_TYPE_OPTIONS.map((option) => (
-          <FilterPill
-            key={option}
-            label={option}
-            active={betType === option}
-            onClick={() => setBetType(option)}
-          />
-        ))}
+      {/* Bet Type - Horizontal Scroll */}
+      <div>
+        <span className="text-xs text-muted-foreground font-medium block mb-2">Type</span>
+        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+          {BET_TYPE_OPTIONS.map((option) => (
+            <FilterPill
+              key={option}
+              label={option}
+              active={betType === option}
+              onClick={() => setBetType(option)}
+            />
+          ))}
+        </div>
       </div>
       
-      {/* Sport */}
-      <div className="flex flex-wrap gap-2 items-center">
-        <span className="text-xs text-muted-foreground font-medium w-16">Sport:</span>
-        {SPORT_OPTIONS.map((option) => (
-          <FilterPill
-            key={option}
-            label={option}
-            active={sport === option}
-            onClick={() => setSport(option)}
-          />
-        ))}
+      {/* Sport - Horizontal Scroll */}
+      <div>
+        <span className="text-xs text-muted-foreground font-medium block mb-2">Sport</span>
+        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+          {SPORT_OPTIONS.map((option) => (
+            <FilterPill
+              key={option}
+              label={option}
+              active={sport === option}
+              onClick={() => setSport(option)}
+            />
+          ))}
+        </div>
       </div>
 
       {/* Clear filters */}
@@ -378,13 +386,36 @@ export default function AnalyticsPage() {
       evBySport[bet.sport] = (evBySport[bet.sport] || 0) + bet.ev_total;
     });
     
-    return Object.entries(evBySport)
+    const totalEV = Object.values(evBySport).reduce((sum, v) => sum + Math.abs(v), 0);
+    let otherEV = 0;
+    
+    // Group slices < 5% into "Other"
+    const mainSlices = Object.entries(evBySport)
+      .filter(([_, ev]) => {
+        const percent = Math.abs(ev) / totalEV;
+        if (percent < 0.05 && totalEV > 0) {
+          otherEV += ev;
+          return false;
+        }
+        return true;
+      })
       .map(([name, ev], i) => ({
         name,
         value: ev,
         color: CHART_COLORS[i % CHART_COLORS.length],
       }))
       .sort((a, b) => b.value - a.value);
+    
+    // Add "Other" slice if needed
+    if (otherEV !== 0) {
+      mainSlices.push({
+        name: "Other",
+        value: otherEV,
+        color: "#E7E5E4", // stone-200
+      });
+    }
+    
+    return mainSlices;
   }, [filteredBets]);
 
   // Bets by promo type (from filtered bets)
@@ -396,12 +427,35 @@ export default function AnalyticsPage() {
       counts[label] = (counts[label] || 0) + 1;
     });
     
-    return Object.entries(counts)
+    const total = Object.values(counts).reduce((sum, v) => sum + v, 0);
+    let otherCount = 0;
+    
+    // Group slices < 5% into "Other"
+    const mainSlices = Object.entries(counts)
+      .filter(([_, count]) => {
+        const percent = count / total;
+        if (percent < 0.05 && total > 0) {
+          otherCount += count;
+          return false;
+        }
+        return true;
+      })
       .map(([name, value], i) => ({
         name,
         value,
         color: CHART_COLORS[i % CHART_COLORS.length],
       }));
+    
+    // Add "Other" slice if needed
+    if (otherCount > 0) {
+      mainSlices.push({
+        name: "Other",
+        value: otherCount,
+        color: "#E7E5E4", // stone-200
+      });
+    }
+    
+    return mainSlices;
   }, [filteredBets]);
 
   // Cumulative EV vs Real Profit over time (by date)
@@ -437,25 +491,28 @@ export default function AnalyticsPage() {
           </div>
         ) : (
           <>
-            {/* Filter Button - Floating at top right */}
-            <div className="flex justify-end">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setFilterOpen(true)}
-                className={cn(
-                  "gap-2",
-                  hasActiveFilters && "border-foreground bg-foreground/5"
-                )}
-              >
-                <SlidersHorizontal className="h-4 w-4" />
-                Filter
-                {hasActiveFilters && (
-                  <span className="bg-foreground text-background text-xs font-semibold px-1.5 py-0.5 rounded-full">
-                    {activeFilterCount}
-                  </span>
-                )}
-              </Button>
+            {/* Sticky Filter Bar */}
+            <div className="sticky top-0 z-10 -mx-4 px-4 py-3 bg-background border-b border-transparent transition-shadow [&:has(+_:hover)]:border-border" style={{ backgroundColor: "hsl(40, 33%, 97%)" }}>
+              <div className="flex justify-between items-center">
+                <h1 className="text-lg font-semibold">Analytics</h1>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setFilterOpen(true)}
+                  className={cn(
+                    "gap-2",
+                    hasActiveFilters && "border-foreground bg-foreground/5"
+                  )}
+                >
+                  <SlidersHorizontal className="h-4 w-4" />
+                  <span className="hidden sm:inline">Filter</span>
+                  {hasActiveFilters && (
+                    <span className="bg-foreground text-background text-xs font-semibold px-1.5 py-0.5 rounded-full">
+                      {activeFilterCount}
+                    </span>
+                  )}
+                </Button>
+              </div>
             </div>
 
             {/* Filter Sheet (Drawer) */}
@@ -609,16 +666,17 @@ export default function AnalyticsPage() {
                   </p>
                 </CardHeader>
                 <CardContent>
-                  <ResponsiveContainer width="100%" height={250}>
+                  <ResponsiveContainer width="100%" height={200} className="md:!h-[250px]">
                     <ComposedChart data={cumulativeData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                       <XAxis 
                         dataKey="date" 
                         fontSize={10} 
-                        angle={-45} 
-                        textAnchor="end" 
-                        height={60}
+                        angle={0}
+                        textAnchor="middle" 
+                        height={30}
                         interval="preserveStartEnd"
+                        tickCount={5}
                         stroke="hsl(var(--muted-foreground))"
                       />
                       <YAxis tickFormatter={(v) => `$${v}`} fontSize={11} stroke="hsl(var(--muted-foreground))" />
