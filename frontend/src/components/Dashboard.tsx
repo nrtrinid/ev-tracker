@@ -1,6 +1,7 @@
 "use client";
 
 import { Card, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useSummary, useBets } from "@/lib/hooks";
 import { formatCurrency, cn } from "@/lib/utils";
 import { TrendingUp, DollarSign, Activity, Clock } from "lucide-react";
@@ -17,9 +18,12 @@ export function Dashboard() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[1, 2, 3, 4].map((i) => (
           <Card key={i}>
-            <CardContent className="p-4">
-              <div className="h-4 w-16 animate-pulse bg-muted rounded mb-2" />
-              <div className="h-8 w-24 animate-pulse bg-muted rounded" />
+            <CardContent className="p-4 flex flex-col items-center justify-center">
+              <div className="flex items-center gap-1.5 mb-1">
+                <Skeleton className="h-3.5 w-3.5 rounded" />
+                <Skeleton className="h-3 w-16" />
+              </div>
+              <Skeleton className="h-7 w-20" />
             </CardContent>
           </Card>
         ))}

@@ -48,9 +48,33 @@ export default function SettingsPage() {
   };
 
   const handleDeleteTransaction = (tx: Transaction) => {
-    // Just delete - optimistic update handles UI immediately
-    // No error toast since deletion always works in practice
-    deleteTransaction.mutate(tx.id);
+    const txData = {
+      sportsbook: tx.sportsbook,
+      type: tx.type,
+      amount: tx.amount,
+      notes: tx.notes || undefined,
+    };
+
+    deleteTransaction.mutate(tx.id, {
+      onSuccess: () => {
+        toast("Transaction deleted", {
+          description: `${tx.type === "deposit" ? "Deposit" : "Withdrawal"} of ${formatCurrency(tx.amount)} from ${tx.sportsbook}`,
+          duration: 5000,
+          action: {
+            label: "Undo",
+            onClick: () => {
+              createTransaction.mutate(txData, {
+                onSuccess: () => toast.success("Transaction restored"),
+                onError: () => toast.error("Failed to restore transaction"),
+              });
+            },
+          },
+        });
+      },
+      onError: () => {
+        toast.error("Failed to delete transaction");
+      },
+    });
   };
 
   const handleUpdateKFactor = async () => {

@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { useUpdateBet } from "@/lib/hooks";
 import type { Bet, PromoType } from "@/lib/types";
-import { SPORTSBOOKS, SPORTS, MARKETS, PROMO_TYPES } from "@/lib/types";
+import { SPORTSBOOKS, SPORTS, MARKETS, PROMO_TYPES, PROMO_TYPE_CONFIG } from "@/lib/types";
 import { 
   cn, 
   americanToDecimal,
@@ -27,10 +27,10 @@ const MARKET_VIG: Record<string, number> = {
   ML: 0.045,      // Standard markets: 4.5%
   Spread: 0.045,
   Total: 0.045,
-  Parlay: 0.12,   // Parlays: 12% (similar to SGP)
-  Prop: 0.07,     // Juiced markets: 7%
-  Futures: 0.07,
-  SGP: 0.12,      // Exotic markets: 12%
+  Parlay: 0.15,   // Parlays: 15%
+  Prop: 0.09,     // Juiced markets: 9%
+  Futures: 0.20,
+  SGP: 0.20,      // Exotic markets: 20%
 };
 
 // Map sportsbook names to button variants
@@ -119,7 +119,12 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
       return;
     }
 
-    const boostPercentNum = parseFloat(formData.boost_percent) || 0;
+    const boostPercentRaw = parseFloat(formData.boost_percent);
+    const boostPercentNum = isNaN(boostPercentRaw) ? 0 : boostPercentRaw;
+    if (formData.promo_type === "boost_custom" && (isNaN(boostPercentRaw) || boostPercentNum < 0 || boostPercentNum > 300)) {
+      toast.error("Boost percent must be between 0 and 300");
+      return;
+    }
     const winningsCapNum = parseFloat(formData.winnings_cap) || 0;
 
     try {
@@ -135,7 +140,7 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
           stake: stakeNum,
           boost_percent:
             formData.promo_type === "boost_custom"
-              ? boostPercentNum || undefined
+              ? Math.max(0, Math.min(300, boostPercentNum)) || undefined
               : undefined,
           winnings_cap: winningsCapNum || undefined,
           notes: formData.notes || undefined,
@@ -237,27 +242,17 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
           <div>
             <label className="text-sm font-medium mb-2 block">Promo Type</label>
             <div className="flex flex-wrap gap-2">
-              {PROMO_TYPES.map((promo) => (
+              {PROMO_TYPES.map((promo) => {
+                const config = PROMO_TYPE_CONFIG[promo.value];
+                const isSelected = formData.promo_type === promo.value;
+                return (
                 <Button
                   key={promo.value}
                   type="button"
-                  variant={
-                    formData.promo_type === promo.value ? "default" : "outline"
-                  }
+                  variant={isSelected ? "default" : "outline"}
                   size="sm"
                   className={cn(
-                    promo.value === "bonus_bet" &&
-                      formData.promo_type === promo.value &&
-                      "bg-[#7A9E7E]/20 hover:bg-[#7A9E7E]/30 text-[#2C2416] border-[#7A9E7E]/40",
-                    promo.value === "no_sweat" &&
-                      formData.promo_type === promo.value &&
-                      "bg-[#4A7C59] hover:bg-[#3D6B4A] text-white",
-                    promo.value === "promo_qualifier" &&
-                      formData.promo_type === promo.value &&
-                      "bg-[#B85C38] hover:bg-[#A04E2E] text-white",
-                    promo.value.startsWith("boost") &&
-                      formData.promo_type === promo.value &&
-                      "bg-[#C4A35A] hover:bg-[#B8963E] text-[#2C2416]"
+                    isSelected && cn(config.selectedBg, config.selectedText, config.ring)
                   )}
                   onClick={() =>
                     updateField("promo_type", promo.value as PromoType)
@@ -265,7 +260,8 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
                 >
                   {promo.label}
                 </Button>
-              ))}
+                );
+              })}
             </div>
           </div>
 

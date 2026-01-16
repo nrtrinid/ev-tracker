@@ -201,6 +201,20 @@ const SPORTSBOOK_COLORS: Record<string, string> = {
 
 const CHART_COLORS = ["#4A7C59", "#C4A35A", "#6B5E4F", "#B85C38", "#8B7355", "#7A9E7E", "#D4C4A8", "#9B8A7B"];
 
+// Promo type chart colors (distinct hues for readability)
+// Note: Chart palette intentionally diverges from tag colors for better differentiation.
+const PROMO_TYPE_CHART_COLORS: Record<string, string> = {
+  // Brand-consistent, softer earth tones with distinct hues
+  "Bonus Bet": "#7A9E7E", // sage green
+  "30% Boost": "#C4A35A", // amber/gold
+  "50% Boost": "#B8963E", // warm ochre
+  "100% Boost": "#8B7355", // brown
+  "Custom Boost": "#D4C4A8", // light sand
+  "No Sweat": "#4A7C59", // deep green
+  "Promo Qualifier": "#B85C38", // brick red
+  "Standard": "#6B5E4F", // taupe
+};
+
 export default function AnalyticsPage() {
   // Filter state
   const [timeframe, setTimeframe] = useState<TimeframeOption>("All Time");
@@ -432,10 +446,10 @@ export default function AnalyticsPage() {
     });
     
     return Object.entries(counts)
-      .map(([name, value], i) => ({
+      .map(([name, value]) => ({
         name,
         value,
-        color: CHART_COLORS[i % CHART_COLORS.length],
+        color: PROMO_TYPE_CHART_COLORS[name] || CHART_COLORS[0],
       }))
       .sort((a, b) => b.value - a.value);
   }, [filteredBets]);
@@ -603,6 +617,9 @@ export default function AnalyticsPage() {
                 )}
                 {sport !== "All Sports" && (
                   <span className="px-2 py-1 bg-muted rounded-full text-xs font-medium">{sport}</span>
+                )}
+                {sportsbook !== "All Books" && (
+                  <span className="px-2 py-1 bg-muted rounded-full text-xs font-medium">{sportsbook}</span>
                 )}
                 <button
                   onClick={clearFilters}
@@ -787,10 +804,10 @@ export default function AnalyticsPage() {
                   </CardContent>
                 </Card>
 
-                {/* Fun Metrics Row */}
+                {/* Performance Metrics Row */}
                 <Card>
                   <CardHeader className="pb-2">
-                    <h3 className="font-semibold text-sm">Fun Metrics</h3>
+                    <h3 className="font-semibold text-sm">Performance Metrics</h3>
                   </CardHeader>
                   <CardContent>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -918,7 +935,8 @@ export default function AnalyticsPage() {
                               nameKey="name" 
                               cx="50%" 
                               cy="45%" 
-                              outerRadius={55} 
+                              outerRadius={55}
+                              minAngle={5}
                               label={({ payload, percent }) => {
                                 // Access name from payload (the original data entry)
                                 const name = payload?.name || "";
@@ -965,12 +983,9 @@ export default function AnalyticsPage() {
                               nameKey="name" 
                               cx="50%" 
                               cy="45%" 
-                              outerRadius={55} 
-                              label={({ payload }) => {
-                                const name = payload?.name || "";
-                                const value = payload?.value || 0;
-                                return `${name}: ${value}`;
-                              }} 
+                              outerRadius={55}
+                              minAngle={5}
+                              label={({ percent }) => `${Math.round((percent || 0) * 100)}%`} 
                               labelLine={false} 
                               fontSize={10}
                             >
@@ -978,7 +993,11 @@ export default function AnalyticsPage() {
                                 <Cell key={index} fill={entry.color} name={entry.name} />
                               ))}
                             </Pie>
-                            <Tooltip />
+                            <Tooltip formatter={(value: number, name: string) => {
+                              const total = promoTypeData.reduce((sum, e) => sum + e.value, 0);
+                              const pct = total ? Math.round((Number(value) / total) * 100) : 0;
+                              return [`${value} bet${Number(value) !== 1 ? 's' : ''} (${pct}%)`, name];
+                            }} />
                             <Legend 
                               payload={promoTypeData.map((entry) => ({
                                 value: entry.name,

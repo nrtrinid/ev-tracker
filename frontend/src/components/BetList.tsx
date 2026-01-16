@@ -24,6 +24,7 @@ import { useBets, useUpdateBetResult, useDeleteBet, useCreateBet, useBalances } 
 import { Skeleton } from "@/components/ui/skeleton";
 import { EditBetModal } from "@/components/EditBetModal";
 import type { Bet, BetResult } from "@/lib/types";
+import { PROMO_TYPE_CONFIG } from "@/lib/types";
 import { formatCurrency, formatOdds, cn, formatRelativeTime, formatShortDate, formatFullDateTime, americanToDecimal, decimalToAmerican, calculateImpliedProb, calculateHoldFromOdds } from "@/lib/utils";
 import {
   Check,
@@ -107,27 +108,17 @@ const sportsbookTextColors: Record<string, string> = {
   bet365: "text-bet365",
 };
 
-// ============ PROMO TYPE DISPLAY CONFIG ============
-const promoTypeConfig: Record<string, { short: string; bg: string; text: string }> = {
-  standard: { short: "Std", bg: "bg-[#DDD5C7]", text: "text-[#6B5E4F]" },
-  bonus_bet: { short: "BB", bg: "bg-[#7A9E7E]/20", text: "text-[#2C2416]" },
-  no_sweat: { short: "NS", bg: "bg-[#4A7C59]/15", text: "text-[#4A7C59]" },
-  promo_qualifier: { short: "PQ", bg: "bg-[#B85C38]/15", text: "text-[#B85C38]" },
-  boost_30: { short: "30%", bg: "bg-[#C4A35A]/20", text: "text-[#8B7355]" },
-  boost_50: { short: "50%", bg: "bg-[#C4A35A]/20", text: "text-[#8B7355]" },
-  boost_100: { short: "100%", bg: "bg-[#C4A35A]/20", text: "text-[#8B7355]" },
-  boost_custom: { short: "Boost", bg: "bg-[#C4A35A]/20", text: "text-[#8B7355]" },
-};
+// Using shared PROMO_TYPE_CONFIG from types.ts
 
 // ============ MARKET VIG DEFAULTS ============
 const MARKET_VIG: Record<string, number> = {
   ML: 0.045,
   Spread: 0.045,
   Total: 0.045,
-  Parlay: 0.12,
-  Prop: 0.07,
-  Futures: 0.07,
-  SGP: 0.12,
+  Parlay: 0.15,
+  Prop: 0.09,
+  Futures: 0.20,
+  SGP: 0.20,
 };
 
 // ============ HELPER FUNCTIONS ============
@@ -180,7 +171,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
   const [expanded, setExpanded] = useState(false);
   const borderColor = sportsbookColors[bet.sportsbook] || "bg-gray-400";
   const textColor = sportsbookTextColors[bet.sportsbook] || "text-gray-600";
-  const promoConfig = promoTypeConfig[bet.promo_type] || { short: "Std", bg: "bg-[#DDD5C7]", text: "text-[#6B5E4F]" };
+  const promoConfig = PROMO_TYPE_CONFIG[bet.promo_type] || PROMO_TYPE_CONFIG.standard;
   
   // Short promo label (BB, 30%, etc.)
   const promoLabel = bet.promo_type === "boost_custom" && bet.boost_percent 
@@ -221,8 +212,9 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
               {showPromoBadge && (
                 <span className={cn(
                   "px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none",
-                  promoConfig.bg,
-                  promoConfig.text
+                  promoConfig.selectedBg,
+                  promoConfig.selectedText,
+                  promoConfig.ring
                 )}>
                   {promoLabel}
                 </span>
@@ -248,8 +240,8 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
               
               if (boostedOdds) {
                 return (
-                  <div className="font-mono font-semibold flex flex-col md:flex-row md:items-baseline">
-                    <span className="line-through text-muted-foreground/60 md:mr-1.5">
+                  <div className="font-mono font-semibold flex flex-row items-baseline">
+                    <span className="line-through text-muted-foreground/60 mr-1.5">
                       {formatOdds(bet.odds_american)}
                     </span>
                     <span className="text-foreground">{formatOdds(boostedOdds)}</span>
@@ -834,13 +826,11 @@ export function BetList() {
   const matchesBetType = (bet: Bet) => {
     if (betTypeFilter === "all") return true;
     if (betTypeFilter === "bonus") {
-      return bet.promo_type === "bonus_bet" || 
-             bet.promo_type?.includes("boost");
+      // Bonus bets funded by bonus bet stake
+      return bet.promo_type === "bonus_bet";
     }
-    // "cash" = standard bets (not bonus/boost)
-    return bet.promo_type === "standard" || 
-           bet.promo_type === null || 
-           bet.promo_type === undefined;
+    // Cash bets: everything except bonus bet stake
+    return bet.promo_type !== "bonus_bet";
   };
   
   // Apply book and type filters first, then split by status
@@ -1092,7 +1082,7 @@ export function BetList() {
                 {([
                   { key: "all", label: "All Bets" },
                   { key: "cash", label: "Cash Bets" },
-                  { key: "bonus", label: "Bonus & Boosts" },
+                  { key: "bonus", label: "Bonus Bets" },
                 ] as const).map(({ key, label }) => (
                   <button
                     key={key}

@@ -16,6 +16,7 @@ import {
   SPORTS,
   MARKETS,
   PROMO_TYPES,
+  PROMO_TYPE_CONFIG,
   type PromoType,
 } from "@/lib/types";
 import {
@@ -32,10 +33,10 @@ const MARKET_VIG: Record<string, number> = {
   ML: 0.045,
   Spread: 0.045,
   Total: 0.045,
-  Parlay: 0.12,
-  Prop: 0.07,
-  Futures: 0.07,
-  SGP: 0.12,
+  Parlay: 0.15,
+  Prop: 0.09,
+  Futures: 0.20,
+  SGP: 0.20,
 };
 
 // Sportsbook colors for selected state
@@ -126,7 +127,9 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
   const oddsNum = oddsInputRef.current?.getSignedValue() || 0;
   const stakeNum = parseFloat(formState.stake) || 0;
   const opposingOddsNum = opposingOddsInputRef.current?.getSignedValue() || 0;
-  const boostPercentNum = parseFloat(formState.boost_percent) || 0;
+  const boostPercentRaw = parseFloat(formState.boost_percent);
+  const boostPercentNum = isNaN(boostPercentRaw) ? 0 : boostPercentRaw;
+  const boostPercentClamped = Math.max(0, Math.min(300, boostPercentNum));
   const payoutOverrideNum = parseFloat(formState.payout_override) || 0;
 
   // Get smart vig default based on market
@@ -145,16 +148,32 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
     oddsNum,
     stakeNum,
     formState.promo_type,
-    boostPercentNum,
+    boostPercentClamped,
     payoutOverrideNum || undefined,
     effectiveVig
   );
+
+  // Calculate EV with better vig (lower vig = better EV) for nudge
+  // Suggest using a vig that's 1% lower than current if it improves EV by >$0.15
+  const betterVig = effectiveVig - 0.01;
+  const evWithBetterVig = betterVig > 0 ? calculateEVClient(
+    oddsNum,
+    stakeNum,
+    formState.promo_type,
+    boostPercentClamped,
+    payoutOverrideNum || undefined,
+    betterVig
+  ) : ev;
+  const vigNudgeValue = evWithBetterVig.evTotal - ev.evTotal;
+
+  const invalidBoost = formState.promo_type === "boost_custom" && (isNaN(boostPercentRaw) || boostPercentNum < 0 || boostPercentNum > 300);
 
   const updateField = (field: keyof FormState, value: string) => {
     setFormState(prev => ({ ...prev, [field]: value }));
   };
 
   const isValid = formState.sportsbook && formState.sport && oddsNum !== 0 && stakeNum > 0;
+  const showVigNudge = calculatedVig === null && vigNudgeValue > 0.15 && isValid;
 
   const handleLogBet = async (keepOpen: boolean) => {
     if (!isValid) return;
@@ -361,38 +380,59 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
               Promo Type
             </label>
             <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 pt-0.5">
-              {PROMO_TYPES.map((promo) => (
-                <button
-                  key={promo.value}
-                  type="button"
-                  onClick={() => updateField("promo_type", promo.value)}
-                  className={cn(
-                    "flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap",
-                    formState.promo_type === promo.value
-                      ? promo.value === "bonus_bet" 
-                        ? "bg-[#7A9E7E]/30 text-[#2C2416] ring-1 ring-[#7A9E7E]"
-                        : "bg-foreground text-background"
-                      : "bg-muted text-muted-foreground hover:bg-secondary"
-                  )}
-                >
-                  {promo.label}
-                </button>
-              ))}
+              {PROMO_TYPES.map((promo) => {
+                const config = PROMO_TYPE_CONFIG[promo.value];
+                const isSelected = formState.promo_type === promo.value;
+                return (
+                  <button
+                    key={promo.value}
+                    type="button"
+                    onClick={() => updateField("promo_type", promo.value)}
+                    className={cn(
+                      "flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap",
+                      isSelected
+                        ? cn(config.selectedBg, config.selectedText, config.ring)
+                        : "bg-muted text-muted-foreground hover:bg-secondary"
+                    )}
+                  >
+                    {promo.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          {/* Vig Hint */}
-          <div className="text-xs text-muted-foreground mb-3 flex items-center gap-2">
-            <span>
-              Using {calculatedVig !== null ? "calculated" : "default"} vig:{" "}
-              <span className="font-mono font-medium">
-                {(effectiveVig * 100).toFixed(1)}%
-              </span>
-              {calculatedVig === null && (
-                <span className="text-muted-foreground/70"> ({formState.market})</span>
-              )}
-            </span>
-          </div>
+          {/* Vig Nudge - Show if worth it (>$0.15 EV improvement) */}
+          {showVigNudge && (
+            <div className="mb-4 p-3 rounded-lg bg-[#C4A35A]/10 border border-[#C4A35A]/20">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1">
+                  <p className="text-xs font-medium text-[#8B7355] mb-1">
+                    Better vig available?
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Using {(betterVig * 100).toFixed(1)}% vig instead of {(effectiveVig * 100).toFixed(1)}% 
+                    would add <span className="font-mono font-semibold text-[#4A7C59]">+{formatCurrency(vigNudgeValue)}</span> EV
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Suggest entering opposing odds in advanced section
+                    setShowAdvanced(true);
+                    setTimeout(() => {
+                      const container = document.querySelector('[data-opposing-odds-input]');
+                      const input = container?.querySelector('input') as HTMLInputElement;
+                      input?.focus();
+                    }, 100);
+                  }}
+                  className="text-xs font-medium text-[#C4A35A] hover:text-[#8B7355] underline"
+                >
+                  Add opposing line
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Custom Boost Percent (shows when boost_custom selected) */}
           {formState.promo_type === "boost_custom" && (
@@ -408,9 +448,13 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
                 onChange={(e) => updateField("boost_percent", e.target.value)}
                 className="h-10"
               />
-              <p className="text-xs text-muted-foreground mt-1">
-                Enter the boost % (e.g., 75 for a 75% profit boost)
-              </p>
+              <div className="mt-1">
+                {invalidBoost ? (
+                  <p className="text-xs text-[#B85C38]">Enter a value between 0 and 300.</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Using {boostPercentClamped.toFixed(0)}% boost.</p>
+                )}
+              </div>
             </div>
           )}
 
@@ -442,15 +486,17 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
 
               {/* Opposing Odds (for accurate vig) */}
               <div>
-                <SmartOddsInput
-                  ref={opposingOddsInputRef}
-                  value={formState.opposing_odds}
-                  onChange={(value) => updateField("opposing_odds", value)}
-                  placeholder="180"
-                  defaultSign="-"
-                  label="Opposing Odds"
-                  className="[&_input]:h-10"
-                />
+                <div data-opposing-odds-input>
+                  <SmartOddsInput
+                    ref={opposingOddsInputRef}
+                    value={formState.opposing_odds}
+                    onChange={(value) => updateField("opposing_odds", value)}
+                    placeholder="180"
+                    defaultSign="-"
+                    label="Opposing Odds"
+                    className="[&_input]:h-10"
+                  />
+                </div>
                 <p className="text-xs text-muted-foreground mt-1">
                   Enter opposing line for accurate vig calculation
                 </p>
@@ -491,18 +537,42 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
           )}
 
           {/* EV Preview */}
-          {isValid && ev.evTotal > 0 && (
-            <div className="rounded-lg bg-[#4A7C59]/10 border border-[#4A7C59]/20 p-3 mb-4">
+          {isValid && ev.evTotal !== 0 && (
+            <div className={cn(
+              "rounded-lg border p-3 mb-4",
+              ev.evTotal >= 0 
+                ? "bg-[#4A7C59]/10 border-[#4A7C59]/20"
+                : "bg-[#B85C38]/10 border-[#B85C38]/20"
+            )}>
               <div className="flex justify-between items-center">
                 <span className="text-sm text-muted-foreground">Expected Value</span>
-                <span className="font-mono font-semibold text-[#4A7C59]">
-                  +{formatCurrency(ev.evTotal)}
+                <span className={cn(
+                  "font-mono font-semibold",
+                  ev.evTotal >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]"
+                )}>
+                  {ev.evTotal >= 0 ? "+" : ""}{formatCurrency(ev.evTotal)}
                 </span>
               </div>
               <div className="flex justify-between items-center mt-1">
                 <span className="text-xs text-muted-foreground">To Win</span>
                 <span className="font-mono text-sm">
                   {formatCurrency(ev.winPayout)}
+                </span>
+              </div>
+              {(formState.promo_type?.startsWith("boost") || formState.promo_type === "boost_custom") && (
+                <p className="text-[10px] text-muted-foreground mt-1.5">
+                  Boost EV = win probability × boost value − vig (probability uses unboosted odds)
+                </p>
+              )}
+              <div className="flex justify-between items-center mt-1.5 pt-1.5 border-t border-border/40">
+                <span className="text-xs text-muted-foreground">
+                  Using {calculatedVig !== null ? "calculated" : "default"} vig
+                  {calculatedVig === null && (
+                    <span className="text-muted-foreground/60"> ({formState.market})</span>
+                  )}
+                </span>
+                <span className="font-mono text-xs font-medium">
+                  {(effectiveVig * 100).toFixed(1)}%
                 </span>
               </div>
             </div>
@@ -515,7 +585,7 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
             variant="outline"
             className="flex-1 h-12"
             onClick={() => handleLogBet(true)}
-            disabled={!isValid || createBet.isPending}
+            disabled={!isValid || invalidBoost || createBet.isPending}
           >
             {createBet.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -529,7 +599,7 @@ export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
           <Button
             className="flex-1 h-12"
             onClick={() => handleLogBet(false)}
-            disabled={!isValid || createBet.isPending}
+            disabled={!isValid || invalidBoost || createBet.isPending}
           >
             {createBet.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -556,7 +626,8 @@ function calculateEVClient(
     return { evTotal: 0, winPayout: 0 };
   }
 
-  let decimalOdds = americanToDecimal(oddsAmerican);
+  const unboostedDecimal = americanToDecimal(oddsAmerican);
+  let decimalOdds = unboostedDecimal;
   
   // Apply boost if applicable
   let effectiveBoost = 0;
@@ -572,8 +643,9 @@ function calculateEVClient(
     decimalOdds = 1 + boostedProfit;
   }
   
-  const impliedProb = 1 / americanToDecimal(oddsAmerican); // Use unboosted for fair prob
-  const fairProb = impliedProb / (1 + vig);
+  // Calculate win probability from UNBOOSTED odds (the true market)
+  const winProbability = 1 / unboostedDecimal;
+  const fairProb = winProbability / (1 + vig);
 
   let winPayout: number;
   let evTotal: number;
@@ -581,16 +653,23 @@ function calculateEVClient(
   if (promoType === "bonus_bet") {
     // Bonus bet: stake not returned on win
     const calculatedPayout = stake * (decimalOdds - 1);
-    // Use override if provided, otherwise calculated
     winPayout = payoutOverride || calculatedPayout;
-    evTotal = fairProb * winPayout; // No risk on bonus bet
-  } else {
-    // Standard or boosted bet
+    // EV = stake × (1 - 1/decimal_odds) - you're not risking real money
+    evTotal = stake * (1 - (1 / unboostedDecimal));
+  } else if (effectiveBoost > 0) {
+    // Boosted bet: EV comes from the boost value minus vig
     const calculatedPayout = stake * decimalOdds;
-    // Use override if provided, otherwise calculated
     winPayout = payoutOverride || calculatedPayout;
-    const profit = winPayout - stake;
-    evTotal = (fairProb * profit) - ((1 - fairProb) * stake);
+    // EV = win_probability × boost_amount - vig
+    const potentialExtra = effectiveBoost * (unboostedDecimal - 1);
+    const boostValue = winProbability * potentialExtra;
+    const evPerDollar = boostValue - vig;
+    evTotal = stake * evPerDollar;
+  } else {
+    // Standard bet or no-sweat: negative EV from vig
+    const calculatedPayout = stake * decimalOdds;
+    winPayout = payoutOverride || calculatedPayout;
+    evTotal = stake * -vig;
   }
 
   return { evTotal, winPayout };

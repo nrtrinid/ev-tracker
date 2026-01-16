@@ -163,13 +163,81 @@ export const MARKETS = [
   "Futures",
 ] as const;
 
+// Ordered by frequency of use (most common first) with logical grouping
 export const PROMO_TYPES: { value: PromoType; label: string }[] = [
-  { value: "standard", label: "Standard" },
-  { value: "no_sweat", label: "No-Sweat" },
-  { value: "promo_qualifier", label: "Promo Qualifier" },
   { value: "bonus_bet", label: "Bonus Bet" },
   { value: "boost_30", label: "30% Boost" },
   { value: "boost_50", label: "50% Boost" },
+  { value: "promo_qualifier", label: "Promo Qualifier" },
   { value: "boost_100", label: "100% Boost" },
   { value: "boost_custom", label: "Custom Boost" },
+  { value: "no_sweat", label: "No-Sweat" },
+  { value: "standard", label: "Standard" },
 ];
+
+// Promo type display config - colors for tags and selection buttons
+export const PROMO_TYPE_CONFIG: Record<PromoType, { 
+  short: string; 
+  bg: string; 
+  text: string;
+  selectedBg: string;
+  selectedText: string;
+  ring?: string;
+}> = {
+  bonus_bet: { 
+    short: "BB", 
+    bg: "bg-[#0EA5A4]/15", 
+    text: "text-[#0EA5A4]",
+    selectedBg: "bg-[#0EA5A4]/25",
+    selectedText: "text-[#0B5E5D]"
+  },
+  boost_30: { 
+    short: "30%", 
+    bg: "bg-[#C4A35A]/20", 
+    text: "text-[#8B7355]",
+    selectedBg: "bg-[#C4A35A]/30",
+    selectedText: "text-[#5C4D2E]"
+  },
+  boost_50: { 
+    short: "50%", 
+    bg: "bg-[#C4A35A]/20", 
+    text: "text-[#8B7355]",
+    selectedBg: "bg-[#C4A35A]/30",
+    selectedText: "text-[#5C4D2E]"
+  },
+  promo_qualifier: { 
+    short: "PQ", 
+    bg: "bg-[#B85C38]/15", 
+    text: "text-[#B85C38]",
+    selectedBg: "bg-[#B85C38]/20",
+    selectedText: "text-[#8B3D20]"
+  },
+  boost_100: { 
+    short: "100%", 
+    bg: "bg-[#C4A35A]/20", 
+    text: "text-[#8B7355]",
+    selectedBg: "bg-[#C4A35A]/30",
+    selectedText: "text-[#5C4D2E]"
+  },
+  boost_custom: { 
+    short: "Boost", 
+    bg: "bg-[#C4A35A]/20", 
+    text: "text-[#8B7355]",
+    selectedBg: "bg-[#C4A35A]/30",
+    selectedText: "text-[#5C4D2E]"
+  },
+  no_sweat: { 
+    short: "NS", 
+    bg: "bg-[#4A7C59]/15", 
+    text: "text-[#4A7C59]",
+    selectedBg: "bg-[#4A7C59]/25",
+    selectedText: "text-[#2C5235]"
+  },
+  standard: { 
+    short: "Std", 
+    bg: "bg-[#DDD5C7]", 
+    text: "text-[#6B5E4F]",
+    selectedBg: "bg-foreground",
+    selectedText: "text-background",
+  },
+};
