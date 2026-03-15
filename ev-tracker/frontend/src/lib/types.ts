@@ -1,0 +1,244 @@
+// Types matching the FastAPI backend models
+
+export type PromoType =
+  | "standard"
+  | "bonus_bet"
+  | "no_sweat"
+  | "promo_qualifier"
+  | "boost_30"
+  | "boost_50"
+  | "boost_100"
+  | "boost_custom";
+
+export type BetResult = "pending" | "win" | "loss" | "push" | "void";
+
+export interface Bet {
+  id: string;
+  created_at: string;
+  event_date: string;
+  settled_at: string | null;
+  sport: string;
+  event: string;
+  market: string;
+  sportsbook: string;
+  promo_type: PromoType;
+  odds_american: number;
+  odds_decimal: number;
+  stake: number;
+  boost_percent: number | null;
+  winnings_cap: number | null;
+  notes: string | null;
+  opposing_odds: number | null;
+  result: BetResult;
+  win_payout: number;
+  ev_per_dollar: number;
+  ev_total: number;
+  real_profit: number | null;
+}
+
+export interface BetCreate {
+  sport: string;
+  event: string;
+  market: string;
+  sportsbook: string;
+  promo_type: PromoType;
+  odds_american: number;
+  stake: number;
+  boost_percent?: number;
+  winnings_cap?: number;
+  notes?: string;
+  payout_override?: number;
+  opposing_odds?: number;
+  event_date?: string;
+}
+
+export interface BetUpdate {
+  sport?: string;
+  event?: string;
+  market?: string;
+  sportsbook?: string;
+  promo_type?: PromoType;
+  odds_american?: number;
+  stake?: number;
+  boost_percent?: number;
+  winnings_cap?: number;
+  notes?: string;
+  result?: BetResult;
+  payout_override?: number;
+  opposing_odds?: number;
+  event_date?: string;
+}
+
+export interface Settings {
+  k_factor: number;
+  default_stake: number | null;
+  preferred_sportsbooks: string[];
+}
+
+export interface Summary {
+  total_bets: number;
+  pending_bets: number;
+  total_ev: number;
+  total_real_profit: number;
+  variance: number;
+  win_count: number;
+  loss_count: number;
+  win_rate: number | null;
+  ev_by_sportsbook: Record<string, number>;
+  profit_by_sportsbook: Record<string, number>;
+  ev_by_sport: Record<string, number>;
+}
+
+export interface EVCalculation {
+  odds_american: number;
+  odds_decimal: number;
+  stake: number;
+  promo_type: string;
+  ev_per_dollar: number;
+  ev_total: number;
+  win_payout: number;
+}
+
+// Transaction types
+export type TransactionType = "deposit" | "withdrawal";
+
+export interface Transaction {
+  id: string;
+  created_at: string;
+  sportsbook: string;
+  type: TransactionType;
+  amount: number;
+  notes: string | null;
+}
+
+export interface TransactionCreate {
+  sportsbook: string;
+  type: TransactionType;
+  amount: number;
+  notes?: string;
+  created_at?: string; // For undo functionality to preserve original timestamp
+}
+
+export interface Balance {
+  sportsbook: string;
+  deposits: number;
+  withdrawals: number;
+  net_deposits: number;
+  profit: number;
+  pending: number;
+  balance: number;
+}
+
+// Constants
+export const SPORTSBOOKS = [
+  "DraftKings",
+  "FanDuel",
+  "BetMGM",
+  "Caesars",
+  "ESPN Bet",
+  "Fanatics",
+  "Hard Rock",
+  "bet365",
+] as const;
+
+export const SPORTS = [
+  "NFL",
+  "NBA",
+  "MLB",
+  "NHL",
+  "NCAAF",
+  "NCAAB",
+  "UFC",
+  "Soccer",
+  "Tennis",
+  "Other",
+] as const;
+
+export const MARKETS = [
+  "ML",
+  "Spread",
+  "Total",
+  "Parlay",
+  "SGP",
+  "Prop",
+  "Futures",
+] as const;
+
+// Ordered by frequency of use (most common first) with logical grouping
+export const PROMO_TYPES: { value: PromoType; label: string }[] = [
+  { value: "bonus_bet", label: "Bonus Bet" },
+  { value: "boost_30", label: "30% Boost" },
+  { value: "boost_50", label: "50% Boost" },
+  { value: "promo_qualifier", label: "Promo Qualifier" },
+  { value: "boost_100", label: "100% Boost" },
+  { value: "boost_custom", label: "Custom Boost" },
+  { value: "no_sweat", label: "No-Sweat" },
+  { value: "standard", label: "Standard" },
+];
+
+// Promo type display config - colors for tags and selection buttons
+export const PROMO_TYPE_CONFIG: Record<PromoType, { 
+  short: string; 
+  bg: string; 
+  text: string;
+  selectedBg: string;
+  selectedText: string;
+  ring?: string;
+}> = {
+  bonus_bet: { 
+    short: "BB", 
+    bg: "bg-[#0EA5A4]/15", 
+    text: "text-[#0EA5A4]",
+    selectedBg: "bg-[#0EA5A4]/25",
+    selectedText: "text-[#0B5E5D]"
+  },
+  boost_30: { 
+    short: "30%", 
+    bg: "bg-[#C4A35A]/20", 
+    text: "text-[#8B7355]",
+    selectedBg: "bg-[#C4A35A]/30",
+    selectedText: "text-[#5C4D2E]"
+  },
+  boost_50: { 
+    short: "50%", 
+    bg: "bg-[#C4A35A]/20", 
+    text: "text-[#8B7355]",
+    selectedBg: "bg-[#C4A35A]/30",
+    selectedText: "text-[#5C4D2E]"
+  },
+  promo_qualifier: { 
+    short: "PQ", 
+    bg: "bg-[#B85C38]/15", 
+    text: "text-[#B85C38]",
+    selectedBg: "bg-[#B85C38]/20",
+    selectedText: "text-[#8B3D20]"
+  },
+  boost_100: { 
+    short: "100%", 
+    bg: "bg-[#C4A35A]/20", 
+    text: "text-[#8B7355]",
+    selectedBg: "bg-[#C4A35A]/30",
+    selectedText: "text-[#5C4D2E]"
+  },
+  boost_custom: { 
+    short: "Boost", 
+    bg: "bg-[#C4A35A]/20", 
+    text: "text-[#8B7355]",
+    selectedBg: "bg-[#C4A35A]/30",
+    selectedText: "text-[#5C4D2E]"
+  },
+  no_sweat: { 
+    short: "NS", 
+    bg: "bg-[#4A7C59]/15", 
+    text: "text-[#4A7C59]",
+    selectedBg: "bg-[#4A7C59]/25",
+    selectedText: "text-[#2C5235]"
+  },
+  standard: { 
+    short: "Std", 
+    bg: "bg-[#DDD5C7]", 
+    text: "text-[#6B5E4F]",
+    selectedBg: "bg-foreground",
+    selectedText: "text-background",
+  },
+};

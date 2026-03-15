@@ -1,0 +1,5 @@
+node_modules/
+dist/
+build/
+*.csv
+*.json  # (If you have massive data files)
