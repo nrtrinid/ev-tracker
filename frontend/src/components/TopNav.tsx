@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { Calculator, BarChart3, Settings, Home } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { Calculator, BarChart3, Settings, Home, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/lib/auth-context";
 
 const navItems = [
   { href: "/", label: "Home", icon: Home },
@@ -14,6 +15,16 @@ const navItems = [
 
 export function TopNav() {
   const pathname = usePathname();
+  const router = useRouter();
+  const { signOut } = useAuth();
+
+  if (pathname === "/login") return null;
+
+  const handleSignOut = async () => {
+    await signOut();
+    router.push("/login");
+    router.refresh();
+  };
 
   return (
     <header className="sticky top-0 z-20 border-b border-border bg-card/90 backdrop-blur-sm">
@@ -51,6 +62,14 @@ export function TopNav() {
               </Link>
             );
           })}
+
+          <button
+            onClick={handleSignOut}
+            className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:text-destructive hover:bg-background transition-all tactile-btn ml-1"
+            title="Sign out"
+          >
+            <LogOut className="h-4 w-4" />
+          </button>
         </nav>
       </div>
     </header>

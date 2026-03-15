@@ -53,6 +53,7 @@ export default function SettingsPage() {
       type: tx.type,
       amount: tx.amount,
       notes: tx.notes || undefined,
+      created_at: tx.created_at, // Restore original timestamp
     };
 
     deleteTransaction.mutate(tx.id, {

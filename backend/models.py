@@ -95,7 +95,7 @@ class BetResponse(BaseModel):
 
 class SettingsUpdate(BaseModel):
     """User settings."""
-    k_factor: float = Field(default=0.78, ge=0, le=1)
+    k_factor: float | None = Field(default=None, ge=0, le=1)
     default_stake: float | None = None
     preferred_sportsbooks: list[str] | None = None
 
@@ -136,6 +136,7 @@ class TransactionCreate(BaseModel):
     type: TransactionType
     amount: float = Field(gt=0)
     notes: str | None = None
+    created_at: datetime | None = None
 
 
 class TransactionResponse(BaseModel):

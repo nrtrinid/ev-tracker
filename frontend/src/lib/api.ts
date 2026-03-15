@@ -11,6 +11,7 @@ import type {
   TransactionCreate,
   Balance,
 } from "./types";
+import { createClient } from "./supabase";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -18,10 +19,18 @@ async function fetchAPI<T>(
   endpoint: string,
   options?: RequestInit
 ): Promise<T> {
+  const supabase = createClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
   const res = await fetch(`${API_URL}${endpoint}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
+      ...(session?.access_token && {
+        Authorization: `Bearer ${session.access_token}`,
+      }),
       ...options?.headers,
     },
   });
@@ -142,29 +151,9 @@ export async function createTransaction(transaction: TransactionCreate): Promise
 }
 
 export async function deleteTransaction(id: string): Promise<void> {
-  const res = await fetch(`${API_URL}/transactions/${id}`, { 
+  await fetchAPI<{ deleted: boolean }>(`/transactions/${id}`, {
     method: "DELETE",
-    headers: {
-      "Content-Type": "application/json",
-    },
   });
-  
-  // res.ok is true for status codes 200-299 (includes 204 No Content)
-  // 204 No Content means success with no response body - just return
-  if (res.ok) {
-    return;
-  }
-  
-  // Only throw error for actual failures (4xx, 5xx)
-  // Try to get error message from response body
-  let errorMessage = `API error: ${res.status}`;
-  try {
-    const error = await res.json();
-    errorMessage = error.detail || errorMessage;
-  } catch {
-    // If JSON parsing fails, use status code
-  }
-  throw new Error(errorMessage);
 }
 
 // ============ Balances API ============

@@ -116,6 +116,7 @@ export interface TransactionCreate {
   type: TransactionType;
   amount: number;
   notes?: string;
+  created_at?: string; // For undo functionality to preserve original timestamp
 }
 
 export interface Balance {

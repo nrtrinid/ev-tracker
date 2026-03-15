@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 venv/
 env/
+activate/
 
 # Environment files (NEVER commit these)
 .env
@@ -40,6 +41,9 @@ htmlcov/
 # Misc
 *.bak
 *.tmp
+
+# Legacy duplicate (delete manually after closing IDE/servers)
+ev-tracker/
 
 # AI Agent Instructions (personal use only)
 .github/copilot-instructions.md
