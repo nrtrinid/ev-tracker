@@ -19,10 +19,10 @@ import {
   Target, 
   DollarSign,
   BarChart3,
-  PieChart as PieChartIcon,
   Activity,
   X,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Info
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { getBets, getSummary, getBalances } from "@/lib/api";
@@ -33,14 +33,10 @@ import {
   YAxis, 
   Tooltip, 
   ResponsiveContainer,
-  PieChart,
-  Pie,
   Cell,
-  Legend,
   LineChart,
   Line,
   CartesianGrid,
-  Area,
   ComposedChart
 } from "recharts";
 import type { Bet } from "@/lib/types";
@@ -204,15 +200,15 @@ const CHART_COLORS = ["#4A7C59", "#C4A35A", "#6B5E4F", "#B85C38", "#8B7355", "#7
 // Promo type chart colors (distinct hues for readability)
 // Note: Chart palette intentionally diverges from tag colors for better differentiation.
 const PROMO_TYPE_CHART_COLORS: Record<string, string> = {
-  // Brand-consistent, softer earth tones with distinct hues
-  "Bonus Bet": "#7A9E7E", // sage green
-  "30% Boost": "#C4A35A", // amber/gold
-  "50% Boost": "#B8963E", // warm ochre
-  "100% Boost": "#8B7355", // brown
-  "Custom Boost": "#D4C4A8", // light sand
-  "No Sweat": "#4A7C59", // deep green
-  "Promo Qualifier": "#B85C38", // brick red
-  "Standard": "#6B5E4F", // taupe
+  "Bonus Bet": "#7A9E7E",
+  "Boosts": "#C4A35A",
+  "30% Boost": "#C4A35A",
+  "50% Boost": "#B8963E",
+  "100% Boost": "#8B7355",
+  "Custom Boost": "#D4C4A8",
+  "No Sweat": "#4A7C59",
+  "Promo Qualifier": "#B85C38",
+  "Standard": "#6B5E4F",
 };
 
 export default function AnalyticsPage() {
@@ -372,6 +368,18 @@ export default function AnalyticsPage() {
     .reduce((sum, b) => sum + b.win_payout, 0);
   const bonusEfficiency = bonusStaked > 0 ? (bonusReturns / bonusStaked) * 100 : null;
 
+  // CLV Analytics — standard bets only. Promos (bonus bets, boosts, qualifiers) optimize
+  // for retention/boost value, not for beating the closing line, so including them would
+  // pollute the signal.
+  const standardBets = filteredBets.filter(b => b.promo_type === "standard");
+  const clvBets = standardBets.filter(b => b.clv_ev_percent !== null);
+  const clvTrackedCount = standardBets.filter(b => b.pinnacle_odds_at_entry !== null).length;
+  const beatCloseCount = clvBets.filter(b => b.beat_close === true).length;
+  const beatClosePct = clvBets.length > 0 ? (beatCloseCount / clvBets.length) * 100 : null;
+  const avgCLV = clvBets.length > 0
+    ? clvBets.reduce((sum, b) => sum + (b.clv_ev_percent ?? 0), 0) / clvBets.length
+    : null;
+
   // Prepare chart data from FILTERED bets
   const sportsbookChartData = useMemo(() => {
     const evBySportsbook: Record<string, number> = {};
@@ -396,55 +404,49 @@ export default function AnalyticsPage() {
 
   const sportChartData = useMemo(() => {
     const evBySport: Record<string, number> = {};
-    
     filteredBets.forEach(bet => {
       evBySport[bet.sport] = (evBySport[bet.sport] || 0) + bet.ev_total;
     });
-    
     const totalEV = Object.values(evBySport).reduce((sum, v) => sum + Math.abs(v), 0);
     if (totalEV === 0) return [];
-    
-    // Separate large and small slices
-    const largeSlices: Array<{ name: string; value: number; color: string }> = [];
-    let otherValue = 0;
-    
-    // Sort entries by value first
-    const sortedEntries = Object.entries(evBySport).sort((a, b) => b[1] - a[1]);
-    
-    sortedEntries.forEach(([name, ev], i) => {
-      const percent = Math.abs(ev) / totalEV;
-      if (percent >= 0.05) {
-        largeSlices.push({
-          name,
-          value: ev,
-          color: CHART_COLORS[largeSlices.length % CHART_COLORS.length],
-        });
-      } else {
-        otherValue += ev;
-      }
-    });
-    
-    // Add "Other" slice at the end if there are small slices
-    if (otherValue !== 0) {
-      largeSlices.push({
+
+    const THRESHOLD = 0.05; // sports below 5% of total EV go into "Other"
+    const bars: Array<{ name: string; ev: number; color: string }> = [];
+    let otherEV = 0;
+
+    Object.entries(evBySport)
+      .sort(([, a], [, b]) => b - a)
+      .forEach(([name, ev]) => {
+        const share = Math.abs(ev) / totalEV;
+        if (share >= THRESHOLD) {
+          bars.push({
+            name,
+            ev,
+            color: CHART_COLORS[bars.length % CHART_COLORS.length],
+          });
+        } else {
+          otherEV += ev;
+        }
+      });
+
+    if (otherEV !== 0) {
+      bars.push({
         name: "Other",
-        value: otherValue,
-        color: "#A8A29E", // stone-400 - lighter but still readable
+        ev: otherEV,
+        color: "#A8A29E",
       });
     }
-    
-    return largeSlices;
+
+    return bars.sort((a, b) => b.ev - a.ev);
   }, [filteredBets]);
 
-  // Bets by promo type (from filtered bets) - no "Other" grouping since there are limited types
+  // Bets by promo type — boost subtypes are merged into one "Boosts" bar for chart clarity
   const promoTypeData = useMemo(() => {
     const counts: Record<string, number> = {};
-    
     filteredBets.forEach(bet => {
-      const label = formatPromoType(bet.promo_type);
+      const label = bet.promo_type.startsWith("boost_") ? "Boosts" : formatPromoType(bet.promo_type);
       counts[label] = (counts[label] || 0) + 1;
     });
-    
     return Object.entries(counts)
       .map(([name, value]) => ({
         name,
@@ -642,7 +644,13 @@ export default function AnalyticsPage() {
             )}>
               <CardContent className="pt-6 pb-4">
                 <div className="text-center">
-                  <p className="text-sm text-muted-foreground mb-2 uppercase tracking-wide">Performance Status</p>
+                  <div className="flex items-center justify-center gap-1.5 mb-2">
+                    <p className="text-sm text-muted-foreground uppercase tracking-wide">Performance Status</p>
+                    <Info
+                      className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0"
+                      title="Z-Score measures how much your actual profit deviates from expected EV. Positive = outrunning variance (running hot). Negative = underrunning variance (running cold). Values between -1 and +1 are normal luck variance."
+                    />
+                  </div>
                   <div>
                     <p className={cn(
                       "text-2xl font-bold",
@@ -687,16 +695,17 @@ export default function AnalyticsPage() {
               </Card>
               <Card className="card-hover">
                 <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">EV Conversion</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Avg CLV</p>
                   <p className={cn(
                     "text-xl sm:text-2xl font-bold font-mono leading-tight",
-                    evConversion === null ? "text-muted-foreground" :
-                    evConversion >= 1.2 ? "text-[#4A7C59]" :
-                    evConversion >= 0.8 ? "text-foreground" :
+                    avgCLV === null ? "text-muted-foreground" :
+                    avgCLV >= 1.5 ? "text-[#4A7C59]" :
+                    avgCLV >= 0 ? "text-[#8B7355]" :
                     "text-[#B85C38]"
                   )}>
-                    {evConversion !== null ? `${(evConversion * 100).toFixed(0)}%` : "—"}
+                    {avgCLV !== null ? `${avgCLV >= 0 ? "+" : ""}${avgCLV.toFixed(2)}%` : "—"}
                   </p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">standard bets</p>
                 </CardContent>
               </Card>
               <Card className="card-hover">
@@ -767,6 +776,84 @@ export default function AnalyticsPage() {
                 </summary>
                 
                 <div className="px-6 pb-6 pt-6 space-y-6 border-t">
+
+                {/* ── Process Quality: CLV ── */}
+                {clvTrackedCount > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <Target className="h-4 w-4 text-muted-foreground" />
+                      <h3 className="font-semibold text-sm">Closing Line Value</h3>
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-1">
+                      How often your scanner finds lines better than where the market closes.
+                      A positive average CLV is the strongest evidence the scanner works.
+                    </p>
+                    <p className="text-[10px] text-muted-foreground/60 mb-4">
+                      Standard bets only — promo bets optimize for different objectives and are excluded.
+                    </p>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                      <Card className="card-hover">
+                        <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
+                          <p className="text-xs text-muted-foreground uppercase tracking-wide">Avg CLV</p>
+                          <p className={cn(
+                            "text-xl font-bold font-mono leading-tight",
+                            avgCLV === null ? "text-muted-foreground" :
+                            avgCLV >= 1.5 ? "text-[#4A7C59]" :
+                            avgCLV >= 0 ? "text-[#8B7355]" : "text-[#B85C38]"
+                          )}>
+                            {avgCLV !== null ? `${avgCLV >= 0 ? "+" : ""}${avgCLV.toFixed(2)}%` : "—"}
+                          </p>
+                        </CardContent>
+                      </Card>
+                      <Card className="card-hover">
+                        <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
+                          <p className="text-xs text-muted-foreground uppercase tracking-wide">Beat Close</p>
+                          <p className={cn(
+                            "text-xl font-bold font-mono leading-tight",
+                            beatClosePct === null ? "text-muted-foreground" :
+                            beatClosePct >= 55 ? "text-[#4A7C59]" :
+                            beatClosePct >= 45 ? "text-foreground" : "text-[#B85C38]"
+                          )}>
+                            {beatClosePct !== null ? `${beatClosePct.toFixed(0)}%` : "—"}
+                          </p>
+                        </CardContent>
+                      </Card>
+                      <Card className="card-hover">
+                        <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
+                          <p className="text-xs text-muted-foreground uppercase tracking-wide">CLV Bets</p>
+                          <p className="text-xl font-bold font-mono leading-tight">{beatCloseCount} / {clvBets.length}</p>
+                          <p className="text-[10px] text-muted-foreground mt-0.5">beat close</p>
+                        </CardContent>
+                      </Card>
+                      <Card className="card-hover">
+                        <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
+                          <p className="text-xs text-muted-foreground uppercase tracking-wide">Tracked</p>
+                          <p className="text-xl font-bold font-mono leading-tight">{clvTrackedCount}</p>
+                          <p className="text-[10px] text-muted-foreground mt-0.5">of {filteredBets.length} bets</p>
+                        </CardContent>
+                      </Card>
+                    </div>
+                    {clvBets.length === 0 && clvTrackedCount > 0 && (
+                      <p className="text-xs text-muted-foreground italic text-center py-2">
+                        Close lines not yet captured — they update automatically when you scan.
+                      </p>
+                    )}
+                    {avgCLV !== null && (
+                      <p className={cn(
+                        "text-xs text-center font-medium",
+                        avgCLV > 1.5 ? "text-[#4A7C59]" :
+                        avgCLV > 0 ? "text-[#8B7355]" : "text-[#B85C38]"
+                      )}>
+                        {avgCLV > 1.5
+                          ? "Strong positive CLV — scanner is consistently beating the market."
+                          : avgCLV > 0
+                          ? "Positive CLV — scanner is finding edge, keep tracking."
+                          : "Negative CLV — review scanner settings or sample size."}
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 {/* Bankroll Box */}
                 <Card>
                   <CardHeader className="pb-2">
@@ -804,13 +891,26 @@ export default function AnalyticsPage() {
                   </CardContent>
                 </Card>
 
-                {/* Performance Metrics Row */}
+                {/* Notable Stats */}
                 <Card>
                   <CardHeader className="pb-2">
-                    <h3 className="font-semibold text-sm">Performance Metrics</h3>
+                    <h3 className="font-semibold text-sm">Notable Stats</h3>
                   </CardHeader>
                   <CardContent>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                      {/* EV Conversion */}
+                      <div className="rounded-lg bg-muted border border-border p-3">
+                        <p className="text-xs text-muted-foreground">EV Conversion</p>
+                        <p className={cn(
+                          "text-lg font-bold",
+                          evConversion === null ? "text-muted-foreground" :
+                          evConversion >= 1.2 ? "text-[#4A7C59]" :
+                          evConversion >= 0.8 ? "text-foreground" : "text-[#B85C38]"
+                        )}>
+                          {evConversion !== null ? `${(evConversion * 100).toFixed(0)}%` : "—"}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5">actual / expected</p>
+                      </div>
                       {/* Biggest Win */}
                       <div className="rounded-lg bg-muted border border-border p-3">
                         <p className="text-xs text-muted-foreground">Biggest Win</p>
@@ -927,40 +1027,17 @@ export default function AnalyticsPage() {
                     </CardHeader>
                     <CardContent>
                       {sportChartData.length > 0 ? (
-                        <ResponsiveContainer width="100%" height={220}>
-                          <PieChart>
-                            <Pie 
-                              data={sportChartData} 
-                              dataKey="value" 
-                              nameKey="name" 
-                              cx="50%" 
-                              cy="45%" 
-                              outerRadius={55}
-                              minAngle={5}
-                              label={({ payload, percent }) => {
-                                // Access name from payload (the original data entry)
-                                const name = payload?.name || "";
-                                return `${name} ${(percent * 100).toFixed(0)}%`;
-                              }} 
-                              labelLine={false} 
-                              fontSize={10}
-                            >
-                              {sportChartData.map((entry, index) => (
-                                <Cell key={index} fill={entry.color} name={entry.name} />
-                              ))}
-                            </Pie>
+                        <ResponsiveContainer width="100%" height={Math.max(120, sportChartData.length * 36)}>
+                          <BarChart data={sportChartData} layout="vertical" margin={{ left: 0, right: 10, top: 0, bottom: 0 }}>
+                            <XAxis type="number" tickFormatter={(v) => `$${v}`} fontSize={10} stroke="hsl(var(--muted-foreground))" />
+                            <YAxis type="category" dataKey="name" width={50} fontSize={10} stroke="hsl(var(--muted-foreground))" />
                             <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                            <Legend 
-                              payload={sportChartData.map((entry) => ({
-                                value: entry.name,
-                                type: "square" as const,
-                                color: entry.color,
-                              }))}
-                              wrapperStyle={{ fontSize: '10px', paddingTop: '8px' }}
-                              layout="horizontal"
-                              align="center"
-                            />
-                          </PieChart>
+                            <Bar dataKey="ev" radius={[0, 4, 4, 0]}>
+                              {sportChartData.map((entry, index) => (
+                                <Cell key={index} fill={entry.color} />
+                              ))}
+                            </Bar>
+                          </BarChart>
                         </ResponsiveContainer>
                       ) : (
                         <EmptyChart message="No data yet" />
@@ -971,44 +1048,21 @@ export default function AnalyticsPage() {
                   {/* Bets by Promo Type */}
                   <Card>
                     <CardHeader className="pb-2">
-                      <h3 className="font-semibold text-sm">Bets by Promo Type</h3>
+                      <h3 className="font-semibold text-sm">Bets by Type</h3>
                     </CardHeader>
                     <CardContent>
                       {promoTypeData.length > 0 ? (
-                        <ResponsiveContainer width="100%" height={220}>
-                          <PieChart>
-                            <Pie 
-                              data={promoTypeData} 
-                              dataKey="value" 
-                              nameKey="name" 
-                              cx="50%" 
-                              cy="45%" 
-                              outerRadius={55}
-                              minAngle={5}
-                              label={({ percent }) => `${Math.round((percent || 0) * 100)}%`} 
-                              labelLine={false} 
-                              fontSize={10}
-                            >
+                        <ResponsiveContainer width="100%" height={Math.max(120, promoTypeData.length * 36)}>
+                          <BarChart data={promoTypeData} layout="vertical" margin={{ left: 0, right: 10, top: 0, bottom: 0 }}>
+                            <XAxis type="number" allowDecimals={false} fontSize={10} stroke="hsl(var(--muted-foreground))" />
+                            <YAxis type="category" dataKey="name" width={70} fontSize={10} stroke="hsl(var(--muted-foreground))" />
+                            <Tooltip formatter={(value: number) => [`${value} bet${value !== 1 ? "s" : ""}`, "Count"]} />
+                            <Bar dataKey="value" radius={[0, 4, 4, 0]}>
                               {promoTypeData.map((entry, index) => (
-                                <Cell key={index} fill={entry.color} name={entry.name} />
+                                <Cell key={index} fill={entry.color} />
                               ))}
-                            </Pie>
-                            <Tooltip formatter={(value: number, name: string) => {
-                              const total = promoTypeData.reduce((sum, e) => sum + e.value, 0);
-                              const pct = total ? Math.round((Number(value) / total) * 100) : 0;
-                              return [`${value} bet${Number(value) !== 1 ? 's' : ''} (${pct}%)`, name];
-                            }} />
-                            <Legend 
-                              payload={promoTypeData.map((entry) => ({
-                                value: entry.name,
-                                type: "square" as const,
-                                color: entry.color,
-                              }))}
-                              wrapperStyle={{ fontSize: '10px', paddingTop: '8px' }}
-                              layout="horizontal"
-                              align="center"
-                            />
-                          </PieChart>
+                            </Bar>
+                          </BarChart>
                         </ResponsiveContainer>
                       ) : (
                         <EmptyChart message="No data yet" />
@@ -1084,6 +1138,7 @@ export default function AnalyticsPage() {
               </div>
             </details>
             </Card>
+
           </>
         )}
       </div>

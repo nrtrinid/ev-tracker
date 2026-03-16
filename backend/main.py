@@ -18,7 +18,7 @@ from models import (
     TransactionCreate, TransactionResponse, BalanceResponse,
     ScanResponse, FullScanResponse,
 )
-from calculations import american_to_decimal, calculate_ev, calculate_real_profit
+from calculations import american_to_decimal, calculate_ev, calculate_real_profit, calculate_clv
 from auth import get_current_user
 
 load_dotenv()
@@ -28,6 +28,47 @@ app = FastAPI(
     description="Track sports betting Expected Value",
     version="1.0.0"
 )
+
+
+# ---------- CLV daily safety-net scheduler ----------
+# Fires once per day at 23:30 UTC (6:30 PM ET). Makes one fetch_odds call per
+# active sport and updates pinnacle_odds_at_close for all pending tracked bets.
+# This is a backstop — the piggyback in scan_markets does most of the work for free.
+
+async def _run_clv_daily_job():
+    """Safety-net: fetch closing Pinnacle lines for all pending CLV-tracked bets."""
+    from services.odds_api import fetch_clv_for_pending_bets
+    db = get_db()
+    try:
+        updated = await fetch_clv_for_pending_bets(db)
+        print(f"[CLV daily job] Updated {updated} bet(s) with closing lines.")
+    except Exception as e:
+        print(f"[CLV daily job] Error: {e}")
+
+
+async def _piggyback_clv(sides: list[dict]):
+    """
+    Fire-and-forget task: update CLV snapshots for all pending tracked bets
+    from the just-completed scan. Errors are swallowed so they never affect
+    the scan response the user sees.
+    """
+    from services.odds_api import update_clv_snapshots
+    try:
+        db = get_db()
+        update_clv_snapshots(sides, db)
+    except Exception as e:
+        print(f"[CLV piggyback] Error: {e}")
+
+
+@app.on_event("startup")
+async def start_scheduler():
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from apscheduler.triggers.cron import CronTrigger
+    scheduler = AsyncIOScheduler()
+    # 23:30 UTC = 6:30 PM ET (accounts for EST; shift to 22:30 during EDT if needed)
+    scheduler.add_job(_run_clv_daily_job, CronTrigger(hour=23, minute=30))
+    scheduler.start()
+    app.state.scheduler = scheduler
 
 # CORS - allow frontend to call API
 app.add_middleware(
@@ -123,6 +164,7 @@ def build_bet_response(row: dict, k_factor: float) -> BetResponse:
         boost_percent=row.get("boost_percent"),
         winnings_cap=row.get("winnings_cap"),
         vig=vig,
+        true_prob=row.get("true_prob_at_entry"),
     )
 
     # Use payout override if present
@@ -134,6 +176,14 @@ def build_bet_response(row: dict, k_factor: float) -> BetResponse:
         result=row["result"],
         promo_type=row["promo_type"],
     )
+
+    # CLV — compute only when we have both entry and close Pinnacle lines
+    clv_ev_percent = None
+    beat_close = None
+    if row.get("pinnacle_odds_at_entry") and row.get("pinnacle_odds_at_close"):
+        clv_result = calculate_clv(row["odds_american"], row["pinnacle_odds_at_close"])
+        clv_ev_percent = clv_result["clv_ev_percent"]
+        beat_close = clv_result["beat_close"]
 
     return BetResponse(
         id=row["id"],
@@ -157,6 +207,15 @@ def build_bet_response(row: dict, k_factor: float) -> BetResponse:
         ev_per_dollar=ev_result["ev_per_dollar"],
         ev_total=ev_result["ev_total"],
         real_profit=real_profit,
+        pinnacle_odds_at_entry=row.get("pinnacle_odds_at_entry"),
+        pinnacle_odds_at_close=row.get("pinnacle_odds_at_close"),
+        clv_updated_at=row.get("clv_updated_at"),
+        commence_time=row.get("commence_time"),
+        clv_team=row.get("clv_team"),
+        clv_sport_key=row.get("clv_sport_key"),
+        true_prob_at_entry=row.get("true_prob_at_entry"),
+        clv_ev_percent=clv_ev_percent,
+        beat_close=beat_close,
     )
 
 
@@ -191,6 +250,12 @@ def create_bet(bet: BetCreate, user: dict = Depends(get_current_user)):
         "payout_override": bet.payout_override,
         "opposing_odds": bet.opposing_odds,
         "result": BetResult.PENDING.value,
+        # CLV tracking fields (None when betting manually, set when logging from scanner)
+        "pinnacle_odds_at_entry": bet.pinnacle_odds_at_entry,
+        "commence_time": bet.commence_time,
+        "clv_team": bet.clv_team,
+        "clv_sport_key": bet.clv_sport_key,
+        "true_prob_at_entry": bet.true_prob_at_entry,
     }
 
     # Only include event_date if provided, otherwise let DB default to today
@@ -763,6 +828,8 @@ async def scan_markets(
         if sport is not None:
             result = await get_cached_or_scan(sport)
             scanned_at = datetime.utcfromtimestamp(result["fetched_at"]).isoformat() + "Z"
+            # Piggyback CLV update — zero extra API calls
+            asyncio.create_task(_piggyback_clv(result["sides"]))
             return FullScanResponse(
                 sport=sport,
                 sides=result["sides"],
@@ -801,6 +868,8 @@ async def scan_markets(
             if ft is not None:
                 oldest_fetched = ft if oldest_fetched is None else min(oldest_fetched, ft)
         scanned_at = (datetime.utcfromtimestamp(oldest_fetched).isoformat() + "Z") if oldest_fetched else None
+        # Piggyback CLV update across all scanned sides — zero extra API calls
+        asyncio.create_task(_piggyback_clv(all_sides))
         return FullScanResponse(
             sport="all",
             sides=all_sides,

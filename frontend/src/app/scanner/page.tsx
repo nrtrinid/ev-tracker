@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { LogBetDrawer } from "@/components/LogBetDrawer";
@@ -112,6 +113,7 @@ function bookAbbrev(name: string): string {
 // ============ Page ============
 
 export default function ScannerPage() {
+  const queryClient = useQueryClient();
   const { data: balances } = useBalances();
   const { useComputedBankroll, bankrollOverride, kellyMultiplier } = useKellySettings();
   const computedBankroll = useMemo(() => {
@@ -161,6 +163,9 @@ export default function ScannerPage() {
     if (cooldown > 0 || isScanning) return;
     await refetchScan();
     setCooldown(60);
+    // Piggyback just updated CLV snapshots in the DB — invalidate bets so
+    // the dashboard/bet list shows fresh CLV badges without a manual refresh.
+    queryClient.invalidateQueries({ queryKey: ["bets"] });
   };
 
   const toggleBook = (book: string) => {
@@ -228,6 +233,12 @@ export default function ScannerPage() {
       opposing_odds: side.pinnacle_odds,
       promo_type: promoType,
       boost_percent: boostPct,
+      // CLV tracking metadata — stored silently at bet creation
+      pinnacle_odds_at_entry: side.pinnacle_odds,
+      commence_time: side.commence_time,
+      clv_team: side.team,
+      clv_sport_key: side.sport,
+      true_prob_at_entry: side.true_prob,  // de-vigged Pinnacle prob — used for accurate EV
     });
     setDrawerKey(Date.now());
     setDrawerOpen(true);

@@ -43,9 +43,16 @@ class BetCreate(BaseModel):
     notes: str | None = None
     event_date: date | None = None  # Defaults to today if not provided
     opposing_odds: float | None = None  # For accurate vig calculation
-    
+
     # Optional override for edge cases
     payout_override: float | None = None
+
+    # CLV tracking — populated automatically when logging from scanner
+    pinnacle_odds_at_entry: float | None = None  # Pinnacle line for this side at bet time
+    commence_time: str | None = None             # ISO-8601 game start (for snapshot matching)
+    clv_team: str | None = None                  # Team name (e.g. "Los Angeles Lakers")
+    clv_sport_key: str | None = None             # Odds API key (e.g. "basketball_nba")
+    true_prob_at_entry: float | None = None      # De-vigged Pinnacle probability — enables accurate EV for standard scanner bets
 
 
 class BetUpdate(BaseModel):
@@ -85,12 +92,24 @@ class BetResponse(BaseModel):
     notes: str | None
     opposing_odds: float | None
     result: BetResult
-    
+
     # Calculated fields
     win_payout: float
     ev_per_dollar: float
     ev_total: float
     real_profit: float | None
+
+    # CLV fields
+    pinnacle_odds_at_entry: float | None = None
+    pinnacle_odds_at_close: float | None = None
+    clv_updated_at: datetime | None = None
+    commence_time: str | None = None
+    clv_team: str | None = None
+    clv_sport_key: str | None = None
+    true_prob_at_entry: float | None = None
+    # Calculated CLV — only set when both entry and close Pinnacle odds are present
+    clv_ev_percent: float | None = None
+    beat_close: bool | None = None
 
 
 class SettingsUpdate(BaseModel):

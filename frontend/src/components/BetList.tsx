@@ -110,6 +110,21 @@ const sportsbookTextColors: Record<string, string> = {
 
 // Using shared PROMO_TYPE_CONFIG from types.ts
 
+// ============ SPORTSBOOK ABBREVIATIONS ============
+function bookAbbrev(name: string): string {
+  const map: Record<string, string> = {
+    DraftKings: "DK",
+    FanDuel: "FD",
+    BetMGM: "MGM",
+    Caesars: "CZR",
+    "ESPN Bet": "ESPN",
+    Fanatics: "FAN",
+    "Hard Rock": "HR",
+    bet365: "B365",
+  };
+  return map[name] || name.slice(0, 3).toUpperCase();
+}
+
 // ============ MARKET VIG DEFAULTS ============
 const MARKET_VIG: Record<string, number> = {
   ML: 0.045,
@@ -220,6 +235,22 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
                 </span>
               )}
               <span className="text-xs text-muted-foreground">{bet.sport} • {bet.market}</span>
+              {/* CLV badge — raw market CLV for all bets with a Pinnacle snapshot */}
+              {bet.clv_ev_percent !== null && (
+                <span className={cn(
+                  "px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none",
+                  bet.beat_close
+                    ? "bg-[#4A7C59]/15 text-[#4A7C59]"
+                    : "bg-[#B85C38]/15 text-[#B85C38]"
+                )}>
+                  CLV {bet.clv_ev_percent >= 0 ? "+" : ""}{bet.clv_ev_percent.toFixed(1)}%
+                </span>
+              )}
+              {bet.pinnacle_odds_at_entry !== null && bet.clv_ev_percent === null && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-medium leading-none bg-muted text-muted-foreground">
+                  CLV ⏳
+                </span>
+              )}
             </div>
           </div>
           {headerRight}
@@ -254,8 +285,12 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
           {/* EV - Col 2 on mobile, Col 3 on desktop */}
           <div className="order-2 md:order-3">
             <p className="text-muted-foreground text-xs">EV</p>
-            <p className={cn("font-mono font-semibold", bet.ev_total >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
-              {bet.ev_total >= 0 ? "+" : ""}{formatCurrency(bet.ev_total)}
+            <p className={cn("font-mono font-semibold", bet.ev_total >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}
+               style={{ whiteSpace: "nowrap" }}>
+              {bet.ev_total >= 0 ? "+" : ""}{formatCurrency(bet.ev_total)}{" "}
+              <span className="font-normal text-xs opacity-70">
+                ({bet.ev_per_dollar >= 0 ? "+" : ""}{(bet.ev_per_dollar * 100).toFixed(1)}%)
+              </span>
             </p>
           </div>
           {/* Stake - Col 1 on mobile row 2, Col 2 on desktop */}
@@ -296,112 +331,89 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
         </Button>
 
         {expanded && (
-          <div className="pt-3 border-t border-border">
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-              {/* Slot 1: Opposing Line (if available) - Always Top Left */}
-              {bet.opposing_odds ? (
-                <div>
-                  <p className="text-muted-foreground text-xs mb-0.5">Opposing Line</p>
-                  <p className="font-mono text-sm text-foreground">{formatOdds(bet.opposing_odds)}</p>
-                </div>
-              ) : (
-                <div>
-                  <p className="text-muted-foreground text-xs mb-0.5">Req. Win %</p>
-                  <p className="font-mono text-sm text-foreground">{(impliedProb * 100).toFixed(1)}%</p>
-                </div>
-              )}
-              
-              {mode === "pending" ? (
-                <>
-                  {/* PENDING LAYOUT */}
-                  {/* Slot 2: Req. Win % (if Opposing Line present) or Vig */}
-                  {bet.opposing_odds ? (
-                    <div>
-                      <p className="text-muted-foreground text-xs mb-0.5">Req. Win %</p>
-                      <p className="font-mono text-sm text-foreground">{(impliedProb * 100).toFixed(1)}%</p>
-                    </div>
-                  ) : (
-                    <div>
-                      <p className="text-muted-foreground text-xs mb-0.5">Vig</p>
-                      <p className="font-mono text-sm text-foreground">{(displayVig * 100).toFixed(1)}%</p>
-                    </div>
-                  )}
-                  {/* Slot 3: Vig (if Opposing Line present) or EV per $ */}
-                  {bet.opposing_odds ? (
-                    <div>
-                      <p className="text-muted-foreground text-xs mb-0.5">Vig</p>
-                      <p className="font-mono text-sm text-foreground">{(displayVig * 100).toFixed(1)}%</p>
-                    </div>
-                  ) : (
-                    <div>
-                      <p className="text-muted-foreground text-xs mb-0.5">EV per $</p>
-                      <p className="font-mono text-sm text-foreground">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
-                    </div>
-                  )}
-                  {/* Slot 4: EV per $ (if Opposing Line present) or empty */}
-                  {bet.opposing_odds && (
-                    <div>
-                      <p className="text-muted-foreground text-xs mb-0.5">EV per $</p>
-                      <p className="font-mono text-sm text-foreground">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <>
-                  {/* SETTLED LAYOUT: Prioritize financial data (Win Payout) near Profit */}
-                  {/* Slot 2: Win Payout - Directly under Profit (Top Right) */}
+          <div className="pt-3 border-t border-border space-y-4">
+
+            {/* ── Row 1: CLV (all bets with a Pinnacle entry snapshot) ── */}
+            {bet.pinnacle_odds_at_entry != null && (
+              <div>
+                <div className="grid grid-cols-3 gap-x-3">
+                  {/* Col 1: Entry odds — always the raw (unboosted) market line */}
                   <div>
-                    <p className="text-muted-foreground text-xs mb-0.5">Win Payout</p>
-                    <p className="font-mono text-sm text-foreground">{formatCurrency(bet.win_payout)}</p>
+                    <p className="text-muted-foreground text-xs mb-1">Your Odds</p>
+                    <p className="font-mono text-sm font-semibold">{formatOdds(bet.odds_american)}</p>
                   </div>
-                  {/* Slot 3: Req. Win % (if Opposing Line present) or EV per $ */}
-                  {bet.opposing_odds ? (
-                    <div>
-                      <p className="text-muted-foreground text-xs mb-0.5">Req. Win %</p>
-                      <p className="font-mono text-sm text-foreground">{(impliedProb * 100).toFixed(1)}%</p>
-                    </div>
-                  ) : (
-                    <div>
-                      <p className="text-muted-foreground text-xs mb-0.5">EV per $</p>
-                      <p className="font-mono text-sm text-foreground">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
-                    </div>
-                  )}
-                  {/* Slot 4: EV per $ (if Opposing Line present) or empty */}
-                  {bet.opposing_odds && (
-                    <div>
-                      <p className="text-muted-foreground text-xs mb-0.5">EV per $</p>
-                      <p className="font-mono text-sm text-foreground">{(bet.ev_per_dollar * 100).toFixed(1)}%</p>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-            
-            {/* Dates Section - Pushed to bottom, full width */}
-            <div className="mt-3 pt-3 border-t border-border grid grid-cols-2 gap-x-4 gap-y-2">
-              <div>
-                <p className="text-muted-foreground text-xs mb-0.5">Event Date</p>
-                <p className="font-medium text-sm text-foreground">{formatShortDate(bet.event_date)}</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground text-xs mb-0.5">Logged</p>
-                <p className="font-medium text-sm text-foreground">{formatFullDateTime(bet.created_at)}</p>
-              </div>
-              {bet.settled_at && (
-                <div className="col-span-2">
-                  <p className="text-muted-foreground text-xs mb-0.5">Settled</p>
-                  <p className="font-medium text-sm text-foreground">{formatFullDateTime(bet.settled_at)}</p>
+                  {/* Col 2: Pinnacle close */}
+                  <div>
+                    <p className="text-muted-foreground text-xs mb-1">Closing Odds <span className="text-muted-foreground/50">(Pin)</span></p>
+                    {bet.pinnacle_odds_at_close != null ? (
+                      <p className="font-mono text-sm font-semibold">{formatOdds(bet.pinnacle_odds_at_close)}</p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground italic">Pending…</p>
+                    )}
+                  </div>
+                  {/* Col 3: CLV result */}
+                  <div>
+                    <p className="text-muted-foreground text-xs mb-1">CLV</p>
+                    {bet.clv_ev_percent != null ? (
+                      <p className={cn(
+                        "font-mono text-sm font-semibold",
+                        bet.beat_close ? "text-[#4A7C59]" : "text-[#B85C38]"
+                      )}>
+                        {bet.clv_ev_percent >= 0 ? "+" : ""}{bet.clv_ev_percent.toFixed(2)}%
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground italic">—</p>
+                    )}
+                  </div>
                 </div>
-              )}
+                {/* Snapshot timestamp + optional promo footnote */}
+                <div className="mt-1.5 space-y-0.5">
+                  {bet.clv_updated_at && (
+                    <p className="text-[10px] text-muted-foreground/50">
+                      Snapshot {formatRelativeTime(bet.clv_updated_at)}
+                    </p>
+                  )}
+                  {bet.promo_type !== "standard" && (
+                    <p className="text-[10px] text-muted-foreground/40 italic">
+                      CLV is calculated against the original market line to preserve sharp analytics.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ── Row 2: Metadata footer ── */}
+            <div className={cn(
+              "grid grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-2 pt-3",
+              bet.pinnacle_odds_at_entry != null ? "border-t border-border" : ""
+            )}>
+              <div>
+                <p className="text-muted-foreground/60 text-xs mb-0.5">Req. Win %</p>
+                <p className="font-mono text-xs text-muted-foreground">{(impliedProb * 100).toFixed(1)}%</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground/60 text-xs mb-0.5">Event Date</p>
+                <p className="font-mono text-xs text-muted-foreground">{formatShortDate(bet.event_date)}</p>
+              </div>
+              {/* Timestamp spans full width on mobile so it never truncates */}
+              <div className="col-span-2 md:col-span-1">
+                <p className="text-muted-foreground/60 text-xs mb-0.5">
+                  {bet.settled_at ? "Settled" : "Logged"}
+                </p>
+                <p className="font-mono text-xs text-muted-foreground">
+                  {bet.settled_at ? formatFullDateTime(bet.settled_at) : formatFullDateTime(bet.created_at)}
+                </p>
+              </div>
             </div>
-            
-            {/* Notes - Full width at bottom */}
+
+            {/* ── Notes ── */}
             {bet.notes && (
-              <div className="mt-3 pt-3 border-t border-border">
+              <div className="pt-3 border-t border-border">
                 <p className="text-muted-foreground text-xs mb-0.5">Notes</p>
                 <p className="text-sm text-foreground leading-relaxed pl-2 border-l-2 border-border">{bet.notes}</p>
               </div>
             )}
+
           </div>
         )}
       </div>

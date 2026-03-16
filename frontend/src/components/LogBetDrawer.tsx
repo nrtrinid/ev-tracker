@@ -58,6 +58,15 @@ interface LogBetDrawerProps {
   initialValues?: ScannedBetData;
 }
 
+// CLV metadata is read-only scanner passthrough — never user-editable
+interface ClvMeta {
+  pinnacle_odds_at_entry?: number;
+  commence_time?: string;
+  clv_team?: string;
+  clv_sport_key?: string;
+  true_prob_at_entry?: number;
+}
+
 interface FormState {
   sportsbook: string;
   sport: string;
@@ -120,7 +129,19 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
     };
   });
   const [showAdvanced, setShowAdvanced] = useState(!!initialValues);
-  
+
+  // CLV metadata — captured from scanner, passed through silently to backend
+  const clvMeta = useRef<ClvMeta>({});
+  if (initialValues) {
+    clvMeta.current = {
+      pinnacle_odds_at_entry: initialValues.pinnacle_odds_at_entry,
+      commence_time: initialValues.commence_time,
+      clv_team: initialValues.clv_team,
+      clv_sport_key: initialValues.clv_sport_key,
+      true_prob_at_entry: initialValues.true_prob_at_entry,
+    };
+  }
+
   const oddsInputRef = useRef<SmartOddsInputRef>(null);
   const opposingOddsInputRef = useRef<SmartOddsInputRef>(null);
   const createBet = useCreateBet();
@@ -162,26 +183,27 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
   // Use calculated vig if available, otherwise smart default
   const effectiveVig = calculatedVig !== null ? calculatedVig : defaultVig;
 
-  // Calculate EV for display
+  // Calculate EV for display — use scanner's true_prob when available (accurate +EV for standard bets)
   const ev = calculateEVClient(
     oddsNum,
     stakeNum,
     formState.promo_type,
     boostPercentClamped,
     payoutOverrideNum || undefined,
-    effectiveVig
+    effectiveVig,
+    clvMeta.current.true_prob_at_entry,
   );
 
-  // Calculate EV with better vig (lower vig = better EV) for nudge
-  // Suggest using a vig that's 1% lower than current if it improves EV by >$0.15
+  // Vig nudge: only relevant when we're using a vig estimate (not a scanner bet with true_prob)
+  const hasTrueProb = !!clvMeta.current.true_prob_at_entry;
   const betterVig = effectiveVig - 0.01;
-  const evWithBetterVig = betterVig > 0 ? calculateEVClient(
+  const evWithBetterVig = !hasTrueProb && betterVig > 0 ? calculateEVClient(
     oddsNum,
     stakeNum,
     formState.promo_type,
     boostPercentClamped,
     payoutOverrideNum || undefined,
-    betterVig
+    betterVig,
   ) : ev;
   const vigNudgeValue = evWithBetterVig.evTotal - ev.evTotal;
 
@@ -217,6 +239,8 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
         payout_override: payoutOverrideNum || undefined,
         opposing_odds: opposingOddsNum || undefined,
         notes: formState.notes || undefined,
+        // CLV passthrough — silently stored for closing-line tracking
+        ...clvMeta.current,
       });
 
       toast.success("Bet logged!", {
@@ -639,7 +663,8 @@ function calculateEVClient(
   promoType: PromoType,
   boostPercent: number = 0,
   payoutOverride?: number,
-  vig: number = 0.045
+  vig: number = 0.045,
+  trueProb?: number,
 ): { evTotal: number; winPayout: number } {
   if (oddsAmerican === 0 || stake <= 0) {
     return { evTotal: 0, winPayout: 0 };
@@ -684,8 +709,13 @@ function calculateEVClient(
     const boostValue = winProbability * potentialExtra;
     const evPerDollar = boostValue - vig;
     evTotal = stake * evPerDollar;
+  } else if (trueProb !== undefined) {
+    // Scanner bet: use de-vigged Pinnacle probability for accurate EV
+    const calculatedPayout = stake * decimalOdds;
+    winPayout = payoutOverride || calculatedPayout;
+    evTotal = stake * (trueProb * unboostedDecimal - 1);
   } else {
-    // Standard bet or no-sweat: negative EV from vig
+    // Standard bet logged manually: estimate cost as -vig
     const calculatedPayout = stake * decimalOdds;
     winPayout = payoutOverride || calculatedPayout;
     evTotal = stake * -vig;

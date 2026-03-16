@@ -34,6 +34,15 @@ export interface Bet {
   ev_per_dollar: number;
   ev_total: number;
   real_profit: number | null;
+  // CLV tracking
+  pinnacle_odds_at_entry: number | null;
+  pinnacle_odds_at_close: number | null;
+  clv_updated_at: string | null;
+  commence_time: string | null;
+  clv_team: string | null;
+  clv_sport_key: string | null;
+  clv_ev_percent: number | null;  // computed: edge vs. Pinnacle close
+  beat_close: boolean | null;
 }
 
 export interface BetCreate {
@@ -50,6 +59,12 @@ export interface BetCreate {
   payout_override?: number;
   opposing_odds?: number;
   event_date?: string;
+  // CLV — auto-populated when logging from scanner
+  pinnacle_odds_at_entry?: number;
+  commence_time?: string;
+  clv_team?: string;
+  clv_sport_key?: string;
+  true_prob_at_entry?: number;
 }
 
 export interface BetUpdate {
@@ -162,6 +177,12 @@ export interface ScannedBetData {
   opposing_odds: number;
   promo_type: PromoType;
   boost_percent?: number;
+  // CLV passthrough from scanner
+  pinnacle_odds_at_entry?: number;
+  commence_time?: string;
+  clv_team?: string;
+  clv_sport_key?: string;
+  true_prob_at_entry?: number;  // de-vigged Pinnacle probability — enables accurate EV display
 }
 
 // Constants

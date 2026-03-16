@@ -82,6 +82,7 @@ def calculate_ev(
     boost_percent: float | None = None,
     winnings_cap: float | None = None,
     vig: float | None = None,
+    true_prob: float | None = None,
 ) -> dict:
     """
     Calculate Expected Value based on promo type.
@@ -158,9 +159,12 @@ def calculate_ev(
         boost_value = win_probability * capped_extra
         ev_per_dollar = boost_value - effective_vig
         
+    elif true_prob is not None:
+        # Scanner bet: true probability known from Pinnacle de-vig.
+        # EV = (true_prob × book_decimal) - 1  — same formula the scanner uses.
+        ev_per_dollar = (true_prob * decimal_odds) - 1.0
     else:
-        # Standard bet: account for vig
-        # User logs these when they believe they have information edge
+        # Standard bet logged manually: no sharp reference, assume vig as cost.
         ev_per_dollar = -effective_vig
     
     ev_total = stake * ev_per_dollar
@@ -170,6 +174,42 @@ def calculate_ev(
         "ev_total": round(ev_total, 2),
         "win_payout": round(win_payout, 2),
         "decimal_odds": round(decimal_odds, 4),
+    }
+
+
+def calculate_clv(
+    book_american: float,
+    close_pinnacle_american: float,
+) -> dict:
+    """
+    Closing Line Value: measures edge of the logged bet against Pinnacle's
+    closing line. Positive = you beat the market.
+
+    Formula (same as calculate_edge, but using the closing Pinnacle line):
+        true_close_prob  = 1 / decimal(close_pinnacle)
+        clv_ev_percent   = (true_close_prob × book_decimal − 1) × 100
+
+    Args:
+        book_american:          American odds you got from the target book.
+        close_pinnacle_american: Pinnacle's American odds for the same outcome at close.
+
+    Returns:
+        clv_ev_percent:  Edge vs. close (positive = beat the close).
+        close_true_prob: Pinnacle's closing implied probability (single-side, no full de-vig).
+        book_decimal:    Your book's decimal odds.
+        beat_close:      True when clv_ev_percent > 0.
+    """
+    book_decimal = american_to_decimal(book_american)
+    close_decimal = american_to_decimal(close_pinnacle_american)
+
+    close_true_prob = 1.0 / close_decimal
+    ev_raw = (close_true_prob * book_decimal) - 1.0
+
+    return {
+        "clv_ev_percent": round(ev_raw * 100, 2),
+        "close_true_prob": round(close_true_prob, 4),
+        "book_decimal": round(book_decimal, 4),
+        "beat_close": ev_raw > 0,
     }
 
 

@@ -238,6 +238,132 @@ async def scan_for_ev(sport: str = "basketball_nba") -> dict:
     }
 
 
+def update_clv_snapshots(sides: list[dict], db) -> int:
+    """
+    Layer 2 — Piggyback CLV update. Zero extra API calls.
+
+    After any scan returns, this is called synchronously before responding.
+    It builds a lookup of (commence_time, team) → pinnacle_odds from the fresh
+    scan data, then finds every pending bet with CLV tracking enabled and writes
+    the latest Pinnacle line to pinnacle_odds_at_close.
+
+    Args:
+        sides: The `sides` list from scan_all_sides / get_cached_or_scan.
+        db:    Supabase client (service role).
+
+    Returns:
+        Number of bet rows updated.
+    """
+    from datetime import datetime, timezone
+
+    if not sides:
+        return 0
+
+    # Build a fast lookup: (commence_time, team) -> pinnacle_odds
+    snapshot: dict[tuple[str, str], float] = {}
+    for side in sides:
+        ct = side.get("commence_time", "")
+        team = side.get("team", "")
+        if ct and team:
+            snapshot[(ct, team)] = side["pinnacle_odds"]
+
+    if not snapshot:
+        return 0
+
+    # Fetch all pending bets that have CLV tracking data
+    result = (
+        db.table("bets")
+        .select("id,clv_team,commence_time")
+        .eq("result", "pending")
+        .not_.is_("clv_team", "null")
+        .execute()
+    )
+
+    if not result.data:
+        return 0
+
+    now = datetime.now(timezone.utc).isoformat()
+    updated = 0
+
+    for bet in result.data:
+        team = bet.get("clv_team")
+        ct = bet.get("commence_time")
+        if not team or not ct:
+            continue
+
+        pinnacle_close = snapshot.get((ct, team))
+        if pinnacle_close is None:
+            continue
+
+        db.table("bets").update({
+            "pinnacle_odds_at_close": pinnacle_close,
+            "clv_updated_at": now,
+        }).eq("id", bet["id"]).execute()
+        updated += 1
+
+    return updated
+
+
+async def fetch_clv_for_pending_bets(db) -> int:
+    """
+    Layer 3 — Daily safety-net job. Called by APScheduler.
+
+    Finds all pending bets with CLV tracking enabled, groups them by sport key,
+    and makes one fat fetch_odds call per active sport. Updates pinnacle_odds_at_close
+    for all matched bets. Returns total bets updated.
+    """
+    # Find pending bets with CLV tracking grouped by sport key
+    result = (
+        db.table("bets")
+        .select("clv_sport_key")
+        .eq("result", "pending")
+        .not_.is_("clv_sport_key", "null")
+        .execute()
+    )
+
+    if not result.data:
+        return 0
+
+    sport_keys = list({row["clv_sport_key"] for row in result.data if row.get("clv_sport_key")})
+
+    if not sport_keys:
+        return 0
+
+    total_updated = 0
+
+    for sport_key in sport_keys:
+        try:
+            data, _ = await fetch_odds(sport_key)
+            events = data if isinstance(data, list) else []
+
+            sides = []
+            for event in events:
+                home = event["home_team"]
+                away = event["away_team"]
+                ct = event.get("commence_time", "")
+
+                pin_outcomes = _extract_outcomes(event.get("bookmakers", []), SHARP_BOOK)
+                if not pin_outcomes:
+                    continue
+
+                pin_home = pin_outcomes.get(home)
+                pin_away = pin_outcomes.get(away)
+                if None in (pin_home, pin_away):
+                    continue
+
+                sides.append({"commence_time": ct, "team": home, "pinnacle_odds": pin_home})
+                sides.append({"commence_time": ct, "team": away, "pinnacle_odds": pin_away})
+
+            updated = update_clv_snapshots(sides, db)
+            total_updated += updated
+
+        except Exception:
+            # Never let a single sport failure break the entire job
+            pass
+
+    return total_updated
+
+
 async def scan_all_sides(sport: str = "basketball_nba") -> dict:
     """
     Return ALL matched sides between Pinnacle and every target book with
