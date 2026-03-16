@@ -60,18 +60,18 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                     Browser                          │
-│   Next.js 14 (App Router)  ·  React Query  ·  Tailwind │
-│   /scanner  /dashboard  /bets  /settings             │
+│                     Browser                         │
+│ Next.js 14 (App Router)  ·  React Query  ·  Tailwind│
+│   /scanner  /dashboard  /bets  /settings            │
 └───────────────────┬─────────────────────────────────┘
                     │  HTTPS / JSON
 ┌───────────────────▼─────────────────────────────────┐
-│                 FastAPI (Python)                      │
-│   /api/scan-markets   /api/bets   /api/balances      │
-│   Auth via Supabase JWT  ·  Rate limiting  ·  Cache  │
-└───────────┬──────────────────────┬───────────────────┘
+│                 FastAPI (Python)                    │
+│   /api/scan-markets   /api/bets   /api/balances     │
+│   Auth via Supabase JWT  ·  Rate limiting  ·  Cache │
+└───────────┬──────────────────────┬──────────────────┘
             │                      │
-┌───────────▼──────┐   ┌──────────▼──────────────────┐
+┌───────────▼───────┐   ┌──────────▼───────────────────┐
 │  Supabase Postgres│   │      The Odds API            │
 │  bets · balances  │   │  Live h2h odds — Pinnacle +  │
 │  users · RLS      │   │  DK, FD, MGM, CZR, ESPN Bet  │

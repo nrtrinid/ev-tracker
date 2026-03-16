@@ -14,6 +14,7 @@ activate/
 
 # IDE
 .vscode/
+.cursorignore
 .idea/
 *.swp
 *.swo

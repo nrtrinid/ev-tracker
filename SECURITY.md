@@ -23,10 +23,10 @@ You can expect an acknowledgment within 48 hours and a resolution timeline withi
 
 - All secrets (Supabase keys, Odds API key) are managed via `.env` files and are **never committed to the repository**.
 - The `.gitignore` explicitly excludes `.env`, `.env.local`, and `.env.*.local`.
-- The backend uses **Supabase Row Level Security (RLS)** to ensure users can only access their own data.
-- All backend scan endpoints require a valid **Supabase JWT** for authentication.
-- A per-user **rate limiter** (12 requests / 15 minutes) protects the scan endpoints from abuse.
-- The `SUPABASE_SERVICE_ROLE_KEY` is only used server-side and never exposed to the browser.
+- **Authentication** is handled via [Supabase Auth](https://supabase.com/docs/guides/auth). Every protected endpoint extracts the `Bearer` token from the `Authorization` header and validates it by calling `supabase.auth.get_user(token)` via the Supabase Python SDK. Invalid or expired tokens return HTTP 401.
+- **Multi-tenant data isolation** is enforced at the query level. The backend uses the service role key (which bypasses Supabase RLS), so every database query explicitly scopes results to the authenticated user with `.eq("user_id", user["id"])`. No user can read or modify another user's data.
+- A per-user **rate limiter** protects the scan endpoints (`/api/scan-bets` and `/api/scan-markets`) from abuse. Limits: **12 requests per 15-minute window per user**. Violations return HTTP 429. The limiter is in-memory and resets on server restart — all other API routes (bets, balances, settings, etc.) are not rate limited.
+- The `SUPABASE_SERVICE_ROLE_KEY` is only used server-side (`backend/.env`) and is never exposed to the browser.
 
 ## Dependency Security
 
