@@ -21,6 +21,26 @@ def american_to_decimal(american_odds: float) -> float:
         return 1 + (100 / abs(american_odds))
 
 
+def kelly_fraction(p: float, decimal_odds: float) -> float:
+    """
+    Fractional Kelly base fraction (full Kelly), returned as a fraction of bankroll.
+
+    f* = (b*p - q) / b
+      b = decimal_odds - 1
+      q = 1 - p
+
+    If f* <= 0, return 0.
+    """
+    if decimal_odds <= 1:
+        return 0.0
+    if p <= 0 or p >= 1:
+        return 0.0
+    b = decimal_odds - 1.0
+    q = 1.0 - p
+    f = (b * p - q) / b
+    return float(f) if f > 0 else 0.0
+
+
 def decimal_to_american(decimal_odds: float) -> int:
     """
     Convert Decimal odds to American odds.

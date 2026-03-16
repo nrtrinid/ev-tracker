@@ -129,6 +129,41 @@ export interface Balance {
   balance: number;
 }
 
+// Scanner types
+export interface MarketSide {
+  sportsbook: string;
+  sport: string;
+  event: string;
+  commence_time: string;
+  team: string;
+  pinnacle_odds: number;
+  book_odds: number;
+  true_prob: number;
+  base_kelly_fraction: number;
+  book_decimal: number;
+  ev_percentage: number;
+}
+
+export interface ScanResult {
+  sport: string;
+  sides: MarketSide[];
+  events_fetched: number;
+  events_with_both_books: number;
+  api_requests_remaining: string | null;
+  scanned_at?: string | null;
+}
+
+export interface ScannedBetData {
+  sportsbook: string;
+  sport: string;
+  event: string;
+  market: string;
+  odds_american: number;
+  opposing_odds: number;
+  promo_type: PromoType;
+  boost_percent?: number;
+}
+
 // Constants
 export const SPORTSBOOKS = [
   "DraftKings",

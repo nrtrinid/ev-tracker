@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Calculator, BarChart3, Settings, Home, LogOut } from "lucide-react";
+import { Calculator, BarChart3, Settings, Home, LogOut, Radar } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
 
 const navItems = [
   { href: "/", label: "Home", icon: Home },
+  { href: "/scanner", label: "Scan", icon: Radar },
   { href: "/tools", label: "Tools", icon: Calculator },
   { href: "/analytics", label: "Stats", icon: BarChart3 },
   { href: "/settings", label: "Settings", icon: Settings },

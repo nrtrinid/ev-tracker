@@ -46,6 +46,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
     });
 
+    // Dev-only: get token from console for testing API (e.g. scan-bets)
+    if (typeof window !== "undefined" && process.env.NODE_ENV === "development") {
+      (window as unknown as { getAuthToken?: () => Promise<string | null> }).getAuthToken = async () => {
+        const { data } = await createClient().auth.getSession();
+        return data.session?.access_token ?? null;
+      };
+    }
+
     return () => subscription.unsubscribe();
   }, []);
 

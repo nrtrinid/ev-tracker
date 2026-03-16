@@ -10,6 +10,7 @@ import type {
   Transaction,
   TransactionCreate,
   Balance,
+  ScanResult,
 } from "./types";
 import { createClient } from "./supabase";
 
@@ -160,4 +161,11 @@ export async function deleteTransaction(id: string): Promise<void> {
 
 export async function getBalances(): Promise<Balance[]> {
   return fetchAPI<Balance[]>("/balances");
+}
+
+// ============ Scanner API ============
+
+/** Full scan across all sports. Backend uses 20-min TTL cache per sport. */
+export async function scanMarkets(): Promise<ScanResult> {
+  return fetchAPI<ScanResult>("/api/scan-markets");
 }

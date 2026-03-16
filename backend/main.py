@@ -3,16 +3,20 @@ EV Tracker API
 FastAPI backend for sports betting EV tracking.
 """
 
+import asyncio
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 import os
+import time
 from dotenv import load_dotenv
+import httpx
 
 from models import (
     BetCreate, BetUpdate, BetResponse, BetResult, PromoType,
     SettingsUpdate, SettingsResponse, SummaryResponse,
-    TransactionCreate, TransactionResponse, BalanceResponse
+    TransactionCreate, TransactionResponse, BalanceResponse,
+    ScanResponse, FullScanResponse,
 )
 from calculations import american_to_decimal, calculate_ev, calculate_real_profit
 from auth import get_current_user
@@ -37,6 +41,47 @@ app.add_middleware(
 # Import database after app setup to avoid circular imports
 from database import get_db
 
+# ---------- Scan rate limit (per user, in-memory) ----------
+# 12 full scans per 15 minutes per user; cache makes most requests cheap.
+_scan_rate_window_sec = 15 * 60
+_scan_rate_max = 12
+_scan_rate_times: dict[str, list[float]] = {}
+_scan_rate_lock = asyncio.Lock()
+
+
+async def require_scan_rate_limit(user: dict = Depends(get_current_user)) -> dict:
+    """Allow at most _scan_rate_max scan requests per user per _scan_rate_window_sec."""
+    async with _scan_rate_lock:
+        now = time.time()
+        uid = user["id"]
+        if uid not in _scan_rate_times:
+            _scan_rate_times[uid] = []
+        times = _scan_rate_times[uid]
+        times[:] = [t for t in times if (now - t) < _scan_rate_window_sec]
+        if len(times) >= _scan_rate_max:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many scan requests. Please try again in a few minutes.",
+            )
+        times.append(now)
+    return user
+
+
+def _retry_supabase(f, retries=2):
+    """Retry a Supabase/PostgREST request on transient 'Server disconnected' errors."""
+    last_err = None
+    for attempt in range(retries):
+        try:
+            return f()
+        except httpx.RemoteProtocolError as e:
+            last_err = e
+            if attempt == retries - 1:
+                raise
+            time.sleep(0.4)
+    if last_err:
+        raise last_err
+
+
 DEFAULT_SPORTSBOOKS = [
     "DraftKings", "FanDuel", "BetMGM", "Caesars",
     "ESPN Bet", "Fanatics", "Hard Rock", "bet365"
@@ -45,7 +90,7 @@ DEFAULT_SPORTSBOOKS = [
 
 def get_user_settings(db, user_id: str) -> dict:
     """Get settings from DB, creating defaults for new users."""
-    result = db.table("settings").select("*").eq("user_id", user_id).execute()
+    result = _retry_supabase(lambda: db.table("settings").select("*").eq("user_id", user_id).execute())
     if result.data:
         return result.data[0]
 
@@ -55,8 +100,9 @@ def get_user_settings(db, user_id: str) -> dict:
         "default_stake": None,
         "preferred_sportsbooks": DEFAULT_SPORTSBOOKS,
     }
-    db.table("settings").upsert(defaults).execute()
-    return defaults
+    _retry_supabase(lambda: db.table("settings").upsert(defaults).execute())
+    result = _retry_supabase(lambda: db.table("settings").select("*").eq("user_id", user_id).execute())
+    return result.data[0]
 
 
 def build_bet_response(row: dict, k_factor: float) -> BetResponse:
@@ -188,7 +234,7 @@ def get_bets(
 
     query = query.range(offset, offset + limit - 1)
 
-    response = query.execute()
+    response = _retry_supabase(lambda: query.execute())
 
     return [build_bet_response(row, settings["k_factor"]) for row in response.data]
 
@@ -345,7 +391,7 @@ def get_summary(user: dict = Depends(get_current_user)):
     settings = get_user_settings(db, user["id"])
     k_factor = settings["k_factor"]
 
-    result = db.table("bets").select("*").eq("user_id", user["id"]).execute()
+    result = _retry_supabase(lambda: db.table("bets").select("*").eq("user_id", user["id"]).execute())
     bets = result.data
 
     if not bets:
@@ -517,16 +563,16 @@ def get_balances(user: dict = Depends(get_current_user)):
     k_factor = settings["k_factor"]
 
     # Get all transactions for this user
-    tx_result = (
+    tx_result = _retry_supabase(lambda: (
         db.table("transactions")
         .select("*")
         .eq("user_id", user["id"])
         .execute()
-    )
+    ))
     transactions = tx_result.data or []
 
     # Get all bets for profit calculation
-    bets_result = db.table("bets").select("*").eq("user_id", user["id"]).execute()
+    bets_result = _retry_supabase(lambda: db.table("bets").select("*").eq("user_id", user["id"]).execute())
     bets = bets_result.data or []
 
     # Aggregate by sportsbook
@@ -656,6 +702,117 @@ def calculate_ev_preview(
         "promo_type": promo_type.value,
         **result,
     }
+
+
+# ============ Odds Scanner ============
+
+@app.get("/api/scan-bets", response_model=ScanResponse)
+async def scan_bets(
+    sport: str = "basketball_nba",
+    user: dict = Depends(require_scan_rate_limit),
+):
+    """
+    Scan live odds: de-vig Pinnacle, compare to DraftKings,
+    return any +EV moneyline opportunities.
+    """
+    from services.odds_api import scan_for_ev, fetch_odds, SUPPORTED_SPORTS
+
+    if sport not in SUPPORTED_SPORTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported sport. Choose from: {', '.join(SUPPORTED_SPORTS)}",
+        )
+
+    try:
+        result = await scan_for_ev(sport)
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odds API error: {e}")
+
+    return ScanResponse(
+        sport=sport,
+        opportunities=result["opportunities"],
+        events_fetched=result["events_fetched"],
+        events_with_both_books=result["events_with_both_books"],
+        api_requests_remaining=result.get("api_requests_remaining"),
+    )
+
+
+@app.get("/api/scan-markets", response_model=FullScanResponse)
+async def scan_markets(
+    sport: str | None = None,
+    user: dict = Depends(require_scan_rate_limit),
+):
+    """
+    Full market scan: returns every matched side between Pinnacle and the target
+    books with de-vigged true probabilities. Uses server-side 5-min TTL cache per
+    sport. If sport is omitted, scans all supported sports (cached per sport; only
+    stale sports hit the API).
+    """
+    from services.odds_api import get_cached_or_scan, SUPPORTED_SPORTS
+    from datetime import datetime
+
+    if sport is not None and sport not in SUPPORTED_SPORTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported sport. Choose from: {', '.join(SUPPORTED_SPORTS)}",
+        )
+
+    try:
+        if sport is not None:
+            result = await get_cached_or_scan(sport)
+            scanned_at = datetime.utcfromtimestamp(result["fetched_at"]).isoformat() + "Z"
+            return FullScanResponse(
+                sport=sport,
+                sides=result["sides"],
+                events_fetched=result["events_fetched"],
+                events_with_both_books=result["events_with_both_books"],
+                api_requests_remaining=result.get("api_requests_remaining"),
+                scanned_at=scanned_at,
+            )
+        # Full scan: all sports (skip any that 404 — e.g. out of season)
+        all_sides = []
+        total_events = 0
+        total_with_both = 0
+        min_remaining = None
+        oldest_fetched = None
+        from os import getenv
+        env = getenv("ENVIRONMENT", "production").lower()
+        sports_to_scan = ["basketball_nba"] if env == "development" else SUPPORTED_SPORTS
+        for s in sports_to_scan:
+            try:
+                result = await get_cached_or_scan(s)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    continue  # sport has no odds right now (e.g. off-season)
+                raise
+            all_sides.extend(result["sides"])
+            total_events += result["events_fetched"]
+            total_with_both += result["events_with_both_books"]
+            rem = result.get("api_requests_remaining")
+            if rem is not None:
+                try:
+                    r = int(rem)
+                    min_remaining = str(r) if min_remaining is None else str(min(r, int(min_remaining)))
+                except ValueError:
+                    min_remaining = rem
+            ft = result.get("fetched_at")
+            if ft is not None:
+                oldest_fetched = ft if oldest_fetched is None else min(oldest_fetched, ft)
+        scanned_at = (datetime.utcfromtimestamp(oldest_fetched).isoformat() + "Z") if oldest_fetched else None
+        return FullScanResponse(
+            sport="all",
+            sides=all_sides,
+            events_fetched=total_events,
+            events_with_both_books=total_with_both,
+            api_requests_remaining=min_remaining,
+            scanned_at=scanned_at,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odds API error: {e}")
 
 
 if __name__ == "__main__":

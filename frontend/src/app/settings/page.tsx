@@ -11,11 +11,20 @@ import { useTransactions, useCreateTransaction, useDeleteTransaction, useBalance
 import { SPORTSBOOKS } from "@/lib/types";
 import type { TransactionType, Transaction } from "@/lib/types";
 import { toast } from "sonner";
+import { useKellySettings } from "@/lib/kelly-context";
 
 export default function SettingsPage() {
   const { data: transactions, isLoading: txLoading } = useTransactions();
   const { data: balances } = useBalances();
   const { data: settings, isLoading: settingsLoading } = useSettings();
+  const {
+    useComputedBankroll,
+    bankrollOverride,
+    kellyMultiplier,
+    setUseComputedBankroll,
+    setBankrollOverride,
+    setKellyMultiplier,
+  } = useKellySettings();
   const createTransaction = useCreateTransaction();
   const deleteTransaction = useDeleteTransaction();
   const updateSettings = useUpdateSettings();
@@ -89,6 +98,7 @@ export default function SettingsPage() {
   };
 
   const isLoading = txLoading || settingsLoading;
+  const computedBankroll = (balances || []).reduce((sum, b) => sum + (b.balance || 0), 0);
 
   return (
     <main className="min-h-screen bg-background">
@@ -172,6 +182,100 @@ export default function SettingsPage() {
                   <Button onClick={handleUpdateKFactor} disabled={!kFactor || updateSettings.isPending}>
                     Update
                   </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Kelly Sizing */}
+            <Card>
+              <CardHeader className="pb-2">
+                <h2 className="font-semibold flex items-center gap-2">
+                  <TargetIcon className="h-4 w-4" />
+                  Kelly Sizing
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Used to compute the “Rec Bet” amount shown in the Scanner.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Kelly Multiplier */}
+                <div>
+                  <label className="text-sm text-muted-foreground mb-2 block">
+                    Kelly Multiplier
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { v: 0.1, label: "0.10×" },
+                      { v: 0.25, label: "0.25× (Quarter)" },
+                      { v: 0.5, label: "0.50× (Half)" },
+                      { v: 1.0, label: "1.00× (Full)" },
+                    ].map((opt) => (
+                      <Button
+                        key={opt.v}
+                        type="button"
+                        size="sm"
+                        variant={kellyMultiplier === opt.v ? "default" : "outline"}
+                        onClick={() => setKellyMultiplier(opt.v)}
+                      >
+                        {opt.label}
+                      </Button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Current: <span className="font-mono">{kellyMultiplier.toFixed(2)}×</span>
+                  </p>
+                </div>
+
+                {/* Bankroll source */}
+                <div className="pt-2 border-t">
+                  <label className="text-sm text-muted-foreground mb-2 block">
+                    Bankroll for sizing
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={useComputedBankroll ? "default" : "outline"}
+                      onClick={() => setUseComputedBankroll(true)}
+                    >
+                      Use computed bankroll
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={!useComputedBankroll ? "default" : "outline"}
+                      onClick={() => setUseComputedBankroll(false)}
+                    >
+                      Override bankroll
+                    </Button>
+                  </div>
+
+                  <div className="mt-3 space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Computed bankroll</span>
+                      <span className="font-mono font-semibold">{formatCurrency(computedBankroll)}</span>
+                    </div>
+                    {!useComputedBankroll && (
+                      <div>
+                        <label className="text-sm text-muted-foreground mb-1 block">
+                          Override amount
+                        </label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={Number.isFinite(bankrollOverride) ? bankrollOverride : 0}
+                          onChange={(e) => setBankrollOverride(parseFloat(e.target.value) || 0)}
+                        />
+                      </div>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      Active bankroll:{" "}
+                      <span className="font-mono font-semibold">
+                        {formatCurrency(useComputedBankroll ? computedBankroll : bankrollOverride)}
+                      </span>
+                    </p>
+                  </div>
                 </div>
               </CardContent>
             </Card>

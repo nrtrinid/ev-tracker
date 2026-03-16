@@ -158,3 +158,52 @@ class BalanceResponse(BaseModel):
     profit: float        # from betting
     pending: float       # pending exposure
     balance: float       # net_deposits + profit - pending
+
+
+class EVOpportunity(BaseModel):
+    """A single +EV bet opportunity from the odds scanner."""
+    sportsbook: str
+    sport: str
+    event: str
+    commence_time: str
+    team: str
+    pinnacle_odds: float
+    book_odds: float
+    true_prob: float
+    base_kelly_fraction: float
+    ev_percentage: float
+    book_decimal: float
+
+
+class ScanResponse(BaseModel):
+    """Response from the odds scanner endpoint."""
+    sport: str
+    opportunities: list[EVOpportunity]
+    events_fetched: int  # events returned by the Odds API
+    events_with_both_books: int  # events that had Pinnacle + DraftKings
+    api_requests_remaining: str | None = None
+
+
+class MarketSide(BaseModel):
+    """A single side (team) with odds from a target book and true probability."""
+    sportsbook: str
+    sport: str
+    event: str
+    commence_time: str
+    team: str
+    pinnacle_odds: float
+    book_odds: float
+    true_prob: float
+    base_kelly_fraction: float
+    book_decimal: float
+    ev_percentage: float
+
+
+class FullScanResponse(BaseModel):
+    """Response from the full market scanner — all sides, not just +EV."""
+    sport: str  # "all" for full scan, or single sport key
+    sides: list[MarketSide]
+    events_fetched: int
+    events_with_both_books: int
+    api_requests_remaining: str | None = None
+    scanned_at: str | None = None  # ISO datetime of oldest cache used (for "Data as of X min ago")

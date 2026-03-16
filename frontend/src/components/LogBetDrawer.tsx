@@ -18,6 +18,7 @@ import {
   PROMO_TYPES,
   PROMO_TYPE_CONFIG,
   type PromoType,
+  type ScannedBetData,
 } from "@/lib/types";
 import {
   formatCurrency,
@@ -54,6 +55,7 @@ const sportsbookColors: Record<string, string> = {
 interface LogBetDrawerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  initialValues?: ScannedBetData;
 }
 
 interface FormState {
@@ -86,37 +88,54 @@ const getStickyPromoType = (): PromoType => {
   return "standard";
 };
 
-export function LogBetDrawer({ open, onOpenChange }: LogBetDrawerProps) {
-  const [formState, setFormState] = useState<FormState>({
-    sportsbook: "",
-    sport: "",
-    market: "ML",
-    promo_type: "standard",
-    odds: "",
-    stake: "",
-    event: "",
-    opposing_odds: "",
-    boost_percent: "",
-    payout_override: "",
-    notes: "",
+export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawerProps) {
+  const [formState, setFormState] = useState<FormState>(() => {
+    if (initialValues) {
+      return {
+        sportsbook: initialValues.sportsbook,
+        sport: initialValues.sport,
+        market: initialValues.market,
+        promo_type: initialValues.promo_type,
+        odds: String(initialValues.odds_american),
+        stake: "",
+        event: initialValues.event,
+        opposing_odds: String(initialValues.opposing_odds),
+        boost_percent: initialValues.boost_percent != null ? String(initialValues.boost_percent) : "",
+        payout_override: "",
+        notes: "",
+      };
+    }
+    return {
+      sportsbook: "",
+      sport: "",
+      market: "ML",
+      promo_type: "standard",
+      odds: "",
+      stake: "",
+      event: "",
+      opposing_odds: "",
+      boost_percent: "",
+      payout_override: "",
+      notes: "",
+    };
   });
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(!!initialValues);
   
   const oddsInputRef = useRef<SmartOddsInputRef>(null);
   const opposingOddsInputRef = useRef<SmartOddsInputRef>(null);
   const createBet = useCreateBet();
 
-  // Initialize sticky values on mount
+  // Initialize sticky values on mount (skip when pre-filled from scanner)
   useEffect(() => {
     if (open) {
-      setFormState(prev => ({
-        ...prev,
-        sportsbook: prev.sportsbook || getStickySportsbook(),
-        promo_type: getStickyPromoType(),
-      }));
-      // Focus odds input after a short delay to let drawer animate
+      if (!initialValues) {
+        setFormState(prev => ({
+          ...prev,
+          sportsbook: prev.sportsbook || getStickySportsbook(),
+          promo_type: getStickyPromoType(),
+        }));
+      }
       setTimeout(() => {
-        // Focus the actual input element inside SmartOddsInput
         const input = document.querySelector('[data-odds-input]') as HTMLInputElement;
         input?.focus();
       }, 300);
