@@ -6,7 +6,7 @@ FastAPI backend for sports betting EV tracking.
 import asyncio
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime
+from datetime import datetime, UTC
 import os
 import time
 from dotenv import load_dotenv
@@ -85,6 +85,8 @@ async def _piggyback_clv(sides: list[dict]):
 
 @app.on_event("startup")
 async def start_scheduler():
+    if os.getenv("TESTING") == "1":
+        return  # Skip scheduler in integration tests so we don't hit Odds API or cron
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
     from apscheduler.triggers.interval import IntervalTrigger
@@ -252,12 +254,12 @@ def build_bet_response(row: dict, k_factor: float) -> BetResponse:
 @app.get("/health")
 def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+    return {"status": "healthy", "timestamp": datetime.now(UTC).isoformat()}
 
 
 # ============ Bets CRUD ============
 
-@app.post("/bets", response_model=BetResponse)
+@app.post("/bets", response_model=BetResponse, status_code=201)
 def create_bet(bet: BetCreate, user: dict = Depends(get_current_user)):
     """Create a new bet."""
     db = get_db()
@@ -391,7 +393,7 @@ def update_bet(bet_id: str, bet: BetUpdate, user: dict = Depends(get_current_use
             .execute()
         )
         if current.data and current.data[0]["result"] == "pending" and bet.result.value != "pending":
-            data["settled_at"] = datetime.utcnow().isoformat()
+            data["settled_at"] = datetime.now(UTC).isoformat()
     if bet.payout_override is not None:
         data["payout_override"] = bet.payout_override
     if bet.opposing_odds is not None:
@@ -440,7 +442,7 @@ def update_bet_result(
     if not current.data:
         raise HTTPException(status_code=404, detail="Bet not found")
     if current.data[0]["result"] == "pending" and result.value != "pending":
-        update_data["settled_at"] = datetime.utcnow().isoformat()
+        update_data["settled_at"] = datetime.now(UTC).isoformat()
 
     response = (
         db.table("bets")
@@ -748,7 +750,7 @@ def update_settings(
         data["preferred_sportsbooks"] = settings.preferred_sportsbooks
 
     if data:
-        data["updated_at"] = datetime.utcnow().isoformat()
+        data["updated_at"] = datetime.now(UTC).isoformat()
         db.table("settings").update(data).eq("user_id", user["id"]).execute()
 
     updated = get_user_settings(db, user["id"])

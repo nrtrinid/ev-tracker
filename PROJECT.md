@@ -228,4 +228,5 @@ ev-betting-tracker/
 ## See Also
 
 - **README.md** — Setup instructions, EV formulas, deployment
+- **docs/testing.md** — Testing strategy, what’s automated vs manual, and local commands
 - **database/migration_001_multi_tenant.sql** — Multi-tenant schema and RLS policies

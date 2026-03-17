@@ -1,5 +1,7 @@
 # EV Betting Tracker
 
+[![Backend tests](https://github.com/nrtrinid/ev-tracker/actions/workflows/backend-tests.yml/badge.svg)](https://github.com/nrtrinid/ev-tracker/actions/workflows/backend-tests.yml)
+
 **Find +EV bets, log them, and track real P&L across every sportsbook.**
 
 EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. It uses live odds from [The Odds API](https://the-odds-api.com) and Pinnacle as a sharp-line reference to surface positive expected value (+EV) opportunities across DraftKings, FanDuel, BetMGM, Caesars, and ESPN Bet — then gives you the math to size them.
@@ -142,6 +144,17 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 npm run dev
 # → http://localhost:3000
 ```
+
+---
+
+## Testing
+
+A small but meaningful test suite protects the EV math, settlement/profit logic, core route behavior, and a couple critical UI flows. Details (what’s live vs mocked, what’s covered vs manual): [docs/testing.md](./docs/testing.md).
+
+- **Backend unit tests** (math layer): `cd backend && pytest tests/test_calculations.py -v` — or unit-only by marker: `cd backend && pytest -m "not integration" -v`
+- **Backend integration tests** (requires test Supabase and auth user): From `backend/` with venv + full deps (`pip install -r requirements.txt`): Set `TESTING=1`, `SUPABASE_URL` (or `TEST_SUPABASE_URL`), and `TEST_USER_ID`. Then: Windows PowerShell: `$env:TESTING="1"; pytest tests/test_api.py -v` — macOS/Linux: `TESTING=1 pytest tests/test_api.py -v`. By marker: `$env:TESTING="1"; pytest -m integration -v` (Windows) or `TESTING=1 pytest -m integration -v` (macOS/Linux). Set `TEST_USER_ID` to a UUID that exists in your test project’s `auth.users`, or create a user and use its id. Optional: `TEST_SUPABASE_URL` and `TEST_SUPABASE_SERVICE_ROLE_KEY` for a separate test project.
+- **Playwright smoke tests** (run with frontend and backend dev servers up): From `frontend/`: `npm install`, then `npx playwright install`, then `npm run test:e2e`. Set PLAYWRIGHT_TEST_EMAIL and PLAYWRIGHT_TEST_PASSWORD so tests can log in; otherwise smoke tests are skipped.
+- **CI**: GitHub Actions runs backend unit tests only on push/PR. Integration and Playwright are documented above for local use; E2E in CI is a possible next step.
 
 ---
 
