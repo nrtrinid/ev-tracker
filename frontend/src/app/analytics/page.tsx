@@ -646,10 +646,15 @@ export default function AnalyticsPage() {
                 <div className="text-center">
                   <div className="flex items-center justify-center gap-1.5 mb-2">
                     <p className="text-sm text-muted-foreground uppercase tracking-wide">Performance Status</p>
-                    <Info
-                      className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0"
+                    <span
                       title="Z-Score measures how much your actual profit deviates from expected EV. Positive = outrunning variance (running hot). Negative = underrunning variance (running cold). Values between -1 and +1 are normal luck variance."
-                    />
+                      className="inline-flex"
+                    >
+                      <Info
+                        className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0"
+                        aria-label="Z-Score explanation"
+                      />
+                    </span>
                   </div>
                   <div>
                     <p className={cn(
