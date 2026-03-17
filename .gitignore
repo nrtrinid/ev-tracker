@@ -38,6 +38,8 @@ npm-debug.log*
 .coverage
 htmlcov/
 .pytest_cache/
+frontend/test-results/
+
 
 # Misc
 *.bak

@@ -45,13 +45,11 @@ const AVAILABLE_BOOKS = [
 ];
 
 const DEFAULT_SELECTED_BOOKS = ["DraftKings", "FanDuel"];
+const LONGSHOT_MAX_AMERICAN = 500;
 
 type Lens = "standard" | "profit_boost" | "bonus_bet" | "qualifier";
 
-const BOOST_OPTIONS = [
-  { value: 30, label: "30%" },
-  { value: 50, label: "50%" },
-];
+const BOOST_PRESETS = [25, 30, 50];
 
 const bookColors: Record<string, string> = {
   DraftKings: "bg-draftkings",
@@ -139,8 +137,10 @@ export default function ScannerPage() {
   const [cooldown, setCooldown] = useState(0);
   const [activeLens, setActiveLens] = useState<Lens>("standard");
   const [boostPercent, setBoostPercent] = useState(30);
+  const [customBoostInput, setCustomBoostInput] = useState("");
   const [selectedBooks, setSelectedBooks] = useState<string[]>(DEFAULT_SELECTED_BOOKS);
   const [visibleCount, setVisibleCount] = useState(10);
+  const [hideLongshots, setHideLongshots] = useState(true);
 
   // Drawer state
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -183,7 +183,9 @@ export default function ScannerPage() {
   // Filter by selected books then apply lens
   const fullResults = useMemo(() => {
     if (!scanData) return [];
-    const sides = scanData.sides.filter((s) => selectedBooks.includes(s.sportsbook));
+    const sides = scanData.sides
+      .filter((s) => selectedBooks.includes(s.sportsbook))
+      .filter((s) => !hideLongshots || s.book_odds <= LONGSHOT_MAX_AMERICAN);
 
     switch (activeLens) {
       case "standard":
@@ -211,7 +213,7 @@ export default function ScannerPage() {
 
   useEffect(() => {
     setVisibleCount(10);
-  }, [scanData, activeLens, boostPercent, selectedBooks]);
+  }, [scanData, activeLens, boostPercent, selectedBooks, hideLongshots]);
 
   const results = useMemo(() => {
     return fullResults.slice(0, visibleCount);
@@ -454,27 +456,71 @@ export default function ScannerPage() {
           </div>
         )}
 
-        {/* Boost % sub-selector */}
-        {scanData && activeLens === "profit_boost" && (
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-muted-foreground">
-              Boost:
-            </span>
-            {BOOST_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => setBoostPercent(opt.value)}
-                className={cn(
-                  "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
-                  boostPercent === opt.value
-                    ? "bg-[#C4A35A]/25 text-[#5C4D2E] border border-[#C4A35A]/40"
-                    : "bg-muted text-muted-foreground hover:bg-secondary"
-                )}
-              >
-                {opt.label}
-              </button>
-            ))}
+        {/* Controls row: boost pills (profit_boost lens) + longshot toggle */}
+        {scanData && (
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            {/* Left: boost pills (only when on profit_boost lens) */}
+            {activeLens === "profit_boost" ? (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs font-medium text-muted-foreground mr-0.5">Boost:</span>
+                {BOOST_PRESETS.map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => {
+                      setBoostPercent(preset);
+                      setCustomBoostInput("");
+                    }}
+                    className={cn(
+                      "px-2.5 py-1 rounded-md text-xs font-medium transition-colors",
+                      boostPercent === preset && customBoostInput === ""
+                        ? "bg-[#C4A35A]/25 text-[#5C4D2E] border border-[#C4A35A]/40"
+                        : "bg-muted text-muted-foreground hover:bg-secondary"
+                    )}
+                  >
+                    {preset}%
+                  </button>
+                ))}
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    placeholder="Custom"
+                    value={customBoostInput}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCustomBoostInput(val);
+                      const n = parseInt(val, 10);
+                      if (!isNaN(n) && n > 0 && n <= 200) setBoostPercent(n);
+                    }}
+                    className={cn(
+                      "w-16 px-2 py-1 rounded-md text-xs font-medium border transition-colors bg-muted text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-[#C4A35A]/50",
+                      customBoostInput !== "" ? "border-[#C4A35A]/40" : "border-transparent"
+                    )}
+                  />
+                  {customBoostInput !== "" && (
+                    <span className="text-xs text-muted-foreground">%</span>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div />
+            )}
+
+            {/* Right: longshot toggle chip */}
+            <button
+              type="button"
+              onClick={() => setHideLongshots((v) => !v)}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border transition-colors",
+                hideLongshots
+                  ? "bg-muted text-muted-foreground border-transparent hover:bg-secondary"
+                  : "bg-[#B85C38]/10 text-[#B85C38] border-[#B85C38]/30"
+              )}
+            >
+              <span>{hideLongshots ? `Hiding > +${LONGSHOT_MAX_AMERICAN}` : `Showing all odds`}</span>
+            </button>
           </div>
         )}
 

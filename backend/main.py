@@ -258,6 +258,26 @@ def build_bet_response(row: dict, k_factor: float) -> BetResponse:
     from calculations import calculate_hold_from_odds
 
     decimal_odds = american_to_decimal(row["odds_american"])
+    decimal_odds_for_ev = decimal_odds
+
+    # If payout_override is provided, keep EV math consistent with the displayed payout.
+    # This is only unambiguous for markets where win_payout is stake * decimal_odds
+    # (standard/no_sweat/promo_qualifier). For bonus bets and profit boosts, payout
+    # semantics differ, so we do not try to back-solve odds automatically.
+    payout_override = row.get("payout_override")
+    promo_type = row.get("promo_type")
+    stake = row.get("stake") or 0
+    if (
+        payout_override is not None
+        and stake
+        and promo_type in ("standard", "no_sweat", "promo_qualifier")
+    ):
+        try:
+            implied_decimal = float(payout_override) / float(stake)
+            if implied_decimal > 1:
+                decimal_odds_for_ev = implied_decimal
+        except Exception:
+            pass
 
     vig = None
     if row.get("opposing_odds"):
@@ -265,7 +285,7 @@ def build_bet_response(row: dict, k_factor: float) -> BetResponse:
 
     ev_result = calculate_ev(
         stake=row["stake"],
-        decimal_odds=decimal_odds,
+        decimal_odds=decimal_odds_for_ev,
         promo_type=row["promo_type"],
         k_factor=k_factor,
         boost_percent=row.get("boost_percent"),
@@ -275,7 +295,7 @@ def build_bet_response(row: dict, k_factor: float) -> BetResponse:
     )
 
     # Use payout override if present
-    win_payout = row.get("payout_override") or ev_result["win_payout"]
+    win_payout = payout_override or ev_result["win_payout"]
 
     real_profit = calculate_real_profit(
         stake=row["stake"],
@@ -1012,6 +1032,8 @@ async def cron_run_scan(x_cron_token: str | None = Header(default=None, alias="X
     scanned = []
     errors: list[dict] = []
     total_sides = 0
+    alerts_scheduled = 0
+    from services.discord_alerts import schedule_alerts
 
     for sport_key in SUPPORTED_SPORTS:
         try:
@@ -1027,6 +1049,7 @@ async def cron_run_scan(x_cron_token: str | None = Header(default=None, alias="X
                 }
             )
             total_sides += len(sides)
+            alerts_scheduled += schedule_alerts(sides)
         except httpx.HTTPStatusError as e:
             status = e.response.status_code if e.response is not None else None
             # 404 just means out of season / no odds; treat as non-fatal.
@@ -1045,7 +1068,77 @@ async def cron_run_scan(x_cron_token: str | None = Header(default=None, alias="X
         "sports_scanned": scanned,
         "errors": errors,
         "total_sides": total_sides,
+        "alerts_scheduled": alerts_scheduled,
     }
+
+
+@app.post("/api/cron/run-auto-settle")
+async def cron_run_auto_settle(
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+):
+    """
+    Cron-triggered auto-settler runner (for Render free sleep).
+
+    Security: requires X-Cron-Token header matching the CRON_TOKEN environment variable.
+    """
+    expected = os.getenv("CRON_TOKEN")
+    if not expected:
+        raise HTTPException(status_code=503, detail="CRON_TOKEN not configured on server")
+    if not x_cron_token or x_cron_token != expected:
+        raise HTTPException(status_code=401, detail="Invalid cron token")
+
+    db = get_db()
+    started = datetime.now(UTC).isoformat() + "Z"
+    try:
+        from services.odds_api import run_auto_settler
+
+        settled = await run_auto_settler(db)
+    except Exception as e:
+        # Never crash the server; return error for cron logs.
+        raise HTTPException(status_code=502, detail=f"Auto-settler error: {e}")
+    finally:
+        finished = datetime.now(UTC).isoformat() + "Z"
+
+    return {
+        "ok": True,
+        "started_at": started,
+        "finished_at": finished,
+        "settled": settled,
+    }
+
+
+@app.post("/api/cron/test-discord")
+async def cron_test_discord(
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+):
+    """
+    Send a test Discord message (no EV/odds filtering).
+
+    Security: requires X-Cron-Token header matching the CRON_TOKEN environment variable.
+    """
+    expected = os.getenv("CRON_TOKEN")
+    if not expected:
+        raise HTTPException(status_code=503, detail="CRON_TOKEN not configured on server")
+    if not x_cron_token or x_cron_token != expected:
+        raise HTTPException(status_code=401, detail="Invalid cron token")
+
+    from services.discord_alerts import send_discord_webhook
+
+    payload = {
+        "embeds": [
+            {
+                "title": "Webhook test",
+                "description": "If you can read this, DISCORD_WEBHOOK_URL is working.",
+                "fields": [
+                    {"name": "Server time (UTC)", "value": datetime.now(UTC).isoformat() + "Z", "inline": False},
+                ],
+            }
+        ]
+    }
+
+    # Non-blocking: schedule and immediately return.
+    asyncio.create_task(send_discord_webhook(payload))
+    return {"ok": True, "scheduled": True}
 
 
 if __name__ == "__main__":
