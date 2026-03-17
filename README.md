@@ -32,7 +32,7 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 ## Feature Set
 
 ### Scanner (Promo Decision Engine)
-- Full scan across NBA, NFL, MLB, NHL, MMA, MLS, and more
+- Full scan across NBA, NCAAB, MLB, and NHL
 - **Standard EV** lens: top +EV moneylines sorted by edge
 - **Profit Boost** lens: recalculates EV after applying a 30% or 50% profit multiplier
 - **Bonus Bet** lens: sorts by retention rate (`true_prob × decimal_odds`) to maximize free-bet conversion
@@ -117,7 +117,18 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ODDS_API_KEY=your-odds-api-key
 ENVIRONMENT=development
+CRON_TOKEN=your-random-cron-token
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 ```
+
+### Cron-job friendly automation (Render free sleep)
+If your backend sleeps when idle (Render free tier), use an external scheduler (cron-job.org, GitHub Actions, etc.) to hit these endpoints:
+
+- `POST /api/cron/run-scan` (warms scanner cache; sends Discord +EV alerts if configured)
+- `POST /api/cron/run-auto-settle` (grades eligible pending ML bets)
+- `POST /api/cron/test-discord` (sends a test Discord message)
+
+All cron endpoints require the header `X-Cron-Token` matching `CRON_TOKEN`.
 
 ```bash
 python main.py

@@ -1099,6 +1099,23 @@ async def cron_run_auto_settle(
     finally:
         finished = datetime.now(UTC).isoformat() + "Z"
 
+    if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1":
+        from services.discord_alerts import send_discord_webhook
+
+        payload = {
+            "embeds": [
+                {
+                    "title": "Auto-settle run complete",
+                    "description": f"Graded **{settled}** bet(s).",
+                    "fields": [
+                        {"name": "Started (UTC)", "value": started, "inline": True},
+                        {"name": "Finished (UTC)", "value": finished, "inline": True},
+                    ],
+                }
+            ]
+        }
+        asyncio.create_task(send_discord_webhook(payload))
+
     return {
         "ok": True,
         "started_at": started,
