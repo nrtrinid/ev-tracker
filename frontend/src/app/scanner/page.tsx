@@ -590,11 +590,15 @@ export default function ScannerPage() {
                                 <span className="font-mono font-semibold text-foreground">
                                   {formatCurrency(stealthKellyStake)}
                                 </span>
-                                <Info
-                                  className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70"
+                                <span
                                   title={`Raw Kelly: ${formatCurrency(rawKellyStake)}`}
-                                  aria-label="Raw Kelly amount"
-                                />
+                                  className="inline-flex"
+                                >
+                                  <Info
+                                    className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70"
+                                    aria-label="Raw Kelly amount"
+                                  />
+                                </span>
                               </p>
                             )}
                           </div>
