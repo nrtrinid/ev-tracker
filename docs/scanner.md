@@ -58,12 +58,8 @@ frontend: lens filtering + sorting (useMemo)
 **Supported sports:**
 ```
 basketball_nba, basketball_ncaab
-football_nfl, football_ncaaf
 baseball_mlb
 icehockey_nhl
-mma_mixed_martial_arts
-soccer_usa_mls
-tennis_atp_us_open
 ```
 
 Sports that are out of season return a 404 from The Odds API. The scanner catches these silently and continues — they don't fail the entire scan.
@@ -81,7 +77,7 @@ Each sport has its own in-memory cache entry (`_cache: dict[str, dict]`) and its
 **Behavior:**
 - First request for a sport after cache expiry → hits The Odds API, costs 1 token, stores result.
 - All subsequent requests within 5 minutes → served from cache, cost 0 tokens.
-- With 9 supported sports and a 5-min TTL, a worst-case full scan costs 9 tokens. In practice, with multiple users, each sport's cache is shared, so 10 users scanning within 5 minutes costs the same as 1.
+- With 4 supported sports and a 5-min TTL, a worst-case full scan costs 4 tokens. In practice, with multiple users, each sport's cache is shared, so 10 users scanning within 5 minutes costs the same as 1.
 
 **Thread safety:** `asyncio.Lock` per sport prevents duplicate simultaneous API calls (e.g., two users hitting "scan" at the same time for the same sport). Only one request goes through; the other waits and receives the cached result.
 
@@ -112,10 +108,10 @@ The response includes `x-requests-remaining` in the headers, which is surfaced t
 For every event:
 
 1. Extract Pinnacle's home/away odds.
-2. Call `devig_pinnacle(pin_home, pin_away)` → `true_prob_home`, `true_prob_away`.
+2. De-vig Pinnacle to get true probabilities (supports both 2-way and 3-way H2H when present).
 3. For each of the 5 target books:
    - Extract that book's home/away odds.
-   - Call `calculate_edge(true_prob, book_odds)` for each side.
+   - Call `calculate_edge(true_prob, book_odds)` for each side (and include Draw/Tie when present).
    - Append both sides to `all_sides[]`, regardless of whether EV is positive or negative.
 4. Include `base_kelly_fraction`, `sportsbook`, `book_decimal`, `ev_percentage`, `true_prob` on each side.
 

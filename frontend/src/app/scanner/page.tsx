@@ -140,6 +140,7 @@ export default function ScannerPage() {
   const [activeLens, setActiveLens] = useState<Lens>("standard");
   const [boostPercent, setBoostPercent] = useState(30);
   const [selectedBooks, setSelectedBooks] = useState<string[]>(DEFAULT_SELECTED_BOOKS);
+  const [visibleCount, setVisibleCount] = useState(10);
 
   // Drawer state
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -180,7 +181,7 @@ export default function ScannerPage() {
   };
 
   // Filter by selected books then apply lens
-  const results = useMemo(() => {
+  const fullResults = useMemo(() => {
     if (!scanData) return [];
     const sides = scanData.sides.filter((s) => selectedBooks.includes(s.sportsbook));
 
@@ -188,29 +189,33 @@ export default function ScannerPage() {
       case "standard":
         return sides
           .filter((s) => s.ev_percentage > 0)
-          .sort((a, b) => b.ev_percentage - a.ev_percentage)
-          .slice(0, 10);
+          .sort((a, b) => b.ev_percentage - a.ev_percentage);
 
       case "profit_boost":
         return sides
           .map((s) => ({ ...s, _boostedEV: calculateBoostedEV(s, boostPercent) }))
           .filter((s) => s._boostedEV > 0)
-          .sort((a, b) => b._boostedEV - a._boostedEV)
-          .slice(0, 10);
+          .sort((a, b) => b._boostedEV - a._boostedEV);
 
       case "bonus_bet":
         return sides
           .map((s) => ({ ...s, _retention: calculateRetention(s) }))
-          .sort((a, b) => b._retention - a._retention)
-          .slice(0, 10);
+          .sort((a, b) => b._retention - a._retention);
 
       case "qualifier":
         return sides
           .filter((s) => s.book_odds >= -250 && s.book_odds <= 150)
-          .sort((a, b) => b.ev_percentage - a.ev_percentage)
-          .slice(0, 10);
+          .sort((a, b) => b.ev_percentage - a.ev_percentage);
     }
   }, [scanData, activeLens, boostPercent, selectedBooks]);
+
+  useEffect(() => {
+    setVisibleCount(10);
+  }, [scanData, activeLens, boostPercent, selectedBooks]);
+
+  const results = useMemo(() => {
+    return fullResults.slice(0, visibleCount);
+  }, [fullResults, visibleCount]);
 
   const handleLogBet = (side: MarketSide) => {
     const sportDisplay = SPORT_KEY_TO_DISPLAY[side.sport] || side.sport;
@@ -477,7 +482,7 @@ export default function ScannerPage() {
         {scanData && (
           <div className="space-y-2">
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-              Top {results.length}{" "}
+              Showing {results.length} of {fullResults.length}{" "}
               {activeLens === "standard"
                 ? "+EV Lines"
                 : activeLens === "bonus_bet"
@@ -500,7 +505,8 @@ export default function ScannerPage() {
                 </CardContent>
               </Card>
             ) : (
-              results.map((side, i) => {
+              <>
+                {results.map((side, i) => {
                 const metric = getMetric(side);
                 const rawKellyStake = Math.max(
                   0,
@@ -615,7 +621,18 @@ export default function ScannerPage() {
                     </CardContent>
                   </Card>
                 );
-              })
+                })}
+                {fullResults.length > results.length && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="w-full"
+                    onClick={() => setVisibleCount((c) => c + 10)}
+                  >
+                    Load more
+                  </Button>
+                )}
+              </>
             )}
           </div>
         )}

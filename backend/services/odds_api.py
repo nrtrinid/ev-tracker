@@ -48,13 +48,8 @@ async def get_cached_or_scan(sport: str) -> dict:
 SUPPORTED_SPORTS = [
     "basketball_nba",
     "basketball_ncaab",
-    "football_nfl",
-    "football_ncaaf",
     "baseball_mlb",
     "icehockey_nhl",
-    "mma_mixed_martial_arts",
-    "soccer_usa_mls",
-    "tennis_atp_us_open",
 ]
 
 SHARP_BOOK = "pinnacle"
@@ -91,6 +86,54 @@ def devig_pinnacle(outcome_a_price: float, outcome_b_price: float) -> dict:
     true_prob_b = implied_b / overround
 
     return {"team_a": true_prob_a, "team_b": true_prob_b}
+
+
+def devig_outcomes(outcome_prices: dict[str, float]) -> dict[str, float] | None:
+    """
+    De-vig a market with N outcomes (2-way or 3-way) using additive normalization.
+
+    Args:
+        outcome_prices: mapping of outcome name -> American odds
+
+    Returns:
+        mapping of outcome name -> true probability (sums to 1.0), or None if invalid
+    """
+    if not outcome_prices:
+        return None
+
+    implied: dict[str, float] = {}
+    for name, price in outcome_prices.items():
+        try:
+            dec = american_to_decimal(float(price))
+            if dec <= 1:
+                return None
+            implied[name] = 1.0 / dec
+        except Exception:
+            return None
+
+    overround = sum(implied.values())
+    if overround <= 0:
+        return None
+
+    return {name: (p / overround) for name, p in implied.items()}
+
+
+def _find_draw_key(outcomes: dict[str, float], home: str, away: str) -> str | None:
+    """
+    For 3-way h2h markets, attempt to find the draw/tie outcome key.
+    """
+    if not outcomes:
+        return None
+
+    lower_to_key = {k.lower(): k for k in outcomes.keys()}
+    for candidate in ("draw", "tie", "x"):
+        if candidate in lower_to_key:
+            k = lower_to_key[candidate]
+            if k not in (home, away):
+                return k
+
+    extras = [k for k in outcomes.keys() if k not in (home, away)]
+    return extras[0] if len(extras) == 1 else None
 
 
 def calculate_edge(true_prob: float, book_american_odds: float) -> dict:
@@ -175,8 +218,16 @@ async def scan_for_ev(sport: str = "basketball_nba") -> dict:
         pin_away = pin_outcomes.get(away)
         if None in (pin_home, pin_away):
             continue
-
-        true_probs = devig_pinnacle(pin_home, pin_away)
+        draw_key = _find_draw_key(pin_outcomes, home, away)
+        if draw_key:
+            true_probs_n = devig_outcomes({home: pin_home, away: pin_away, draw_key: pin_outcomes[draw_key]})
+            if not true_probs_n:
+                continue
+            true_probs = {"team_a": true_probs_n[home], "team_b": true_probs_n[away]}
+            true_prob_draw = true_probs_n[draw_key]
+        else:
+            true_probs = devig_pinnacle(pin_home, pin_away)
+            true_prob_draw = None
         had_any_book = False
 
         for book_key, book_display in TARGET_BOOKS.items():
@@ -222,6 +273,25 @@ async def scan_for_ev(sport: str = "basketball_nba") -> dict:
                     "ev_percentage": away_edge["ev_percentage"],
                     "book_decimal": away_edge["book_decimal"],
                 })
+
+            if true_prob_draw is not None:
+                book_draw_key = _find_draw_key(book_outcomes, home, away)
+                if book_draw_key and book_draw_key in book_outcomes:
+                    draw_edge = calculate_edge(true_prob_draw, book_outcomes[book_draw_key])
+                    if draw_edge["ev_percentage"] > 0:
+                        ev_bets.append({
+                            "sportsbook": book_display,
+                            "sport": event.get("sport_key", sport),
+                            "event": f"{away} @ {home}",
+                            "commence_time": commence,
+                            "team": book_draw_key,
+                            "pinnacle_odds": pin_outcomes[draw_key],
+                            "book_odds": book_outcomes[book_draw_key],
+                            "true_prob": draw_edge["true_prob"],
+                            "base_kelly_fraction": round(kelly_fraction(draw_edge["true_prob"], draw_edge["book_decimal"]), 6),
+                            "ev_percentage": draw_edge["ev_percentage"],
+                            "book_decimal": draw_edge["book_decimal"],
+                        })
 
         if had_any_book:
             events_with_pinnacle += 1
@@ -608,8 +678,16 @@ async def scan_all_sides(sport: str = "basketball_nba") -> dict:
         pin_away = pin_outcomes.get(away)
         if None in (pin_home, pin_away):
             continue
-
-        true_probs = devig_pinnacle(pin_home, pin_away)
+        draw_key = _find_draw_key(pin_outcomes, home, away)
+        if draw_key:
+            true_probs_n = devig_outcomes({home: pin_home, away: pin_away, draw_key: pin_outcomes[draw_key]})
+            if not true_probs_n:
+                continue
+            true_probs = {"team_a": true_probs_n[home], "team_b": true_probs_n[away]}
+            true_prob_draw = true_probs_n[draw_key]
+        else:
+            true_probs = devig_pinnacle(pin_home, pin_away)
+            true_prob_draw = None
         had_any_book = False
 
         for book_key, book_display in TARGET_BOOKS.items():
@@ -654,6 +732,24 @@ async def scan_all_sides(sport: str = "basketball_nba") -> dict:
                 "book_decimal": away_edge["book_decimal"],
                 "ev_percentage": away_edge["ev_percentage"],
             })
+
+            if true_prob_draw is not None:
+                book_draw_key = _find_draw_key(book_outcomes, home, away)
+                if book_draw_key and book_draw_key in book_outcomes:
+                    draw_edge = calculate_edge(true_prob_draw, book_outcomes[book_draw_key])
+                    all_sides.append({
+                        "sportsbook": book_display,
+                        "sport": event.get("sport_key", sport),
+                        "event": f"{away} @ {home}",
+                        "commence_time": commence,
+                        "team": book_draw_key,
+                        "pinnacle_odds": pin_outcomes[draw_key],
+                        "book_odds": book_outcomes[book_draw_key],
+                        "true_prob": draw_edge["true_prob"],
+                        "base_kelly_fraction": round(kelly_fraction(draw_edge["true_prob"], draw_edge["book_decimal"]), 6),
+                        "book_decimal": draw_edge["book_decimal"],
+                        "ev_percentage": draw_edge["ev_percentage"],
+                    })
 
         if had_any_book:
             events_with_any_book += 1
