@@ -1153,8 +1153,8 @@ async def cron_test_discord(
         ]
     }
 
-    # Non-blocking: schedule and immediately return.
-    asyncio.create_task(send_discord_webhook(payload))
+    # Awaited directly so any Discord error surfaces in logs/response.
+    await send_discord_webhook(payload)
     return {"ok": True, "scheduled": True}
 
 

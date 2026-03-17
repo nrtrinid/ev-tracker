@@ -88,10 +88,13 @@ async def send_discord_webhook(payload: dict[str, Any]) -> None:
     timeout = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            await client.post(url, json=payload)
+            resp = await client.post(url, json=payload)
+            print(f"[Discord] Webhook response: {resp.status_code} {resp.text}")
+            resp.raise_for_status()
     except Exception as e:
         # Never crash caller; Discord being down should not affect scans.
         print(f"[Discord] Webhook error: {e}")
+        raise
 
 
 async def alert_for_side(side: dict[str, Any]) -> None:
