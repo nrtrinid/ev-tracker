@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { LogBetDrawer } from "@/components/LogBetDrawer";
-import { cn, formatCurrency, formatOdds } from "@/lib/utils";
+import { cn, formatCurrency, formatOdds, calculateStealthStake } from "@/lib/utils";
 import {
   Radar,
   TrendingUp,
@@ -14,6 +14,7 @@ import {
   Loader2,
   Clock,
   ChevronRight,
+  Info,
 } from "lucide-react";
 import { scanMarkets } from "@/lib/api";
 import type { MarketSide, ScanResult, ScannedBetData, PromoType } from "@/lib/types";
@@ -224,6 +225,9 @@ export default function ScannerPage() {
       boostPct = boostPercent;
     }
 
+    const rawKellyStake = Math.max(0, side.base_kelly_fraction * kellyMultiplier * bankroll);
+    const stealthKellyStake = calculateStealthStake(rawKellyStake);
+
     setDrawerInitialValues({
       sportsbook: side.sportsbook,
       sport: sportDisplay,
@@ -239,6 +243,8 @@ export default function ScannerPage() {
       clv_team: side.team,
       clv_sport_key: side.sport,
       true_prob_at_entry: side.true_prob,  // de-vigged Pinnacle prob — used for accurate EV
+      raw_kelly_stake: rawKellyStake,
+      stealth_kelly_stake: stealthKellyStake,
     });
     setDrawerKey(Date.now());
     setDrawerOpen(true);
@@ -496,10 +502,11 @@ export default function ScannerPage() {
             ) : (
               results.map((side, i) => {
                 const metric = getMetric(side);
-                const recommendedBet = Math.max(
+                const rawKellyStake = Math.max(
                   0,
                   side.base_kelly_fraction * kellyMultiplier * bankroll
                 );
+                const stealthKellyStake = calculateStealthStake(rawKellyStake);
                 return (
                   <Card key={`${side.sportsbook}-${side.team}-${side.event}-${i}`} className="card-hover">
                     <CardContent className="p-4">
@@ -578,11 +585,16 @@ export default function ScannerPage() {
                               {metric.label}
                             </p>
                             {activeLens === "standard" && (
-                              <p className="text-[10px] text-muted-foreground mt-0.5">
+                              <p className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1">
                                 Rec Bet:{" "}
                                 <span className="font-mono font-semibold text-foreground">
-                                  {formatCurrency(recommendedBet)}
+                                  {formatCurrency(stealthKellyStake)}
                                 </span>
+                                <Info
+                                  className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70"
+                                  title={`Raw Kelly: ${formatCurrency(rawKellyStake)}`}
+                                  aria-label="Raw Kelly amount"
+                                />
                               </p>
                             )}
                           </div>

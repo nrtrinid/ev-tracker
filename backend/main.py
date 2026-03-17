@@ -46,6 +46,29 @@ async def _run_clv_daily_job():
         print(f"[CLV daily job] Error: {e}")
 
 
+async def _run_jit_clv_snatcher_job():
+    """JIT CLV Snatcher: capture closing Pinnacle lines for games starting in the next 20 min."""
+    from services.odds_api import run_jit_clv_snatcher
+    db = get_db()
+    try:
+        updated = await run_jit_clv_snatcher(db)
+        if updated:
+            print(f"[JIT CLV] Captured closing lines for {updated} bet(s).")
+    except Exception as e:
+        print(f"[JIT CLV] Error: {e}")
+
+
+async def _run_auto_settler_job():
+    """Auto-Settler: grade completed ML bets using The Odds API /scores endpoint."""
+    from services.odds_api import run_auto_settler
+    db = get_db()
+    try:
+        settled = await run_auto_settler(db)
+        print(f"[Auto-Settler] Graded {settled} bet(s).")
+    except Exception as e:
+        print(f"[Auto-Settler] Error: {e}")
+
+
 async def _piggyback_clv(sides: list[dict]):
     """
     Fire-and-forget task: update CLV snapshots for all pending tracked bets
@@ -64,9 +87,14 @@ async def _piggyback_clv(sides: list[dict]):
 async def start_scheduler():
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
+    from apscheduler.triggers.interval import IntervalTrigger
     scheduler = AsyncIOScheduler()
     # 23:30 UTC = 6:30 PM ET (accounts for EST; shift to 22:30 during EDT if needed)
     scheduler.add_job(_run_clv_daily_job, CronTrigger(hour=23, minute=30))
+    # Every 15 min: capture closing Pinnacle lines for games starting within 20 min
+    scheduler.add_job(_run_jit_clv_snatcher_job, IntervalTrigger(minutes=15))
+    # 4:00 AM UTC daily: auto-grade completed ML bets via /scores
+    scheduler.add_job(_run_auto_settler_job, CronTrigger(hour=4, minute=0))
     scheduler.start()
     app.state.scheduler = scheduler
 

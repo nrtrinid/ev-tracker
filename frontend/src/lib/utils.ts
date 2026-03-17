@@ -103,6 +103,18 @@ export function calculateImpliedProb(oddsAmerican: number): number {
   }
 }
 
+/**
+ * Stealth Mode: round raw Kelly stake to book-friendly amounts to avoid
+ * flagging accounts for odd bet sizes. Returns a number; use formatCurrency for display.
+ */
+export function calculateStealthStake(rawStake: number): number {
+  const safe = Math.max(0, Number.isFinite(rawStake) ? rawStake : 0);
+  if (safe < 10) return Math.round(safe / 0.5) * 0.5;
+  if (safe < 50) return Math.round(safe);
+  if (safe < 150) return Math.round(safe / 5) * 5;
+  return Math.round(safe / 10) * 10;
+}
+
 // Calculate hold (vig) from two American odds
 export function calculateHoldFromOdds(odds1: number, odds2: number): number | null {
   if (odds1 === 0 || odds2 === 0) return null;

@@ -364,6 +364,225 @@ async def fetch_clv_for_pending_bets(db) -> int:
     return total_updated
 
 
+async def run_jit_clv_snatcher(db) -> int:
+    """
+    JIT CLV Snatcher — runs every 15 minutes via APScheduler.
+
+    Finds pending bets whose game is starting within the next 20 minutes and
+    whose closing Pinnacle line has not yet been captured. The IS NULL check on
+    pinnacle_odds_at_close acts as an idempotency lock — once written, the row
+    is never touched again by this job.
+
+    One fetch_odds call per unique sport_key (1 API token each).
+    Returns the number of bets updated.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    now = datetime.now(timezone.utc)
+    window_end = now + timedelta(minutes=20)
+    now_iso = now.isoformat()
+    window_end_iso = window_end.isoformat()
+
+    result = (
+        db.table("bets")
+        .select("id,clv_sport_key,clv_team,commence_time")
+        .eq("result", "pending")
+        .is_("pinnacle_odds_at_close", "null")
+        .not_.is_("clv_sport_key", "null")
+        .gt("commence_time", now_iso)
+        .lte("commence_time", window_end_iso)
+        .execute()
+    )
+
+    if not result.data:
+        return 0
+
+    sport_bets: dict[str, list[dict]] = {}
+    for bet in result.data:
+        sk = bet.get("clv_sport_key")
+        if sk:
+            sport_bets.setdefault(sk, []).append(bet)
+
+    total_updated = 0
+    settled_at = datetime.now(timezone.utc).isoformat()
+
+    for sport_key, bets in sport_bets.items():
+        try:
+            data, _ = await fetch_odds(sport_key)
+            events = data if isinstance(data, list) else []
+
+            snapshot: dict[tuple[str, str], float] = {}
+            for event in events:
+                home = event["home_team"]
+                away = event["away_team"]
+                ct = event.get("commence_time", "")
+                pin_outcomes = _extract_outcomes(event.get("bookmakers", []), SHARP_BOOK)
+                if not pin_outcomes:
+                    continue
+                pin_home = pin_outcomes.get(home)
+                pin_away = pin_outcomes.get(away)
+                if pin_home:
+                    snapshot[(ct, home)] = pin_home
+                if pin_away:
+                    snapshot[(ct, away)] = pin_away
+
+            for bet in bets:
+                key = (bet.get("commence_time", ""), bet.get("clv_team", ""))
+                close_odds = snapshot.get(key)
+                if close_odds is not None:
+                    db.table("bets").update({
+                        "pinnacle_odds_at_close": close_odds,
+                        "clv_updated_at": settled_at,
+                    }).eq("id", bet["id"]).execute()
+                    total_updated += 1
+
+        except Exception:
+            pass
+
+    return total_updated
+
+
+async def fetch_scores(sport: str) -> list[dict]:
+    """
+    Fetch completed game scores from The Odds API.
+
+    daysFrom=2 returns games completed in the last 2 days — wide enough to
+    catch overnight finishes and any games that ran into extra time.
+    Costs 1 API token per sport call.
+    """
+    if not ODDS_API_KEY:
+        raise ValueError("ODDS_API_KEY not set in environment")
+
+    url = f"{ODDS_API_BASE}/sports/{sport}/scores"
+    params = {
+        "apiKey": ODDS_API_KEY,
+        "daysFrom": 2,
+        "dateFormat": "iso",
+    }
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(url, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, list) else []
+
+
+def _grade_ml(clv_team: str, home_team: str, away_team: str, scores: list[dict]) -> str | None:
+    """
+    Grade a moneyline bet given the completed game scores.
+
+    scores is the 'scores' list from The Odds API event object, e.g.:
+        [{"name": "Los Angeles Lakers", "score": "118"},
+         {"name": "Boston Celtics",     "score": "120"}]
+
+    Returns 'win', 'loss', or 'push', or None if the score data is unusable.
+    """
+    score_map: dict[str, float] = {}
+    for s in scores or []:
+        try:
+            score_map[s["name"]] = float(s["score"])
+        except (KeyError, ValueError, TypeError):
+            pass
+
+    bet_score = score_map.get(clv_team)
+    opponent = away_team if clv_team == home_team else home_team
+    opp_score = score_map.get(opponent)
+
+    if bet_score is None or opp_score is None:
+        return None
+
+    if bet_score > opp_score:
+        return "win"
+    if bet_score < opp_score:
+        return "loss"
+    return "push"
+
+
+async def run_auto_settler(db) -> int:
+    """
+    Auto-Settler — runs once daily at 4:00 AM UTC via APScheduler.
+
+    Grades pending ML bets for games that have already started (commence_time
+    in the past). Groups by sport_key, fetches scores once per sport (1 token),
+    and updates result + settled_at for every completed game found.
+
+    Non-ML markets (Spread, Total, SGP, Prop, Futures) are skipped — the schema
+    does not store the bet line needed for algorithmic grading of those markets.
+    Returns the number of bets settled.
+    """
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+
+    result = (
+        db.table("bets")
+        .select("id,market,clv_sport_key,clv_team,commence_time")
+        .eq("result", "pending")
+        .not_.is_("clv_sport_key", "null")
+        .lt("commence_time", now_iso)
+        .execute()
+    )
+
+    if not result.data:
+        return 0
+
+    sport_bets: dict[str, list[dict]] = {}
+    for bet in result.data:
+        sk = bet.get("clv_sport_key")
+        if sk:
+            sport_bets.setdefault(sk, []).append(bet)
+
+    total_settled = 0
+    settled_at = now.isoformat()
+
+    for sport_key, bets in sport_bets.items():
+        try:
+            events = await fetch_scores(sport_key)
+
+            # Build lookup from completed games: (home_team, away_team) → event
+            completed: dict[tuple[str, str], dict] = {}
+            for event in events:
+                if event.get("completed"):
+                    completed[(event["home_team"], event["away_team"])] = event
+
+            for bet in bets:
+                market = (bet.get("market") or "").strip().upper()
+                clv_team = bet.get("clv_team")
+
+                if market != "ML":
+                    print(
+                        f"[Auto-Settler] Skipping bet {bet['id']} — "
+                        f"market '{market}' requires manual grading."
+                    )
+                    continue
+
+                if not clv_team:
+                    continue
+
+                # Find the matching completed game
+                grade = None
+                for (home, away), event in completed.items():
+                    if clv_team in (home, away):
+                        grade = _grade_ml(
+                            clv_team, home, away, event.get("scores") or []
+                        )
+                        break
+
+                if grade is None:
+                    continue
+
+                db.table("bets").update({
+                    "result": grade,
+                    "settled_at": settled_at,
+                }).eq("id", bet["id"]).execute()
+                total_settled += 1
+
+        except Exception as e:
+            print(f"[Auto-Settler] Error processing sport '{sport_key}': {e}")
+
+    return total_settled
+
+
 async def scan_all_sides(sport: str = "basketball_nba") -> dict:
     """
     Return ALL matched sides between Pinnacle and every target book with

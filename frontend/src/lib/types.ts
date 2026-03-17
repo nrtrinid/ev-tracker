@@ -183,6 +183,9 @@ export interface ScannedBetData {
   clv_team?: string;
   clv_sport_key?: string;
   true_prob_at_entry?: number;  // de-vigged Pinnacle probability — enables accurate EV display
+  kelly_suggestion?: number;    // deprecated: use raw_kelly_stake / stealth_kelly_stake
+  raw_kelly_stake?: number;     // raw Kelly $ (base_kelly * multiplier * bankroll)
+  stealth_kelly_stake?: number; // stealth-rounded stake for display and auto-fill
 }
 
 // Constants

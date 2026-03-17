@@ -78,7 +78,7 @@ def calculate_ev(
     stake: float,
     decimal_odds: float,
     promo_type: str,
-    k_factor: float = 0.78,
+    k_factor: float = 0.78,  # reserved for future fractional Kelly; currently unused
     boost_percent: float | None = None,
     winnings_cap: float | None = None,
     vig: float | None = None,

@@ -25,6 +25,7 @@ import {
   americanToDecimal,
   cn,
   calculateHoldFromOdds,
+  calculateStealthStake,
 } from "@/lib/utils";
 import { Loader2, Plus, ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
@@ -160,6 +161,27 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
         const input = document.querySelector('[data-odds-input]') as HTMLInputElement;
         input?.focus();
       }, 300);
+    }
+  }, [open]);
+
+  // Smart Stake: auto-fill stake when drawer opens with scanner data.
+  // Promos always get $25; standard +EV bets get the stealth-rounded Kelly amount.
+  useEffect(() => {
+    if (open && initialValues) {
+      const isPromo = initialValues.promo_type !== "standard";
+      if (isPromo) {
+        updateField("stake", "10.00");
+      } else {
+        const stealth =
+          initialValues.stealth_kelly_stake ??
+          (initialValues.raw_kelly_stake != null
+            ? calculateStealthStake(initialValues.raw_kelly_stake)
+            : undefined);
+        const stake = stealth ?? initialValues.kelly_suggestion;
+        if (stake != null && stake > 0) {
+          updateField("stake", stake.toFixed(2));
+        }
+      }
     }
   }, [open]);
 
@@ -374,11 +396,11 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
               />
               {/* Quick Stake Presets - directly under stake field */}
               <div className="flex gap-2 mt-2">
-                {[10, 25, 50].map((amount) => (
+                {[5, 10, 25].map((amount) => (
                   <button
                     key={amount}
                     type="button"
-                    onClick={() => updateField("stake", amount.toString())}
+                    onClick={() => updateField("stake", amount.toFixed(2))}
                     className={cn(
                       "flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors",
                       formState.stake === amount.toString()

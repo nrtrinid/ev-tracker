@@ -5,3 +5,4 @@ supabase
 python-dotenv
 httpx
 apscheduler
+pytest>=7.0
