@@ -4,13 +4,15 @@ FastAPI backend for sports betting EV tracking.
 """
 
 import asyncio
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, UTC
+from contextlib import asynccontextmanager
 import os
 import time
 from dotenv import load_dotenv
 import httpx
+from zoneinfo import ZoneInfo
 
 from models import (
     BetCreate, BetUpdate, BetResponse, BetResult, PromoType,
@@ -23,11 +25,15 @@ from auth import get_current_user
 
 load_dotenv()
 
-app = FastAPI(
-    title="EV Tracker API",
-    description="Track sports betting Expected Value",
-    version="1.0.0"
-)
+app: FastAPI
+
+PHOENIX_TZ = None
+try:
+    PHOENIX_TZ = ZoneInfo("America/Phoenix")
+except Exception as e:
+    # If the runtime lacks IANA tzdata, scheduled scans should not run at wrong times.
+    # Install the `tzdata` package if this occurs in production.
+    print(f"[Scheduler] Failed to load America/Phoenix timezone: {e}")
 
 
 # ---------- CLV daily safety-net scheduler ----------
@@ -69,6 +75,39 @@ async def _run_auto_settler_job():
         print(f"[Auto-Settler] Error: {e}")
 
 
+async def _run_scheduled_scan_job():
+    """
+    Scheduled scan job: warms the same cache used by GET /api/scan-markets by
+    calling services.odds_api.get_cached_or_scan across SUPPORTED_SPORTS.
+    """
+    from services.odds_api import get_cached_or_scan, SUPPORTED_SPORTS
+
+    started = datetime.now(UTC).isoformat()
+    print(f"[Scheduled scan] Starting scan job at {started}Z")
+
+    for sport_key in SUPPORTED_SPORTS:
+        try:
+            result = await get_cached_or_scan(sport_key)
+            sides_count = len(result.get("sides") or [])
+            fetched = result.get("events_fetched")
+            with_both = result.get("events_with_both_books")
+            print(
+                f"[Scheduled scan] {sport_key}: {sides_count} sides "
+                f"({fetched} events, {with_both} with sharp+target)"
+            )
+        except httpx.HTTPStatusError as e:
+            if e.response is not None and e.response.status_code == 404:
+                print(f"[Scheduled scan] {sport_key}: 404 (no odds). Skipping.")
+                continue
+            print(f"[Scheduled scan] {sport_key}: HTTP error: {e}")
+        except Exception as e:
+            # Never crash the server/scheduler; log and continue.
+            print(f"[Scheduled scan] {sport_key}: Error: {e}")
+
+    finished = datetime.now(UTC).isoformat()
+    print(f"[Scheduled scan] Finished scan job at {finished}Z")
+
+
 async def _piggyback_clv(sides: list[dict]):
     """
     Fire-and-forget task: update CLV snapshots for all pending tracked bets
@@ -83,10 +122,11 @@ async def _piggyback_clv(sides: list[dict]):
         print(f"[CLV piggyback] Error: {e}")
 
 
-@app.on_event("startup")
 async def start_scheduler():
     if os.getenv("TESTING") == "1":
         return  # Skip scheduler in integration tests so we don't hit Odds API or cron
+    if os.getenv("ENABLE_SCHEDULER") != "1":
+        return  # Only one instance should run background jobs (Render scaling/workers)
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
     from apscheduler.triggers.interval import IntervalTrigger
@@ -97,8 +137,45 @@ async def start_scheduler():
     scheduler.add_job(_run_jit_clv_snatcher_job, IntervalTrigger(minutes=15))
     # 4:00 AM UTC daily: auto-grade completed ML bets via /scores
     scheduler.add_job(_run_auto_settler_job, CronTrigger(hour=4, minute=0))
+    if PHOENIX_TZ is not None:
+        scheduler.add_job(
+            _run_scheduled_scan_job,
+            CronTrigger(hour=16, minute=30, timezone=PHOENIX_TZ),
+        )
+        scheduler.add_job(
+            _run_scheduled_scan_job,
+            CronTrigger(hour=18, minute=30, timezone=PHOENIX_TZ),
+        )
+    else:
+        print("[Scheduler] Phoenix timezone unavailable; skipping scheduled scan jobs.")
     scheduler.start()
     app.state.scheduler = scheduler
+
+
+async def stop_scheduler():
+    scheduler = getattr(app.state, "scheduler", None)
+    if scheduler:
+        try:
+            scheduler.shutdown(wait=False)
+        except Exception as e:
+            print(f"[Scheduler] Error shutting down: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await start_scheduler()
+    try:
+        yield
+    finally:
+        await stop_scheduler()
+
+
+app = FastAPI(
+    title="EV Tracker API",
+    description="Track sports betting Expected Value",
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
 # CORS - allow frontend to call API
 app.add_middleware(
@@ -912,6 +989,63 @@ async def scan_markets(
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odds API error: {e}")
+
+
+@app.post("/api/cron/run-scan")
+async def cron_run_scan(x_cron_token: str | None = Header(default=None, alias="X-Cron-Token")):
+    """
+    Cron-triggered scan runner (for Render free sleep). This endpoint is intended to be
+    called by an external scheduler (cron-job.org, GitHub Actions, etc.) to wake the
+    service and warm the scan cache.
+
+    Security: requires X-Cron-Token header matching the CRON_TOKEN environment variable.
+    """
+    expected = os.getenv("CRON_TOKEN")
+    if not expected:
+        raise HTTPException(status_code=503, detail="CRON_TOKEN not configured on server")
+    if not x_cron_token or x_cron_token != expected:
+        raise HTTPException(status_code=401, detail="Invalid cron token")
+
+    from services.odds_api import get_cached_or_scan, SUPPORTED_SPORTS
+
+    started = datetime.now(UTC).isoformat() + "Z"
+    scanned = []
+    errors: list[dict] = []
+    total_sides = 0
+
+    for sport_key in SUPPORTED_SPORTS:
+        try:
+            result = await get_cached_or_scan(sport_key)
+            sides = result.get("sides") or []
+            scanned.append(
+                {
+                    "sport": sport_key,
+                    "sides": len(sides),
+                    "events_fetched": result.get("events_fetched"),
+                    "events_with_both_books": result.get("events_with_both_books"),
+                    "api_requests_remaining": result.get("api_requests_remaining"),
+                }
+            )
+            total_sides += len(sides)
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code if e.response is not None else None
+            # 404 just means out of season / no odds; treat as non-fatal.
+            if status == 404:
+                errors.append({"sport": sport_key, "status": 404, "error": "no odds"})
+                continue
+            errors.append({"sport": sport_key, "status": status, "error": str(e)})
+        except Exception as e:
+            errors.append({"sport": sport_key, "error": str(e)})
+
+    finished = datetime.now(UTC).isoformat() + "Z"
+    return {
+        "ok": True,
+        "started_at": started,
+        "finished_at": finished,
+        "sports_scanned": scanned,
+        "errors": errors,
+        "total_sides": total_sides,
+    }
 
 
 if __name__ == "__main__":
