@@ -174,7 +174,7 @@ export interface ScannedBetData {
   event: string;
   market: string;
   odds_american: number;
-  opposing_odds: number;
+  opposing_odds?: number;
   promo_type: PromoType;
   boost_percent?: number;
   // CLV passthrough from scanner
