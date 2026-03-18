@@ -6,26 +6,36 @@ import { NextResponse } from 'next/server';
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const target = url.searchParams.get('target') ?? '';
+  const targetParam = url.searchParams.get('target') ?? '';
 
   const authHeader = request.headers.get('authorization') ?? '';
   const cronSecret = process.env.CRON_SECRET;
 
   if (!cronSecret) {
     return NextResponse.json({ error: 'CRON_SECRET not configured' }, { status: 500 });
-    }
+  }
   const expected = `Bearer ${cronSecret}`;
   if (authHeader !== expected) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  if (!target) {
+  if (!targetParam) {
     return NextResponse.json({ error: 'Missing target parameter' }, { status: 400 });
   }
   // Basic safeguard: only allow simple, safe path segments
-  if (!/^[a-z0-9-]+$/.test(target)) {
+  if (!/^[a-z0-9-]+$/.test(targetParam)) {
     return NextResponse.json({ error: 'Invalid target' }, { status: 400 });
   }
+
+  // Keep the public query parameter stable, but map to backend route names.
+  const target =
+    targetParam === 'settle'
+      ? 'run-auto-settle'
+      : targetParam;
+
+  // The backend expects X-Cron-Token (see backend/main.py). By default, reuse CRON_SECRET.
+  // If you want separate secrets, set BACKEND_CRON_TOKEN on Vercel and on the backend as CRON_TOKEN.
+  const backendCronToken = process.env.BACKEND_CRON_TOKEN ?? cronSecret;
 
   const endpoint = `https://ev-tracker-backend.onrender.com/api/cron/${target}`;
 
@@ -35,6 +45,7 @@ export async function GET(request: Request) {
       headers: {
         'accept': 'application/json',
         'content-type': 'application/json',
+        'x-cron-token': backendCronToken,
       },
       // Send empty JSON body; adjust if backend expects payload
       body: JSON.stringify({}),
