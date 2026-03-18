@@ -34,8 +34,8 @@ export async function GET(request: Request) {
       : targetParam;
 
   // The backend expects X-Cron-Token (see backend/main.py). By default, reuse CRON_SECRET.
-  // If you want separate secrets, set BACKEND_CRON_TOKEN on Vercel and on the backend as CRON_TOKEN.
-  const backendCronToken = process.env.BACKEND_CRON_TOKEN ?? cronSecret;
+  // If you want separate secrets, set CRON_TOKEN on Vercel and on the backend as CRON_TOKEN.
+  const backendCronToken = process.env.CRON_TOKEN ?? cronSecret;
 
   const endpoint = `https://ev-tracker-backend.onrender.com/api/cron/${target}`;
 
