@@ -92,6 +92,32 @@ function decimalToAmerican(decimal: number): number {
   return Math.round(-100 / (decimal - 1));
 }
 
+function getLootTier(evPercentage: number): {
+  colorClass: string;
+} {
+  if (evPercentage < 1.5) {
+    return {
+      colorClass: "text-muted-foreground",
+    };
+  }
+  if (evPercentage < 3.5) {
+    return {
+      // Use the app's primary EV green for mid-tier edges to stay on-brand
+      colorClass: "text-[#4A7C59]",
+    };
+  }
+  if (evPercentage < 5.5) {
+    return {
+      // Earthier blue for "Rare" tier
+      colorClass: "text-[#3B6C8E]",
+    };
+  }
+  return {
+    // Earthier purple for "Epic" tier
+    colorClass: "text-[#9A3F86]",
+  };
+}
+
 function minutesAgo(isoString: string): number {
   if (!isoString) return 0;
   const then = new Date(isoString).getTime();
@@ -241,7 +267,6 @@ export default function ScannerPage() {
       event: `${side.team} ML`,
       market: "ML",
       odds_american: side.book_odds,
-      opposing_odds: side.pinnacle_odds,
       promo_type: promoType,
       boost_percent: boostPct,
       // CLV tracking metadata — stored silently at bet creation
@@ -586,35 +611,47 @@ export default function ScannerPage() {
                             {side.event}
                           </p>
                           <div className="flex flex-col gap-1 mt-2 text-xs">
-                            <div className="flex items-center gap-3">
-                              <span className="font-mono font-medium">
-                                {bookAbbrev(side.sportsbook)}:{" "}
-                                <span className="text-foreground">
-                                  {formatOdds(side.book_odds)}
-                                </span>
-                              </span>
-                              <span className="font-mono text-muted-foreground">
-                                Pin: {formatOdds(side.pinnacle_odds)}
-                              </span>
-                              {activeLens === "profit_boost" && (
-                                <span className="font-mono text-[#C4A35A]">
-                                  Boosted:{" "}
-                                  {formatOdds(
-                                    decimalToAmerican(
-                                      boostedDecimalOdds(side, boostPercent)
-                                    )
-                                  )}
-                                </span>
-                              )}
+                            {/* Secondary proof row: Odds vs Fair line (format varies by lens) */}
+                            <div className="flex flex-wrap items-center gap-3">
+                              {(() => {
+                                const fairAmerican = decimalToAmerican(1 / side.true_prob);
+                                const fairPct = (side.true_prob * 100).toFixed(1);
+
+                                if (activeLens === "profit_boost") {
+                                  const boostedAmerican = decimalToAmerican(
+                                    boostedDecimalOdds(side, boostPercent)
+                                  );
+                                  return (
+                                    <span className="font-mono font-medium">
+                                      <span className="line-through text-muted-foreground/70 mr-1">
+                                        {formatOdds(side.book_odds)}
+                                      </span>
+                                      <span className="text-foreground">
+                                        {formatOdds(boostedAmerican)}
+                                      </span>
+                                      <span className="mx-1 text-muted-foreground">|</span>
+                                      <span className="text-muted-foreground">
+                                        Fair: {formatOdds(fairAmerican)} ({fairPct}%)
+                                      </span>
+                                    </span>
+                                  );
+                                }
+
+                                return (
+                                  <span className="font-mono font-medium">
+                                    <span className="text-foreground">
+                                      {formatOdds(side.book_odds)}
+                                    </span>
+                                    <span className="mx-1 text-muted-foreground">|</span>
+                                    <span className="text-muted-foreground">
+                                      Fair: {formatOdds(fairAmerican)} ({fairPct}%)
+                                    </span>
+                                  </span>
+                                );
+                              })()}
                             </div>
-                            <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-                              <span className="font-mono">
-                                Fair:{" "}
-                                {formatOdds(
-                                  decimalToAmerican(1 / side.true_prob)
-                                )}{" "}
-                                ({(side.true_prob * 100).toFixed(1)}%)
-                              </span>
+                            {/* Tertiary: kickoff time */}
+                            <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
                               <span>{formatGameTime(side.commence_time)}</span>
                             </div>
                           </div>
@@ -623,20 +660,50 @@ export default function ScannerPage() {
                         {/* Right: metric + action */}
                         <div className="flex flex-col items-end gap-2 shrink-0">
                           <div className="text-right">
-                            <p
-                              className={cn(
-                                "font-mono font-bold text-lg leading-tight",
-                                metric.positive
-                                  ? "text-[#4A7C59]"
-                                  : "text-foreground"
-                              )}
-                            >
-                              {metric.value}
-                            </p>
-                            <p className="text-[10px] text-muted-foreground">
-                              {metric.label}
-                            </p>
-                            {activeLens === "standard" && (
+                            {(() => {
+                              // Choose color logic per lens
+                              let colorClass = "text-foreground";
+
+                              if (activeLens === "standard") {
+                                const loot = getLootTier(side.ev_percentage);
+                                colorClass = loot.colorClass;
+                              } else if (activeLens === "profit_boost") {
+                                const bev =
+                                  (side as any)._boostedEV ?? calculateBoostedEV(side as any, boostPercent);
+                                // Profit boost: gold when boost clears the vig, muted otherwise
+                                colorClass = bev > 0 ? "text-[#C4A35A]" : "text-muted-foreground";
+                              } else if (activeLens === "bonus_bet") {
+                                // Bonus bet: always teal, since metric is retention, not raw EV
+                                colorClass = "text-[#0EA5A4]";
+                              } else if (activeLens === "qualifier") {
+                                // Qualifier: minimize loss — red for bad, neutral for okay, green for good / free
+                                if (side.ev_percentage < -2) {
+                                  colorClass = "text-[#B85C38]";
+                                } else if (side.ev_percentage >= 0) {
+                                  colorClass = "text-[#4A7C59]";
+                                } else {
+                                  colorClass = "text-foreground";
+                                }
+                              }
+
+                              return (
+                                <>
+                                  <p
+                                    className={cn(
+                                      "font-mono font-bold text-lg leading-tight",
+                                      colorClass
+                                    )}
+                                  >
+                                    {metric.value}
+                                  </p>
+                                  <p className="text-[10px] text-muted-foreground">
+                                    {metric.label}
+                                  </p>
+                                </>
+                              );
+                            })()}
+                            {/* Rec Bet row: keep consistent card height across lenses */}
+                            {activeLens === "standard" ? (
                               <p className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1">
                                 Rec Bet:{" "}
                                 <span className="font-mono font-semibold text-foreground">
@@ -651,6 +718,10 @@ export default function ScannerPage() {
                                     aria-label="Raw Kelly amount"
                                   />
                                 </span>
+                              </p>
+                            ) : (
+                              <p className="text-[10px] text-muted-foreground mt-0.5 invisible">
+                                Rec Bet placeholder
                               </p>
                             )}
                           </div>

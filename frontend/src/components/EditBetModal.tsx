@@ -17,21 +17,9 @@ import { SPORTSBOOKS, SPORTS, MARKETS, PROMO_TYPES, PROMO_TYPE_CONFIG } from "@/
 import { 
   cn, 
   americanToDecimal,
-  calculateHoldFromOdds,
 } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-
-// Smart vig defaults based on market type
-const MARKET_VIG: Record<string, number> = {
-  ML: 0.045,      // Standard markets: 4.5%
-  Spread: 0.045,
-  Total: 0.045,
-  Parlay: 0.15,   // Parlays: 15%
-  Prop: 0.09,     // Juiced markets: 9%
-  Futures: 0.20,
-  SGP: 0.20,      // Exotic markets: 20%
-};
 
 // Map sportsbook names to button variants
 const sportsbookVariants: Record<string, string> = {
@@ -101,14 +89,6 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
   const oddsNum = oddsInputRef.current?.getSignedValue() || 0;
   const stakeNum = parseFloat(formData.stake) || 0;
   const opposingOddsNum = opposingOddsInputRef.current?.getSignedValue() || 0;
-
-  // Get smart vig default based on market
-  const defaultVig = MARKET_VIG[formData.market] || 0.045;
-
-  // Calculate actual vig if opposing odds provided (for advanced options hint)
-  const calculatedVig = opposingOddsNum !== 0 
-    ? calculateHoldFromOdds(oddsNum, opposingOddsNum)
-    : null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -327,7 +307,7 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
                 />
               </div>
 
-              {/* Opposing Odds - For precise vig calculation */}
+              {/* Opposing Odds - Optional for more precise EV when no sharp line is available */}
               <div>
                 <SmartOddsInput
                   ref={opposingOddsInputRef}
@@ -338,11 +318,6 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
                   label="Opposing Line (optional)"
                   className="[&_input]:font-mono"
                 />
-                {calculatedVig !== null && (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Calculated hold: {(calculatedVig * 100).toFixed(1)}% (overrides {(defaultVig * 100).toFixed(1)}% default)
-                  </p>
-                )}
               </div>
 
               {/* Event Date */}

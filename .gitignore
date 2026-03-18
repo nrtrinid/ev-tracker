@@ -40,7 +40,6 @@ htmlcov/
 .pytest_cache/
 frontend/test-results/
 
-
 # Misc
 *.bak
 *.tmp
