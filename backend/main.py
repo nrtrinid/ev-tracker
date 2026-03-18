@@ -1061,6 +1061,29 @@ async def cron_run_scan(x_cron_token: str | None = Header(default=None, alias="X
             errors.append({"sport": sport_key, "error": str(e)})
 
     finished = datetime.now(UTC).isoformat() + "Z"
+
+    # Optional heartbeat so we can confirm the scheduled scan ran even when it finds no lines.
+    # Reuse the existing heartbeat flag to avoid adding another env var.
+    # Sends only when enabled and when no alerts were scheduled.
+    if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1" and alerts_scheduled == 0:
+        from services.discord_alerts import send_discord_webhook
+
+        payload = {
+            "embeds": [
+                {
+                    "title": "Scan run complete (no alerts)",
+                    "description": "The scheduled scan ran successfully but found no qualifying lines to alert on.",
+                    "fields": [
+                        {"name": "Started (UTC)", "value": started, "inline": True},
+                        {"name": "Finished (UTC)", "value": finished, "inline": True},
+                        {"name": "Total sides", "value": str(total_sides), "inline": True},
+                        {"name": "Alerts scheduled", "value": str(alerts_scheduled), "inline": True},
+                    ],
+                }
+            ]
+        }
+        asyncio.create_task(send_discord_webhook(payload))
+
     return {
         "ok": True,
         "started_at": started,
