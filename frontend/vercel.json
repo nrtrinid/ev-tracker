@@ -2,6 +2,10 @@
   "crons": [
     {
       "path": "/api/cron/wakeup",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/wakeup",
       "schedule": "55 10 * * *"
     },
     {
