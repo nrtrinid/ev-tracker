@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/wakeup",
-      "schedule": "28 10 * * *"
+      "schedule": "55 10 * * *"
     },
     {
       "path": "/api/cron/trigger-backend?target=settle",
@@ -10,7 +10,7 @@
     },
     {
       "path": "/api/cron/wakeup",
-      "schedule": "28 23 * * *"
+      "schedule": "25 23 * * *"
     },
     {
       "path": "/api/cron/trigger-backend?target=run-scan",
@@ -18,7 +18,7 @@
     },
     {
       "path": "/api/cron/wakeup",
-      "schedule": "28 1 * * *"
+      "schedule": "25 1 * * *"
     },
     {
       "path": "/api/cron/trigger-backend?target=run-scan",

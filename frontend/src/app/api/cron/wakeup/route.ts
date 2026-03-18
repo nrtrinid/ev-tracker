@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 /**
- * Alarm Clock route: wakes Render by pinging /health and aborting after 3s.
+ * Alarm Clock route: wakes Render by pinging /health and aborting after 9s.
  * Always returns 200 quickly to avoid Vercel's 10s hard timeout counting as failure.
  */
 export async function GET(request: Request) {
@@ -17,7 +17,7 @@ export async function GET(request: Request) {
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 3000);
+  const timeoutId = setTimeout(() => controller.abort(), 9000);
 
   try {
     await fetch('https://ev-tracker-backend.onrender.com/health', {
