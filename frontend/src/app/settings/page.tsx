@@ -99,6 +99,18 @@ export default function SettingsPage() {
 
   const isLoading = txLoading || settingsLoading;
   const computedBankroll = (balances || []).reduce((sum, b) => sum + (b.balance || 0), 0);
+  const safeNumber = (value: number | null | undefined, fallback: number) =>
+    typeof value === "number" && Number.isFinite(value) ? value : fallback;
+
+  const baselineK = safeNumber(settings?.k_factor, 0.78);
+  const observedK =
+    typeof settings?.k_factor_observed === "number" && Number.isFinite(settings.k_factor_observed)
+      ? settings.k_factor_observed
+      : null;
+  const blendWeight = safeNumber(settings?.k_factor_weight, 0);
+  const effectiveK = safeNumber(settings?.k_factor_effective, baselineK);
+  const settledBonusStake = safeNumber(settings?.k_factor_bonus_stake_settled, 0);
+  const minStakeForBlend = safeNumber(settings?.k_factor_min_stake, 0);
 
   return (
     <main className="min-h-screen bg-background">
@@ -217,7 +229,7 @@ export default function SettingsPage() {
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Current baseline: <span className="font-mono font-semibold">{settings?.k_factor ?? 0.78}</span>
+                    Current baseline: <span className="font-mono font-semibold">{baselineK}</span>
                   </p>
                 </div>
 
@@ -228,29 +240,29 @@ export default function SettingsPage() {
                     <div className="grid grid-cols-2 gap-2 text-sm">
                       <div>
                         <p className="text-xs text-muted-foreground">Baseline</p>
-                        <p className="font-mono font-semibold">{(settings.k_factor * 100).toFixed(0)}%</p>
+                        <p className="font-mono font-semibold">{(baselineK * 100).toFixed(0)}%</p>
                       </div>
                       <div>
                         <p className="text-xs text-muted-foreground">Observed</p>
                         <p className="font-mono font-semibold">
-                          {settings.k_factor_observed !== null
-                            ? `${(settings.k_factor_observed * 100).toFixed(1)}%`
+                          {observedK !== null
+                            ? `${(observedK * 100).toFixed(1)}%`
                             : "—"}
                         </p>
                       </div>
                       <div>
                         <p className="text-xs text-muted-foreground">Blend weight</p>
-                        <p className="font-mono font-semibold">{(settings.k_factor_weight * 100).toFixed(0)}%</p>
+                        <p className="font-mono font-semibold">{(blendWeight * 100).toFixed(0)}%</p>
                       </div>
                       <div>
                         <p className="text-xs text-muted-foreground">Effective k</p>
-                        <p className="font-mono font-semibold">{(settings.k_factor_effective * 100).toFixed(1)}%</p>
+                        <p className="font-mono font-semibold">{(effectiveK * 100).toFixed(1)}%</p>
                       </div>
                     </div>
                     <p className="text-xs text-muted-foreground pt-1">
-                      Sample: <span className="font-mono">${settings.k_factor_bonus_stake_settled.toFixed(0)}</span> in settled bonus-bet stake.
-                      {settings.k_factor_mode === "auto" && settings.k_factor_weight === 0 && (
-                        <span className="ml-1">Reach ${settings.k_factor_min_stake} to start blending.</span>
+                      Sample: <span className="font-mono">${settledBonusStake.toFixed(0)}</span> in settled bonus-bet stake.
+                      {settings.k_factor_mode === "auto" && blendWeight === 0 && (
+                        <span className="ml-1">Reach ${minStakeForBlend} to start blending.</span>
                       )}
                     </p>
                   </div>
