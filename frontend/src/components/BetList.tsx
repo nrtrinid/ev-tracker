@@ -849,11 +849,15 @@ export function BetList() {
   const filteredBets = bets?.filter(bet => matchesSportsbook(bet) && matchesBetType(bet)) || [];
   const pendingBets = filteredBets.filter((bet) => bet.result === "pending");
   const settledBets = filteredBets.filter((bet) => bet.result !== "pending");
+
+  // Cash-at-risk exposure should exclude bonus bet stake (not real cash).
+  const pendingCashBets = pendingBets.filter((b) => b.promo_type !== "bonus_bet");
   
   // Counts for the current sportsbook selection (before type filter, for accurate numbers)
   const booksWithBetType = bets?.filter(matchesSportsbook) || [];
   const pendingForBook = booksWithBetType.filter(b => b.result === "pending");
   const settledForBook = booksWithBetType.filter(b => b.result !== "pending");
+  const pendingCashForBook = pendingForBook.filter((b) => b.promo_type !== "bonus_bet");
 
   return (
     <>
@@ -942,9 +946,9 @@ export function BetList() {
                 )}
                 {selectedBook !== "all" && selectedBalance && (
                   <span className="ml-auto text-xs text-muted-foreground">
-                    Balance: <span className="font-mono font-semibold text-foreground">{formatCurrency(selectedBalance.profit + selectedBalance.net_deposits)}</span>
-                    {pendingForBook.length > 0 && (
-                      <> · Pending: <span className="font-mono font-semibold text-[#C4A35A]">{formatCurrency(pendingForBook.reduce((s, b) => s + b.stake, 0))}</span></>
+                    Balance: <span className="font-mono font-semibold text-foreground">{formatCurrency(selectedBalance.balance)}</span>
+                    {pendingCashForBook.length > 0 && (
+                      <> · Pending: <span className="font-mono font-semibold text-[#C4A35A]">{formatCurrency(pendingCashForBook.reduce((s, b) => s + b.stake, 0))}</span></>
                     )}
                   </span>
                 )}
@@ -961,25 +965,34 @@ export function BetList() {
 
           {/* Summary stats for pending tab */}
           {activeTab === "pending" && pendingBets.length > 0 && (
-            <div className="flex justify-between text-sm text-muted-foreground pt-3">
-              <span>
-                <span className="font-mono font-medium text-foreground">
-                  {formatCurrency(pendingBets.reduce((s, b) => s + b.stake, 0))}
-                </span>{" "}
-                at risk
-              </span>
-              <span>
-                <span className={cn(
-                  "font-mono font-medium",
-                  pendingBets.reduce((s, b) => s + b.ev_total, 0) >= 0 
-                    ? "text-[#4A7C59]" 
-                    : "text-[#B85C38]"
-                )}>
-                  {pendingBets.reduce((s, b) => s + b.ev_total, 0) >= 0 ? "+" : ""}
-                  {formatCurrency(pendingBets.reduce((s, b) => s + b.ev_total, 0))}
-                </span>{" "}
-                expected
-              </span>
+            <div className="grid grid-cols-3 gap-3 pt-3">
+              <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-center">
+                <p className="text-xs text-muted-foreground">At Risk</p>
+                <p className="font-mono font-semibold text-foreground">
+                  {formatCurrency(pendingCashBets.reduce((s, b) => s + b.stake, 0))}
+                </p>
+              </div>
+              <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-center">
+                <p className="text-xs text-muted-foreground">Pending EV</p>
+                {(() => {
+                  const pendingEvTotal = pendingBets.reduce((s, b) => s + b.ev_total, 0);
+                  return (
+                    <p
+                      className={cn(
+                        "font-mono font-semibold",
+                        pendingEvTotal >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]",
+                      )}
+                    >
+                      {pendingEvTotal >= 0 ? "+" : ""}
+                      {formatCurrency(pendingEvTotal)}
+                    </p>
+                  );
+                })()}
+              </div>
+              <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-center">
+                <p className="text-xs text-muted-foreground">Open Bets</p>
+                <p className="font-mono font-semibold text-foreground">{pendingBets.length}</p>
+              </div>
             </div>
           )}
         </CardHeader>

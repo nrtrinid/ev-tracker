@@ -16,7 +16,7 @@ import {
   ChevronRight,
   Info,
 } from "lucide-react";
-import { scanMarkets } from "@/lib/api";
+import { getLatestScan, scanMarkets } from "@/lib/api";
 import type { MarketSide, ScanResult, ScannedBetData, PromoType } from "@/lib/types";
 import { useKellySettings } from "@/lib/kelly-context";
 import { useBalances, useBackendReadiness } from "@/lib/hooks";
@@ -145,18 +145,22 @@ export default function ScannerPage() {
   const bankroll = useComputedBankroll ? computedBankroll : bankrollOverride;
   const {
     data: scanData,
-    isFetching: isScanning,
+    isFetching: isFetchingLatest,
     error: scanErrorRaw,
-    refetch: refetchScan,
   } = useQuery({
     queryKey: ["scan-markets"],
-    queryFn: scanMarkets,
-    enabled: false, // only run when user clicks
-    staleTime: 5 * 60 * 1000, // keep results fresh-ish across page switches
-    gcTime: 30 * 60 * 1000, // keep in cache for 30 minutes
+    queryFn: getLatestScan,
+    enabled: true, // load the most recent global scan (if any)
+    staleTime: 60_000,
+    gcTime: 30 * 60 * 1000,
+    // Important: do NOT trigger fresh scans automatically. This query only loads
+    // the persisted "last global scan" payload.
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     retry: 1,
   });
   const scanError = scanErrorRaw instanceof Error ? scanErrorRaw.message : null;
+  const [isRunningScan, setIsRunningScan] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const [activeLens, setActiveLens] = useState<Lens>("standard");
   const [boostPercent, setBoostPercent] = useState(30);
@@ -189,12 +193,18 @@ export default function ScannerPage() {
   }, [cooldown]);
 
   const handleScan = async () => {
-    if (cooldown > 0 || isScanning) return;
-    await refetchScan();
-    setCooldown(60);
-    // Piggyback just updated CLV snapshots in the DB — invalidate bets so
-    // the dashboard/bet list shows fresh CLV badges without a manual refresh.
-    queryClient.invalidateQueries({ queryKey: ["bets"] });
+    if (cooldown > 0 || isRunningScan) return;
+    setIsRunningScan(true);
+    try {
+      const res = await scanMarkets();
+      queryClient.setQueryData(["scan-markets"], res);
+      setCooldown(60);
+      // Piggyback just updated CLV snapshots in the DB — invalidate bets so
+      // the dashboard/bet list shows fresh CLV badges without a manual refresh.
+      queryClient.invalidateQueries({ queryKey: ["bets"] });
+    } finally {
+      setIsRunningScan(false);
+    }
   };
 
   const toggleBook = (book: string) => {
@@ -399,9 +409,9 @@ export default function ScannerPage() {
         <Button
           className="w-full h-12 text-base font-semibold"
           onClick={handleScan}
-          disabled={isScanning || cooldown > 0}
+          disabled={isRunningScan || cooldown > 0}
         >
-          {isScanning ? (
+          {isRunningScan ? (
             <>
               <Loader2 className="h-5 w-5 mr-2 animate-spin" />
               Scanning all sports…
@@ -427,7 +437,14 @@ export default function ScannerPage() {
         {scanData && (
           <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
             {scanData.scanned_at && (
-              <span>Data as of {minutesAgo(scanData.scanned_at)} min ago</span>
+              <span>
+                Data as of {minutesAgo(scanData.scanned_at)} min ago
+                {minutesAgo(scanData.scanned_at) > 5 && (
+                  <span className="ml-2 inline-flex items-center rounded-full border border-[#B85C38]/30 bg-[#B85C38]/10 px-2 py-0.5 text-[10px] text-[#8B3D20]">
+                    Stale
+                  </span>
+                )}
+              </span>
             )}
             <span>{scanData.events_fetched} events</span>
             <span className="w-px h-3 bg-border" />
@@ -762,7 +779,7 @@ export default function ScannerPage() {
         )}
 
         {/* Pre-scan empty state */}
-        {!scanData && !isScanning && !scanError && (
+        {!scanData && !isFetchingLatest && !scanError && (
           <div className="text-center py-12">
             <Radar className="h-12 w-12 mx-auto mb-3 text-muted-foreground/30" />
             <p className="text-sm text-muted-foreground">

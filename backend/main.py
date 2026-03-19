@@ -1315,7 +1315,9 @@ def get_balances(user: dict = Depends(get_current_user)):
         bet = build_bet_response(row, k_factor)
 
         if bet.result == BetResult.PENDING:
-            sportsbook_data[book]["pending"] += bet.stake
+            # Pending cash exposure: bonus bet stake is not real cash.
+            if bet.promo_type != "bonus_bet":
+                sportsbook_data[book]["pending"] += bet.stake
         elif bet.real_profit is not None:
             sportsbook_data[book]["profit"] += bet.real_profit
 
@@ -1468,7 +1470,9 @@ async def scan_markets(
     stale sports hit the API).
     """
     from services.odds_api import get_cached_or_scan, SUPPORTED_SPORTS
-    from datetime import datetime
+    from datetime import datetime, timezone
+
+    db = get_db()
 
     if sport is not None and sport not in SUPPORTED_SPORTS:
         raise HTTPException(
@@ -1479,7 +1483,7 @@ async def scan_markets(
     try:
         if sport is not None:
             result = await get_cached_or_scan(sport, source="manual_scan")
-            scanned_at = datetime.utcfromtimestamp(result["fetched_at"]).isoformat() + "Z"
+            scanned_at = datetime.fromtimestamp(result["fetched_at"], tz=timezone.utc).isoformat().replace("+00:00", "Z")
             _set_ops_status(
                 "last_manual_scan",
                 {
@@ -1493,7 +1497,7 @@ async def scan_markets(
             )
             # Piggyback CLV update — zero extra API calls
             asyncio.create_task(_piggyback_clv(result["sides"]))
-            return FullScanResponse(
+            response = FullScanResponse(
                 sport=sport,
                 sides=result["sides"],
                 events_fetched=result["events_fetched"],
@@ -1501,6 +1505,23 @@ async def scan_markets(
                 api_requests_remaining=result.get("api_requests_remaining"),
                 scanned_at=scanned_at,
             )
+            # Persist as the latest global scan (durable across devices/accounts).
+            try:
+                _retry_supabase(lambda: (
+                    db.table("global_scan_cache").upsert(
+                        {"key": "latest", "payload": response.model_dump()},
+                        on_conflict="key",
+                    ).execute()
+                ))
+            except Exception as e:
+                # Best-effort; scan results still return even if persistence fails.
+                _log_event(
+                    "scan_latest_cache.persist_failed",
+                    level="warning",
+                    error_class=type(e).__name__,
+                    error=str(e),
+                )
+            return response
         # Full scan: all sports (skip any that 404 — e.g. out of season)
         all_sides = []
         total_events = 0
@@ -1530,7 +1551,11 @@ async def scan_markets(
             ft = result.get("fetched_at")
             if ft is not None:
                 oldest_fetched = ft if oldest_fetched is None else min(oldest_fetched, ft)
-        scanned_at = (datetime.utcfromtimestamp(oldest_fetched).isoformat() + "Z") if oldest_fetched else None
+        scanned_at = (
+            datetime.fromtimestamp(oldest_fetched, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+            if oldest_fetched
+            else None
+        )
         _set_ops_status(
             "last_manual_scan",
             {
@@ -1544,7 +1569,7 @@ async def scan_markets(
         )
         # Piggyback CLV update across all scanned sides — zero extra API calls
         asyncio.create_task(_piggyback_clv(all_sides))
-        return FullScanResponse(
+        response = FullScanResponse(
             sport="all",
             sides=all_sides,
             events_fetched=total_events,
@@ -1552,10 +1577,78 @@ async def scan_markets(
             api_requests_remaining=min_remaining,
             scanned_at=scanned_at,
         )
+        # Persist as the latest global scan (durable across devices/accounts).
+        try:
+            _retry_supabase(lambda: (
+                db.table("global_scan_cache").upsert(
+                    {"key": "latest", "payload": response.model_dump()},
+                    on_conflict="key",
+                ).execute()
+            ))
+        except Exception as e:
+            _log_event(
+                "scan_latest_cache.persist_failed",
+                level="warning",
+                error_class=type(e).__name__,
+                error=str(e),
+            )
+        return response
     except ValueError as e:
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odds API error: {e}")
+
+
+@app.get("/api/scan-latest", response_model=FullScanResponse)
+async def scan_latest(user: dict = Depends(require_scan_rate_limit)):
+    """
+    Return the most recent *global* scan payload, even if stale.
+
+    This is a UX convenience so the Scanner can show something on first load
+    (across devices/accounts) without requiring an immediate rescan.
+    """
+    db = get_db()
+    try:
+        try:
+            res = _retry_supabase(lambda: (
+                db.table("global_scan_cache")
+                .select("payload")
+                .eq("key", "latest")
+                .limit(1)
+                .execute()
+            ))
+        except Exception as e:
+            # Supabase PostgREST returns PGRST205 when the table doesn't exist / schema cache is stale.
+            # Treat as "no scans yet" so the UI doesn't show scary errors.
+            msg = str(e)
+            if "PGRST205" in msg or ("global_scan_cache" in msg and "schema cache" in msg):
+                return FullScanResponse(
+                    sport="all",
+                    sides=[],
+                    events_fetched=0,
+                    events_with_both_books=0,
+                    api_requests_remaining=None,
+                    scanned_at=None,
+                )
+            raise
+        if not res.data:
+            # Return an empty payload (200) so the UI doesn't treat this as an error.
+            return FullScanResponse(
+                sport="all",
+                sides=[],
+                events_fetched=0,
+                events_with_both_books=0,
+                api_requests_remaining=None,
+                scanned_at=None,
+            )
+        payload = res.data[0].get("payload")
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=500, detail="Invalid scan cache payload")
+        return payload
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to load scan cache: {e}")
 
 
 @app.post("/api/cron/run-scan")

@@ -189,6 +189,16 @@ export async function scanMarkets(): Promise<ScanResult> {
   return fetchAPI<ScanResult>("/api/scan-markets");
 }
 
+export async function getLatestScan(): Promise<ScanResult | null> {
+  try {
+    return await fetchAPI<ScanResult>("/api/scan-latest");
+  } catch (e) {
+    // Backend returns 404 with detail "No scans yet" when nothing has been persisted.
+    if (e instanceof Error && e.message === "No scans yet") return null;
+    throw e;
+  }
+}
+
 // ============ System Status API ============
 
 const DEFAULT_READINESS_CHECKS: BackendReadiness["checks"] = {

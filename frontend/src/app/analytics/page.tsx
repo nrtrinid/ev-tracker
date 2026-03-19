@@ -24,6 +24,7 @@ import {
   SlidersHorizontal,
   Info
 } from "lucide-react";
+import { TopKpiCards } from "@/components/TopKpiCards";
 import { useQuery } from "@tanstack/react-query";
 import { getBets, getSummary, getBalances } from "@/lib/api";
 import { useBackendReadiness } from "@/lib/hooks";
@@ -487,6 +488,23 @@ export default function AnalyticsPage() {
         }, [] as Array<{ date: string; cumulativeEV: number; cumulativeProfit: number; variance: number }>)
     : [];
 
+  const totalBalance =
+    balances && balances.length > 0 ? balances.reduce((sum, b) => sum + (b.balance || 0), 0) : null;
+
+  const bestSource = useMemo(() => {
+    if (!filteredBets || filteredBets.length === 0) return null;
+    const evByBook: Record<string, number> = {};
+    const evBySport: Record<string, number> = {};
+    filteredBets.forEach((b) => {
+      evByBook[b.sportsbook] = (evByBook[b.sportsbook] || 0) + b.ev_total;
+      evBySport[b.sport] = (evBySport[b.sport] || 0) + b.ev_total;
+    });
+    const bestBook = Object.entries(evByBook).sort((a, b) => b[1] - a[1])[0];
+    if (bestBook) return { label: bestBook[0], value: bestBook[1], type: "book" as const };
+    const bestSport = Object.entries(evBySport).sort((a, b) => b[1] - a[1])[0];
+    return bestSport ? { label: bestSport[0], value: bestSport[1], type: "sport" as const } : null;
+  }, [filteredBets]);
+
   return (
     <main className="min-h-screen bg-background">
       {/* Sticky Filter Bar - Positioned below TopNav (56px) */}
@@ -646,7 +664,7 @@ export default function AnalyticsPage() {
               </div>
             )}
 
-            {/* HERO: Performance Status with Z-Score */}
+            {/* HERO: Performance Status */}
             <Card className={cn(
               "border card-hover",
               zScore === null ? "border-border" :
@@ -686,7 +704,8 @@ export default function AnalyticsPage() {
                     </p>
                     {zScore !== null && (
                       <p className="text-sm text-muted-foreground mt-1">
-                        Z-Score: <span className="font-mono">{zScore.toFixed(2)}</span> ({zScore >= 0 ? "+" : ""}{formatCurrency(settledProfit - settledEV)} vs expected)
+                        {zScore >= 0 ? "+" : ""}
+                        {formatCurrency(settledProfit - settledEV)} vs expected
                       </p>
                     )}
                   </div>
@@ -694,51 +713,13 @@ export default function AnalyticsPage() {
               </CardContent>
             </Card>
 
-            {/* Key Numbers - The 4 Things That Matter for EV Bettors */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <Card className="card-hover">
-                <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Real Profit</p>
-                  <p className={cn("text-xl sm:text-2xl font-bold font-mono leading-tight", filteredRealProfit >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
-                    {filteredRealProfit >= 0 ? "+" : ""}{formatCurrency(filteredRealProfit)}
-                  </p>
-                </CardContent>
-              </Card>
-              <Card className="card-hover">
-                <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Total EV</p>
-                  <p className="text-xl sm:text-2xl font-bold font-mono text-[#C4A35A] leading-tight">
-                    {filteredTotalEV >= 0 ? "+" : ""}{formatCurrency(filteredTotalEV)}
-                  </p>
-                </CardContent>
-              </Card>
-              <Card className="card-hover">
-                <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Avg CLV</p>
-                  <p className={cn(
-                    "text-xl sm:text-2xl font-bold font-mono leading-tight",
-                    avgCLV === null ? "text-muted-foreground" :
-                    avgCLV >= 1.5 ? "text-[#4A7C59]" :
-                    avgCLV >= 0 ? "text-[#8B7355]" :
-                    "text-[#B85C38]"
-                  )}>
-                    {avgCLV !== null ? `${avgCLV >= 0 ? "+" : ""}${avgCLV.toFixed(2)}%` : "—"}
-                  </p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">standard bets</p>
-                </CardContent>
-              </Card>
-              <Card className="card-hover">
-                <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Pending EV</p>
-                  <p className="text-xl sm:text-2xl font-bold font-mono text-[#C4A35A] leading-tight">
-                    {pendingEV >= 0 ? "+" : ""}{formatCurrency(pendingEV)}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {pendingBets.length} bet{pendingBets.length !== 1 ? "s" : ""}
-                  </p>
-                </CardContent>
-              </Card>
-            </div>
+            {/* Top KPIs (matches Home) */}
+            <TopKpiCards
+              netProfit={filteredRealProfit}
+              expectedProfit={settledEV}
+              totalBalance={totalBalance}
+              beatClose={{ beatClosePct, avgClvPct: avgCLV }}
+            />
 
             {/* Cumulative EV vs Profit Chart */}
             {cumulativeData.length > 1 && (
@@ -784,16 +765,116 @@ export default function AnalyticsPage() {
               </Card>
             )}
 
-            {/* Detailed Breakdown - Collapsible */}
+            {/* Sportsbook Balances (moved up) */}
+            <Card>
+              <CardHeader className="pb-2">
+                <h3 className="font-semibold text-sm">Sportsbook Balances</h3>
+                <p className="text-xs text-muted-foreground">Add deposits/withdrawals on the Settings page</p>
+              </CardHeader>
+              <CardContent>
+                {balancesLoading ? (
+                  <Skeleton className="h-24 w-full rounded" />
+                ) : balances && balances.length > 0 ? (
+                  <div className="overflow-x-auto -mx-4 px-4">
+                    <table className="w-full min-w-[560px] text-sm">
+                      <thead>
+                        <tr className="border-b text-xs text-muted-foreground">
+                          <th className="text-left py-1.5 sm:py-2 font-medium whitespace-nowrap">Book</th>
+                          <th className="text-right py-1.5 sm:py-2 font-medium whitespace-nowrap">Deposits</th>
+                          <th className="text-right py-1.5 sm:py-2 font-medium whitespace-nowrap">Withdrawals</th>
+                          <th className="text-right py-1.5 sm:py-2 font-medium whitespace-nowrap">Profit</th>
+                          <th className="text-right py-1.5 sm:py-2 font-medium whitespace-nowrap">Pending</th>
+                          <th className="text-right py-1.5 sm:py-2 font-medium whitespace-nowrap">Balance</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {balances.map((b) => (
+                          <tr key={b.sportsbook} className="border-b border-border hover:bg-muted/50">
+                            <td className="py-1.5 sm:py-2 font-medium whitespace-nowrap">{b.sportsbook}</td>
+                            <td className="text-right py-1.5 sm:py-2 text-[#4A7C59] font-medium whitespace-nowrap">{formatCurrency(b.deposits)}</td>
+                            <td className="text-right py-1.5 sm:py-2 text-[#B85C38] font-medium whitespace-nowrap">{formatCurrency(b.withdrawals)}</td>
+                            <td className={cn("text-right py-1.5 sm:py-2 whitespace-nowrap", b.profit >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+                              {formatCurrency(b.profit)}
+                            </td>
+                            <td className="text-right py-1.5 sm:py-2 text-muted-foreground whitespace-nowrap">{formatCurrency(b.pending)}</td>
+                            <td className={cn("text-right py-1.5 sm:py-2 font-semibold whitespace-nowrap", b.balance >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+                              {formatCurrency(b.balance)}
+                            </td>
+                          </tr>
+                        ))}
+                        <tr className="bg-muted/50 font-semibold">
+                          <td className="py-1.5 sm:py-2 whitespace-nowrap">Total</td>
+                          <td className="text-right py-1.5 sm:py-2 text-[#4A7C59] font-semibold whitespace-nowrap">
+                            {formatCurrency(balances.reduce((sum, b) => sum + b.deposits, 0))}
+                          </td>
+                          <td className="text-right py-1.5 sm:py-2 text-[#B85C38] font-semibold whitespace-nowrap">
+                            {formatCurrency(balances.reduce((sum, b) => sum + b.withdrawals, 0))}
+                          </td>
+                          <td className={cn("text-right py-1.5 sm:py-2 whitespace-nowrap", balances.reduce((sum, b) => sum + b.profit, 0) >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+                            {formatCurrency(balances.reduce((sum, b) => sum + b.profit, 0))}
+                          </td>
+                          <td className="text-right py-1.5 sm:py-2 text-muted-foreground whitespace-nowrap">
+                            {formatCurrency(balances.reduce((sum, b) => sum + b.pending, 0))}
+                          </td>
+                          <td className={cn("text-right py-1.5 sm:py-2 whitespace-nowrap", balances.reduce((sum, b) => sum + b.balance, 0) >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+                            {formatCurrency(balances.reduce((sum, b) => sum + b.balance, 0))}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    No deposits recorded yet. Add your first deposit on the Settings page.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Insights */}
+            <Card>
+              <CardHeader className="pb-2">
+                <h3 className="font-semibold text-sm">Insights</h3>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <StatCard label="ROI" value={settledROI} format="percent" colorize subtitle={totalSettledStake > 0 ? "settled" : undefined} />
+                  <StatCard
+                    label="Win Rate"
+                    value={actualWinRate === null ? null : actualWinRate / 100}
+                    format="percent"
+                    subtitle={
+                      actualWinRate !== null && expectedWinRate !== null
+                        ? `Exp: ${expectedWinRate.toFixed(1)}%`
+                        : undefined
+                    }
+                  />
+                  <StatCard
+                    label="CLV Coverage"
+                    value={standardBets.length > 0 ? `${clvTrackedCount} / ${standardBets.length}` : "—"}
+                    format="text"
+                    subtitle="bets tracked"
+                  />
+                  <StatCard
+                    label="Best Source"
+                    value={bestSource ? bestSource.label : "—"}
+                    format="text"
+                    subtitle={bestSource ? `${bestSource.value >= 0 ? "+" : ""}${formatCurrency(bestSource.value)} EV` : undefined}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Advanced Metrics - Collapsible */}
             <Card>
               <details className="group">
                 <summary className="cursor-pointer list-none hover:bg-muted/50 transition-colors rounded-lg">
                   <CardContent className="py-4 flex items-center justify-between">
-                    <span className="font-medium">Detailed Breakdown</span>
+                    <span className="font-medium">Advanced Metrics</span>
                     <span className="text-muted-foreground text-sm group-open:rotate-180 transition-transform">▼</span>
                   </CardContent>
                 </summary>
-                
+
                 <div className="px-6 pb-6 pt-6 space-y-6 border-t">
 
                 {/* ── Process Quality: CLV ── */}
@@ -913,7 +994,7 @@ export default function AnalyticsPage() {
                 {/* Notable Stats */}
                 <Card>
                   <CardHeader className="pb-2">
-                    <h3 className="font-semibold text-sm">Notable Stats</h3>
+                    <h3 className="font-semibold text-sm">More Details</h3>
                   </CardHeader>
                   <CardContent>
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -980,6 +1061,19 @@ export default function AnalyticsPage() {
                         {bonusEfficiency !== null && (
                           <p className="text-xs text-muted-foreground mt-0.5">
                             +{formatCurrency(bonusReturns)} washed from {formatCurrency(bonusStaked)}
+                          </p>
+                        )}
+                      </div>
+                      {/* Z-Score (advanced) */}
+                      <div className="rounded-lg bg-muted border border-border p-3">
+                        <p className="text-xs text-muted-foreground">Z-Score</p>
+                        <p className="text-lg font-bold text-foreground">
+                          {zScore !== null ? zScore.toFixed(2) : "—"}
+                        </p>
+                        {zScore !== null && (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {zScore >= 0 ? "+" : ""}
+                            {formatCurrency(settledProfit - settledEV)} vs expected
                           </p>
                         )}
                       </div>
@@ -1089,71 +1183,6 @@ export default function AnalyticsPage() {
                     </CardContent>
                   </Card>
                 </div>
-
-                {/* Per-Sportsbook Balances */}
-                <Card>
-                  <CardHeader className="pb-2">
-                    <h3 className="font-semibold text-sm">Sportsbook Balances</h3>
-                    <p className="text-xs text-muted-foreground">Add deposits/withdrawals on the Settings page</p>
-                  </CardHeader>
-                  <CardContent>
-                    {balances && balances.length > 0 ? (
-                      <div className="overflow-x-auto -mx-4 px-4">
-                        <table className="w-full min-w-[560px] text-sm">
-                          <thead>
-                            <tr className="border-b text-xs text-muted-foreground">
-                              <th className="text-left py-1.5 sm:py-2 font-medium whitespace-nowrap">Book</th>
-                              <th className="text-right py-1.5 sm:py-2 font-medium whitespace-nowrap">Deposits</th>
-                              <th className="text-right py-1.5 sm:py-2 font-medium whitespace-nowrap">Withdrawals</th>
-                              <th className="text-right py-1.5 sm:py-2 font-medium whitespace-nowrap">Profit</th>
-                              <th className="text-right py-1.5 sm:py-2 font-medium whitespace-nowrap">Pending</th>
-                              <th className="text-right py-1.5 sm:py-2 font-medium whitespace-nowrap">Balance</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {balances.map((b) => (
-                              <tr key={b.sportsbook} className="border-b border-border hover:bg-muted/50">
-                                <td className="py-1.5 sm:py-2 font-medium whitespace-nowrap">{b.sportsbook}</td>
-                                <td className="text-right py-1.5 sm:py-2 text-[#4A7C59] font-medium whitespace-nowrap">{formatCurrency(b.deposits)}</td>
-                                <td className="text-right py-1.5 sm:py-2 text-[#B85C38] font-medium whitespace-nowrap">{formatCurrency(b.withdrawals)}</td>
-                                <td className={cn("text-right py-1.5 sm:py-2 whitespace-nowrap", b.profit >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
-                                  {formatCurrency(b.profit)}
-                                </td>
-                                <td className="text-right py-1.5 sm:py-2 text-muted-foreground whitespace-nowrap">{formatCurrency(b.pending)}</td>
-                                <td className={cn("text-right py-1.5 sm:py-2 font-semibold whitespace-nowrap", b.balance >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
-                                  {formatCurrency(b.balance)}
-                                </td>
-                              </tr>
-                            ))}
-                            {/* Totals row */}
-                            <tr className="bg-muted/50 font-semibold">
-                              <td className="py-1.5 sm:py-2 whitespace-nowrap">Total</td>
-                              <td className="text-right py-1.5 sm:py-2 text-[#4A7C59] font-semibold whitespace-nowrap">
-                                {formatCurrency(balances.reduce((sum, b) => sum + b.deposits, 0))}
-                              </td>
-                              <td className="text-right py-1.5 sm:py-2 text-[#B85C38] font-semibold whitespace-nowrap">
-                                {formatCurrency(balances.reduce((sum, b) => sum + b.withdrawals, 0))}
-                              </td>
-                              <td className={cn("text-right py-1.5 sm:py-2 whitespace-nowrap", balances.reduce((sum, b) => sum + b.profit, 0) >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
-                                {formatCurrency(balances.reduce((sum, b) => sum + b.profit, 0))}
-                              </td>
-                              <td className="text-right py-1.5 sm:py-2 text-muted-foreground whitespace-nowrap">
-                                {formatCurrency(balances.reduce((sum, b) => sum + b.pending, 0))}
-                              </td>
-                              <td className={cn("text-right py-1.5 sm:py-2 whitespace-nowrap", balances.reduce((sum, b) => sum + b.balance, 0) >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
-                                {formatCurrency(balances.reduce((sum, b) => sum + b.balance, 0))}
-                              </td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      <p className="text-sm text-muted-foreground text-center py-4">
-                        No deposits recorded yet. Add your first deposit on the Settings page.
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
               </div>
             </details>
             </Card>

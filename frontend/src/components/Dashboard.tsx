@@ -2,17 +2,18 @@
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useSummary, useBets, useBackendReadiness } from "@/lib/hooks";
-import { formatCurrency, cn } from "@/lib/utils";
-import { TrendingUp, DollarSign, Activity, Clock, AlertTriangle } from "lucide-react";
-import Link from "next/link";
+import { useSummary, useBets, useBackendReadiness, useBalances } from "@/lib/hooks";
+import { cn } from "@/lib/utils";
+import { AlertTriangle } from "lucide-react";
+import { TopKpiCards } from "@/components/TopKpiCards";
 
 export function Dashboard() {
   const { data: summary, isLoading: summaryLoading } = useSummary();
   const { data: bets, isLoading: betsLoading } = useBets();
+  const { data: balances, isLoading: balancesLoading } = useBalances();
   const { data: readiness } = useBackendReadiness();
 
-  const isLoading = summaryLoading || betsLoading;
+  const isLoading = summaryLoading || betsLoading || balancesLoading;
 
   if (isLoading || !summary) {
     return (
@@ -32,90 +33,41 @@ export function Dashboard() {
     );
   }
 
-  // Calculate pending EV and EV conversion
-  const settledBets = bets?.filter(b => b.result !== "pending") || [];
-  const pendingBets = bets?.filter(b => b.result === "pending") || [];
-  const pendingEV = pendingBets.reduce((sum, b) => sum + b.ev_total, 0);
-  const settledEV = settledBets.reduce((sum, b) => sum + b.ev_total, 0);
-  const evConversion = settledEV > 0 ? (summary.total_real_profit / settledEV) : null;
+  const totalBalance =
+    balances && balances.length > 0 ? balances.reduce((sum, b) => sum + (b.balance || 0), 0) : null;
+
+  // Expected Profit should be settled-only EV (apples-to-apples with Net Profit)
+  const settledEV = (bets || []).filter((b) => b.result !== "pending").reduce((sum, b) => sum + b.ev_total, 0);
+
+  // Beat Close / Avg CLV (standard bets only)
+  const standardBets = (bets || []).filter((b) => b.promo_type === "standard");
+  const clvBets = standardBets.filter((b) => b.clv_ev_percent !== null);
+  const beatCloseCount = clvBets.filter((b) => b.beat_close === true).length;
+  const beatClosePct = clvBets.length > 0 ? (beatCloseCount / clvBets.length) * 100 : null;
+  const avgCLV =
+    clvBets.length > 0
+      ? clvBets.reduce((sum, b) => sum + (b.clv_ev_percent ?? 0), 0) / clvBets.length
+      : null;
   const showDegradedHint = !!readiness && (readiness.status !== "ready" || !readiness.checks.scheduler_freshness);
   const degradedLabel = readiness?.status === "unreachable"
     ? "Some data is temporarily unavailable"
     : "Recent bet results may still be updating";
 
   return (
-    <Link href="/analytics" className="block">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 group">
-        {/* Real Profit - The bottom line */}
-        <Card className="card-hover">
-          <CardContent className="p-4 flex flex-col items-center justify-center">
-            <div className="flex items-center gap-1.5 text-muted-foreground mb-1">
-              <DollarSign className="h-3.5 w-3.5" />
-              <span className="text-xs font-medium uppercase tracking-wide">Profit</span>
-            </div>
-            <p className={cn(
-              "text-xl sm:text-2xl font-bold font-mono tracking-tight",
-              summary.total_real_profit >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]"
-            )}>
-              {summary.total_real_profit >= 0 ? "+" : ""}{formatCurrency(summary.total_real_profit)}
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Total EV - Process metric */}
-        <Card className="card-hover">
-          <CardContent className="p-4 flex flex-col items-center justify-center">
-            <div className="flex items-center gap-1.5 text-muted-foreground mb-1">
-              <TrendingUp className="h-3.5 w-3.5" />
-              <span className="text-xs font-medium uppercase tracking-wide">Total EV</span>
-            </div>
-            <p className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-[#C4A35A]">
-              {summary.total_ev >= 0 ? "+" : ""}{formatCurrency(summary.total_ev)}
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* EV Conversion - Variance indicator */}
-        <Card className="card-hover">
-          <CardContent className="p-4 flex flex-col items-center justify-center">
-            <div className="flex items-center gap-1.5 text-muted-foreground mb-1">
-              <Activity className="h-3.5 w-3.5" />
-              <span className="text-xs font-medium uppercase tracking-wide">EV Conv.</span>
-            </div>
-            <p className={cn(
-              "text-xl sm:text-2xl font-bold font-mono tracking-tight",
-              evConversion === null ? "text-muted-foreground" :
-              evConversion >= 1.2 ? "text-[#4A7C59]" :
-              evConversion >= 0.8 ? "text-foreground" :
-              "text-[#B85C38]"
-            )}>
-              {evConversion !== null ? `${(evConversion * 100).toFixed(0)}%` : "—"}
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Pending EV - What's in play */}
-        <Card className="card-hover">
-          <CardContent className="p-4 flex flex-col items-center justify-center">
-            <div className="flex items-center gap-1.5 text-muted-foreground mb-1">
-              <Clock className="h-3.5 w-3.5" />
-              <span className="text-xs font-medium uppercase tracking-wide">Pending</span>
-            </div>
-            <p className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-[#C4A35A]">
-              {pendingEV >= 0 ? "+" : ""}{formatCurrency(pendingEV)}
-            </p>
-            <p className="text-[10px] text-muted-foreground">
-              {pendingBets.length} bet{pendingBets.length !== 1 ? "s" : ""}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+    <>
+      <TopKpiCards
+        href="/analytics"
+        netProfit={summary.total_real_profit}
+        expectedProfit={settledEV}
+        totalBalance={totalBalance}
+        beatClose={{ beatClosePct, avgClvPct: avgCLV }}
+      />
       {showDegradedHint && (
         <div className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-[#B85C38]/30 bg-[#B85C38]/10 px-2.5 py-1.5 text-xs text-[#8B3D20]">
           <AlertTriangle className="h-3.5 w-3.5" />
           {degradedLabel}
         </div>
       )}
-    </Link>
+    </>
   );
 }
