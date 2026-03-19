@@ -27,10 +27,6 @@ import { useQuery } from "@tanstack/react-query";
 const SPORT_KEY_TO_DISPLAY: Record<string, string> = {
   basketball_nba: "NBA",
   basketball_ncaab: "NCAAB",
-  football_nfl: "NFL",
-  football_ncaaf: "NCAAF",
-  baseball_mlb: "MLB",
-  icehockey_nhl: "NHL",
   mma_mixed_martial_arts: "UFC",
   soccer_usa_mls: "Soccer",
   tennis_atp_us_open: "Tennis",

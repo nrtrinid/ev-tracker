@@ -58,8 +58,6 @@ frontend: lens filtering + sorting (useMemo)
 **Supported sports:**
 ```
 basketball_nba, basketball_ncaab
-baseball_mlb
-icehockey_nhl
 ```
 
 Sports that are out of season return a 404 from The Odds API. The scanner catches these silently and continues — they don't fail the entire scan.

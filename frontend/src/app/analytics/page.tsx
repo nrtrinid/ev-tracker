@@ -323,9 +323,14 @@ export default function AnalyticsPage() {
   }, 0);
   const standardDeviation = Math.sqrt(totalVariance);
   const settledProfit = settledBets.reduce((sum, b) => sum + (b.real_profit || 0), 0);
-  const zScore = standardDeviation > 0 
-    ? (settledProfit - settledEV) / standardDeviation 
-    : null;
+  // Z-score only becomes meaningful with a small sample (>= 2 settled bets).
+  // With 0-1 bets the UI should keep the "need more data" message.
+  const zScore =
+    settledBets.length <= 1
+      ? null
+      : standardDeviation > 0
+        ? (settledProfit - settledEV) / standardDeviation
+        : null;
   
   // Calculate filtered totals
   const filteredTotalEV = filteredBets.reduce((sum, b) => sum + b.ev_total, 0);

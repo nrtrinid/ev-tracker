@@ -48,8 +48,6 @@ async def get_cached_or_scan(sport: str) -> dict:
 SUPPORTED_SPORTS = [
     "basketball_nba",
     "basketball_ncaab",
-    "baseball_mlb",
-    "icehockey_nhl",
 ]
 
 SHARP_BOOK = "pinnacle"
