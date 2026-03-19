@@ -125,3 +125,12 @@ For bets you've already logged, `backend/calculations.py` computes `ev_per_dolla
 | `boost_30/50/100/custom` | `win_prob × boost_value − vig` |
 
 The scanner's real-time lens math and the logged-bet EV math are consistent — both reference the same true probability from Pinnacle de-vigging.
+
+---
+
+## Operational Notes
+
+- **Execution path parity:** Lens math is identical regardless of trigger source (manual scan, scheduled scan, or cron-triggered scan).
+- **Cache consistency:** Because scan results are cached per sport for 5 minutes, rapid re-runs across trigger sources usually produce the same lens candidates.
+- **Ops diagnostics:** The operator console (`/admin/ops`) and status payload (`/api/ops/status`) provide compact Odds API activity and scan recency context when promo lens results look stale or unexpectedly empty.
+- **Fallback behavior:** If the dedicated odds-activity block is temporarily unavailable, the ops UI derives fallback status from recent scan snapshots to avoid ambiguous "unknown" states.

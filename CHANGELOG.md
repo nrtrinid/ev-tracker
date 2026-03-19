@@ -7,6 +7,35 @@ Version labels use pre-release suffixes until the app is ready for outside users
 
 ---
 
+## [2.2.0-alpha.2] - 2026-03-18
+
+### Added
+
+- **Automation + Ops hardening**
+  - Scheduler-first automation health model surfaced to operators.
+  - Protected backend operator endpoint: `GET /api/ops/status` (cron-token protected).
+  - Internal frontend operator console (`/admin/ops`) with allowlist enforcement.
+  - Compact Odds API activity telemetry exposed in ops payload (`summary` + `recent_calls`).
+- **Protected bridge routes (frontend)**
+  - `GET /api/ops/status` server bridge to backend ops endpoint.
+  - `GET /api/cron/trigger-backend?target=...` with strict target allowlist.
+  - `GET /api/cron/wakeup` for cron-driven keep-alive workflows.
+- **Tests**
+  - Added/expanded backend hardening coverage (`test_scheduler.py`, `test_odds_api_activity.py`).
+  - Added frontend ops access utility and non-admin access checks.
+
+### Changed
+
+- **Ops UI**
+  - Automation card emphasizes scheduler as primary execution path, with cron as fallback visibility.
+  - Odds API Activity badge/summary now handles fallback data when backend activity block is missing.
+- **Status payloads**
+  - Backend ops status now injects latest odds-activity snapshot at response time.
+- **Docs**
+  - Updated README, PROJECT docs, scanner docs, and testing docs to reflect current hardening architecture and test matrix.
+
+---
+
 ## [2.2.0-alpha.1] - 2025-03-16
 
 ### Added
@@ -41,4 +70,5 @@ Version labels use pre-release suffixes until the app is ready for outside users
 ---
 
 [2.2.0-alpha.1]: https://github.com/your-org/ev-betting-tracker/compare/v2.1.0...v2.2.0-alpha.1
+[2.2.0-alpha.2]: https://github.com/your-org/ev-betting-tracker/compare/v2.2.0-alpha.1...v2.2.0-alpha.2
 [2.1.0]: https://github.com/your-org/ev-betting-tracker/compare/v2.0.0...v2.1.0

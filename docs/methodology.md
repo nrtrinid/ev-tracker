@@ -135,6 +135,16 @@ With $1,000 bankroll and 0.25× multiplier: `0.0037 × 0.25 × 1000 = $0.93`
 
 ---
 
+## Operational Notes
+
+- **Scheduler-first operations:** Math and de-vig logic are unchanged, but production scan execution is expected to run primarily through scheduler jobs when enabled.
+- **Cron fallback:** If your host sleeps or scheduler is disabled, external cron routes can trigger the same scan pipeline.
+- **Shared cache behavior:** Multiple scan triggers (manual, scheduler, cron) share the same 5-minute per-sport cache, reducing quota usage and keeping outputs consistent.
+- **Operator visibility:** `/api/ops/status` and `/admin/ops` expose compact scan/odds activity summaries (counts, recency, status) to diagnose data freshness and API reliability.
+- **No payload leakage:** Ops activity telemetry intentionally excludes raw API response payloads and secrets.
+
+---
+
 ## Further Reading
 
 - [The Kelly Criterion — Wikipedia](https://en.wikipedia.org/wiki/Kelly_criterion)

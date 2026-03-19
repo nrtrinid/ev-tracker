@@ -2,8 +2,10 @@ import importlib
 import os
 import sys
 import types
+from datetime import datetime, UTC, timedelta
 
 import pytest
+from fastapi import HTTPException
 
 
 def _reload_main(monkeypatch, *, zoneinfo_zoneinfo_override=None):
@@ -145,7 +147,7 @@ async def test_scheduled_scan_job_continues_if_one_sport_scan_throws(monkeypatch
 
     called = []
 
-    async def fake_get_cached_or_scan(sport):
+    async def fake_get_cached_or_scan(sport, source="unknown"):
         called.append(sport)
         if sport == "bad_sport":
             raise RuntimeError("boom")
@@ -166,7 +168,7 @@ async def test_scheduled_scan_job_calls_get_cached_or_scan_for_all_supported_spo
 
     called = []
 
-    async def fake_get_cached_or_scan(sport):
+    async def fake_get_cached_or_scan(sport, source="unknown"):
         called.append(sport)
         return {"sides": [1], "events_fetched": 1, "events_with_both_books": 1}
 
@@ -178,4 +180,57 @@ async def test_scheduled_scan_job_calls_get_cached_or_scan_for_all_supported_spo
     await main._run_scheduled_scan_job()
 
     assert called == sports
+
+
+def test_scheduler_freshness_uses_startup_grace_when_no_success(monkeypatch):
+    main = _reload_main(monkeypatch)
+    main._init_scheduler_heartbeats()
+    main.app.state.scheduler_started_at = datetime.now(UTC).isoformat() + "Z"
+
+    fresh, details = main._check_scheduler_freshness(True)
+
+    assert fresh is True
+    for job_name, state in details["jobs"].items():
+        assert state["fresh"] is True
+        assert state["freshness_reason"] == "waiting_first_run"
+
+
+def test_scheduler_freshness_fails_if_no_success_past_stale_window(monkeypatch):
+    main = _reload_main(monkeypatch)
+    main._init_scheduler_heartbeats()
+    main.app.state.scheduler_started_at = (datetime.now(UTC) - timedelta(hours=48)).isoformat() + "Z"
+
+    fresh, details = main._check_scheduler_freshness(True)
+
+    assert fresh is False
+    assert any(not state["fresh"] for state in details["jobs"].values())
+    assert any(state["freshness_reason"] == "stale_no_success" for state in details["jobs"].values())
+
+
+def test_ops_status_requires_valid_cron_token(monkeypatch):
+    main = _reload_main(monkeypatch)
+    main._init_ops_status()
+    monkeypatch.setenv("CRON_TOKEN", "secret-token")
+
+    with pytest.raises(HTTPException) as exc:
+        main.ops_status(x_cron_token="wrong")
+
+    assert exc.value.status_code == 401
+
+
+def test_ops_status_returns_snapshot_when_token_valid(monkeypatch):
+    main = _reload_main(monkeypatch)
+    main._init_ops_status()
+    monkeypatch.setenv("CRON_TOKEN", "secret-token")
+    monkeypatch.setenv("ENABLE_SCHEDULER", "0")
+
+    payload = main.ops_status(x_cron_token="secret-token")
+
+    assert "runtime" in payload
+    assert "checks" in payload
+    assert "ops" in payload
+    assert payload["runtime"]["scheduler_expected"] is False
+    assert "odds_api_activity" in payload["ops"]
+    assert "summary" in payload["ops"]["odds_api_activity"]
+    assert "recent_calls" in payload["ops"]["odds_api_activity"]
 

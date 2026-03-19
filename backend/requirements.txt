@@ -5,4 +5,6 @@ supabase
 python-dotenv
 httpx
 apscheduler
+redis
 pytest>=7.0
+pytest-asyncio

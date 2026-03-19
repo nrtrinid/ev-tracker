@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:ops-utils": "playwright test tests/admin-access-utils.spec.ts",
+    "test:ops-access": "playwright test tests/ops-access.spec.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.0.5",

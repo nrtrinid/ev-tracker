@@ -9,9 +9,14 @@ surface +EV moneyline bets.
 import asyncio
 import os
 import time
+import re
 import httpx
+from collections import deque
+import threading
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from calculations import american_to_decimal, kelly_fraction
+from services.shared_state import get_scan_cache, set_scan_cache
 
 load_dotenv()
 
@@ -23,9 +28,109 @@ CACHE_TTL_SECONDS = 5 * 60
 
 _cache: dict[str, dict] = {}
 _locks: dict[str, asyncio.Lock] = {}
+_LAST_AUTO_SETTLER_SUMMARY: dict | None = None
+
+_ODDS_ACTIVITY_LOCK = threading.Lock()
+_ODDS_ACTIVITY_MAX_ENTRIES = 500
+_ODDS_ACTIVITY_MAX_RECENT = 50
+_ODDS_ACTIVITY_EVENTS = deque(maxlen=_ODDS_ACTIVITY_MAX_ENTRIES)
 
 
-async def get_cached_or_scan(sport: str) -> dict:
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _short_error_message(message: str | None) -> str | None:
+    if not message:
+        return None
+    cleaned = str(message).strip().replace("\n", " ")
+    return cleaned[:180]
+
+
+def _append_odds_api_activity(
+    *,
+    source: str,
+    endpoint: str,
+    sport: str | None,
+    cache_hit: bool,
+    outbound_call_made: bool,
+    status_code: int | None,
+    duration_ms: float | None,
+    api_requests_remaining: str | int | None,
+    error_type: str | None,
+    error_message: str | None,
+) -> None:
+    now = datetime.now(timezone.utc)
+    event = {
+        "timestamp": now.isoformat().replace("+00:00", "Z"),
+        "source": source,
+        "endpoint": endpoint,
+        "sport": sport,
+        "cache_hit": cache_hit,
+        "outbound_call_made": outbound_call_made,
+        "status_code": status_code,
+        "duration_ms": round(duration_ms, 2) if isinstance(duration_ms, (int, float)) else None,
+        "api_requests_remaining": api_requests_remaining,
+        "error_type": error_type,
+        "error_message": _short_error_message(error_message),
+        "_ts_epoch": now.timestamp(),
+    }
+    with _ODDS_ACTIVITY_LOCK:
+        _ODDS_ACTIVITY_EVENTS.append(event)
+
+
+def _sanitize_activity_event(event: dict) -> dict:
+    return {
+        "timestamp": event.get("timestamp"),
+        "source": event.get("source"),
+        "endpoint": event.get("endpoint"),
+        "sport": event.get("sport"),
+        "cache_hit": bool(event.get("cache_hit")),
+        "outbound_call_made": bool(event.get("outbound_call_made")),
+        "status_code": event.get("status_code"),
+        "duration_ms": event.get("duration_ms"),
+        "api_requests_remaining": event.get("api_requests_remaining"),
+        "error_type": event.get("error_type"),
+        "error_message": event.get("error_message"),
+    }
+
+
+def get_odds_api_activity_snapshot() -> dict:
+    now_epoch = datetime.now(timezone.utc).timestamp()
+    last_hour_cutoff = now_epoch - 3600
+
+    with _ODDS_ACTIVITY_LOCK:
+        events = list(_ODDS_ACTIVITY_EVENTS)
+
+    last_hour_events = [e for e in events if isinstance(e.get("_ts_epoch"), (int, float)) and e["_ts_epoch"] >= last_hour_cutoff]
+    errors_last_hour = [e for e in last_hour_events if e.get("error_type") or (isinstance(e.get("status_code"), int) and e["status_code"] >= 400)]
+
+    last_success = None
+    last_error = None
+    for event in reversed(events):
+        status_code = event.get("status_code")
+        is_error = bool(event.get("error_type")) or (isinstance(status_code, int) and status_code >= 400)
+        if last_error is None and is_error:
+            last_error = event.get("timestamp")
+        if last_success is None and not is_error and bool(event.get("outbound_call_made")):
+            last_success = event.get("timestamp")
+        if last_success and last_error:
+            break
+
+    recent_calls = [_sanitize_activity_event(e) for e in list(reversed(events[-_ODDS_ACTIVITY_MAX_RECENT:]))]
+
+    return {
+        "summary": {
+            "calls_last_hour": len(last_hour_events),
+            "errors_last_hour": len(errors_last_hour),
+            "last_success_at": last_success,
+            "last_error_at": last_error,
+        },
+        "recent_calls": recent_calls,
+    }
+
+
+async def get_cached_or_scan(sport: str, source: str = "unknown") -> dict:
     """
     Return sides for this sport from cache if fresh (< CACHE_TTL_SECONDS),
     else call scan_all_sides and cache. Thread-safe per sport.
@@ -35,13 +140,46 @@ async def get_cached_or_scan(sport: str) -> dict:
         _locks[sport] = asyncio.Lock()
     async with _locks[sport]:
         now = time.time()
+        shared_entry = get_scan_cache(sport)
+        if isinstance(shared_entry, dict):
+            fetched_at = shared_entry.get("fetched_at")
+            if isinstance(fetched_at, (int, float)) and (now - fetched_at) < CACHE_TTL_SECONDS:
+                _cache[sport] = shared_entry
+                _append_odds_api_activity(
+                    source=source,
+                    endpoint=f"/sports/{sport}/odds",
+                    sport=sport,
+                    cache_hit=True,
+                    outbound_call_made=False,
+                    status_code=200,
+                    duration_ms=0.0,
+                    api_requests_remaining=shared_entry.get("api_requests_remaining"),
+                    error_type=None,
+                    error_message=None,
+                )
+                return shared_entry
+
         if sport in _cache:
             entry = _cache[sport]
             if (now - entry["fetched_at"]) < CACHE_TTL_SECONDS:
+                _append_odds_api_activity(
+                    source=source,
+                    endpoint=f"/sports/{sport}/odds",
+                    sport=sport,
+                    cache_hit=True,
+                    outbound_call_made=False,
+                    status_code=200,
+                    duration_ms=0.0,
+                    api_requests_remaining=entry.get("api_requests_remaining"),
+                    error_type=None,
+                    error_message=None,
+                )
                 return entry
-        result = await scan_all_sides(sport)
+
+        result = await scan_all_sides(sport, source=source)
         result["fetched_at"] = now
         _cache[sport] = result
+        set_scan_cache(sport, result, CACHE_TTL_SECONDS)
         return result
 
 
@@ -159,7 +297,12 @@ def calculate_edge(true_prob: float, book_american_odds: float) -> dict:
     }
 
 
-async def fetch_odds(sport: str = "basketball_nba") -> tuple[list[dict], httpx.Response]:
+async def fetch_odds(
+    sport: str = "basketball_nba",
+    *,
+    source: str = "unknown",
+    endpoint: str | None = None,
+) -> tuple[list[dict], httpx.Response]:
     """
     Hit The Odds API and return raw event data with odds
     from Pinnacle and all target books.
@@ -177,10 +320,62 @@ async def fetch_odds(sport: str = "basketball_nba") -> tuple[list[dict], httpx.R
         "bookmakers": all_books,
     }
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.get(url, params=params)
-        resp.raise_for_status()
-        return resp.json(), resp
+    started = time.monotonic()
+    endpoint_value = endpoint or f"/sports/{sport}/odds"
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            duration_ms = (time.monotonic() - started) * 1000
+            remaining = resp.headers.get("x-requests-remaining") or resp.headers.get("x-request-remaining")
+            _append_odds_api_activity(
+                source=source,
+                endpoint=endpoint_value,
+                sport=sport,
+                cache_hit=False,
+                outbound_call_made=True,
+                status_code=resp.status_code,
+                duration_ms=duration_ms,
+                api_requests_remaining=remaining,
+                error_type=None,
+                error_message=None,
+            )
+            return resp.json(), resp
+    except httpx.HTTPStatusError as e:
+        duration_ms = (time.monotonic() - started) * 1000
+        status_code = e.response.status_code if e.response is not None else None
+        remaining = None
+        if e.response is not None:
+            remaining = e.response.headers.get("x-requests-remaining") or e.response.headers.get("x-request-remaining")
+        _append_odds_api_activity(
+            source=source,
+            endpoint=endpoint_value,
+            sport=sport,
+            cache_hit=False,
+            outbound_call_made=True,
+            status_code=status_code,
+            duration_ms=duration_ms,
+            api_requests_remaining=remaining,
+            error_type=type(e).__name__,
+            error_message=str(e),
+        )
+        raise
+    except Exception as e:
+        duration_ms = (time.monotonic() - started) * 1000
+        _append_odds_api_activity(
+            source=source,
+            endpoint=endpoint_value,
+            sport=sport,
+            cache_hit=False,
+            outbound_call_made=True,
+            status_code=None,
+            duration_ms=duration_ms,
+            api_requests_remaining=None,
+            error_type=type(e).__name__,
+            error_message=str(e),
+        )
+        raise
 
 
 def _extract_outcomes(bookmakers: list[dict], book_key: str) -> dict | None:
@@ -198,7 +393,7 @@ async def scan_for_ev(sport: str = "basketball_nba") -> dict:
     Full pipeline: fetch → de-vig → compare → return +EV bets and metadata.
     Scans across all TARGET_BOOKS.
     """
-    data, resp = await fetch_odds(sport)
+    data, resp = await fetch_odds(sport, source="scan_for_ev")
     events = data if isinstance(data, list) else []
     ev_bets = []
     events_with_pinnacle = 0
@@ -401,7 +596,7 @@ async def fetch_clv_for_pending_bets(db) -> int:
 
     for sport_key in sport_keys:
         try:
-            data, _ = await fetch_odds(sport_key)
+            data, _ = await fetch_odds(sport_key, source="clv_daily")
             events = data if isinstance(data, list) else []
 
             sides = []
@@ -425,9 +620,9 @@ async def fetch_clv_for_pending_bets(db) -> int:
             updated = update_clv_snapshots(sides, db)
             total_updated += updated
 
-        except Exception:
+        except Exception as e:
             # Never let a single sport failure break the entire job
-            pass
+            print(f"[CLV daily job] Error processing sport '{sport_key}': {e}")
 
     return total_updated
 
@@ -476,7 +671,7 @@ async def run_jit_clv_snatcher(db) -> int:
 
     for sport_key, bets in sport_bets.items():
         try:
-            data, _ = await fetch_odds(sport_key)
+            data, _ = await fetch_odds(sport_key, source="jit_clv")
             events = data if isinstance(data, list) else []
 
             snapshot: dict[tuple[str, str], float] = {}
@@ -504,13 +699,13 @@ async def run_jit_clv_snatcher(db) -> int:
                     }).eq("id", bet["id"]).execute()
                     total_updated += 1
 
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[JIT CLV] Error processing sport '{sport_key}': {e}")
 
     return total_updated
 
 
-async def fetch_scores(sport: str) -> list[dict]:
+async def fetch_scores(sport: str, source: str = "auto_settle") -> list[dict]:
     """
     Fetch completed game scores from The Odds API.
 
@@ -527,11 +722,61 @@ async def fetch_scores(sport: str) -> list[dict]:
         "daysFrom": 2,
         "dateFormat": "iso",
     }
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.get(url, params=params)
-        resp.raise_for_status()
-        data = resp.json()
-        return data if isinstance(data, list) else []
+    started = time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            duration_ms = (time.monotonic() - started) * 1000
+            remaining = resp.headers.get("x-requests-remaining") or resp.headers.get("x-request-remaining")
+            _append_odds_api_activity(
+                source=source,
+                endpoint=f"/sports/{sport}/scores",
+                sport=sport,
+                cache_hit=False,
+                outbound_call_made=True,
+                status_code=resp.status_code,
+                duration_ms=duration_ms,
+                api_requests_remaining=remaining,
+                error_type=None,
+                error_message=None,
+            )
+            data = resp.json()
+            return data if isinstance(data, list) else []
+    except httpx.HTTPStatusError as e:
+        duration_ms = (time.monotonic() - started) * 1000
+        status_code = e.response.status_code if e.response is not None else None
+        remaining = None
+        if e.response is not None:
+            remaining = e.response.headers.get("x-requests-remaining") or e.response.headers.get("x-request-remaining")
+        _append_odds_api_activity(
+            source=source,
+            endpoint=f"/sports/{sport}/scores",
+            sport=sport,
+            cache_hit=False,
+            outbound_call_made=True,
+            status_code=status_code,
+            duration_ms=duration_ms,
+            api_requests_remaining=remaining,
+            error_type=type(e).__name__,
+            error_message=str(e),
+        )
+        raise
+    except Exception as e:
+        duration_ms = (time.monotonic() - started) * 1000
+        _append_odds_api_activity(
+            source=source,
+            endpoint=f"/sports/{sport}/scores",
+            sport=sport,
+            cache_hit=False,
+            outbound_call_made=True,
+            status_code=None,
+            duration_ms=duration_ms,
+            api_requests_remaining=None,
+            error_type=type(e).__name__,
+            error_message=str(e),
+        )
+        raise
 
 
 def _grade_ml(clv_team: str, home_team: str, away_team: str, scores: list[dict]) -> str | None:
@@ -545,15 +790,34 @@ def _grade_ml(clv_team: str, home_team: str, away_team: str, scores: list[dict])
     Returns 'win', 'loss', or 'push', or None if the score data is unusable.
     """
     score_map: dict[str, float] = {}
+    score_map_norm: dict[str, float] = {}
     for s in scores or []:
         try:
-            score_map[s["name"]] = float(s["score"])
+            team_name = str(s["name"])
+            score_val = float(s["score"])
+            score_map[team_name] = score_val
+            score_map_norm[_canonical_team_name(team_name)] = score_val
         except (KeyError, ValueError, TypeError):
             pass
 
+    clv_team_norm = _canonical_team_name(clv_team)
+    home_norm = _canonical_team_name(home_team)
+    away_norm = _canonical_team_name(away_team)
+
+    if clv_team_norm == home_norm:
+        opponent = away_team
+    elif clv_team_norm == away_norm:
+        opponent = home_team
+    else:
+        return None
+
     bet_score = score_map.get(clv_team)
-    opponent = away_team if clv_team == home_team else home_team
+    if bet_score is None:
+        bet_score = score_map_norm.get(_canonical_team_name(clv_team))
+
     opp_score = score_map.get(opponent)
+    if opp_score is None:
+        opp_score = score_map_norm.get(_canonical_team_name(opponent))
 
     if bet_score is None or opp_score is None:
         return None
@@ -565,7 +829,47 @@ def _grade_ml(clv_team: str, home_team: str, away_team: str, scores: list[dict])
     return "push"
 
 
-async def run_auto_settler(db) -> int:
+def _canonical_team_name(name: str | None) -> str:
+    if not name:
+        return ""
+    lowered = str(name).strip().lower()
+    return re.sub(r"[^a-z0-9]+", "", lowered)
+
+
+def _select_completed_event_for_bet(bet: dict, completed_events: list[dict]) -> tuple[dict | None, str]:
+    """
+    Deterministic settlement match to prevent accidental auto-grading.
+
+    We only auto-grade when there is exactly one completed event matching:
+    - exact commence_time equality
+    - clv_team equals home_team or away_team (canonicalized)
+    """
+    clv_team = bet.get("clv_team")
+    commence_time = bet.get("commence_time")
+    if not clv_team:
+        return None, "missing_clv_team"
+    if not commence_time:
+        return None, "missing_commence_time"
+
+    target_team = _canonical_team_name(clv_team)
+    candidates: list[dict] = []
+    for event in completed_events:
+        if event.get("commence_time") != commence_time:
+            continue
+
+        home = _canonical_team_name(event.get("home_team"))
+        away = _canonical_team_name(event.get("away_team"))
+        if target_team in (home, away):
+            candidates.append(event)
+
+    if not candidates:
+        return None, "no_match"
+    if len(candidates) > 1:
+        return None, "ambiguous_match"
+    return candidates[0], "matched"
+
+
+async def run_auto_settler(db, source: str = "auto_settle") -> int:
     """
     Auto-Settler — runs once daily at 4:00 AM UTC via APScheduler.
 
@@ -602,16 +906,29 @@ async def run_auto_settler(db) -> int:
 
     total_settled = 0
     settled_at = now.isoformat()
+    sport_summaries: list[dict] = []
+    aggregate_skipped = {
+        "missing_clv_team": 0,
+        "missing_commence_time": 0,
+        "no_match": 0,
+        "ambiguous_match": 0,
+        "missing_scores": 0,
+        "db_update_failed": 0,
+    }
 
     for sport_key, bets in sport_bets.items():
         try:
-            events = await fetch_scores(sport_key)
+            events = await fetch_scores(sport_key, source=source)
 
-            # Build lookup from completed games: (home_team, away_team) → event
-            completed: dict[tuple[str, str], dict] = {}
-            for event in events:
-                if event.get("completed"):
-                    completed[(event["home_team"], event["away_team"])] = event
+            completed_events = [event for event in events if event.get("completed")]
+            skipped_reasons: dict[str, int] = {
+                "missing_clv_team": 0,
+                "missing_commence_time": 0,
+                "no_match": 0,
+                "ambiguous_match": 0,
+                "missing_scores": 0,
+                "db_update_failed": 0,
+            }
 
             for bet in bets:
                 market = (bet.get("market") or "").strip().upper()
@@ -627,46 +944,104 @@ async def run_auto_settler(db) -> int:
                 if not clv_team:
                     continue
 
-                # Find the matching completed game
-                grade = None
-                for (home, away), event in completed.items():
-                    if clv_team in (home, away):
-                        grade = _grade_ml(
-                            clv_team, home, away, event.get("scores") or []
-                        )
-                        break
-
-                if grade is None:
+                event, reason = _select_completed_event_for_bet(bet, completed_events)
+                if event is None:
+                    skipped_reasons[reason] = skipped_reasons.get(reason, 0) + 1
                     continue
 
-                db.table("bets").update({
-                    "result": grade,
-                    "settled_at": settled_at,
-                }).eq("id", bet["id"]).execute()
-                total_settled += 1
+                grade = _grade_ml(
+                    clv_team,
+                    str(event.get("home_team", "")),
+                    str(event.get("away_team", "")),
+                    event.get("scores") or [],
+                )
+
+                if grade is None:
+                    skipped_reasons["missing_scores"] += 1
+                    continue
+
+                try:
+                    db.table("bets").update({
+                        "result": grade,
+                        "settled_at": settled_at,
+                    }).eq("id", bet["id"]).execute()
+                    total_settled += 1
+                except Exception as e:
+                    skipped_reasons["db_update_failed"] += 1
+                    print(f"[Auto-Settler] Failed updating bet {bet.get('id')}: {e}")
+
+            if any(v > 0 for v in skipped_reasons.values()):
+                print(
+                    "[Auto-Settler] Sport summary "
+                    f"sport={sport_key} skipped={skipped_reasons} completed_events={len(completed_events)}"
+                )
+
+            for key, value in skipped_reasons.items():
+                aggregate_skipped[key] = aggregate_skipped.get(key, 0) + value
+
+            sport_summaries.append(
+                {
+                    "sport_key": sport_key,
+                    "bets_considered": len(bets),
+                    "completed_events": len(completed_events),
+                    "skipped": skipped_reasons,
+                }
+            )
 
         except Exception as e:
             print(f"[Auto-Settler] Error processing sport '{sport_key}': {e}")
+            sport_summaries.append(
+                {
+                    "sport_key": sport_key,
+                    "bets_considered": len(bets),
+                    "completed_events": None,
+                    "error": f"{type(e).__name__}: {e}",
+                }
+            )
+
+    global _LAST_AUTO_SETTLER_SUMMARY
+    _LAST_AUTO_SETTLER_SUMMARY = {
+        "captured_at": settled_at,
+        "sports": sport_summaries,
+        "total_settled": total_settled,
+        "skipped_totals": aggregate_skipped,
+    }
 
     return total_settled
 
 
-async def scan_all_sides(sport: str = "basketball_nba") -> dict:
+def get_last_auto_settler_summary() -> dict | None:
+    return _LAST_AUTO_SETTLER_SUMMARY
+
+
+async def scan_all_sides(sport: str = "basketball_nba", source: str = "unknown") -> dict:
     """
     Return ALL matched sides between Pinnacle and every target book with
     de-vigged true probabilities. Each side includes a sportsbook field.
     Unlike scan_for_ev, this doesn't filter to +EV only — the frontend
     applies promo-specific lens math.
     """
-    data, resp = await fetch_odds(sport)
+    data, resp = await fetch_odds(sport, source=source)
     events = data if isinstance(data, list) else []
     all_sides = []
     events_with_any_book = 0
+    # Pregame-only filter: skip events that are started or starting imminently.
+    # Small buffer avoids false edges from books updating out-of-sync near kickoff.
+    pregame_cutoff = datetime.now(timezone.utc) + timedelta(minutes=1)
 
     for event in events:
         home = event["home_team"]
         away = event["away_team"]
         commence = event.get("commence_time", "")
+        if commence:
+          try:
+              # The Odds API returns ISO like "2026-03-19T01:30:00Z"
+              commence_dt = datetime.fromisoformat(str(commence).replace("Z", "+00:00"))
+              if commence_dt <= pregame_cutoff:
+                  continue
+          except Exception:
+              # If commence_time is missing/invalid, keep the event rather than dropping silently.
+              pass
 
         pin_outcomes = _extract_outcomes(event.get("bookmakers", []), SHARP_BOOK)
         if not pin_outcomes:

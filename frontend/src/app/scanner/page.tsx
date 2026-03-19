@@ -19,7 +19,7 @@ import {
 import { scanMarkets } from "@/lib/api";
 import type { MarketSide, ScanResult, ScannedBetData, PromoType } from "@/lib/types";
 import { useKellySettings } from "@/lib/kelly-context";
-import { useBalances } from "@/lib/hooks";
+import { useBalances, useBackendReadiness } from "@/lib/hooks";
 import { useQuery } from "@tanstack/react-query";
 
 // ============ Constants ============
@@ -136,6 +136,7 @@ function bookAbbrev(name: string): string {
 export default function ScannerPage() {
   const queryClient = useQueryClient();
   const { data: balances } = useBalances();
+  const { data: readiness } = useBackendReadiness();
   const { useComputedBankroll, bankrollOverride, kellyMultiplier } = useKellySettings();
   const computedBankroll = useMemo(() => {
     if (!balances || balances.length === 0) return 0;
@@ -163,6 +164,10 @@ export default function ScannerPage() {
   const [selectedBooks, setSelectedBooks] = useState<string[]>(DEFAULT_SELECTED_BOOKS);
   const [visibleCount, setVisibleCount] = useState(10);
   const [hideLongshots, setHideLongshots] = useState(true);
+  const showBackendHint = !!readiness && (readiness.status !== "ready" || !readiness.checks.scheduler_freshness);
+  const backendHint = readiness?.status === "unreachable"
+    ? "Scanner is reconnecting. Odds may be slightly delayed."
+    : "Scanner data is refreshing. Prices may be a little behind.";
 
   // Drawer state
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -433,6 +438,12 @@ export default function ScannerPage() {
                 <span>{scanData.api_requests_remaining} API calls left</span>
               </>
             )}
+          </div>
+        )}
+
+        {showBackendHint && (
+          <div className="rounded-lg border border-[#B85C38]/30 bg-[#B85C38]/10 px-3 py-2 text-xs text-[#8B3D20]">
+            {backendHint}
           </div>
         )}
 

@@ -1,6 +1,6 @@
 # EV Betting Tracker — Project Documentation
 
-Technical documentation for the EV (Expected Value) Betting Tracker: architecture, tech stack, conventions, key logic locations, and important decisions.
+Technical documentation for the EV (Expected Value) Betting Tracker: architecture, tech stack, conventions, key logic locations, operational hardening behavior, and important decisions.
 
 ---
 
@@ -10,16 +10,23 @@ Technical documentation for the EV (Expected Value) Betting Tracker: architectur
 
 The app is a full-stack web application with a **Next.js frontend** and **FastAPI backend**, backed by **Supabase** (PostgreSQL + Auth). The backend uses the **service role key** to bypass RLS and perform user-scoped operations; RLS protects direct anon access.
 
+Operational hardening adds:
+
+- Scheduler heartbeats and readiness freshness checks.
+- Protected operator status bridge (`/api/ops/status`) and internal admin console (`/admin/ops`).
+- Cron-trigger fallback routes for sleeping-host environments.
+- Odds API activity tracking (summary + recent calls, no secrets/raw payloads).
+
 ```
-┌─────────────────┐     JWT (Bearer)      ┌─────────────────┐     Supabase Client     ┌─────────────────┐
-│  Next.js       │ ───────────────────► │  FastAPI        │ ─────────────────────► │  Supabase       │
-│  (port 3000)   │     REST API          │  (port 8000)    │     (PostgreSQL)        │  (PostgreSQL)   │
-└─────────────────┘                       └─────────────────┘                         └─────────────────┘
-        │                                         │
-        │                                         │
-        ▼                                         ▼
-  Supabase Auth                            The Odds API
-  (SSR + JWT)                              (live odds)
+┌─────────────────┐  JWT (Bearer)   ┌─────────────────┐   service role client   ┌─────────────────┐
+│  Next.js       │ ───────────────►│  FastAPI        │────────────────────────► │  Supabase       │
+│  (port 3000)   │   REST + bridge  │  (port 8000)    │    (PostgREST/Auth)     │  (PostgreSQL)   │
+└─────────────────┘                  └─────────────────┘                          └─────────────────┘
+    │                                      │
+    │                                      │
+    ▼                                      ▼
+  Supabase Auth                         The Odds API
+  (SSR + JWT)                           (odds + scores)
 ```
 
 ### Data Flow
@@ -28,6 +35,8 @@ The app is a full-stack web application with a **Next.js frontend** and **FastAP
 2. **Bets**: `LogBetDrawer` / `EditBetModal` → `api.createBet` / `api.updateBet` → FastAPI → Supabase `bets`.
 3. **EV**: `calculate_ev` in `calculations.py` → `build_bet_response` in `main.py` → frontend.
 4. **Scanner**: Frontend `scanMarkets()` → `/api/scan-markets` → `services/odds_api.get_cached_or_scan` → The Odds API → de-vig Pinnacle → compare to target books.
+5. **Operator status**: `/admin/ops` → protected frontend bridge `/api/ops/status` → backend `/api/ops/status` (server-side cron token).
+6. **Automation fallback**: scheduler or external cron → `/api/cron/run-scan` and `/api/cron/run-auto-settle`.
 
 ### Multi-Tenancy
 
@@ -83,13 +92,15 @@ ev-betting-tracker/
 │   ├── auth.py              # JWT validation via Supabase
 │   ├── database.py          # Supabase client
 │   ├── services/
-│   │   └── odds_api.py      # The Odds API integration
+│   │   ├── odds_api.py      # Odds/scores integration + activity snapshot
+│   │   └── discord_alerts.py
 │   ├── seed_data.py         # Mock data seeding
 │   ├── requirements.txt
 │   └── .env.example
 ├── frontend/                # Next.js React frontend
 │   └── src/
-│       ├── app/             # App Router pages (page, scanner, settings, tools, analytics, login)
+│       ├── app/             # App Router pages (scanner, settings, analytics, login, admin/ops)
+│       │   └── api/         # Protected bridge routes (cron + ops)
 │       ├── components/      # UI (Dashboard, BetList, LogBetDrawer, EditBetModal, TopNav, SmartOddsInput, ui/)
 │       ├── lib/             # api.ts, auth-context, hooks, kelly-context, supabase, types, utils
 │       └── middleware.ts    # Auth redirects
@@ -105,6 +116,7 @@ ev-betting-tracker/
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/health` | Health check |
+| GET | `/ready` | Readiness check (env, DB, scheduler freshness) |
 | GET | `/bets` | List bets (filters: sport, sportsbook, result) |
 | POST | `/bets` | Create bet |
 | GET | `/bets/{id}` | Get bet |
@@ -121,6 +133,10 @@ ev-betting-tracker/
 | GET | `/balances` | Per-sportsbook balances |
 | GET | `/api/scan-bets` | +EV scan (single sport) |
 | GET | `/api/scan-markets` | Full market scan (all sports, cached) |
+| POST | `/api/cron/run-scan` | Cron-triggered cache warm + alert scheduling |
+| POST | `/api/cron/run-auto-settle` | Cron-triggered auto-settle run |
+| POST | `/api/cron/test-discord` | Test Discord message |
+| GET | `/api/ops/status` | Protected operator status payload |
 
 ---
 
@@ -130,12 +146,16 @@ ev-betting-tracker/
 |---------|----------|
 | **EV calculations** | `backend/calculations.py` — `calculate_ev`, `american_to_decimal`, `kelly_fraction`, `calculate_real_profit`, `calculate_hold_from_odds` |
 | **Bet CRUD + response building** | `backend/main.py` — `build_bet_response`, `get_user_settings`, route handlers |
-| **Odds / scanner** | `backend/services/odds_api.py` — `fetch_odds`, `devig_pinnacle`, `calculate_edge`, `scan_for_ev`, `scan_all_sides` |
+| **Odds / scanner** | `backend/services/odds_api.py` — `fetch_odds`, `devig_pinnacle`, `calculate_edge`, `scan_for_ev`, `scan_all_sides`, `get_cached_or_scan` |
+| **Odds API activity** | `backend/services/odds_api.py` — `_append_odds_api_activity`, `get_odds_api_activity_snapshot` |
+| **Automation/scheduler health** | `backend/main.py` — scheduler jobs, heartbeats, readiness freshness, ops status |
 | **Auth** | `backend/auth.py` — `get_current_user`; `frontend/src/lib/auth-context.tsx`; `frontend/src/middleware.ts` |
 | **Frontend API** | `frontend/src/lib/api.ts` — `fetchAPI`, all API wrappers |
 | **React Query hooks** | `frontend/src/lib/hooks.ts` — `useBets`, `useCreateBet`, `useSummary`, etc. |
 | **Kelly settings** | `frontend/src/lib/kelly-context.tsx` — bankroll, multiplier, localStorage |
 | **Scanner UI** | `frontend/src/app/scanner/page.tsx` — lenses (standard, profit_boost, bonus_bet, qualifier), book filter, Log Bet flow |
+| **Ops dashboard UI** | `frontend/src/app/admin/ops/OpsDashboard.tsx` — scheduler-first health + odds activity card |
+| **Protected ops bridge** | `frontend/src/app/api/ops/status/route.ts` + `frontend/src/lib/server/admin-access.ts` |
 | **Log Bet form** | `frontend/src/components/LogBetDrawer.tsx` — form, EV preview, vig handling |
 | **Types** | `frontend/src/lib/types.ts` — mirrors backend Pydantic models |
 
@@ -190,6 +210,13 @@ ev-betting-tracker/
 - **Rate limiting**: 12 scans per 15 minutes per user (`require_scan_rate_limit`).
 - **Dev mode**: `ENVIRONMENT=development` limits full scan to NBA to save API quota.
 
+### Operational Hardening
+
+- **Scheduler-first posture**: readiness and operator dashboards evaluate scheduler health/freshness first.
+- **Cron fallback paths**: external schedulers can trigger scan/settle safely through token-protected cron endpoints.
+- **Operator endpoint protection**: backend `/api/ops/status` is protected by `X-Cron-Token`; frontend exposes data only through allowlisted, authenticated bridge routes.
+- **Observability**: odds/scores calls are tracked in-memory with bounded recent history and one-hour summary counters.
+
 ### EV & Promo Logic
 
 - **Promo types**: `standard`, `bonus_bet`, `no_sweat`, `promo_qualifier`, `boost_30`, `boost_50`, `boost_100`, `boost_custom`.
@@ -214,6 +241,11 @@ ev-betting-tracker/
 | `SUPABASE_SERVICE_ROLE_KEY` | Service role key (bypasses RLS) |
 | `ODDS_API_KEY` | The Odds API key |
 | `ENVIRONMENT` | `development` (limit scans) or `production` |
+| `ENABLE_SCHEDULER` | `1` to run APScheduler jobs in this process |
+| `TESTING` | `1` disables scheduler startup for tests |
+| `CRON_TOKEN` | Shared secret for backend cron/ops protected endpoints |
+| `DISCORD_WEBHOOK_URL` | Optional webhook for scan/settle alerts |
+| `REDIS_URL` | Optional shared state backend for rate-limit/cache coordination |
 
 ### Frontend (`.env.local`)
 
@@ -222,6 +254,10 @@ ev-betting-tracker/
 | `NEXT_PUBLIC_API_URL` | Backend URL (default `http://localhost:8000`) |
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key |
+| `BACKEND_BASE_URL` | Base URL used by server-side bridge routes |
+| `CRON_SECRET` | Authorization secret for frontend cron bridge endpoints |
+| `CRON_TOKEN` | Optional dedicated backend cron token for forwarded requests |
+| `OPS_ADMIN_EMAILS` | Comma-separated allowlist for `/admin/ops` and `/api/ops/status` |
 
 ---
 

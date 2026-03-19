@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server';
 
 /**
- * Sniper route: once Render is awake, trigger specific backend cron tasks.
- * Accepts `?target=...` and POSTs to https://ev-tracker-backend.onrender.com/api/cron/{target}
+ * Sniper route: once backend is awake, trigger specific backend cron tasks.
+ * Accepts `?target=...` and POSTs to ${BACKEND_BASE_URL}/api/cron/{target}
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const targetParam = url.searchParams.get('target') ?? '';
+  const backendBaseUrl = process.env.BACKEND_BASE_URL;
 
   const authHeader = request.headers.get('authorization') ?? '';
   const cronSecret = process.env.CRON_SECRET;
@@ -22,9 +23,8 @@ export async function GET(request: Request) {
   if (!targetParam) {
     return NextResponse.json({ error: 'Missing target parameter' }, { status: 400 });
   }
-  // Basic safeguard: only allow simple, safe path segments
-  if (!/^[a-z0-9-]+$/.test(targetParam)) {
-    return NextResponse.json({ error: 'Invalid target' }, { status: 400 });
+  if (!backendBaseUrl) {
+    return NextResponse.json({ error: 'BACKEND_BASE_URL not configured' }, { status: 500 });
   }
 
   // Keep the public query parameter stable, but map to backend route names.
@@ -33,11 +33,17 @@ export async function GET(request: Request) {
       ? 'run-auto-settle'
       : targetParam;
 
+  // Only allow known cron targets so this route can't be used as a generic backend proxy.
+  const allowedTargets = new Set(['run-scan', 'run-auto-settle', 'test-discord']);
+  if (!allowedTargets.has(target)) {
+    return NextResponse.json({ error: 'Invalid target' }, { status: 400 });
+  }
+
   // The backend expects X-Cron-Token (see backend/main.py). By default, reuse CRON_SECRET.
   // If you want separate secrets, set CRON_TOKEN on Vercel and on the backend as CRON_TOKEN.
   const backendCronToken = process.env.CRON_TOKEN ?? cronSecret;
 
-  const endpoint = `https://ev-tracker-backend.onrender.com/api/cron/${target}`;
+  const endpoint = `${backendBaseUrl.replace(/\/$/, '')}/api/cron/${target}`;
 
   try {
     const resp = await fetch(endpoint, {
@@ -69,7 +75,7 @@ export async function GET(request: Request) {
     return NextResponse.json(data, { status: resp.status });
   } catch (error) {
     console.error('Trigger backend error:', error);
-    return NextResponse.json({ error: 'Failed to trigger backend' }, { status: 502 });
+    return NextResponse.json({ error: 'Failed to trigger backend', target }, { status: 502 });
   }
 }
 

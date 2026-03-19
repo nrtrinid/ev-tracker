@@ -4,11 +4,27 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
+from services.shared_state import mark_alert_if_new
 
 ALERTED_KEYS: set[str] = set()
 _warned_missing_webhook = False
+ALERT_DEDUPE_TTL_SECONDS = int(os.getenv("ALERT_DEDUPE_TTL_SECONDS", "21600"))
 
 FRONTEND_BASE_URL = "https://ev-tracker-gamma.vercel.app"
+
+def _with_role_mention(payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    If DISCORD_MENTION_ROLE_ID is set, prepend a role mention to the message content.
+    This will only notify users if the role is mentionable and the channel allows role mentions.
+    """
+    role_id = os.getenv("DISCORD_MENTION_ROLE_ID")
+    if not role_id:
+        return payload
+
+    mention = f"<@&{role_id}>"
+    content = str(payload.get("content") or "").strip()
+    payload["content"] = f"{mention} {content}".strip()
+    return payload
 
 
 def should_alert(side: dict[str, Any]) -> bool:
@@ -87,6 +103,7 @@ async def send_discord_webhook(payload: dict[str, Any]) -> None:
 
     timeout = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
     try:
+        payload = _with_role_mention(payload)
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(url, json=payload)
             print(f"[Discord] Webhook response: {resp.status_code} {resp.text}")
@@ -100,6 +117,8 @@ async def send_discord_webhook(payload: dict[str, Any]) -> None:
 async def alert_for_side(side: dict[str, Any]) -> None:
     key = make_alert_key(side)
     if key in ALERTED_KEYS:
+        return
+    if not mark_alert_if_new(key, ALERT_DEDUPE_TTL_SECONDS):
         return
     if not should_alert(side):
         return
@@ -117,6 +136,8 @@ def schedule_alerts(sides: list[dict[str, Any]]) -> int:
     for side in sides:
         key = make_alert_key(side)
         if key in ALERTED_KEYS:
+            continue
+        if not mark_alert_if_new(key, ALERT_DEDUPE_TTL_SECONDS):
             continue
         if not should_alert(side):
             continue

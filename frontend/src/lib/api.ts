@@ -11,6 +11,8 @@ import type {
   TransactionCreate,
   Balance,
   ScanResult,
+  BackendReadiness,
+  OperatorStatusResponse,
 } from "./types";
 import { createClient } from "./supabase";
 
@@ -39,6 +41,23 @@ async function fetchAPI<T>(
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Unknown error" }));
     throw new Error(error.detail || `API error: ${res.status}`);
+  }
+
+  return res.json();
+}
+
+async function fetchInternalAPI<T>(endpoint: string): Promise<T> {
+  const res = await fetch(endpoint, {
+    method: "GET",
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: "Unknown error" }));
+    throw new Error(error.error || `API error: ${res.status}`);
   }
 
   return res.json();
@@ -168,4 +187,65 @@ export async function getBalances(): Promise<Balance[]> {
 /** Full scan across all sports. Backend uses 20-min TTL cache per sport. */
 export async function scanMarkets(): Promise<ScanResult> {
   return fetchAPI<ScanResult>("/api/scan-markets");
+}
+
+// ============ System Status API ============
+
+const DEFAULT_READINESS_CHECKS: BackendReadiness["checks"] = {
+  supabase_env: false,
+  db_connectivity: false,
+  scheduler_state: false,
+  scheduler_freshness: false,
+};
+
+export async function getBackendReadiness(): Promise<BackendReadiness> {
+  try {
+    const res = await fetch(`${API_URL}/ready`, {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    const payload = await res.json().catch(() => null);
+
+    if (res.ok) {
+      return {
+        status: "ready",
+        timestamp: payload?.timestamp ?? null,
+        checks: payload?.checks ?? DEFAULT_READINESS_CHECKS,
+        scheduler_freshness: payload?.scheduler_freshness,
+      };
+    }
+
+    if (res.status === 503 && payload?.detail) {
+      const detail = payload.detail;
+      return {
+        status: "not_ready",
+        timestamp: detail?.timestamp ?? payload?.timestamp ?? null,
+        checks: detail?.checks ?? DEFAULT_READINESS_CHECKS,
+        scheduler_freshness: detail?.scheduler_freshness,
+        detail: "Backend is in a degraded state",
+      };
+    }
+
+    return {
+      status: "unreachable",
+      timestamp: null,
+      checks: DEFAULT_READINESS_CHECKS,
+      detail: `Unexpected readiness response (${res.status})`,
+    };
+  } catch {
+    return {
+      status: "unreachable",
+      timestamp: null,
+      checks: DEFAULT_READINESS_CHECKS,
+      detail: "Backend is currently unreachable",
+    };
+  }
+}
+
+export async function getOperatorStatus(): Promise<OperatorStatusResponse> {
+  return fetchInternalAPI<OperatorStatusResponse>("/api/ops/status");
 }

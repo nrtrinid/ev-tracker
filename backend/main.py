@@ -4,12 +4,15 @@ FastAPI backend for sports betting EV tracking.
 """
 
 import asyncio
+import json
+import logging
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime, UTC
+from datetime import datetime, UTC, timedelta
 from contextlib import asynccontextmanager
 import os
 import time
+from uuid import uuid4
 from dotenv import load_dotenv
 import httpx
 from zoneinfo import ZoneInfo
@@ -22,10 +25,251 @@ from models import (
 )
 from calculations import american_to_decimal, calculate_ev, calculate_real_profit, calculate_clv
 from auth import get_current_user
+from services.shared_state import allow_fixed_window_rate_limit, is_redis_enabled
 
 load_dotenv()
 
 app: FastAPI
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO), format="%(message)s")
+logger = logging.getLogger("ev_tracker")
+
+SCHEDULER_STALE_WINDOWS = {
+    "clv_daily": timedelta(hours=30),
+    "jit_clv": timedelta(minutes=45),
+    "auto_settler": timedelta(hours=30),
+    "scheduled_scan": timedelta(hours=20),
+}
+
+
+def _new_run_id(prefix: str) -> str:
+    return f"{prefix}_{uuid4().hex[:12]}"
+
+
+def _log_event(event: str, level: str = "info", **fields):
+    payload = {
+        "event": event,
+        "timestamp": datetime.now(UTC).isoformat() + "Z",
+        **fields,
+    }
+    message = json.dumps(payload, default=str)
+    getattr(logger, level.lower(), logger.info)(message)
+
+
+def _validate_environment() -> None:
+    required = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"]
+    missing = [name for name in required if not os.getenv(name)]
+    if missing:
+        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
+
+    environment = os.getenv("ENVIRONMENT", "production").lower()
+    if environment not in {"development", "production", "testing", "staging"}:
+        _log_event(
+            "startup.env_environment_unexpected",
+            level="warning",
+            environment=environment,
+        )
+
+    scheduler_enabled = os.getenv("ENABLE_SCHEDULER") == "1"
+    odds_api_configured = bool(os.getenv("ODDS_API_KEY"))
+    cron_token_configured = bool(os.getenv("CRON_TOKEN"))
+
+    if scheduler_enabled and not odds_api_configured:
+        _log_event(
+            "startup.env_scheduler_without_odds_key",
+            level="warning",
+            message="ENABLE_SCHEDULER=1 but ODDS_API_KEY is missing; scan jobs will fail.",
+        )
+
+    if not cron_token_configured:
+        _log_event(
+            "startup.env_cron_token_missing",
+            level="warning",
+            message="CRON_TOKEN is missing; cron endpoints will reject requests.",
+        )
+
+    _log_event(
+        "startup.env_validated",
+        environment=environment,
+        scheduler_enabled=scheduler_enabled,
+        cron_token_configured=cron_token_configured,
+        odds_api_key_configured=odds_api_configured,
+    )
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _init_scheduler_heartbeats() -> None:
+    app.state.scheduler_heartbeats = {
+        job: {
+            "last_started_at": None,
+            "last_success_at": None,
+            "last_failure_at": None,
+            "last_run_id": None,
+            "last_duration_ms": None,
+            "last_error": None,
+        }
+        for job in SCHEDULER_STALE_WINDOWS.keys()
+    }
+    app.state.scheduler_started_at = _utc_now_iso()
+
+
+def _record_scheduler_heartbeat(
+    job_name: str,
+    run_id: str,
+    status: str,
+    duration_ms: float | None = None,
+    error: str | None = None,
+) -> None:
+    heartbeats = getattr(app.state, "scheduler_heartbeats", None)
+    if not isinstance(heartbeats, dict):
+        return
+    if job_name not in heartbeats:
+        return
+
+    job_state = heartbeats[job_name]
+    job_state["last_run_id"] = run_id
+    if status == "started":
+        job_state["last_started_at"] = _utc_now_iso()
+    elif status == "success":
+        job_state["last_success_at"] = _utc_now_iso()
+        job_state["last_duration_ms"] = duration_ms
+        job_state["last_error"] = None
+    elif status == "failure":
+        job_state["last_failure_at"] = _utc_now_iso()
+        job_state["last_duration_ms"] = duration_ms
+        job_state["last_error"] = error
+
+
+def _parse_utc_iso(timestamp: str | None) -> datetime | None:
+    if not timestamp:
+        return None
+    try:
+        normalized = timestamp.strip()
+
+        # Accept both normalized UTC timestamps (e.g. 2026-...Z)
+        # and legacy values that may look like 2026-...+00:00Z.
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1]
+
+        parsed = datetime.fromisoformat(normalized)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    except Exception:
+        try:
+            parsed = datetime.fromisoformat(f"{timestamp.strip()}+00:00")
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+        except Exception:
+            return None
+
+
+def _check_scheduler_freshness(scheduler_expected: bool) -> tuple[bool, dict]:
+    if not scheduler_expected:
+        return True, {"enabled": False, "fresh": True, "jobs": {}}
+
+    heartbeats = getattr(app.state, "scheduler_heartbeats", None)
+    if not isinstance(heartbeats, dict):
+        return False, {
+            "enabled": True,
+            "fresh": False,
+            "reason": "scheduler heartbeats unavailable",
+            "jobs": {},
+        }
+
+    now = datetime.now(UTC)
+    scheduler_started_at = _parse_utc_iso(getattr(app.state, "scheduler_started_at", None))
+    all_fresh = True
+    jobs: dict[str, dict] = {}
+    for job_name, stale_window in SCHEDULER_STALE_WINDOWS.items():
+        state = heartbeats.get(job_name) or {}
+        last_success = _parse_utc_iso(state.get("last_success_at"))
+        freshness_reason = "fresh_success"
+
+        if last_success is not None:
+            age_seconds = (now - last_success).total_seconds()
+            is_fresh = age_seconds <= stale_window.total_seconds()
+            if not is_fresh:
+                freshness_reason = "stale_success"
+        else:
+            age_seconds = None
+            if scheduler_started_at is not None:
+                startup_age = (now - scheduler_started_at).total_seconds()
+                is_fresh = startup_age <= stale_window.total_seconds()
+                freshness_reason = "waiting_first_run" if is_fresh else "stale_no_success"
+            else:
+                is_fresh = False
+                freshness_reason = "unknown_start_time"
+
+        if not is_fresh:
+            all_fresh = False
+        jobs[job_name] = {
+            "fresh": is_fresh,
+            "freshness_reason": freshness_reason,
+            "last_success_at": state.get("last_success_at"),
+            "last_failure_at": state.get("last_failure_at"),
+            "last_run_id": state.get("last_run_id"),
+            "last_error": state.get("last_error"),
+            "stale_after_seconds": int(stale_window.total_seconds()),
+            "age_seconds": round(age_seconds, 2) if age_seconds is not None else None,
+        }
+
+    return all_fresh, {"enabled": True, "fresh": all_fresh, "jobs": jobs}
+
+
+def _runtime_state() -> dict:
+    environment = os.getenv("ENVIRONMENT", "production").lower()
+    scheduler_expected = os.getenv("ENABLE_SCHEDULER") == "1" and os.getenv("TESTING") != "1"
+    scheduler_running = bool(getattr(app.state, "scheduler", None))
+    return {
+        "environment": environment,
+        "scheduler_expected": scheduler_expected,
+        "scheduler_running": scheduler_running,
+        "redis_configured": is_redis_enabled(),
+        "cron_token_configured": bool(os.getenv("CRON_TOKEN")),
+        "odds_api_key_configured": bool(os.getenv("ODDS_API_KEY")),
+        "supabase_url_configured": bool(os.getenv("SUPABASE_URL")),
+        "supabase_service_role_configured": bool(os.getenv("SUPABASE_SERVICE_ROLE_KEY")),
+    }
+
+
+def _check_db_ready() -> tuple[bool, str | None]:
+    try:
+        db = get_db()
+        # Cheap DB probe through PostgREST with minimal payload.
+        db.table("settings").select("user_id").limit(1).execute()
+        return True, None
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
+def _init_ops_status() -> None:
+    app.state.ops_status = {
+        "last_scheduler_scan": None,
+        "last_cron_scan": None,
+        "last_manual_scan": None,
+        "last_auto_settle": None,
+        "last_auto_settle_summary": None,
+        "last_readiness_failure": None,
+        "odds_api_activity": {
+            "summary": {
+                "calls_last_hour": 0,
+                "errors_last_hour": 0,
+                "last_success_at": None,
+                "last_error_at": None,
+            },
+            "recent_calls": [],
+        },
+    }
+
+
+def _set_ops_status(key: str, value: dict) -> None:
+    state = getattr(app.state, "ops_status", None)
+    if not isinstance(state, dict):
+        _init_ops_status()
+        state = app.state.ops_status
+    state[key] = value
 
 PHOENIX_TZ = None
 try:
@@ -44,20 +288,67 @@ except Exception as e:
 async def _run_clv_daily_job():
     """Safety-net: fetch closing Pinnacle lines for all pending CLV-tracked bets."""
     from services.odds_api import fetch_clv_for_pending_bets
+
+    run_id = _new_run_id("clv_daily")
+    started_at = time.monotonic()
+    _record_scheduler_heartbeat("clv_daily", run_id, "started")
+    _log_event("scheduler.clv_daily.started", run_id=run_id)
     db = get_db()
     try:
         updated = await fetch_clv_for_pending_bets(db)
-        print(f"[CLV daily job] Updated {updated} bet(s) with closing lines.")
+        _log_event(
+            "scheduler.clv_daily.completed",
+            run_id=run_id,
+            updated=updated,
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        )
+        _record_scheduler_heartbeat(
+            "clv_daily",
+            run_id,
+            "success",
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        )
     except Exception as e:
-        print(f"[CLV daily job] Error: {e}")
+        _record_scheduler_heartbeat(
+            "clv_daily",
+            run_id,
+            "failure",
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+            error=str(e),
+        )
+        _log_event(
+            "scheduler.clv_daily.failed",
+            level="error",
+            run_id=run_id,
+            error_class=type(e).__name__,
+            error=str(e),
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        )
 
 
 async def _run_jit_clv_snatcher_job():
     """JIT CLV Snatcher: capture closing Pinnacle lines for games starting in the next 20 min."""
     from services.odds_api import run_jit_clv_snatcher
+
+    run_id = _new_run_id("jit_clv")
+    started_at = time.monotonic()
+    _record_scheduler_heartbeat("jit_clv", run_id, "started")
+    _log_event("scheduler.jit_clv.started", run_id=run_id)
     db = get_db()
     try:
         updated = await run_jit_clv_snatcher(db)
+        _log_event(
+            "scheduler.jit_clv.completed",
+            run_id=run_id,
+            updated=updated,
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        )
+        _record_scheduler_heartbeat(
+            "jit_clv",
+            run_id,
+            "success",
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        )
         if updated:
             print(f"[JIT CLV] Captured closing lines for {updated} bet(s).")
             # Optional notification (guarded to avoid Discord spam).
@@ -77,18 +368,75 @@ async def _run_jit_clv_snatcher_job():
                 }
                 asyncio.create_task(send_discord_webhook(payload))
     except Exception as e:
-        print(f"[JIT CLV] Error: {e}")
+        _record_scheduler_heartbeat(
+            "jit_clv",
+            run_id,
+            "failure",
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+            error=str(e),
+        )
+        _log_event(
+            "scheduler.jit_clv.failed",
+            level="error",
+            run_id=run_id,
+            error_class=type(e).__name__,
+            error=str(e),
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        )
 
 
 async def _run_auto_settler_job():
     """Auto-Settler: grade completed ML bets using The Odds API /scores endpoint."""
-    from services.odds_api import run_auto_settler
+    from services.odds_api import run_auto_settler, get_last_auto_settler_summary
+
+    run_id = _new_run_id("auto_settler")
+    started_at = time.monotonic()
+    _record_scheduler_heartbeat("auto_settler", run_id, "started")
+    _log_event("scheduler.auto_settler.started", run_id=run_id)
     db = get_db()
     try:
-        settled = await run_auto_settler(db)
-        print(f"[Auto-Settler] Graded {settled} bet(s).")
+        settled = await run_auto_settler(db, source="auto_settle_scheduler")
+        _log_event(
+            "scheduler.auto_settler.completed",
+            run_id=run_id,
+            settled=settled,
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        )
+        _record_scheduler_heartbeat(
+            "auto_settler",
+            run_id,
+            "success",
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        )
+        _set_ops_status(
+            "last_auto_settle",
+            {
+                "source": "scheduler",
+                "run_id": run_id,
+                "settled": settled,
+                "duration_ms": round((time.monotonic() - started_at) * 1000, 2),
+                "captured_at": _utc_now_iso(),
+            },
+        )
+        summary = get_last_auto_settler_summary()
+        if summary:
+            _set_ops_status("last_auto_settle_summary", summary)
     except Exception as e:
-        print(f"[Auto-Settler] Error: {e}")
+        _record_scheduler_heartbeat(
+            "auto_settler",
+            run_id,
+            "failure",
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+            error=str(e),
+        )
+        _log_event(
+            "scheduler.auto_settler.failed",
+            level="error",
+            run_id=run_id,
+            error_class=type(e).__name__,
+            error=str(e),
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        )
 
 
 async def _run_scheduled_scan_job():
@@ -98,37 +446,103 @@ async def _run_scheduled_scan_job():
     """
     from services.odds_api import get_cached_or_scan, SUPPORTED_SPORTS
 
+    run_id = _new_run_id("scheduled_scan")
     started = datetime.now(UTC).isoformat()
-    print(f"[Scheduled scan] Starting scan job at {started}Z")
+    started_at = time.monotonic()
+    _record_scheduler_heartbeat("scheduled_scan", run_id, "started")
+    _log_event("scheduler.scan.started", run_id=run_id, started_at=started + "Z")
 
     total_sides = 0
     alerts_scheduled = 0
+    hard_errors = 0
     from services.discord_alerts import schedule_alerts
 
     for sport_key in SUPPORTED_SPORTS:
         try:
-            result = await get_cached_or_scan(sport_key)
+            result = await get_cached_or_scan(sport_key, source="scheduled_scan")
             sides_count = len(result.get("sides") or [])
             fetched = result.get("events_fetched")
             with_both = result.get("events_with_both_books")
             sides = result.get("sides") or []
             total_sides += len(sides)
             alerts_scheduled += schedule_alerts(sides)
-            print(
-                f"[Scheduled scan] {sport_key}: {sides_count} sides "
-                f"({fetched} events, {with_both} with sharp+target)"
+            _log_event(
+                "scheduler.scan.sport_completed",
+                run_id=run_id,
+                sport=sport_key,
+                sides=sides_count,
+                events_fetched=fetched,
+                events_with_both_books=with_both,
             )
         except httpx.HTTPStatusError as e:
             if e.response is not None and e.response.status_code == 404:
-                print(f"[Scheduled scan] {sport_key}: 404 (no odds). Skipping.")
+                _log_event(
+                    "scheduler.scan.sport_skipped",
+                    run_id=run_id,
+                    sport=sport_key,
+                    status=404,
+                    reason="no odds",
+                )
                 continue
-            print(f"[Scheduled scan] {sport_key}: HTTP error: {e}")
+            _log_event(
+                "scheduler.scan.sport_failed",
+                level="error",
+                run_id=run_id,
+                sport=sport_key,
+                error_class=type(e).__name__,
+                error=str(e),
+            )
+            hard_errors += 1
         except Exception as e:
             # Never crash the server/scheduler; log and continue.
-            print(f"[Scheduled scan] {sport_key}: Error: {e}")
+            _log_event(
+                "scheduler.scan.sport_failed",
+                level="error",
+                run_id=run_id,
+                sport=sport_key,
+                error_class=type(e).__name__,
+                error=str(e),
+            )
+            hard_errors += 1
 
     finished = datetime.now(UTC).isoformat()
-    print(f"[Scheduled scan] Finished scan job at {finished}Z")
+    _log_event(
+        "scheduler.scan.completed",
+        run_id=run_id,
+        finished_at=finished + "Z",
+        total_sides=total_sides,
+        alerts_scheduled=alerts_scheduled,
+        duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+    )
+    duration_ms = round((time.monotonic() - started_at) * 1000, 2)
+    if hard_errors:
+        _record_scheduler_heartbeat(
+            "scheduled_scan",
+            run_id,
+            "failure",
+            duration_ms=duration_ms,
+            error=f"{hard_errors} sport(s) failed",
+        )
+    else:
+        _record_scheduler_heartbeat(
+            "scheduled_scan",
+            run_id,
+            "success",
+            duration_ms=duration_ms,
+        )
+
+    _set_ops_status(
+        "last_scheduler_scan",
+        {
+            "run_id": run_id,
+            "started_at": started + "Z",
+            "finished_at": finished + "Z",
+            "duration_ms": duration_ms,
+            "total_sides": total_sides,
+            "alerts_scheduled": alerts_scheduled,
+            "hard_errors": hard_errors,
+        },
+    )
 
     # Optional heartbeat so we can confirm the scheduled scan ran even when it finds no lines.
     # Send only when enabled and when no alerts were scheduled.
@@ -174,6 +588,7 @@ async def start_scheduler():
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
     from apscheduler.triggers.interval import IntervalTrigger
+    _init_scheduler_heartbeats()
     scheduler = AsyncIOScheduler()
     # 23:30 UTC = 6:30 PM ET (accounts for EST; shift to 22:30 during EDT if needed)
     scheduler.add_job(_run_clv_daily_job, CronTrigger(hour=23, minute=30))
@@ -193,6 +608,12 @@ async def start_scheduler():
     else:
         print("[Scheduler] Phoenix timezone unavailable; skipping scheduled scan jobs.")
     scheduler.start()
+    app.state.scheduler_started_at = _utc_now_iso()
+    if hasattr(scheduler, "get_jobs"):
+        jobs_count = len(scheduler.get_jobs())
+    else:
+        jobs_count = len(getattr(scheduler, "jobs", []))
+    _log_event("scheduler.started", jobs=jobs_count)
     app.state.scheduler = scheduler
 
 
@@ -201,12 +622,20 @@ async def stop_scheduler():
     if scheduler:
         try:
             scheduler.shutdown(wait=False)
+            _log_event("scheduler.stopped")
         except Exception as e:
-            print(f"[Scheduler] Error shutting down: {e}")
+            _log_event(
+                "scheduler.stop_failed",
+                level="error",
+                error_class=type(e).__name__,
+                error=str(e),
+            )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _validate_environment()
+    _init_ops_status()
     await start_scheduler()
     try:
         yield
@@ -233,29 +662,25 @@ app.add_middleware(
 # Import database after app setup to avoid circular imports
 from database import get_db
 
-# ---------- Scan rate limit (per user, in-memory) ----------
-# 12 full scans per 15 minutes per user; cache makes most requests cheap.
+# ---------- Scan rate limit ----------
+# 12 full scans per 15 minutes per user; uses shared state when REDIS_URL is configured.
 _scan_rate_window_sec = 15 * 60
 _scan_rate_max = 12
-_scan_rate_times: dict[str, list[float]] = {}
-_scan_rate_lock = asyncio.Lock()
 
 
 async def require_scan_rate_limit(user: dict = Depends(get_current_user)) -> dict:
     """Allow at most _scan_rate_max scan requests per user per _scan_rate_window_sec."""
-    async with _scan_rate_lock:
-        now = time.time()
-        uid = user["id"]
-        if uid not in _scan_rate_times:
-            _scan_rate_times[uid] = []
-        times = _scan_rate_times[uid]
-        times[:] = [t for t in times if (now - t) < _scan_rate_window_sec]
-        if len(times) >= _scan_rate_max:
-            raise HTTPException(
-                status_code=429,
-                detail="Too many scan requests. Please try again in a few minutes.",
-            )
-        times.append(now)
+    uid = user["id"]
+    allowed = allow_fixed_window_rate_limit(
+        bucket_key=f"scan:{uid}",
+        max_requests=_scan_rate_max,
+        window_seconds=_scan_rate_window_sec,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many scan requests. Please try again in a few minutes.",
+        )
     return user
 
 
@@ -396,6 +821,59 @@ def build_bet_response(row: dict, k_factor: float) -> BetResponse:
 def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "timestamp": datetime.now(UTC).isoformat()}
+
+
+@app.get("/ready")
+def readiness_check():
+    """
+    Readiness endpoint.
+
+    - liveness (`/health`) only checks that the process is up
+    - readiness (`/ready`) checks core runtime dependencies
+    """
+    runtime = _runtime_state()
+    db_ok, db_error = _check_db_ready()
+    scheduler_fresh_ok, scheduler_freshness = _check_scheduler_freshness(runtime["scheduler_expected"])
+
+    checks = {
+        "supabase_env": runtime["supabase_url_configured"] and runtime["supabase_service_role_configured"],
+        "db_connectivity": db_ok,
+        "scheduler_state": (not runtime["scheduler_expected"]) or runtime["scheduler_running"],
+        "scheduler_freshness": scheduler_fresh_ok,
+    }
+    ready = all(checks.values())
+
+    if not ready:
+        _log_event(
+            "readiness.failed",
+            level="warning",
+            checks=checks,
+            db_error=db_error,
+            runtime=runtime,
+        )
+        _set_ops_status(
+            "last_readiness_failure",
+            {
+                "captured_at": _utc_now_iso(),
+                "checks": checks,
+                "db_error": db_error,
+            },
+        )
+
+    response = {
+        "status": "ready" if ready else "not_ready",
+        "timestamp": datetime.now(UTC).isoformat() + "Z",
+        "checks": checks,
+        "runtime": runtime,
+        "scheduler_freshness": scheduler_freshness,
+    }
+    if db_error:
+        response["db_error"] = db_error
+
+    if ready:
+        return response
+
+    raise HTTPException(status_code=503, detail=response)
 
 
 # ============ Bets CRUD ============
@@ -788,6 +1266,9 @@ def delete_transaction(
     if result.status_code and result.status_code >= 400:
         raise HTTPException(status_code=500, detail="Failed to delete transaction")
 
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
     return {"deleted": True, "id": transaction_id}
 
 
@@ -997,8 +1478,19 @@ async def scan_markets(
 
     try:
         if sport is not None:
-            result = await get_cached_or_scan(sport)
+            result = await get_cached_or_scan(sport, source="manual_scan")
             scanned_at = datetime.utcfromtimestamp(result["fetched_at"]).isoformat() + "Z"
+            _set_ops_status(
+                "last_manual_scan",
+                {
+                    "captured_at": _utc_now_iso(),
+                    "sport": sport,
+                    "events_fetched": result.get("events_fetched"),
+                    "events_with_both_books": result.get("events_with_both_books"),
+                    "total_sides": len(result.get("sides") or []),
+                    "api_requests_remaining": result.get("api_requests_remaining"),
+                },
+            )
             # Piggyback CLV update — zero extra API calls
             asyncio.create_task(_piggyback_clv(result["sides"]))
             return FullScanResponse(
@@ -1020,7 +1512,7 @@ async def scan_markets(
         sports_to_scan = ["basketball_nba"] if env == "development" else SUPPORTED_SPORTS
         for s in sports_to_scan:
             try:
-                result = await get_cached_or_scan(s)
+                result = await get_cached_or_scan(s, source="manual_scan")
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 404:
                     continue  # sport has no odds right now (e.g. off-season)
@@ -1039,6 +1531,17 @@ async def scan_markets(
             if ft is not None:
                 oldest_fetched = ft if oldest_fetched is None else min(oldest_fetched, ft)
         scanned_at = (datetime.utcfromtimestamp(oldest_fetched).isoformat() + "Z") if oldest_fetched else None
+        _set_ops_status(
+            "last_manual_scan",
+            {
+                "captured_at": _utc_now_iso(),
+                "sport": "all",
+                "events_fetched": total_events,
+                "events_with_both_books": total_with_both,
+                "total_sides": len(all_sides),
+                "api_requests_remaining": min_remaining,
+            },
+        )
         # Piggyback CLV update across all scanned sides — zero extra API calls
         asyncio.create_task(_piggyback_clv(all_sides))
         return FullScanResponse(
@@ -1070,6 +1573,10 @@ async def cron_run_scan(x_cron_token: str | None = Header(default=None, alias="X
     if not x_cron_token or x_cron_token != expected:
         raise HTTPException(status_code=401, detail="Invalid cron token")
 
+    run_id = _new_run_id("cron_scan")
+    started_clock = time.monotonic()
+    _log_event("cron.scan.started", run_id=run_id)
+
     from services.odds_api import get_cached_or_scan, SUPPORTED_SPORTS
 
     started = datetime.now(UTC).isoformat() + "Z"
@@ -1081,7 +1588,7 @@ async def cron_run_scan(x_cron_token: str | None = Header(default=None, alias="X
 
     for sport_key in SUPPORTED_SPORTS:
         try:
-            result = await get_cached_or_scan(sport_key)
+            result = await get_cached_or_scan(sport_key, source="cron_scan")
             sides = result.get("sides") or []
             scanned.append(
                 {
@@ -1099,12 +1606,53 @@ async def cron_run_scan(x_cron_token: str | None = Header(default=None, alias="X
             # 404 just means out of season / no odds; treat as non-fatal.
             if status == 404:
                 errors.append({"sport": sport_key, "status": 404, "error": "no odds"})
+                _log_event("cron.scan.sport_skipped", run_id=run_id, sport=sport_key, status=404, reason="no odds")
                 continue
             errors.append({"sport": sport_key, "status": status, "error": str(e)})
+            _log_event(
+                "cron.scan.sport_failed",
+                level="error",
+                run_id=run_id,
+                sport=sport_key,
+                status=status,
+                error_class=type(e).__name__,
+                error=str(e),
+            )
         except Exception as e:
             errors.append({"sport": sport_key, "error": str(e)})
+            _log_event(
+                "cron.scan.sport_failed",
+                level="error",
+                run_id=run_id,
+                sport=sport_key,
+                error_class=type(e).__name__,
+                error=str(e),
+            )
 
     finished = datetime.now(UTC).isoformat() + "Z"
+    duration_ms = round((time.monotonic() - started_clock) * 1000, 2)
+    _log_event(
+        "cron.scan.completed",
+        run_id=run_id,
+        total_sides=total_sides,
+        alerts_scheduled=alerts_scheduled,
+        error_count=len(errors),
+        duration_ms=duration_ms,
+    )
+
+    _set_ops_status(
+        "last_cron_scan",
+        {
+            "run_id": run_id,
+            "started_at": started,
+            "finished_at": finished,
+            "duration_ms": duration_ms,
+            "total_sides": total_sides,
+            "alerts_scheduled": alerts_scheduled,
+            "error_count": len(errors),
+            "errors": errors,
+        },
+    )
 
     # Optional heartbeat so we can confirm the scheduled scan ran even when it finds no lines.
     # Reuse the existing heartbeat flag to avoid adding another env var.
@@ -1130,8 +1678,10 @@ async def cron_run_scan(x_cron_token: str | None = Header(default=None, alias="X
 
     return {
         "ok": True,
+        "run_id": run_id,
         "started_at": started,
         "finished_at": finished,
+        "duration_ms": duration_ms,
         "sports_scanned": scanned,
         "errors": errors,
         "total_sides": total_sides,
@@ -1154,17 +1704,49 @@ async def cron_run_auto_settle(
     if not x_cron_token or x_cron_token != expected:
         raise HTTPException(status_code=401, detail="Invalid cron token")
 
+    run_id = _new_run_id("cron_auto_settle")
+    started_clock = time.monotonic()
+    _log_event("cron.auto_settle.started", run_id=run_id)
+
+    from services.odds_api import get_last_auto_settler_summary
+
     db = get_db()
     started = datetime.now(UTC).isoformat() + "Z"
     try:
         from services.odds_api import run_auto_settler
 
-        settled = await run_auto_settler(db)
+        settled = await run_auto_settler(db, source="auto_settle_cron")
+        _log_event("cron.auto_settle.completed", run_id=run_id, settled=settled)
     except Exception as e:
         # Never crash the server; return error for cron logs.
+        _log_event(
+            "cron.auto_settle.failed",
+            level="error",
+            run_id=run_id,
+            error_class=type(e).__name__,
+            error=str(e),
+            duration_ms=round((time.monotonic() - started_clock) * 1000, 2),
+        )
         raise HTTPException(status_code=502, detail=f"Auto-settler error: {e}")
     finally:
         finished = datetime.now(UTC).isoformat() + "Z"
+
+    duration_ms = round((time.monotonic() - started_clock) * 1000, 2)
+
+    _set_ops_status(
+        "last_auto_settle",
+        {
+            "source": "cron",
+            "run_id": run_id,
+            "started_at": started,
+            "finished_at": finished,
+            "duration_ms": duration_ms,
+            "settled": settled,
+        },
+    )
+    summary = get_last_auto_settler_summary()
+    if summary:
+        _set_ops_status("last_auto_settle_summary", summary)
 
     if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1":
         from services.discord_alerts import send_discord_webhook
@@ -1185,9 +1767,47 @@ async def cron_run_auto_settle(
 
     return {
         "ok": True,
+        "run_id": run_id,
         "started_at": started,
         "finished_at": finished,
+        "duration_ms": duration_ms,
         "settled": settled,
+    }
+
+
+@app.get("/api/ops/status")
+def ops_status(x_cron_token: str | None = Header(default=None, alias="X-Cron-Token")):
+    """
+    Protected operator status endpoint.
+
+    Uses the same CRON_TOKEN auth as cron routes to avoid exposing internals publicly.
+    """
+    expected = os.getenv("CRON_TOKEN")
+    if not expected:
+        raise HTTPException(status_code=503, detail="CRON_TOKEN not configured on server")
+    if not x_cron_token or x_cron_token != expected:
+        raise HTTPException(status_code=401, detail="Invalid cron token")
+
+    runtime = _runtime_state()
+    db_ok, db_error = _check_db_ready()
+    scheduler_fresh_ok, scheduler_freshness = _check_scheduler_freshness(runtime["scheduler_expected"])
+    ops = getattr(app.state, "ops_status", {})
+    from services.odds_api import get_odds_api_activity_snapshot
+
+    odds_api_activity = get_odds_api_activity_snapshot()
+    if isinstance(ops, dict):
+        ops["odds_api_activity"] = odds_api_activity
+
+    return {
+        "timestamp": _utc_now_iso(),
+        "runtime": runtime,
+        "checks": {
+            "db_connectivity": db_ok,
+            "scheduler_freshness": scheduler_fresh_ok,
+        },
+        "db_error": db_error,
+        "scheduler_freshness": scheduler_freshness,
+        "ops": ops,
     }
 
 
@@ -1206,6 +1826,10 @@ async def cron_test_discord(
     if not x_cron_token or x_cron_token != expected:
         raise HTTPException(status_code=401, detail="Invalid cron token")
 
+    run_id = _new_run_id("cron_discord_test")
+    started_at = time.monotonic()
+    _log_event("cron.discord_test.started", run_id=run_id)
+
     from services.discord_alerts import send_discord_webhook
 
     payload = {
@@ -1222,7 +1846,12 @@ async def cron_test_discord(
 
     # Awaited directly so any Discord error surfaces in logs/response.
     await send_discord_webhook(payload)
-    return {"ok": True, "scheduled": True}
+    _log_event(
+        "cron.discord_test.completed",
+        run_id=run_id,
+        duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+    )
+    return {"ok": True, "scheduled": True, "run_id": run_id}
 
 
 if __name__ == "__main__":

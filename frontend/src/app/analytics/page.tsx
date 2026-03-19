@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { getBets, getSummary, getBalances } from "@/lib/api";
+import { useBackendReadiness } from "@/lib/hooks";
 import { 
   BarChart, 
   Bar, 
@@ -249,8 +250,10 @@ export default function AnalyticsPage() {
     queryKey: ["balances"],
     queryFn: getBalances,
   });
+  const { data: readiness } = useBackendReadiness();
 
   const isLoading = summaryLoading || betsLoading;
+  const showAnalyticsHint = !!readiness && (readiness.status !== "ready" || !readiness.checks.scheduler_freshness);
 
   // Get unique sportsbooks for filter options
   const sportsbookOptions = useMemo(() => {
@@ -513,6 +516,12 @@ export default function AnalyticsPage() {
       </div>
       
       <div className="container mx-auto px-4 py-6 space-y-6 max-w-4xl">
+        {showAnalyticsHint && (
+          <div className="inline-flex items-center gap-1.5 rounded-md border border-[#C4A35A]/35 bg-[#C4A35A]/15 px-2.5 py-1.5 text-xs text-[#5C4D2E]">
+            <Info className="h-3.5 w-3.5" />
+            Recent analytics may be incomplete while data finishes syncing.
+          </div>
+        )}
         {isLoading ? (
           <div className="space-y-6">
             {/* Z-Score Hero Card Skeleton */}

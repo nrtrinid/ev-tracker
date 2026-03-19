@@ -7,6 +7,8 @@ export const queryKeys = {
   bets: ["bets"] as const,
   bet: (id: string) => ["bets", id] as const,
   summary: ["summary"] as const,
+  backendReadiness: ["backend-readiness"] as const,
+  operatorStatus: ["operator-status"] as const,
   settings: ["settings"] as const,
   transactions: ["transactions"] as const,
   balances: ["balances"] as const,
@@ -113,6 +115,26 @@ export function useSummary() {
   return useQuery({
     queryKey: queryKeys.summary,
     queryFn: api.getSummary,
+  });
+}
+
+export function useBackendReadiness() {
+  return useQuery({
+    queryKey: queryKeys.backendReadiness,
+    queryFn: api.getBackendReadiness,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    retry: 0,
+  });
+}
+
+export function useOperatorStatus() {
+  return useQuery({
+    queryKey: queryKeys.operatorStatus,
+    queryFn: api.getOperatorStatus,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    retry: 1,
   });
 }
 

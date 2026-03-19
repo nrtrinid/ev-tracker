@@ -1,11 +1,13 @@
 ## Testing
 
-This project touches money-adjacent calculations (EV, profit, balances) and user-facing recordkeeping (bets/transactions). The goal of testing here is to prevent regressions in the EV math, settlement/profit logic, core route behavior, and a couple critical UI flows—without over-claiming maturity.
+This project touches money-adjacent calculations (EV, profit, balances), user-facing recordkeeping (bets/transactions), and background automation (scan/settle scheduling and ops observability). The goal of testing is to prevent regressions in EV math, settlement/profit logic, scheduler behavior, protected ops routes, and critical UI flows without over-claiming maturity.
 
 ### Strategy (lean pyramid)
 
 - **Unit (backend, fast)**: deterministic tests for the calculation engine.
+- **Unit (backend, fast)**: deterministic tests for calculation and odds-activity summarization logic.
 - **Integration (backend routes, Supabase-backed)**: route-level behavior against a real Supabase DB + Auth user.
+- **Automation route checks (backend)**: cron/ops/scheduler status behavior with controlled fixtures.
 - **Smoke (frontend, Playwright)**: a couple critical UI flows against local dev servers.
 - **Manual dogfooding**: scanner realism, scheduler behavior, and UX edge cases.
 
@@ -24,7 +26,21 @@ This project touches money-adjacent calculations (EV, profit, balances) and user
 From `backend/` with your venv activated:
 
 - `pytest tests/test_calculations.py -v`
+- `pytest tests/test_odds_api_activity.py -v`
 - Or exclude integration: `pytest -m "not integration" -v`
+
+#### Backend hardening / scheduler tests
+
+From `backend/` with your venv activated:
+
+- `pytest tests/test_scheduler.py -v`
+- `pytest tests/test_scheduler.py tests/test_odds_api_activity.py -v`
+
+What these cover:
+
+- Scheduler heartbeat/status payload behavior.
+- Protected ops status response expectations.
+- Odds API activity summary and recent-call sanitization.
 
 #### Backend integration tests (Supabase-backed)
 
@@ -63,24 +79,49 @@ From `frontend/`:
 - Run (Windows PowerShell):
   - `$env:PLAYWRIGHT_TEST_EMAIL="<email>"; $env:PLAYWRIGHT_TEST_PASSWORD="<password>"; npm run test:e2e`
 
+#### Frontend operator-access tests
+
+These tests cover the new ops hardening layer:
+
+- Utility behavior for allowlist normalization + fail-closed logic
+- Non-admin denial for `/admin/ops` and `/api/ops/status`
+
+From `frontend/`:
+
+- Utility tests (no credentials required):
+  - `npm run test:ops-utils`
+
+- Non-admin denial e2e (requires a real non-admin account):
+  - Windows PowerShell:
+    - `$env:PLAYWRIGHT_NON_ADMIN_EMAIL="<email>"; $env:PLAYWRIGHT_NON_ADMIN_PASSWORD="<password>"; npm run test:ops-access`
+
+Notes:
+
+- `test:ops-access` intentionally skips if non-admin credentials are not set.
+- Keep one dedicated non-admin test user to avoid false positives.
+
 ### What this suite gives you (today)
 
 - High confidence in EV math and profit computation.
 - Good confidence that core CRUD + summary-style backend routes behave correctly against a real database.
+- Better confidence that automation/ops hardening paths behave correctly.
 - Basic “does it still work?” coverage for a couple critical UI flows.
 
 ### Known gaps (intentionally not automated yet)
 
 - Scanner end-to-end correctness against live odds + market mapping edge cases.
-- Scheduler jobs (CLV, auto-settle) and time-based behavior.
+- Full time-based scheduler execution lifecycle in CI-like environments.
 - Performance/load, rate-limit behavior, and broader UI regression coverage.
-- Running integration + Playwright in CI (requires secrets + services; kept out for now).
+- Playwright in CI (requires browser/auth secrets/services; kept local for now).
 
 ### Pre-beta checklist (quick)
 
 - Run unit tests.
+- Run scheduler/odds-activity backend tests.
 - Run backend integration tests against a dedicated test user.
 - Run Playwright smokes with a test login.
+- Run `npm run test:ops-utils`.
+- Run `npm run test:ops-access` with non-admin credentials.
 - Manually: scan a sport in dev mode and spot-check a handful of edges/“fair odds.”
 - Manually: log a bet → settle → verify summary and balances change as expected.
 

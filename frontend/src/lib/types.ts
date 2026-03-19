@@ -168,6 +168,128 @@ export interface ScanResult {
   scanned_at?: string | null;
 }
 
+export interface BackendReadiness {
+  status: "ready" | "not_ready" | "unreachable";
+  timestamp: string | null;
+  checks: {
+    supabase_env: boolean;
+    db_connectivity: boolean;
+    scheduler_state: boolean;
+    scheduler_freshness: boolean;
+  };
+  scheduler_freshness?: {
+    enabled: boolean;
+    fresh: boolean;
+    reason?: string;
+    jobs?: Record<
+      string,
+      {
+        fresh: boolean;
+        freshness_reason: string;
+        last_success_at: string | null;
+        last_failure_at: string | null;
+        last_run_id: string | null;
+        last_error: string | null;
+        stale_after_seconds: number;
+        age_seconds: number | null;
+      }
+    >;
+  };
+  detail?: string;
+}
+
+export interface OperatorStatusResponse {
+  timestamp: string;
+  runtime: {
+    environment?: string;
+    scheduler_expected?: boolean;
+    scheduler_running?: boolean;
+    redis_configured?: boolean;
+    cron_token_configured?: boolean;
+    odds_api_key_configured?: boolean;
+    supabase_url_configured?: boolean;
+    supabase_service_role_configured?: boolean;
+  };
+  checks: {
+    db_connectivity: boolean;
+    scheduler_freshness: boolean;
+  };
+  db_error?: string | null;
+  scheduler_freshness?: BackendReadiness["scheduler_freshness"];
+  ops?: {
+    last_scheduler_scan?: {
+      run_id?: string;
+      started_at?: string;
+      finished_at?: string;
+      duration_ms?: number;
+      total_sides?: number;
+      alerts_scheduled?: number;
+      hard_errors?: number;
+      captured_at?: string;
+    } | null;
+    last_cron_scan?: {
+      run_id?: string;
+      started_at?: string;
+      finished_at?: string;
+      duration_ms?: number;
+      total_sides?: number;
+      alerts_scheduled?: number;
+      error_count?: number;
+      errors?: unknown[];
+      captured_at?: string;
+    } | null;
+    last_manual_scan?: {
+      captured_at?: string;
+      sport?: string;
+      events_fetched?: number;
+      events_with_both_books?: number;
+      total_sides?: number;
+      api_requests_remaining?: string | number | null;
+    } | null;
+    last_auto_settle?: {
+      source?: string;
+      run_id?: string;
+      started_at?: string;
+      finished_at?: string;
+      duration_ms?: number;
+      settled?: number;
+      captured_at?: string;
+    } | null;
+    last_auto_settle_summary?: {
+      captured_at?: string;
+      total_settled?: number;
+      skipped_totals?: Record<string, number>;
+      sports?: Array<Record<string, unknown>>;
+    } | null;
+    last_readiness_failure?: {
+      captured_at?: string;
+      checks?: Record<string, boolean>;
+      db_error?: string | null;
+    } | null;
+    odds_api_activity?: {
+      summary?: {
+        calls_last_hour?: number;
+        errors_last_hour?: number;
+        last_success_at?: string | null;
+        last_error_at?: string | null;
+      };
+      recent_calls?: Array<{
+        timestamp?: string | null;
+        source?: string | null;
+        endpoint?: string | null;
+        sport?: string | null;
+        cache_hit?: boolean;
+        outbound_call_made?: boolean;
+        status_code?: number | null;
+        duration_ms?: number | null;
+        api_requests_remaining?: string | number | null;
+        error_type?: string | null;
+        error_message?: string | null;
+      }>;
+    } | null;
+  };
+}
+
 export interface ScannedBetData {
   sportsbook: string;
   sport: string;

@@ -2,14 +2,15 @@
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useSummary, useBets } from "@/lib/hooks";
+import { useSummary, useBets, useBackendReadiness } from "@/lib/hooks";
 import { formatCurrency, cn } from "@/lib/utils";
-import { TrendingUp, DollarSign, Activity, Clock } from "lucide-react";
+import { TrendingUp, DollarSign, Activity, Clock, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 
 export function Dashboard() {
   const { data: summary, isLoading: summaryLoading } = useSummary();
   const { data: bets, isLoading: betsLoading } = useBets();
+  const { data: readiness } = useBackendReadiness();
 
   const isLoading = summaryLoading || betsLoading;
 
@@ -37,6 +38,10 @@ export function Dashboard() {
   const pendingEV = pendingBets.reduce((sum, b) => sum + b.ev_total, 0);
   const settledEV = settledBets.reduce((sum, b) => sum + b.ev_total, 0);
   const evConversion = settledEV > 0 ? (summary.total_real_profit / settledEV) : null;
+  const showDegradedHint = !!readiness && (readiness.status !== "ready" || !readiness.checks.scheduler_freshness);
+  const degradedLabel = readiness?.status === "unreachable"
+    ? "Some data is temporarily unavailable"
+    : "Recent bet results may still be updating";
 
   return (
     <Link href="/analytics" className="block">
@@ -105,6 +110,12 @@ export function Dashboard() {
           </CardContent>
         </Card>
       </div>
+      {showDegradedHint && (
+        <div className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-[#B85C38]/30 bg-[#B85C38]/10 px-2.5 py-1.5 text-xs text-[#8B3D20]">
+          <AlertTriangle className="h-3.5 w-3.5" />
+          {degradedLabel}
+        </div>
+      )}
     </Link>
   );
 }

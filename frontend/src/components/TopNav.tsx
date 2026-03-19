@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Calculator, BarChart3, Settings, Home, LogOut, Radar } from "lucide-react";
+import { Calculator, BarChart3, Settings, Home, LogOut, Radar, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
+import { useBackendReadiness } from "@/lib/hooks";
 
 const navItems = [
   { href: "/", label: "Home", icon: Home },
@@ -18,8 +19,23 @@ export function TopNav() {
   const pathname = usePathname();
   const router = useRouter();
   const { signOut } = useAuth();
+  const { data: readiness } = useBackendReadiness();
 
   if (pathname === "/login") return null;
+
+  const hasCrossSurfaceImpact = !!readiness && (
+    readiness.status === "unreachable"
+    || !readiness.checks.db_connectivity
+    || !readiness.checks.supabase_env
+  );
+
+  const scheduledScanAgeSeconds = readiness?.scheduler_freshness?.jobs?.scheduled_scan?.age_seconds;
+  const hasSustainedScannerDelay = typeof scheduledScanAgeSeconds === "number" && scheduledScanAgeSeconds >= 20 * 60;
+  const showStatus = hasCrossSurfaceImpact || hasSustainedScannerDelay;
+
+  const statusLabel = hasCrossSurfaceImpact
+    ? "Sync issue"
+    : "Updates delayed";
 
   const handleSignOut = async () => {
     await signOut();
@@ -41,6 +57,15 @@ export function TopNav() {
         </Link>
 
         <nav className="flex items-center gap-1">
+          {showStatus && (
+            <span
+              className="hidden md:inline-flex items-center gap-1.5 rounded-md border border-[#B85C38]/30 bg-[#B85C38]/10 px-2.5 py-1 text-[11px] font-medium text-[#8B3D20]"
+              title="Some data may take longer than usual to refresh"
+            >
+              <Activity className="h-3.5 w-3.5" />
+              {statusLabel}
+            </span>
+          )}
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));

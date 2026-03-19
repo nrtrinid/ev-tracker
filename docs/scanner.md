@@ -31,6 +31,9 @@ scan_all_sides(sport)
   → Append all sides (regardless of EV sign)
         │
         ▼
+  → Record compact Odds API activity event (source, status, cache-hit/live)
+          │
+          ▼
 API response: { sides[], events_fetched, events_with_both_books, scanned_at }
         │
         ▼
@@ -54,6 +57,8 @@ frontend: lens filtering + sorting (useMemo)
 - `sport` (optional): If provided, scans only that sport. If omitted, scans all supported sports.
 
 **Dev mode safeguard:** If `ENVIRONMENT=development`, a full scan (no `sport` param) only fetches `basketball_nba`. This protects the 500-request/month free tier during local development. Set `ENVIRONMENT=production` to scan all sports.
+
+**Source tagging:** Scanner calls are tagged by source (`manual_scan`, `scheduled_scan`, `cron_scan`) and propagated into Odds API activity telemetry so operator dashboards can attribute traffic correctly.
 
 **Supported sports:**
 ```
@@ -79,6 +84,8 @@ Each sport has its own in-memory cache entry (`_cache: dict[str, dict]`) and its
 
 **Thread safety:** `asyncio.Lock` per sport prevents duplicate simultaneous API calls (e.g., two users hitting "scan" at the same time for the same sport). Only one request goes through; the other waits and receives the cached result.
 
+**Observability note:** Cache hits still create a lightweight activity record (`cache_hit=true`, `outbound_call_made=false`) so the operator console can distinguish user traffic from actual outbound API calls.
+
 ---
 
 ## Odds Fetching: `fetch_odds()`
@@ -86,6 +93,26 @@ Each sport has its own in-memory cache entry (`_cache: dict[str, dict]`) and its
 **File:** `backend/services/odds_api.py`
 
 Calls: `GET https://api.the-odds-api.com/v4/sports/{sport}/odds`
+
+This request path also records compact activity metadata in-memory (bounded ring buffer) for `/api/ops/status`.
+
+---
+
+## Ops Observability for Scans
+
+`GET /api/ops/status` includes `ops.odds_api_activity` with:
+
+- `summary.calls_last_hour`
+- `summary.errors_last_hour`
+- `summary.last_success_at`
+- `summary.last_error_at`
+- `recent_calls[]` with timestamp/source/endpoint/sport/cache_hit/outbound_call_made/status/duration/error fields
+
+Notes:
+
+- Recent calls are bounded (`max 50` in snapshot output).
+- Events are sanitized by design (no raw payload bodies, no secrets).
+- UI includes fallback derivation from scan snapshots if the dedicated activity block is unavailable.
 
 **Parameters:**
 ```

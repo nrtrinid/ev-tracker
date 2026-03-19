@@ -20,6 +20,8 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 | **Server-side caching** | 5-minute TTL cache per sport — multiple users share the same Odds API call, protecting token quota |
 | **Multi-book scanning** | One scan covers all your selected books simultaneously at no extra API cost |
 | **Full P&L tracking** | Log every bet (pre-game), settle it after, and see actual vs. expected return over time |
+| **Automation hardening** | Scheduler heartbeats + readiness freshness checks + cron fallbacks keep scans/settles reliable |
+| **Operator observability** | Internal `/admin/ops` console shows automation health and compact Odds API activity summaries |
 
 ---
 
@@ -55,6 +57,15 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 - Configure Kelly multiplier (10%, 25%, 50%, full)
 - Set bankroll: use computed (sum of logged balances) or override manually
 - Persisted to `localStorage`
+
+### Internal Ops Console
+- Route: `/admin/ops` (allowlisted operators only)
+- Scheduler-first **Automation Health** panel, with cron run details as fallback visibility
+- **Odds API Activity** panel:
+    - Calls/errors in the last hour
+    - Last success/error timestamps
+    - Recent compact call history (source, endpoint, cache-hit/live call, status, duration)
+- Frontend fallback derivation keeps status useful during partial backend rollout windows
 
 ---
 
@@ -117,8 +128,11 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ODDS_API_KEY=your-odds-api-key
 ENVIRONMENT=development
+LOG_LEVEL=INFO
 CRON_TOKEN=your-random-cron-token
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+REDIS_URL=redis://localhost:6379/0
+ALERT_DEDUPE_TTL_SECONDS=21600
 ```
 
 ### Cron-job friendly automation (Render free sleep)
@@ -129,6 +143,24 @@ If your backend sleeps when idle (Render free tier), use an external scheduler (
 - `POST /api/cron/test-discord` (sends a test Discord message)
 
 All cron endpoints require the header `X-Cron-Token` matching `CRON_TOKEN`.
+
+Frontend bridge routes (for serverless schedulers that should not hold backend secrets directly):
+
+- `GET /api/cron/wakeup` (requires `Authorization: Bearer ${CRON_SECRET}`)
+- `GET /api/cron/trigger-backend?target=run-scan|run-auto-settle|test-discord` (same auth)
+
+`target=settle` is accepted and mapped to `run-auto-settle` for compatibility.
+
+Health endpoints:
+- `GET /health` for liveness (process is up)
+- `GET /ready` for readiness (Supabase env + DB connectivity + scheduler state/freshness)
+- `GET /api/ops/status` for operator status (requires `X-Cron-Token`)
+
+Readiness scheduler freshness uses a startup grace window equal to each job's expected
+stale window, so a fresh deploy is not marked degraded before the first scheduled run.
+
+If you use the frontend cron bridge routes (for example on Vercel), set `BACKEND_BASE_URL`
+in the frontend environment so the bridge knows where to forward cron triggers.
 
 ```bash
 python main.py
@@ -149,7 +181,25 @@ Edit `frontend/.env.local`:
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 NEXT_PUBLIC_API_URL=http://localhost:8000
+BACKEND_BASE_URL=http://localhost:8000
+CRON_SECRET=your-random-cron-secret
+CRON_TOKEN=your-backend-cron-token
+OPS_ADMIN_EMAILS=ops@example.com
 ```
+
+### Internal operator console
+
+- Route: `/admin/ops` (internal use)
+- Data source: frontend server bridge `GET /api/ops/status` -> backend `GET /api/ops/status`
+- Security: the browser never receives `X-Cron-Token`; token is injected server-side only
+
+Operator access control:
+- Both `/admin/ops` and `/api/ops/status` require a logged-in user
+- Both routes require email allowlist membership via `OPS_ADMIN_EMAILS`
+- Allowlist matching is exact after lowercase + trim normalization
+- If `OPS_ADMIN_EMAILS` is unset/empty, access fails closed
+- Backend ops calls use server-side `CRON_TOKEN` (or `CRON_SECRET` fallback) only
+- Backend remains source-of-truth; frontend operator status route is a protected bridge only
 
 ```bash
 npm run dev
@@ -160,12 +210,14 @@ npm run dev
 
 ## Testing
 
-A small but meaningful test suite protects the EV math, settlement/profit logic, core route behavior, and a couple critical UI flows. Details (what’s live vs mocked, what’s covered vs manual): [docs/testing.md](./docs/testing.md).
+A small but meaningful test suite protects EV math, settlement/profit logic, scheduler/ops status behavior, and critical UI access paths. Details (what’s live vs mocked, what’s covered vs manual): [docs/testing.md](./docs/testing.md).
 
 - **Backend unit tests** (math layer): `cd backend && pytest tests/test_calculations.py -v` — or unit-only by marker: `cd backend && pytest -m "not integration" -v`
+- **Backend hardening tests** (scheduler + odds activity): `cd backend && pytest tests/test_scheduler.py tests/test_odds_api_activity.py -v`
 - **Backend integration tests** (requires test Supabase and auth user): From `backend/` with venv + full deps (`pip install -r requirements.txt`): Set `TESTING=1`, `SUPABASE_URL` (or `TEST_SUPABASE_URL`), and `TEST_USER_ID`. Then: Windows PowerShell: `$env:TESTING="1"; pytest tests/test_api.py -v` — macOS/Linux: `TESTING=1 pytest tests/test_api.py -v`. By marker: `$env:TESTING="1"; pytest -m integration -v` (Windows) or `TESTING=1 pytest -m integration -v` (macOS/Linux). Set `TEST_USER_ID` to a UUID that exists in your test project’s `auth.users`, or create a user and use its id. Optional: `TEST_SUPABASE_URL` and `TEST_SUPABASE_SERVICE_ROLE_KEY` for a separate test project.
 - **Playwright smoke tests** (run with frontend and backend dev servers up): From `frontend/`: `npm install`, then `npx playwright install`, then `npm run test:e2e`. Set PLAYWRIGHT_TEST_EMAIL and PLAYWRIGHT_TEST_PASSWORD so tests can log in; otherwise smoke tests are skipped.
-- **CI**: GitHub Actions runs backend unit tests only on push/PR. Integration and Playwright are documented above for local use; E2E in CI is a possible next step.
+- **Operator access tests**: `cd frontend && npm run test:ops-utils` and (with non-admin creds) `npm run test:ops-access`.
+- **CI**: GitHub Actions runs backend unit tests and the integration marker. Integration tests skip cleanly when test Supabase secrets are not configured. Playwright remains local-only.
 
 ---
 
@@ -176,6 +228,7 @@ A small but meaningful test suite protects the EV math, settlement/profit logic,
 | [docs/methodology.md](./docs/methodology.md) | How Pinnacle lines are de-vigged and EV is calculated |
 | [docs/scanner.md](./docs/scanner.md) | End-to-end scanner pipeline |
 | [docs/promos.md](./docs/promos.md) | Math behind each promo lens |
+| [docs/testing.md](./docs/testing.md) | Unit/integration/e2e strategy and hardening coverage |
 | [PROJECT.md](./PROJECT.md) | Architecture, conventions, key decisions |
 
 ---
