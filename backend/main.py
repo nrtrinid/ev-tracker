@@ -60,6 +60,22 @@ async def _run_jit_clv_snatcher_job():
         updated = await run_jit_clv_snatcher(db)
         if updated:
             print(f"[JIT CLV] Captured closing lines for {updated} bet(s).")
+            # Optional notification (guarded to avoid Discord spam).
+            if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1":
+                from services.discord_alerts import send_discord_webhook
+
+                payload = {
+                    "embeds": [
+                        {
+                            "title": "JIT CLV update",
+                            "description": f"Captured closing lines for **{updated}** bet(s).",
+                            "fields": [
+                                {"name": "Time (UTC)", "value": datetime.now(UTC).isoformat() + "Z", "inline": True},
+                            ],
+                        }
+                    ]
+                }
+                asyncio.create_task(send_discord_webhook(payload))
     except Exception as e:
         print(f"[JIT CLV] Error: {e}")
 
@@ -85,12 +101,19 @@ async def _run_scheduled_scan_job():
     started = datetime.now(UTC).isoformat()
     print(f"[Scheduled scan] Starting scan job at {started}Z")
 
+    total_sides = 0
+    alerts_scheduled = 0
+    from services.discord_alerts import schedule_alerts
+
     for sport_key in SUPPORTED_SPORTS:
         try:
             result = await get_cached_or_scan(sport_key)
             sides_count = len(result.get("sides") or [])
             fetched = result.get("events_fetched")
             with_both = result.get("events_with_both_books")
+            sides = result.get("sides") or []
+            total_sides += len(sides)
+            alerts_scheduled += schedule_alerts(sides)
             print(
                 f"[Scheduled scan] {sport_key}: {sides_count} sides "
                 f"({fetched} events, {with_both} with sharp+target)"
@@ -106,6 +129,27 @@ async def _run_scheduled_scan_job():
 
     finished = datetime.now(UTC).isoformat()
     print(f"[Scheduled scan] Finished scan job at {finished}Z")
+
+    # Optional heartbeat so we can confirm the scheduled scan ran even when it finds no lines.
+    # Send only when enabled and when no alerts were scheduled.
+    if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1" and alerts_scheduled == 0:
+        from services.discord_alerts import send_discord_webhook
+
+        payload = {
+            "embeds": [
+                {
+                    "title": "Scheduled scan complete (no alerts)",
+                    "description": "The scheduled scan ran successfully but found no qualifying lines to alert on.",
+                    "fields": [
+                        {"name": "Started (UTC)", "value": started + "Z", "inline": True},
+                        {"name": "Finished (UTC)", "value": finished + "Z", "inline": True},
+                        {"name": "Total sides", "value": str(total_sides), "inline": True},
+                        {"name": "Alerts scheduled", "value": str(alerts_scheduled), "inline": True},
+                    ],
+                }
+            ]
+        }
+        asyncio.create_task(send_discord_webhook(payload))
 
 
 async def _piggyback_clv(sides: list[dict]):
