@@ -8,6 +8,7 @@ import { DollarSign, TrendingUp, Target, Wallet, Info } from "lucide-react";
 export type BeatCloseMeta = {
   beatClosePct?: number | null;
   avgClvPct?: number | null;
+  trackedCount?: number | null;
 };
 
 type TopKpiCardsProps = {
@@ -21,10 +22,15 @@ type TopKpiCardsProps = {
 function BeatCloseValue({
   beatClosePct,
   avgClvPct,
+  trackedCount,
 }: {
   beatClosePct: number | null | undefined;
   avgClvPct: number | null | undefined;
+  trackedCount: number | null | undefined;
 }) {
+  const trackedLabel =
+    trackedCount === null || trackedCount === undefined ? "of tracked" : `of ${trackedCount} tracked`;
+
   if (beatClosePct !== null && beatClosePct !== undefined) {
     const color =
       beatClosePct >= 55 ? "text-[#4A7C59]" : beatClosePct >= 45 ? "text-foreground" : "text-[#B85C38]";
@@ -33,7 +39,7 @@ function BeatCloseValue({
         <p className={cn("text-xl sm:text-2xl font-bold font-mono tracking-tight", color)}>
           {beatClosePct.toFixed(0)}%
         </p>
-        <p className="text-[10px] text-muted-foreground mt-0.5">of bets</p>
+        <p className="text-[10px] text-muted-foreground mt-0.5">{trackedLabel}</p>
       </>
     );
   }
@@ -47,7 +53,7 @@ function BeatCloseValue({
           {avgClvPct >= 0 ? "+" : ""}
           {avgClvPct.toFixed(2)}%
         </p>
-        <p className="text-[10px] text-muted-foreground mt-0.5">of bets</p>
+        <p className="text-[10px] text-muted-foreground mt-0.5">{trackedLabel}</p>
       </>
     );
   }
@@ -55,7 +61,7 @@ function BeatCloseValue({
   return (
     <>
       <p className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-muted-foreground">Tracking…</p>
-      <p className="text-[10px] text-muted-foreground mt-0.5">of bets</p>
+      <p className="text-[10px] text-muted-foreground mt-0.5">{trackedLabel}</p>
     </>
   );
 }
@@ -108,7 +114,11 @@ function TopKpiCardsInner({ netProfit, expectedProfit, totalBalance, beatClose }
               <Info className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" aria-label="Line Value explanation" />
             </span>
           </div>
-          <BeatCloseValue beatClosePct={beatClose?.beatClosePct} avgClvPct={beatClose?.avgClvPct} />
+          <BeatCloseValue
+            beatClosePct={beatClose?.beatClosePct}
+            avgClvPct={beatClose?.avgClvPct}
+            trackedCount={beatClose?.trackedCount}
+          />
         </CardContent>
       </Card>
 

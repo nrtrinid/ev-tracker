@@ -19,7 +19,7 @@ import {
 import { getLatestScan, scanMarkets } from "@/lib/api";
 import type { MarketSide, ScanResult, ScannedBetData, PromoType } from "@/lib/types";
 import { useKellySettings } from "@/lib/kelly-context";
-import { useBalances, useBackendReadiness } from "@/lib/hooks";
+import { useBalances, useBackendReadiness, useSettings } from "@/lib/hooks";
 import { useQuery } from "@tanstack/react-query";
 
 // ============ Constants ============
@@ -67,8 +67,13 @@ function formatGameTime(isoString: string): string {
   });
 }
 
-function calculateRetention(side: MarketSide): number {
-  return (side.book_decimal - 1) * side.true_prob;
+function calculateRetention(side: MarketSide, kUser?: number, w?: number): number {
+  const rTheory = (side.book_decimal - 1) * side.true_prob;
+  if (kUser !== undefined && w !== undefined && w > 0) {
+    // Blended floor: shrink extremes toward user's observed retention
+    return (1 - w) * rTheory + w * kUser;
+  }
+  return rTheory;
 }
 
 function calculateBoostedEV(side: MarketSide, boostPercent: number): number {
@@ -137,6 +142,7 @@ export default function ScannerPage() {
   const queryClient = useQueryClient();
   const { data: balances } = useBalances();
   const { data: readiness } = useBackendReadiness();
+  const { data: settings } = useSettings();
   const { useComputedBankroll, bankrollOverride, kellyMultiplier } = useKellySettings();
   const computedBankroll = useMemo(() => {
     if (!balances || balances.length === 0) return 0;
@@ -217,6 +223,10 @@ export default function ScannerPage() {
     });
   };
 
+  // Effective k for Bonus Bet lens blending
+  const kUser = settings?.k_factor_mode === "auto" ? (settings.k_factor_observed ?? undefined) : undefined;
+  const kWeight = settings?.k_factor_mode === "auto" ? (settings.k_factor_weight ?? 0) : 0;
+
   // Filter by selected books then apply lens
   const fullResults = useMemo(() => {
     if (!scanData) return [];
@@ -238,7 +248,7 @@ export default function ScannerPage() {
 
       case "bonus_bet":
         return sides
-          .map((s) => ({ ...s, _retention: calculateRetention(s) }))
+          .map((s) => ({ ...s, _retention: calculateRetention(s, kUser, kWeight) }))
           .sort((a, b) => b._retention - a._retention);
 
       case "qualifier":
@@ -246,7 +256,7 @@ export default function ScannerPage() {
           .filter((s) => s.book_odds >= -250 && s.book_odds <= 150)
           .sort((a, b) => b.ev_percentage - a.ev_percentage);
     }
-  }, [scanData, activeLens, boostPercent, selectedBooks]);
+  }, [scanData, activeLens, boostPercent, selectedBooks, kUser, kWeight]);
 
   useEffect(() => {
     setVisibleCount(10);
@@ -307,7 +317,7 @@ export default function ScannerPage() {
           positive: side.ev_percentage > 0,
         };
       case "bonus_bet": {
-        const ret = side._retention ?? calculateRetention(side);
+        const ret = side._retention ?? calculateRetention(side, kUser, kWeight);
         return {
           label: "Retention",
           value: `${(ret * 100).toFixed(1)}%`,

@@ -161,28 +161,100 @@ export default function SettingsPage() {
               <CardHeader className="pb-2">
                 <h2 className="font-semibold flex items-center gap-2">
                   <TargetIcon className="h-4 w-4" />
-                  K-Factor (Bonus Bet Retention)
+                  Bonus Retention (K-Factor)
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  Current: <strong>{settings?.k_factor || 0.78}</strong> — Used for No-Sweat and bonus bet calculations
+                  How much of a bonus-bet token is expected to convert to real cash. Used for promo EV estimates in the Scanner and when logging bonus bets.
                 </p>
               </CardHeader>
-              <CardContent>
-                <div className="flex gap-2">
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max="1"
-                    placeholder="0.78"
-                    value={kFactor}
-                    onChange={(e) => setKFactor(e.target.value)}
-                    className="flex-1"
-                  />
-                  <Button onClick={handleUpdateKFactor} disabled={!kFactor || updateSettings.isPending}>
-                    Update
-                  </Button>
+              <CardContent className="space-y-4">
+                {/* Mode toggle */}
+                <div>
+                  <p className="text-sm font-medium mb-2">Mode</p>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={(!settings?.k_factor_mode || settings.k_factor_mode === "baseline") ? "default" : "outline"}
+                      onClick={() => updateSettings.mutate({ k_factor_mode: "baseline" })}
+                      disabled={updateSettings.isPending}
+                    >
+                      Baseline
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={settings?.k_factor_mode === "auto" ? "default" : "outline"}
+                      onClick={() => updateSettings.mutate({ k_factor_mode: "auto" })}
+                      disabled={updateSettings.isPending}
+                    >
+                      Auto (learn from results)
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1.5">
+                    {settings?.k_factor_mode === "auto"
+                      ? "Blends your observed retention with the baseline once you have enough sample."
+                      : "Always uses the baseline k-factor below."}
+                  </p>
                 </div>
+
+                {/* Baseline input */}
+                <div>
+                  <p className="text-sm font-medium mb-1.5">Baseline k-factor</p>
+                  <div className="flex gap-2">
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="1"
+                      placeholder="0.78"
+                      value={kFactor}
+                      onChange={(e) => setKFactor(e.target.value)}
+                      className="flex-1"
+                    />
+                    <Button onClick={handleUpdateKFactor} disabled={!kFactor || updateSettings.isPending}>
+                      Update
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Current baseline: <span className="font-mono font-semibold">{settings?.k_factor ?? 0.78}</span>
+                  </p>
+                </div>
+
+                {/* Derived k panel */}
+                {settings && (
+                  <div className="rounded-lg bg-muted p-3 space-y-2">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Your Retention Stats</p>
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Baseline</p>
+                        <p className="font-mono font-semibold">{(settings.k_factor * 100).toFixed(0)}%</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Observed</p>
+                        <p className="font-mono font-semibold">
+                          {settings.k_factor_observed !== null
+                            ? `${(settings.k_factor_observed * 100).toFixed(1)}%`
+                            : "—"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Blend weight</p>
+                        <p className="font-mono font-semibold">{(settings.k_factor_weight * 100).toFixed(0)}%</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Effective k</p>
+                        <p className="font-mono font-semibold">{(settings.k_factor_effective * 100).toFixed(1)}%</p>
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground pt-1">
+                      Sample: <span className="font-mono">${settings.k_factor_bonus_stake_settled.toFixed(0)}</span> in settled bonus-bet stake.
+                      {settings.k_factor_mode === "auto" && settings.k_factor_weight === 0 && (
+                        <span className="ml-1">Reach ${settings.k_factor_min_stake} to start blending.</span>
+                      )}
+                    </p>
+                  </div>
+                )}
               </CardContent>
             </Card>
 

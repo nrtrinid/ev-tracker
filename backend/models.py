@@ -111,12 +111,24 @@ class BetResponse(BaseModel):
     clv_ev_percent: float | None = None
     beat_close: bool | None = None
 
+    # Locked EV — frozen at bet-creation time so history is stable when k updates
+    ev_per_dollar_locked: float | None = None
+    ev_total_locked: float | None = None
+    win_payout_locked: float | None = None
+    ev_lock_version: int = 1
+
 
 class SettingsUpdate(BaseModel):
     """User settings."""
     k_factor: float | None = Field(default=None, ge=0, le=1)
     default_stake: float | None = None
     preferred_sportsbooks: list[str] | None = None
+    # Personalized k-factor auto mode
+    k_factor_mode: str | None = None          # 'baseline' | 'auto'
+    k_factor_min_stake: float | None = None   # minimum bonus stake to start blending
+    k_factor_smoothing: float | None = None   # smoothing stake denominator
+    k_factor_clamp_min: float | None = None
+    k_factor_clamp_max: float | None = None
 
 
 class SettingsResponse(BaseModel):
@@ -124,6 +136,17 @@ class SettingsResponse(BaseModel):
     k_factor: float
     default_stake: float | None
     preferred_sportsbooks: list[str]
+    # Personalized k-factor auto mode
+    k_factor_mode: str
+    k_factor_min_stake: float
+    k_factor_smoothing: float
+    k_factor_clamp_min: float
+    k_factor_clamp_max: float
+    # Derived fields (computed from settled bonus bets)
+    k_factor_observed: float | None       # user's actual observed retention
+    k_factor_weight: float                # current blend weight w
+    k_factor_effective: float             # effective k actually used = (1-w)*k0 + w*k_obs
+    k_factor_bonus_stake_settled: float   # total settled bonus stake (sample size indicator)
 
 
 class SummaryResponse(BaseModel):

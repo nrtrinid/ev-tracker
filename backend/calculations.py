@@ -247,3 +247,35 @@ def calculate_real_profit(
             
     else:  # push or void
         return 0.0
+
+
+# ── Personalized k-factor helpers ──────────────────────────────────────────────
+
+def compute_blend_weight(
+    bonus_stake_settled: float,
+    min_stake: float = 300.0,
+    smoothing_stake: float = 700.0,
+) -> float:
+    """
+    Return blending weight w ∈ [0, 1) that grows as more bonus-bet stake settles.
+    w = 0 until min_stake is reached, then asymptotes smoothly toward 1.
+    """
+    if bonus_stake_settled < min_stake:
+        return 0.0
+    excess = bonus_stake_settled - min_stake
+    return excess / (excess + smoothing_stake)
+
+
+def estimate_bonus_retention(
+    theoretical_retention: float,
+    k_user: float,
+    w: float,
+) -> float:
+    """
+    Blend per-bet theoretical retention toward the user's observed k.
+
+    r_eff = (1-w) * r_theory + w * k_user
+
+    Preserves sort order while shrinking extremes toward user average.
+    """
+    return (1.0 - w) * theoretical_retention + w * k_user

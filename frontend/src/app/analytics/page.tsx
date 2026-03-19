@@ -220,6 +220,8 @@ export default function AnalyticsPage() {
   const [sport, setSport] = useState<SportOption>("All Sports");
   const [sportsbook, setSportsbook] = useState<SportsbookOption>("All Books");
   const [filterOpen, setFilterOpen] = useState(false);
+  const [breakdownTab, setBreakdownTab] = useState<"book" | "sport" | "type">("book");
+  const [bookMetric, setBookMetric] = useState<"ev" | "profit">("ev");
 
   const activeFilterCount = [
     timeframe !== "All Time",
@@ -388,6 +390,29 @@ export default function AnalyticsPage() {
   const avgCLV = clvBets.length > 0
     ? clvBets.reduce((sum, b) => sum + (b.clv_ev_percent ?? 0), 0) / clvBets.length
     : null;
+  const settledStandardCount = standardBets.filter((b) => b.result !== "pending").length;
+
+  // Active bets (cash exposure + potential profit)
+  const pendingCashStake = pendingBets.filter((b) => b.promo_type !== "bonus_bet").reduce((sum, b) => sum + b.stake, 0);
+  const pendingPotentialProfit = pendingBets.reduce((sum, b) => {
+    const profitIfWin = b.promo_type === "bonus_bet" ? b.win_payout : (b.win_payout - b.stake);
+    return sum + profitIfWin;
+  }, 0);
+
+  const performanceLabel = useMemo(() => {
+    if (zScore === null) return "Need more data";
+    if (zScore >= 0.5) return "Above Expected";
+    if (zScore <= -0.5) return "Below Expected";
+    return "On Track";
+  }, [zScore]);
+
+  const performanceSubtext = useMemo(() => {
+    if (zScore === null) return "Settle a couple bets to see how results compare to EV.";
+    const diff = settledProfit - settledEV;
+    const abs = Math.abs(diff);
+    const dir = diff >= 0 ? "up" : "down";
+    return `Currently ${dir} ${formatCurrency(abs)} vs what EV predicted. Short-term swings are normal.`;
+  }, [zScore, settledProfit, settledEV]);
 
   // Prepare chart data from FILTERED bets
   const sportsbookChartData = useMemo(() => {
@@ -504,6 +529,18 @@ export default function AnalyticsPage() {
     const bestSport = Object.entries(evBySport).sort((a, b) => b[1] - a[1])[0];
     return bestSport ? { label: bestSport[0], value: bestSport[1], type: "sport" as const } : null;
   }, [filteredBets]);
+
+  const bestDay = useMemo(() => {
+    if (!settledBets || settledBets.length === 0) return null;
+    const byDay: Record<string, number> = {};
+    settledBets.forEach((b) => {
+      const dateKey = new Date(b.settled_at ?? b.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      byDay[dateKey] = (byDay[dateKey] || 0) + (b.real_profit || 0);
+    });
+    const best = Object.entries(byDay).sort((a, b) => b[1] - a[1])[0];
+    if (!best) return null;
+    return { label: best[0], profit: best[1] };
+  }, [settledBets]);
 
   return (
     <main className="min-h-screen bg-background">
@@ -664,7 +701,7 @@ export default function AnalyticsPage() {
               </div>
             )}
 
-            {/* HERO: Performance Status */}
+            {/* OVERVIEW */}
             <Card className={cn(
               "border card-hover",
               zScore === null ? "border-border" :
@@ -677,7 +714,7 @@ export default function AnalyticsPage() {
               <CardContent className="pt-6 pb-4">
                 <div className="text-center">
                   <div className="flex items-center justify-center gap-1.5 mb-2">
-                    <p className="text-sm text-muted-foreground uppercase tracking-wide">Performance Status</p>
+                    <p className="text-sm text-muted-foreground uppercase tracking-wide">Overview</p>
                     <span
                       title="Z-Score measures how much your actual profit deviates from expected EV. Positive = outrunning variance (running hot). Negative = underrunning variance (running cold). Values between -1 and +1 are normal luck variance."
                       className="inline-flex"
@@ -696,18 +733,9 @@ export default function AnalyticsPage() {
                       zScore >= -0.5 ? "text-[#C4A35A]" :
                       "text-[#B85C38]"
                     )}>
-                      {zScore === null ? "Need more data" :
-                       zScore >= 1.5 ? "Running Hot" :
-                       zScore >= 0.5 ? "Above Average" :
-                       zScore >= -0.5 ? "On Track" :
-                       zScore >= -1.5 ? "Below Average" : "Running Cold"}
+                      {performanceLabel}
                     </p>
-                    {zScore !== null && (
-                      <p className="text-sm text-muted-foreground mt-1">
-                        {zScore >= 0 ? "+" : ""}
-                        {formatCurrency(settledProfit - settledEV)} vs expected
-                      </p>
-                    )}
+                    <p className="text-sm text-muted-foreground mt-1">{performanceSubtext}</p>
                   </div>
                 </div>
               </CardContent>
@@ -718,17 +746,15 @@ export default function AnalyticsPage() {
               netProfit={filteredRealProfit}
               expectedProfit={settledEV}
               totalBalance={totalBalance}
-              beatClose={{ beatClosePct, avgClvPct: avgCLV }}
+              beatClose={{ beatClosePct, avgClvPct: avgCLV, trackedCount: clvBets.length }}
             />
 
-            {/* Cumulative EV vs Profit Chart */}
+            {/* HOW YOU’RE TRACKING */}
             {cumulativeData.length > 1 && (
               <Card className="card-hover">
                 <CardHeader className="pb-2">
-                  <h2 className="font-semibold">EV vs Reality (Settled Bets)</h2>
-                  <p className="text-xs text-muted-foreground">
-                    Gold = expected EV • Green = actual profit
-                  </p>
+                  <h2 className="font-semibold">How You’re Tracking</h2>
+                  <p className="text-xs text-muted-foreground">EV is what your results should average over time. Profit will swing above/below it.</p>
                 </CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={200} className="md:!h-[250px]">
@@ -757,21 +783,40 @@ export default function AnalyticsPage() {
                         ]}
                         labelFormatter={(label) => label}
                       />
-                      <Line type="monotone" dataKey="cumulativeEV" stroke="#C4A35A" strokeWidth={2} dot={false} name="Expected EV" />
-                      <Line type="monotone" dataKey="cumulativeProfit" stroke="#4A7C59" strokeWidth={2} dot={false} name="Actual Profit" />
+                      <Line type="monotone" dataKey="cumulativeEV" stroke="#C4A35A" strokeWidth={2} dot={false} name="EV (Expected)" />
+                      <Line type="monotone" dataKey="cumulativeProfit" stroke="#4A7C59" strokeWidth={2} dot={false} name="Profit (Actual)" />
                     </ComposedChart>
                   </ResponsiveContainer>
                 </CardContent>
               </Card>
             )}
 
-            {/* Sportsbook Balances (moved up) */}
+            {/* ACTIVE BETS */}
             <Card>
               <CardHeader className="pb-2">
-                <h3 className="font-semibold text-sm">Sportsbook Balances</h3>
-                <p className="text-xs text-muted-foreground">Add deposits/withdrawals on the Settings page</p>
+                <h3 className="font-semibold text-sm">Active Bets</h3>
+                <p className="text-xs text-muted-foreground">What you have riding right now.</p>
               </CardHeader>
               <CardContent>
+                <div className="grid grid-cols-3 gap-3 mb-4">
+                  <div className="rounded-lg bg-muted p-3 text-center">
+                    <p className="text-xs text-muted-foreground">At Risk</p>
+                    <p className="text-lg font-bold font-mono text-foreground">{formatCurrency(pendingCashStake)}</p>
+                  </div>
+                  <div className="rounded-lg bg-muted p-3 text-center">
+                    <p className="text-xs text-muted-foreground">To Win</p>
+                    <p className="text-lg font-bold font-mono text-foreground">{formatCurrency(pendingPotentialProfit)}</p>
+                  </div>
+                  <div className="rounded-lg bg-muted p-3 text-center">
+                    <p className="text-xs text-muted-foreground">Open Bets</p>
+                    <p className="text-lg font-bold font-mono text-foreground">{pendingBets.length}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm font-medium">Sportsbook Balances</p>
+                  <p className="text-xs text-muted-foreground">cash available by book</p>
+                </div>
                 {balancesLoading ? (
                   <Skeleton className="h-24 w-full rounded" />
                 ) : balances && balances.length > 0 ? (
@@ -831,10 +876,11 @@ export default function AnalyticsPage() {
               </CardContent>
             </Card>
 
-            {/* Insights */}
+            {/* PERFORMANCE */}
             <Card>
               <CardHeader className="pb-2">
-                <h3 className="font-semibold text-sm">Insights</h3>
+                <h3 className="font-semibold text-sm">Performance</h3>
+                <p className="text-xs text-muted-foreground">Familiar stats, with context.</p>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -850,10 +896,38 @@ export default function AnalyticsPage() {
                     }
                   />
                   <StatCard
-                    label="CLV Coverage"
-                    value={standardBets.length > 0 ? `${clvTrackedCount} / ${standardBets.length}` : "—"}
-                    format="text"
-                    subtitle="bets tracked"
+                    label="Luck vs EV"
+                    value={settledBets.length > 0 ? (settledProfit - settledEV) : null}
+                    format="currency"
+                    colorize
+                    subtitle="profit vs EV"
+                  />
+                  <StatCard label="Settled Bets" value={settledBets.length} format="number" subtitle="sample size" />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* HIGHLIGHTS */}
+            <Card>
+              <CardHeader className="pb-2">
+                <h3 className="font-semibold text-sm">Highlights</h3>
+                <p className="text-xs text-muted-foreground">Quick wins and momentum.</p>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <StatCard
+                    label="Biggest Win"
+                    value={biggestWin ? biggestWin.real_profit : null}
+                    format="currency"
+                    colorize
+                    subtitle={biggestWin ? `${biggestWin.event.length > 18 ? `${biggestWin.event.slice(0, 18)}…` : biggestWin.event}` : undefined}
+                  />
+                  <StatCard
+                    label="Best Day"
+                    value={bestDay ? bestDay.profit : null}
+                    format="currency"
+                    colorize
+                    subtitle={bestDay ? bestDay.label : undefined}
                   />
                   <StatCard
                     label="Best Source"
@@ -861,6 +935,107 @@ export default function AnalyticsPage() {
                     format="text"
                     subtitle={bestSource ? `${bestSource.value >= 0 ? "+" : ""}${formatCurrency(bestSource.value)} EV` : undefined}
                   />
+                  <StatCard label="Beat Close" value={beatClosePct === null ? "—" : `${beatClosePct.toFixed(0)}%`} format="text" subtitle={`of ${clvBets.length} tracked`} />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* BREAKDOWNS */}
+            <Card className="card-hover">
+              <CardHeader className="pb-2">
+                <h3 className="font-semibold text-sm">Breakdowns</h3>
+                <p className="text-xs text-muted-foreground">Tap to explore where results come from.</p>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex gap-2">
+                  <Button type="button" variant={breakdownTab === "book" ? "default" : "outline"} size="sm" className="flex-1" onClick={() => setBreakdownTab("book")}>
+                    By Book
+                  </Button>
+                  <Button type="button" variant={breakdownTab === "sport" ? "default" : "outline"} size="sm" className="flex-1" onClick={() => setBreakdownTab("sport")}>
+                    By Sport
+                  </Button>
+                  <Button type="button" variant={breakdownTab === "type" ? "default" : "outline"} size="sm" className="flex-1" onClick={() => setBreakdownTab("type")}>
+                    By Type
+                  </Button>
+                </div>
+
+                {breakdownTab === "book" && (
+                  <div className="flex gap-2">
+                    <Button type="button" variant={bookMetric === "ev" ? "default" : "outline"} size="sm" className="flex-1" onClick={() => setBookMetric("ev")}>
+                      EV
+                    </Button>
+                    <Button type="button" variant={bookMetric === "profit" ? "default" : "outline"} size="sm" className="flex-1" onClick={() => setBookMetric("profit")}>
+                      Profit
+                    </Button>
+                  </div>
+                )}
+
+                <div>
+                  {breakdownTab === "book" && (
+                    sportsbookChartData.length > 0 ? (
+                      <ResponsiveContainer width="100%" height={220}>
+                        <BarChart data={sportsbookChartData} layout="vertical" margin={{ left: 0, right: 10, top: 0, bottom: 0 }}>
+                          <XAxis type="number" tickFormatter={(v) => `$${v}`} fontSize={10} stroke="hsl(var(--muted-foreground))" />
+                          <YAxis type="category" dataKey="name" width={70} fontSize={10} stroke="hsl(var(--muted-foreground))" />
+                          <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                          <Bar dataKey={bookMetric} radius={[0, 4, 4, 0]}>
+                            {sportsbookChartData.map((entry, index) => (
+                              <Cell
+                                key={index}
+                                fill={
+                                  bookMetric === "ev"
+                                    ? entry.color
+                                    : entry.profit >= 0
+                                      ? "#4A7C59"
+                                      : "#B85C38"
+                                }
+                              />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <EmptyChart message="No data yet" />
+                    )
+                  )}
+
+                  {breakdownTab === "sport" && (
+                    sportChartData.length > 0 ? (
+                      <ResponsiveContainer width="100%" height={Math.max(160, sportChartData.length * 32)}>
+                        <BarChart data={sportChartData} layout="vertical" margin={{ left: 0, right: 10, top: 0, bottom: 0 }}>
+                          <XAxis type="number" tickFormatter={(v) => `$${v}`} fontSize={10} stroke="hsl(var(--muted-foreground))" />
+                          <YAxis type="category" dataKey="name" width={70} fontSize={10} stroke="hsl(var(--muted-foreground))" />
+                          <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                          <Bar dataKey="ev" radius={[0, 4, 4, 0]}>
+                            {sportChartData.map((entry, index) => (
+                              <Cell key={index} fill={entry.color} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <EmptyChart message="No data yet" />
+                    )
+                  )}
+
+                  {breakdownTab === "type" && (
+                    promoTypeData.length > 0 ? (
+                      <ResponsiveContainer width="100%" height={Math.max(160, promoTypeData.length * 32)}>
+                        <BarChart data={promoTypeData} layout="vertical" margin={{ left: 0, right: 10, top: 0, bottom: 0 }}>
+                          <XAxis type="number" allowDecimals={false} fontSize={10} stroke="hsl(var(--muted-foreground))" />
+                          <YAxis type="category" dataKey="name" width={90} fontSize={10} stroke="hsl(var(--muted-foreground))" />
+                          <Tooltip formatter={(value: number) => [`${value} bet${value !== 1 ? "s" : ""}`, "Count"]} />
+                          <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+                            {promoTypeData.map((entry, index) => (
+                              <Cell key={index} fill={entry.color} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <EmptyChart message="No data yet" />
+                    )
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -877,312 +1052,104 @@ export default function AnalyticsPage() {
 
                 <div className="px-6 pb-6 pt-6 space-y-6 border-t">
 
-                {/* ── Process Quality: CLV ── */}
-                {clvTrackedCount > 0 && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <Target className="h-4 w-4 text-muted-foreground" />
-                      <h3 className="font-semibold text-sm">Closing Line Value</h3>
-                    </div>
-                    <p className="text-xs text-muted-foreground mb-1">
-                      How often your scanner finds lines better than where the market closes.
-                      A positive average CLV is the strongest evidence the scanner works.
-                    </p>
-                    <p className="text-[10px] text-muted-foreground/60 mb-4">
-                      Standard bets only — promo bets optimize for different objectives and are excluded.
-                    </p>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-                      <Card className="card-hover">
-                        <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
-                          <p className="text-xs text-muted-foreground uppercase tracking-wide">Avg CLV</p>
-                          <p className={cn(
-                            "text-xl font-bold font-mono leading-tight",
-                            avgCLV === null ? "text-muted-foreground" :
-                            avgCLV >= 1.5 ? "text-[#4A7C59]" :
-                            avgCLV >= 0 ? "text-[#8B7355]" : "text-[#B85C38]"
-                          )}>
-                            {avgCLV !== null ? `${avgCLV >= 0 ? "+" : ""}${avgCLV.toFixed(2)}%` : "—"}
-                          </p>
-                        </CardContent>
-                      </Card>
-                      <Card className="card-hover">
-                        <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
-                          <p className="text-xs text-muted-foreground uppercase tracking-wide">Beat Close</p>
-                          <p className={cn(
-                            "text-xl font-bold font-mono leading-tight",
-                            beatClosePct === null ? "text-muted-foreground" :
-                            beatClosePct >= 55 ? "text-[#4A7C59]" :
-                            beatClosePct >= 45 ? "text-foreground" : "text-[#B85C38]"
-                          )}>
-                            {beatClosePct !== null ? `${beatClosePct.toFixed(0)}%` : "—"}
-                          </p>
-                        </CardContent>
-                      </Card>
-                      <Card className="card-hover">
-                        <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
-                          <p className="text-xs text-muted-foreground uppercase tracking-wide">CLV Bets</p>
-                          <p className="text-xl font-bold font-mono leading-tight">{beatCloseCount} / {clvBets.length}</p>
-                          <p className="text-[10px] text-muted-foreground mt-0.5">beat close</p>
-                        </CardContent>
-                      </Card>
-                      <Card className="card-hover">
-                        <CardContent className="pt-4 pb-3 flex flex-col items-center justify-center">
-                          <p className="text-xs text-muted-foreground uppercase tracking-wide">Tracked</p>
-                          <p className="text-xl font-bold font-mono leading-tight">{clvTrackedCount}</p>
-                          <p className="text-[10px] text-muted-foreground mt-0.5">of {filteredBets.length} bets</p>
-                        </CardContent>
-                      </Card>
-                    </div>
-                    {clvBets.length === 0 && clvTrackedCount > 0 && (
-                      <p className="text-xs text-muted-foreground italic text-center py-2">
-                        Close lines not yet captured — they update automatically when you scan.
-                      </p>
-                    )}
-                    {avgCLV !== null && (
-                      <p className={cn(
-                        "text-xs text-center font-medium",
-                        avgCLV > 1.5 ? "text-[#4A7C59]" :
-                        avgCLV > 0 ? "text-[#8B7355]" : "text-[#B85C38]"
-                      )}>
-                        {avgCLV > 1.5
-                          ? "Strong positive CLV — scanner is consistently beating the market."
-                          : avgCLV > 0
-                          ? "Positive CLV — scanner is finding edge, keep tracking."
-                          : "Negative CLV — review scanner settings or sample size."}
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {/* Bankroll Box */}
+                {/* Market Validation */}
                 <Card>
                   <CardHeader className="pb-2">
-                    <h3 className="font-semibold text-sm">Bankroll Status</h3>
+                    <div className="flex items-center gap-2">
+                      <Target className="h-4 w-4 text-muted-foreground" />
+                      <h3 className="font-semibold text-sm">Market Validation</h3>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Standard bets only. Tracked = we captured entry + close lines.
+                    </p>
                   </CardHeader>
-                  <CardContent>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                      <StatCard label="Pending Exposure" value={totalPendingStake} format="currency" subtitle={`${pendingBets.length} bets`} />
-                      <StatCard label="Pending EV" value={pendingEV} format="currency" colorize />
-                      <StatCard label="Cash Risked" value={totalSettledStake} format="currency" subtitle="Settled" />
-                      <StatCard 
-                        label="ROI" 
-                        value={settledROI} 
-                        format="percent" 
-                        subtitle={
-                          settledROI !== null
-                            ? settledROI > 0.15
-                              ? "High Efficiency"
-                              : settledROI > 0
-                              ? "Drifting"
-                              : "Leaking"
-                            : undefined
-                        }
+                  <CardContent className="space-y-2">
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                      <StatCard
+                        label="Avg CLV"
+                        value={avgCLV === null ? "—" : `${avgCLV >= 0 ? "+" : ""}${avgCLV.toFixed(2)}%`}
+                        format="text"
+                        subtitle={clvBets.length > 0 ? "tracked standard bets" : undefined}
                         className={
-                          settledROI !== null
-                            ? settledROI > 0.15
+                          avgCLV === null
+                            ? ""
+                            : avgCLV >= 1.5
                               ? "text-[#4A7C59]"
-                              : settledROI > 0
-                              ? "text-[#C4A35A]"
-                              : "text-[#B85C38]"
-                            : ""
+                              : avgCLV >= 0
+                                ? "text-[#8B7355]"
+                                : "text-[#B85C38]"
                         }
+                      />
+                      <StatCard
+                        label="Beat Close"
+                        value={beatClosePct === null ? "—" : `${beatClosePct.toFixed(0)}%`}
+                        format="text"
+                        subtitle="of tracked"
+                        className={
+                          beatClosePct === null
+                            ? ""
+                            : beatClosePct >= 55
+                              ? "text-[#4A7C59]"
+                              : beatClosePct >= 45
+                                ? "text-foreground"
+                                : "text-[#B85C38]"
+                        }
+                      />
+                      <StatCard
+                        label="Tracked Sample"
+                        value={`${clvBets.length} tracked`}
+                        format="text"
+                        subtitle={`standard bets (of ${settledStandardCount} settled)`}
                       />
                     </div>
                   </CardContent>
                 </Card>
 
-                {/* Notable Stats */}
+                {/* Diagnostics */}
                 <Card>
                   <CardHeader className="pb-2">
-                    <h3 className="font-semibold text-sm">More Details</h3>
+                    <h3 className="font-semibold text-sm">Diagnostics</h3>
                   </CardHeader>
                   <CardContent>
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                      {/* EV Conversion */}
-                      <div className="rounded-lg bg-muted border border-border p-3">
-                        <p className="text-xs text-muted-foreground">EV Conversion</p>
-                        <p className={cn(
-                          "text-lg font-bold",
-                          evConversion === null ? "text-muted-foreground" :
-                          evConversion >= 1.2 ? "text-[#4A7C59]" :
-                          evConversion >= 0.8 ? "text-foreground" : "text-[#B85C38]"
-                        )}>
-                          {evConversion !== null ? `${(evConversion * 100).toFixed(0)}%` : "—"}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-0.5">actual / expected</p>
-                      </div>
-                      {/* Biggest Win */}
-                      <div className="rounded-lg bg-muted border border-border p-3">
-                        <p className="text-xs text-muted-foreground">Biggest Win</p>
-                        <p className="text-lg font-bold text-foreground">
-                          {biggestWin ? `+${formatCurrency(biggestWin.real_profit || 0)}` : "—"}
-                        </p>
-                        {biggestWin && (
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            {biggestWin.event.length > 20 
-                              ? `${biggestWin.event.substring(0, 20)}...` 
-                              : biggestWin.event} @ {formatOdds(biggestWin.odds_american)}
-                          </p>
-                        )}
-                      </div>
-
-                      {/* Win Rate */}
-                      <div className="rounded-lg bg-muted border border-border p-3">
-                        <p className="text-xs text-muted-foreground">Win Rate</p>
-                        <p className="text-lg font-bold text-foreground">
-                          {actualWinRate !== null ? `${actualWinRate.toFixed(1)}%` : "—"}
-                        </p>
-                        {actualWinRate !== null && expectedWinRate !== null && (
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            Exp: {expectedWinRate.toFixed(1)}% ({actualWinRate > expectedWinRate ? "Running Hot" : "Running Cold"})
-                          </p>
-                        )}
-                      </div>
-
-                      {/* Profit Factor */}
-                      <div className="rounded-lg bg-muted border border-border p-3">
-                        <p className="text-xs text-muted-foreground">Profit Factor</p>
-                        <p className="text-lg font-bold text-foreground">
-                          {profitFactor !== null ? `${profitFactor.toFixed(2)} PF` : "—"}
-                        </p>
-                        {profitFactor !== null && (
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            ${profitFactor.toFixed(2)} earned per $1 lost
-                          </p>
-                        )}
-                      </div>
-
-                      {/* Bonus Efficiency */}
-                      <div className="rounded-lg bg-muted border border-border p-3">
-                        <p className="text-xs text-muted-foreground">Bonus Efficiency</p>
-                        <p className="text-lg font-bold text-foreground">
-                          {bonusEfficiency !== null ? `${bonusEfficiency.toFixed(0)}% Conversion` : "—"}
-                        </p>
-                        {bonusEfficiency !== null && (
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            +{formatCurrency(bonusReturns)} washed from {formatCurrency(bonusStaked)}
-                          </p>
-                        )}
-                      </div>
-                      {/* Z-Score (advanced) */}
-                      <div className="rounded-lg bg-muted border border-border p-3">
-                        <p className="text-xs text-muted-foreground">Z-Score</p>
-                        <p className="text-lg font-bold text-foreground">
-                          {zScore !== null ? zScore.toFixed(2) : "—"}
-                        </p>
-                        {zScore !== null && (
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            {zScore >= 0 ? "+" : ""}
-                            {formatCurrency(settledProfit - settledEV)} vs expected
-                          </p>
-                        )}
-                      </div>
+                      <StatCard label="Pending EV" value={pendingEV} format="currency" colorize />
+                      <StatCard label="Cash Risked" value={totalSettledStake} format="currency" subtitle="settled" />
+                      <StatCard
+                        label="EV Conversion"
+                        value={evConversion === null ? "—" : `${(evConversion * 100).toFixed(0)}%`}
+                        format="text"
+                        subtitle="actual / expected"
+                        className={
+                          evConversion === null
+                            ? ""
+                            : evConversion >= 1.2
+                              ? "text-[#4A7C59]"
+                              : evConversion >= 0.8
+                                ? "text-foreground"
+                                : "text-[#B85C38]"
+                        }
+                      />
+                      <StatCard
+                        label="Profit Factor"
+                        value={profitFactor === null ? "—" : `${profitFactor.toFixed(2)} PF`}
+                        format="text"
+                        subtitle={profitFactor === null ? undefined : `$${profitFactor.toFixed(2)} earned per $1 lost`}
+                      />
+                      <StatCard
+                        label="Bonus Efficiency"
+                        value={bonusEfficiency === null ? "—" : `${bonusEfficiency.toFixed(0)}%`}
+                        format="text"
+                        subtitle={bonusEfficiency === null ? undefined : `+${formatCurrency(bonusReturns)} from ${formatCurrency(bonusStaked)}`}
+                      />
+                      <StatCard
+                        label="Z-Score"
+                        value={zScore === null ? "—" : zScore.toFixed(2)}
+                        format="text"
+                        subtitle={zScore === null ? undefined : `${zScore >= 0 ? "+" : ""}${formatCurrency(settledProfit - settledEV)} vs EV`}
+                      />
                     </div>
                   </CardContent>
                 </Card>
-
-                {/* Charts Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* EV by Sportsbook */}
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <h3 className="font-semibold text-sm">EV by Sportsbook</h3>
-                    </CardHeader>
-                    <CardContent>
-                      {sportsbookChartData.length > 0 ? (
-                        <ResponsiveContainer width="100%" height={200}>
-                          <BarChart data={sportsbookChartData} layout="vertical">
-                            <XAxis type="number" tickFormatter={(v) => `$${v}`} fontSize={10} />
-                            <YAxis type="category" dataKey="name" width={60} fontSize={10} />
-                            <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                            <Bar dataKey="ev" radius={[0, 4, 4, 0]}>
-                              {sportsbookChartData.map((entry, index) => (
-                                <Cell key={index} fill={entry.color} />
-                              ))}
-                            </Bar>
-                          </BarChart>
-                        </ResponsiveContainer>
-                      ) : (
-                        <EmptyChart message="No data yet" />
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  {/* Profit by Sportsbook */}
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <h3 className="font-semibold text-sm">Profit by Sportsbook</h3>
-                    </CardHeader>
-                    <CardContent>
-                      {sportsbookChartData.length > 0 ? (
-                        <ResponsiveContainer width="100%" height={200}>
-                          <BarChart data={sportsbookChartData} layout="vertical">
-                            <XAxis type="number" tickFormatter={(v) => `$${v}`} fontSize={10} />
-                            <YAxis type="category" dataKey="name" width={60} fontSize={10} />
-                            <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                            <Bar dataKey="profit" radius={[0, 4, 4, 0]}>
-                              {sportsbookChartData.map((entry, index) => (
-                                <Cell key={index} fill={entry.profit >= 0 ? "#4A7C59" : "#B85C38"} />
-                              ))}
-                            </Bar>
-                          </BarChart>
-                        </ResponsiveContainer>
-                      ) : (
-                        <EmptyChart message="No data yet" />
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  {/* EV by Sport */}
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <h3 className="font-semibold text-sm">EV by Sport</h3>
-                    </CardHeader>
-                    <CardContent>
-                      {sportChartData.length > 0 ? (
-                        <ResponsiveContainer width="100%" height={Math.max(120, sportChartData.length * 36)}>
-                          <BarChart data={sportChartData} layout="vertical" margin={{ left: 0, right: 10, top: 0, bottom: 0 }}>
-                            <XAxis type="number" tickFormatter={(v) => `$${v}`} fontSize={10} stroke="hsl(var(--muted-foreground))" />
-                            <YAxis type="category" dataKey="name" width={50} fontSize={10} stroke="hsl(var(--muted-foreground))" />
-                            <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                            <Bar dataKey="ev" radius={[0, 4, 4, 0]}>
-                              {sportChartData.map((entry, index) => (
-                                <Cell key={index} fill={entry.color} />
-                              ))}
-                            </Bar>
-                          </BarChart>
-                        </ResponsiveContainer>
-                      ) : (
-                        <EmptyChart message="No data yet" />
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  {/* Bets by Promo Type */}
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <h3 className="font-semibold text-sm">Bets by Type</h3>
-                    </CardHeader>
-                    <CardContent>
-                      {promoTypeData.length > 0 ? (
-                        <ResponsiveContainer width="100%" height={Math.max(120, promoTypeData.length * 36)}>
-                          <BarChart data={promoTypeData} layout="vertical" margin={{ left: 0, right: 10, top: 0, bottom: 0 }}>
-                            <XAxis type="number" allowDecimals={false} fontSize={10} stroke="hsl(var(--muted-foreground))" />
-                            <YAxis type="category" dataKey="name" width={70} fontSize={10} stroke="hsl(var(--muted-foreground))" />
-                            <Tooltip formatter={(value: number) => [`${value} bet${value !== 1 ? "s" : ""}`, "Count"]} />
-                            <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                              {promoTypeData.map((entry, index) => (
-                                <Cell key={index} fill={entry.color} />
-                              ))}
-                            </Bar>
-                          </BarChart>
-                        </ResponsiveContainer>
-                      ) : (
-                        <EmptyChart message="No data yet" />
-                      )}
-                    </CardContent>
-                  </Card>
-                </div>
               </div>
             </details>
             </Card>
@@ -1220,7 +1187,7 @@ function StatCard({
     if (colorize) colorClass = value >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]";
   } else if (format === "percent" && typeof value === "number") {
     displayValue = formatPercent(value);
-    if (colorize) colorClass = value >= 1 ? "text-[#4A7C59]" : value < 0.8 ? "text-[#B85C38]" : "text-[#8B7355]";
+    if (colorize) colorClass = value >= 0.05 ? "text-[#4A7C59]" : value <= -0.05 ? "text-[#B85C38]" : "text-[#8B7355]";
   } else if (format === "number" && typeof value === "number") {
     displayValue = value.toLocaleString();
   } else {

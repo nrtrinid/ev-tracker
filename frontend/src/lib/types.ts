@@ -88,6 +88,17 @@ export interface Settings {
   k_factor: number;
   default_stake: number | null;
   preferred_sportsbooks: string[];
+  // Personalized k-factor auto mode
+  k_factor_mode: string;             // 'baseline' | 'auto'
+  k_factor_min_stake: number;
+  k_factor_smoothing: number;
+  k_factor_clamp_min: number;
+  k_factor_clamp_max: number;
+  // Derived fields (computed server-side from settled bonus bets)
+  k_factor_observed: number | null;
+  k_factor_weight: number;
+  k_factor_effective: number;
+  k_factor_bonus_stake_settled: number;
 }
 
 export interface Summary {

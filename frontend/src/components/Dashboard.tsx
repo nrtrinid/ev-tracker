@@ -60,7 +60,7 @@ export function Dashboard() {
         netProfit={summary.total_real_profit}
         expectedProfit={settledEV}
         totalBalance={totalBalance}
-        beatClose={{ beatClosePct, avgClvPct: avgCLV }}
+        beatClose={{ beatClosePct, avgClvPct: avgCLV, trackedCount: clvBets.length }}
       />
       {showDegradedHint && (
         <div className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-[#B85C38]/30 bg-[#B85C38]/10 px-2.5 py-1.5 text-xs text-[#8B3D20]">

@@ -23,7 +23,10 @@ from models import (
     TransactionCreate, TransactionResponse, BalanceResponse,
     ScanResponse, FullScanResponse,
 )
-from calculations import american_to_decimal, calculate_ev, calculate_real_profit, calculate_clv
+from calculations import (
+    american_to_decimal, calculate_ev, calculate_real_profit, calculate_clv,
+    compute_blend_weight, estimate_bonus_retention,
+)
 from auth import get_current_user
 from services.shared_state import allow_fixed_window_rate_limit, is_redis_enabled
 
@@ -716,10 +719,77 @@ def get_user_settings(db, user_id: str) -> dict:
         "k_factor": 0.78,
         "default_stake": None,
         "preferred_sportsbooks": DEFAULT_SPORTSBOOKS,
+        "k_factor_mode": "baseline",
+        "k_factor_min_stake": 300.0,
+        "k_factor_smoothing": 700.0,
+        "k_factor_clamp_min": 0.50,
+        "k_factor_clamp_max": 0.95,
     }
     _retry_supabase(lambda: db.table("settings").upsert(defaults).execute())
     result = _retry_supabase(lambda: db.table("settings").select("*").eq("user_id", user_id).execute())
     return result.data[0]
+
+
+def compute_k_user(db, user_id: str) -> dict:
+    """
+    Compute observed bonus retention from settled bonus bets.
+    Returns k_obs (None if no data), bonus_stake_settled.
+    """
+    try:
+        res = _retry_supabase(lambda: (
+            db.table("bets")
+            .select("stake, result, win_payout, payout_override, promo_type")
+            .eq("user_id", user_id)
+            .eq("promo_type", "bonus_bet")
+            .neq("result", "pending")
+            .execute()
+        ))
+        rows = res.data or []
+    except Exception:
+        return {"k_obs": None, "bonus_stake_settled": 0.0}
+
+    total_stake = 0.0
+    total_profit = 0.0
+    for row in rows:
+        stake = float(row.get("stake") or 0)
+        result = row.get("result")
+        win_payout = float(row.get("payout_override") or row.get("win_payout") or 0)
+        total_stake += stake
+        if result == "win":
+            # bonus_bet profit = win_payout (stake not returned)
+            total_profit += win_payout
+        # loss / push / void → 0 profit
+
+    k_obs = (total_profit / total_stake) if total_stake > 0 else None
+    return {"k_obs": k_obs, "bonus_stake_settled": total_stake}
+
+
+def build_effective_k(settings: dict, k_obs: float | None, bonus_stake_settled: float) -> dict:
+    """
+    Compute all derived k fields returned to the frontend.
+    Returns a dict with k_factor_observed, k_factor_weight, k_factor_effective.
+    """
+    k0 = float(settings.get("k_factor") or 0.78)
+    mode = settings.get("k_factor_mode") or "baseline"
+    min_stake = float(settings.get("k_factor_min_stake") or 300.0)
+    smoothing = float(settings.get("k_factor_smoothing") or 700.0)
+    clamp_min = float(settings.get("k_factor_clamp_min") or 0.50)
+    clamp_max = float(settings.get("k_factor_clamp_max") or 0.95)
+
+    w = 0.0
+    k_effective = k0
+
+    if mode == "auto" and k_obs is not None:
+        k_clamped = max(clamp_min, min(clamp_max, k_obs))
+        w = compute_blend_weight(bonus_stake_settled, min_stake, smoothing)
+        k_effective = (1.0 - w) * k0 + w * k_clamped
+
+    return {
+        "k_factor_observed": k_obs,
+        "k_factor_weight": round(w, 4),
+        "k_factor_effective": round(k_effective, 4),
+        "k_factor_bonus_stake_settled": round(bonus_stake_settled, 2),
+    }
 
 
 def build_bet_response(row: dict, k_factor: float) -> BetResponse:
@@ -781,6 +851,11 @@ def build_bet_response(row: dict, k_factor: float) -> BetResponse:
         clv_ev_percent = clv_result["clv_ev_percent"]
         beat_close = clv_result["beat_close"]
 
+    # Use locked EV when present (frozen at bet-creation time)
+    ev_per_dollar_out = row.get("ev_per_dollar_locked") if row.get("ev_per_dollar_locked") is not None else ev_result["ev_per_dollar"]
+    ev_total_out = row.get("ev_total_locked") if row.get("ev_total_locked") is not None else ev_result["ev_total"]
+    win_payout_out = row.get("win_payout_locked") if row.get("win_payout_locked") is not None else win_payout
+
     return BetResponse(
         id=row["id"],
         created_at=row["created_at"],
@@ -799,9 +874,9 @@ def build_bet_response(row: dict, k_factor: float) -> BetResponse:
         notes=row.get("notes"),
         opposing_odds=row.get("opposing_odds"),
         result=row["result"],
-        win_payout=win_payout,
-        ev_per_dollar=ev_result["ev_per_dollar"],
-        ev_total=ev_result["ev_total"],
+        win_payout=win_payout_out,
+        ev_per_dollar=ev_per_dollar_out,
+        ev_total=ev_total_out,
         real_profit=real_profit,
         pinnacle_odds_at_entry=row.get("pinnacle_odds_at_entry"),
         pinnacle_odds_at_close=row.get("pinnacle_odds_at_close"),
@@ -812,6 +887,10 @@ def build_bet_response(row: dict, k_factor: float) -> BetResponse:
         true_prob_at_entry=row.get("true_prob_at_entry"),
         clv_ev_percent=clv_ev_percent,
         beat_close=beat_close,
+        ev_per_dollar_locked=row.get("ev_per_dollar_locked"),
+        ev_total_locked=row.get("ev_total_locked"),
+        win_payout_locked=row.get("win_payout_locked"),
+        ev_lock_version=row.get("ev_lock_version") or 1,
     )
 
 
@@ -876,6 +955,70 @@ def readiness_check():
     raise HTTPException(status_code=503, detail=response)
 
 
+# ── EV freeze helper ─────────────────────────────────────────────────────────
+
+EV_LOCK_PROMO_TYPES = {"bonus_bet", "no_sweat", "promo_qualifier",
+                       "boost_30", "boost_50", "boost_100", "boost_custom"}
+
+
+def _lock_ev_for_row(db, bet_id: str, user_id: str, row: dict, settings: dict) -> None:
+    """
+    Compute EV once using the current effective k and write locked fields to DB.
+    Only runs for promo types where k has a meaningful effect.
+    Does NOT update bets that already have a valid lock (ev_locked_at is set).
+    """
+    if row.get("ev_locked_at") is not None:
+        return
+    if row.get("promo_type") not in EV_LOCK_PROMO_TYPES:
+        return
+
+    k_data = compute_k_user(db, user_id)
+    k_derived = build_effective_k(settings, k_data["k_obs"], k_data["bonus_stake_settled"])
+    k_eff = k_derived["k_factor_effective"]
+
+    from calculations import calculate_hold_from_odds
+    decimal_odds = american_to_decimal(row["odds_american"])
+    payout_override = row.get("payout_override")
+    stake = float(row.get("stake") or 0)
+    promo_type = row.get("promo_type")
+
+    decimal_odds_for_ev = decimal_odds
+    if (payout_override is not None and stake
+            and promo_type in ("standard", "no_sweat", "promo_qualifier")):
+        try:
+            implied = float(payout_override) / float(stake)
+            if implied > 1:
+                decimal_odds_for_ev = implied
+        except Exception:
+            pass
+
+    vig = None
+    if row.get("opposing_odds"):
+        vig = calculate_hold_from_odds(row["odds_american"], row["opposing_odds"])
+
+    ev_result = calculate_ev(
+        stake=stake,
+        decimal_odds=decimal_odds_for_ev,
+        promo_type=promo_type,
+        k_factor=k_eff,
+        boost_percent=row.get("boost_percent"),
+        winnings_cap=row.get("winnings_cap"),
+        vig=vig,
+        true_prob=row.get("true_prob_at_entry"),
+    )
+    win_payout = payout_override or ev_result["win_payout"]
+
+    try:
+        db.table("bets").update({
+            "ev_per_dollar_locked": ev_result["ev_per_dollar"],
+            "ev_total_locked": ev_result["ev_total"],
+            "win_payout_locked": win_payout,
+            "ev_locked_at": datetime.now(UTC).isoformat(),
+        }).eq("id", bet_id).eq("user_id", user_id).execute()
+    except Exception as e:
+        logger.warning("ev_lock.write_failed bet_id=%s err=%s", bet_id, e)
+
+
 # ============ Bets CRUD ============
 
 @app.post("/bets", response_model=BetResponse, status_code=201)
@@ -916,7 +1059,11 @@ def create_bet(bet: BetCreate, user: dict = Depends(get_current_user)):
     if not result.data:
         raise HTTPException(status_code=500, detail="Failed to create bet")
 
-    return build_bet_response(result.data[0], settings["k_factor"])
+    row = result.data[0]
+    _lock_ev_for_row(db, row["id"], user["id"], row, settings)
+    # Re-fetch so locked fields are included in the response
+    fresh = db.table("bets").select("*").eq("id", row["id"]).execute()
+    return build_bet_response(fresh.data[0] if fresh.data else row, settings["k_factor"])
 
 
 @app.get("/bets", response_model=list[BetResponse])
@@ -1020,6 +1167,15 @@ def update_bet(bet_id: str, bet: BetUpdate, user: dict = Depends(get_current_use
     if bet.event_date is not None:
         data["event_date"] = bet.event_date.isoformat()
 
+    # If any EV-relevant field changed, clear the lock so it gets recomputed
+    EV_RELEVANT = {"odds_american", "stake", "promo_type", "boost_percent",
+                   "winnings_cap", "payout_override", "opposing_odds"}
+    if data.keys() & EV_RELEVANT:
+        data["ev_per_dollar_locked"] = None
+        data["ev_total_locked"] = None
+        data["win_payout_locked"] = None
+        data["ev_locked_at"] = None
+
     if not data:
         raise HTTPException(status_code=400, detail="No fields to update")
 
@@ -1034,7 +1190,10 @@ def update_bet(bet_id: str, bet: BetUpdate, user: dict = Depends(get_current_use
     if not result.data:
         raise HTTPException(status_code=404, detail="Bet not found")
 
-    return build_bet_response(result.data[0], settings["k_factor"])
+    row = result.data[0]
+    _lock_ev_for_row(db, bet_id, user["id"], row, settings)
+    fresh = db.table("bets").select("*").eq("id", bet_id).execute()
+    return build_bet_response(fresh.data[0] if fresh.data else row, settings["k_factor"])
 
 
 @app.patch("/bets/{bet_id}/result")
@@ -1094,6 +1253,35 @@ def delete_bet(bet_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Bet not found")
 
     return {"deleted": True, "id": bet_id}
+
+
+@app.post("/admin/backfill-ev-locks")
+def backfill_ev_locks(user: dict = Depends(get_current_user)):
+    """
+    One-off endpoint: freeze EV on all existing promo bets that don't yet have
+    locked EV fields. Safe to call multiple times (idempotent: skips rows that
+    already have ev_locked_at set).
+    """
+    db = get_db()
+    settings = get_user_settings(db, user["id"])
+
+    res = _retry_supabase(lambda: (
+        db.table("bets")
+        .select("*")
+        .eq("user_id", user["id"])
+        .is_("ev_locked_at", "null")
+        .in_("promo_type", list(EV_LOCK_PROMO_TYPES))
+        .execute()
+    ))
+    rows = res.data or []
+    locked = 0
+    for row in rows:
+        try:
+            _lock_ev_for_row(db, row["id"], user["id"], row, settings)
+            locked += 1
+        except Exception as e:
+            logger.warning("backfill_ev_lock.failed bet_id=%s err=%s", row["id"], e)
+    return {"backfilled": locked, "total_eligible": len(rows)}
 
 
 # ============ Summary / Dashboard ============
@@ -1342,16 +1530,29 @@ def get_balances(user: dict = Depends(get_current_user)):
 
 # ============ Settings ============
 
+def _build_settings_response(db, user_id: str, s: dict) -> SettingsResponse:
+    """Construct SettingsResponse including derived k-factor fields."""
+    k_data = compute_k_user(db, user_id)
+    k_derived = build_effective_k(s, k_data["k_obs"], k_data["bonus_stake_settled"])
+    return SettingsResponse(
+        k_factor=s["k_factor"],
+        default_stake=s.get("default_stake"),
+        preferred_sportsbooks=s.get("preferred_sportsbooks") or DEFAULT_SPORTSBOOKS,
+        k_factor_mode=s.get("k_factor_mode") or "baseline",
+        k_factor_min_stake=float(s.get("k_factor_min_stake") or 300.0),
+        k_factor_smoothing=float(s.get("k_factor_smoothing") or 700.0),
+        k_factor_clamp_min=float(s.get("k_factor_clamp_min") or 0.50),
+        k_factor_clamp_max=float(s.get("k_factor_clamp_max") or 0.95),
+        **k_derived,
+    )
+
+
 @app.get("/settings", response_model=SettingsResponse)
 def get_settings(user: dict = Depends(get_current_user)):
     """Get user settings."""
     db = get_db()
     settings = get_user_settings(db, user["id"])
-    return SettingsResponse(
-        k_factor=settings["k_factor"],
-        default_stake=settings.get("default_stake"),
-        preferred_sportsbooks=settings.get("preferred_sportsbooks", DEFAULT_SPORTSBOOKS),
-    )
+    return _build_settings_response(db, user["id"], settings)
 
 
 @app.patch("/settings", response_model=SettingsResponse)
@@ -1372,17 +1573,23 @@ def update_settings(
         data["default_stake"] = settings.default_stake
     if settings.preferred_sportsbooks is not None:
         data["preferred_sportsbooks"] = settings.preferred_sportsbooks
+    if settings.k_factor_mode is not None:
+        data["k_factor_mode"] = settings.k_factor_mode
+    if settings.k_factor_min_stake is not None:
+        data["k_factor_min_stake"] = settings.k_factor_min_stake
+    if settings.k_factor_smoothing is not None:
+        data["k_factor_smoothing"] = settings.k_factor_smoothing
+    if settings.k_factor_clamp_min is not None:
+        data["k_factor_clamp_min"] = settings.k_factor_clamp_min
+    if settings.k_factor_clamp_max is not None:
+        data["k_factor_clamp_max"] = settings.k_factor_clamp_max
 
     if data:
         data["updated_at"] = datetime.now(UTC).isoformat()
         db.table("settings").update(data).eq("user_id", user["id"]).execute()
 
     updated = get_user_settings(db, user["id"])
-    return SettingsResponse(
-        k_factor=updated["k_factor"],
-        default_stake=updated.get("default_stake"),
-        preferred_sportsbooks=updated.get("preferred_sportsbooks", DEFAULT_SPORTSBOOKS),
-    )
+    return _build_settings_response(db, user["id"], updated)
 
 
 # ============ Utility ============
