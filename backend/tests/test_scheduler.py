@@ -19,6 +19,10 @@ def _reload_main(monkeypatch, *, zoneinfo_zoneinfo_override=None):
         import zoneinfo as _zoneinfo_mod
         monkeypatch.setattr(_zoneinfo_mod, "ZoneInfo", zoneinfo_zoneinfo_override, raising=True)
 
+    # Unit tests should not require real backend secrets just to import main.
+    monkeypatch.setenv("SUPABASE_URL", os.getenv("SUPABASE_URL") or "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "unit-test-key")
+
     # Allow importing main.py even when backend deps aren't installed in the current interpreter.
     # (These are unit tests; we stub the client to avoid touching the network/DB.)
     if "supabase" not in sys.modules:

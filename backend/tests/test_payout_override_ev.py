@@ -1,4 +1,5 @@
 import importlib
+import os
 import sys
 import types
 
@@ -6,6 +7,9 @@ import pytest
 
 
 def _import_main_with_supabase_stub():
+    os.environ.setdefault("SUPABASE_URL", "https://example.supabase.co")
+    os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "unit-test-key")
+
     # Allow importing main.py even if supabase isn't installed in the active interpreter.
     if "supabase" not in sys.modules:
         sys.modules["supabase"] = types.SimpleNamespace(

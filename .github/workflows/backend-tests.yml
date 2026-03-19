@@ -52,4 +52,7 @@ jobs:
       - name: Run integration tests (skips cleanly when secrets are not configured)
         run: |
           cd backend
-          pytest -m integration -v
+          pytest -m integration -v || rc=$?
+          if [ "${rc:-0}" -ne 0 ] && [ "${rc}" -ne 5 ]; then
+            exit "$rc"
+          fi
