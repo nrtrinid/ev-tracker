@@ -43,8 +43,8 @@ class DummyScheduler:
         self.shutdown_called = False
         self.shutdown_wait = None
 
-    def add_job(self, func, trigger):
-        self.jobs.append({"func": func, "trigger": trigger})
+    def add_job(self, func, trigger, **kwargs):
+        self.jobs.append({"func": func, "trigger": trigger, "kwargs": kwargs})
 
     def start(self):
         self.started = True
@@ -120,6 +120,12 @@ async def test_uses_america_phoenix_timezone_when_available(monkeypatch):
     scan_jobs = [j for j in scheduler.jobs if j["func"] == main._run_scheduled_scan_job]
     assert len(scan_jobs) == 2
     assert all(getattr(j["trigger"], "timezone", None) == main.PHOENIX_TZ for j in scan_jobs)
+
+    auto_settle_jobs = [j for j in scheduler.jobs if j["func"] == main._run_auto_settler_job]
+    assert len(auto_settle_jobs) == 1
+    assert getattr(auto_settle_jobs[0]["trigger"], "timezone", None) == main.PHOENIX_TZ
+    assert auto_settle_jobs[0]["kwargs"].get("misfire_grace_time") == 3600
+    assert auto_settle_jobs[0]["kwargs"].get("coalesce") is True
 
 
 @pytest.mark.asyncio

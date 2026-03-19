@@ -597,8 +597,19 @@ async def start_scheduler():
     scheduler.add_job(_run_clv_daily_job, CronTrigger(hour=23, minute=30))
     # Every 15 min: capture closing Pinnacle lines for games starting within 20 min
     scheduler.add_job(_run_jit_clv_snatcher_job, IntervalTrigger(minutes=15))
-    # 4:00 AM UTC daily: auto-grade completed ML bets via /scores
-    scheduler.add_job(_run_auto_settler_job, CronTrigger(hour=4, minute=0))
+    # 4:00 AM Phoenix daily: auto-grade completed ML bets via /scores.
+    # Explicit timezone keeps scheduler behavior consistent across hosts.
+    auto_settle_trigger = (
+        CronTrigger(hour=4, minute=0, timezone=PHOENIX_TZ)
+        if PHOENIX_TZ is not None
+        else CronTrigger(hour=4, minute=0)
+    )
+    scheduler.add_job(
+        _run_auto_settler_job,
+        auto_settle_trigger,
+        misfire_grace_time=60 * 60,
+        coalesce=True,
+    )
     if PHOENIX_TZ is not None:
         scheduler.add_job(
             _run_scheduled_scan_job,
