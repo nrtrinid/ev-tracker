@@ -218,3 +218,118 @@ def test_balances_smoke(auth_client, auth_headers):
         assert "sportsbook" in item
         assert "balance" in item
         assert "net_deposits" in item
+
+
+def _book_balance(balances: list[dict], sportsbook: str) -> float:
+    """Return balance for a book or 0 when the book has no row yet."""
+    for row in balances:
+        if row.get("sportsbook") == sportsbook:
+            return float(row.get("balance", 0.0))
+    return 0.0
+
+
+@pytest.mark.integration
+def test_delete_pending_cash_bet_returns_stake_to_balance(auth_client, auth_headers, run_id, tracker):
+    """Deleting a pending cash bet should refund stake to available balance."""
+    sportsbook = f"DeleteCash-{run_id}"
+
+    deposit_r = auth_client.post(
+        "/transactions",
+        json={
+            "sportsbook": sportsbook,
+            "type": TransactionType.DEPOSIT.value,
+            "amount": 250,
+            "notes": run_id,
+        },
+        headers=auth_headers,
+    )
+    assert deposit_r.status_code == 201
+    tracker.tx_ids.append(deposit_r.json()["id"])
+
+    before_r = auth_client.get("/balances", headers=auth_headers)
+    assert before_r.status_code == 200
+    balance_before = _book_balance(before_r.json(), sportsbook)
+
+    stake = 40.0
+    create_r = auth_client.post(
+        "/bets",
+        json={
+            "sport": "NBA",
+            "event": f"Delete pending cash {run_id}",
+            "market": "ML",
+            "sportsbook": sportsbook,
+            "promo_type": "standard",
+            "odds_american": -110,
+            "stake": stake,
+        },
+        headers=auth_headers,
+    )
+    assert create_r.status_code == 201
+    bet_id = create_r.json()["id"]
+    tracker.bet_ids.append(bet_id)
+
+    during_r = auth_client.get("/balances", headers=auth_headers)
+    assert during_r.status_code == 200
+    balance_during = _book_balance(during_r.json(), sportsbook)
+    assert round(balance_before - balance_during, 2) == round(stake, 2)
+
+    delete_r = auth_client.delete(f"/bets/{bet_id}", headers=auth_headers)
+    assert delete_r.status_code == 200
+
+    after_r = auth_client.get("/balances", headers=auth_headers)
+    assert after_r.status_code == 200
+    balance_after = _book_balance(after_r.json(), sportsbook)
+    assert round(balance_after, 2) == round(balance_before, 2)
+
+
+@pytest.mark.integration
+def test_delete_pending_bonus_bet_does_not_change_balance(auth_client, auth_headers, run_id, tracker):
+    """Deleting a pending bonus bet should not refund cash stake."""
+    sportsbook = f"DeleteBonus-{run_id}"
+
+    deposit_r = auth_client.post(
+        "/transactions",
+        json={
+            "sportsbook": sportsbook,
+            "type": TransactionType.DEPOSIT.value,
+            "amount": 250,
+            "notes": run_id,
+        },
+        headers=auth_headers,
+    )
+    assert deposit_r.status_code == 201
+    tracker.tx_ids.append(deposit_r.json()["id"])
+
+    before_r = auth_client.get("/balances", headers=auth_headers)
+    assert before_r.status_code == 200
+    balance_before = _book_balance(before_r.json(), sportsbook)
+
+    create_r = auth_client.post(
+        "/bets",
+        json={
+            "sport": "NBA",
+            "event": f"Delete pending bonus {run_id}",
+            "market": "ML",
+            "sportsbook": sportsbook,
+            "promo_type": "bonus_bet",
+            "odds_american": -110,
+            "stake": 40,
+        },
+        headers=auth_headers,
+    )
+    assert create_r.status_code == 201
+    bet_id = create_r.json()["id"]
+    tracker.bet_ids.append(bet_id)
+
+    during_r = auth_client.get("/balances", headers=auth_headers)
+    assert during_r.status_code == 200
+    balance_during = _book_balance(during_r.json(), sportsbook)
+    assert round(balance_during, 2) == round(balance_before, 2)
+
+    delete_r = auth_client.delete(f"/bets/{bet_id}", headers=auth_headers)
+    assert delete_r.status_code == 200
+
+    after_r = auth_client.get("/balances", headers=auth_headers)
+    assert after_r.status_code == 200
+    balance_after = _book_balance(after_r.json(), sportsbook)
+    assert round(balance_after, 2) == round(balance_before, 2)

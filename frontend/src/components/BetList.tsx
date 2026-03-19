@@ -392,8 +392,12 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
                 <p className="font-mono text-xs text-muted-foreground">{(impliedProb * 100).toFixed(1)}%</p>
               </div>
               <div>
-                <p className="text-muted-foreground/60 text-xs mb-0.5">Event Date</p>
-                <p className="font-mono text-xs text-muted-foreground">{formatShortDate(bet.event_date)}</p>
+                <p className="text-muted-foreground/60 text-xs mb-0.5">
+                  {bet.commence_time ? "Game Start" : "Event Date"}
+                </p>
+                <p className="font-mono text-xs text-muted-foreground">
+                  {bet.commence_time ? formatFullDateTime(bet.commence_time) : formatShortDate(bet.event_date)}
+                </p>
               </div>
               {/* Timestamp spans full width on mobile so it never truncates */}
               <div className="col-span-2 md:col-span-1">
@@ -759,14 +763,46 @@ export function BetList() {
 
     deleteBet.mutate(bet.id, {
       onSuccess: () => {
+        const returnsCashStake = bet.result === "pending" && bet.promo_type !== "bonus_bet";
+        const deleteDescription = returnsCashStake
+          ? `${bet.sportsbook} • ${formatCurrency(bet.stake)} returned to bankroll`
+          : bet.result === "pending" && bet.promo_type === "bonus_bet"
+          ? `${bet.sportsbook} • Bonus bet removed (no cash stake return)`
+          : `${bet.sportsbook} • ${formatCurrency(bet.stake)}`;
+
         toast("Bet deleted", {
-          description: `${bet.sportsbook} • ${formatCurrency(bet.stake)}`,
+          description: deleteDescription,
           duration: 5000,
           action: {
             label: "Undo",
             onClick: () => {
               createBet.mutate(betData, {
-                onSuccess: () => toast.success("Bet restored"),
+                onSuccess: (restoredBet) => {
+                  if (bet.result === "pending") {
+                    toast.success("Bet restored as pending");
+                    return;
+                  }
+
+                  updateResult.mutate(
+                    { id: restoredBet.id, result: bet.result },
+                    {
+                      onSuccess: () => {
+                        const resultLabel =
+                          bet.result === "win"
+                            ? "Win"
+                            : bet.result === "loss"
+                            ? "Loss"
+                            : bet.result === "push"
+                            ? "Push"
+                            : "Void";
+                        toast.success(`Bet restored as ${resultLabel}`);
+                      },
+                      onError: () => {
+                        toast.error("Bet restored, but failed to restore result");
+                      },
+                    }
+                  );
+                },
                 onError: () => toast.error("Failed to restore bet"),
               });
             },

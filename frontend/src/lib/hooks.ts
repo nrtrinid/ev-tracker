@@ -44,6 +44,7 @@ export function useCreateBet() {
       // Invalidate and refetch bets list and summary
       queryClient.invalidateQueries({ queryKey: queryKeys.bets });
       queryClient.invalidateQueries({ queryKey: queryKeys.summary });
+      queryClient.invalidateQueries({ queryKey: queryKeys.balances });
     },
   });
 }
@@ -58,6 +59,7 @@ export function useUpdateBet() {
       queryClient.invalidateQueries({ queryKey: queryKeys.bets });
       queryClient.invalidateQueries({ queryKey: queryKeys.bet(id) });
       queryClient.invalidateQueries({ queryKey: queryKeys.summary });
+      queryClient.invalidateQueries({ queryKey: queryKeys.balances });
     },
   });
 }
@@ -93,6 +95,7 @@ export function useUpdateBetResult() {
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.bets });
       queryClient.invalidateQueries({ queryKey: queryKeys.summary });
+      queryClient.invalidateQueries({ queryKey: queryKeys.balances });
     },
   });
 }
@@ -105,6 +108,7 @@ export function useDeleteBet() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.bets });
       queryClient.invalidateQueries({ queryKey: queryKeys.summary });
+      queryClient.invalidateQueries({ queryKey: queryKeys.balances });
     },
   });
 }

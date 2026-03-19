@@ -4,11 +4,13 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { createClient } from "@/lib/supabase";
 import type { User, Session } from "@supabase/supabase-js";
+import { useQueryClient } from "@tanstack/react-query";
 
 interface AuthContextType {
   user: User | null;
@@ -25,25 +27,38 @@ const AuthContext = createContext<AuthContextType>({
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const previousUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const supabase = createClient();
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
+    const syncAuthState = (nextSession: Session | null) => {
+      const nextUser = nextSession?.user ?? null;
+      const nextUserId = nextUser?.id ?? null;
+
+      // Prevent cross-account cache bleed when switching users.
+      if (previousUserIdRef.current !== nextUserId) {
+        queryClient.clear();
+      }
+
+      previousUserIdRef.current = nextUserId;
+      setSession(nextSession);
+      setUser(nextUser);
       setLoading(false);
+    };
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      syncAuthState(session);
     });
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false);
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      syncAuthState(nextSession);
     });
 
     // Dev-only: get token from console for testing API (e.g. scan-bets)
@@ -55,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [queryClient]);
 
   const signOut = async () => {
     const supabase = createClient();

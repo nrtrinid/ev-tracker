@@ -20,6 +20,7 @@ import { getLatestScan, scanMarkets } from "@/lib/api";
 import type { MarketSide, ScanResult, ScannedBetData, PromoType } from "@/lib/types";
 import { useKellySettings } from "@/lib/kelly-context";
 import { useBalances, useBackendReadiness, useSettings } from "@/lib/hooks";
+import { createClient } from "@/lib/supabase";
 import { useQuery } from "@tanstack/react-query";
 
 // ============ Constants ============
@@ -161,8 +162,8 @@ export default function ScannerPage() {
     gcTime: 30 * 60 * 1000,
     // Important: do NOT trigger fresh scans automatically. This query only loads
     // the persisted "last global scan" payload.
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
     retry: 1,
   });
   const scanError = scanErrorRaw instanceof Error ? scanErrorRaw.message : null;
@@ -174,6 +175,7 @@ export default function ScannerPage() {
   const [selectedBooks, setSelectedBooks] = useState<string[]>(DEFAULT_SELECTED_BOOKS);
   const [visibleCount, setVisibleCount] = useState(10);
   const [hideLongshots, setHideLongshots] = useState(true);
+  const [ageTick, setAgeTick] = useState(0);
   const showBackendHint = !!readiness && (readiness.status !== "ready" || !readiness.checks.scheduler_freshness);
   const backendHint = readiness?.status === "unreachable"
     ? "Scanner is reconnecting. Odds may be slightly delayed."
@@ -185,6 +187,42 @@ export default function ScannerPage() {
   const [drawerInitialValues, setDrawerInitialValues] = useState<
     ScannedBetData | undefined
   >();
+
+  useEffect(() => {
+    if (!scanData?.scanned_at) return;
+    const timer = setInterval(() => {
+      setAgeTick((tick) => tick + 1);
+    }, 60_000);
+    return () => clearInterval(timer);
+  }, [scanData?.scanned_at]);
+
+  const scanAgeMinutes = useMemo(() => {
+    if (!scanData?.scanned_at) return null;
+    return minutesAgo(scanData.scanned_at);
+  }, [scanData?.scanned_at, ageTick]);
+
+  useEffect(() => {
+    const supabase = createClient();
+    const channel = supabase
+      .channel("scan-latest-updates")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "global_scan_cache",
+          filter: "key=eq.latest",
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["scan-markets"] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [queryClient]);
 
   // Cooldown timer
   useEffect(() => {
@@ -298,6 +336,10 @@ export default function ScannerPage() {
       true_prob_at_entry: side.true_prob,  // de-vigged Pinnacle prob — used for accurate EV
       raw_kelly_stake: rawKellyStake,
       stealth_kelly_stake: stealthKellyStake,
+      scanner_duplicate_state: side.scanner_duplicate_state,
+      best_logged_odds_american: side.best_logged_odds_american,
+      current_odds_american: side.current_odds_american ?? side.book_odds,
+      matched_pending_bet_id: side.matched_pending_bet_id,
     });
     setDrawerKey(Date.now());
     setDrawerOpen(true);
@@ -446,10 +488,10 @@ export default function ScannerPage() {
         {/* Scan metadata */}
         {scanData && (
           <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            {scanData.scanned_at && (
+            {scanAgeMinutes !== null && (
               <span>
-                Data as of {minutesAgo(scanData.scanned_at)} min ago
-                {minutesAgo(scanData.scanned_at) > 5 && (
+                Last scan {scanAgeMinutes} min ago
+                {scanAgeMinutes > 5 && (
                   <span className="ml-2 inline-flex items-center rounded-full border border-[#B85C38]/30 bg-[#B85C38]/10 px-2 py-0.5 text-[10px] text-[#8B3D20]">
                     Stale
                   </span>
@@ -458,7 +500,7 @@ export default function ScannerPage() {
             )}
             <span>{scanData.events_fetched} events</span>
             <span className="w-px h-3 bg-border" />
-            <span>{scanData.events_with_both_books} with sharp + target</span>
+            <span>{scanData.events_with_both_books} with Pinnacle + book line</span>
             {scanData.api_requests_remaining && (
               <>
                 <span className="w-px h-3 bg-border" />
@@ -613,6 +655,7 @@ export default function ScannerPage() {
               <>
                 {results.map((side, i) => {
                 const metric = getMetric(side);
+                const duplicateState = side.scanner_duplicate_state ?? "new";
                 const rawKellyStake = Math.max(
                   0,
                   side.base_kelly_fraction * kellyMultiplier * bankroll
@@ -640,6 +683,16 @@ export default function ScannerPage() {
                             <span className="text-xs text-muted-foreground">
                               ML
                             </span>
+                            {duplicateState !== "new" && (
+                              <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border border-[#B85C38]/35 bg-[#B85C38]/10 text-[#8B3D20]">
+                                Already Logged
+                              </span>
+                            )}
+                            {duplicateState === "better_now" && (
+                              <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border border-[#4A7C59]/35 bg-[#4A7C59]/10 text-[#2E5D39]">
+                                Better Now
+                              </span>
+                            )}
                           </div>
                           <p className="text-xs text-muted-foreground mt-0.5 truncate">
                             {side.event}
@@ -683,6 +736,11 @@ export default function ScannerPage() {
                                   </span>
                                 );
                               })()}
+                              {duplicateState === "better_now" && side.best_logged_odds_american != null && (
+                                <span className="text-[11px] text-[#2E5D39]">
+                                  Logged at {formatOdds(side.best_logged_odds_american)} - now {formatOdds(side.current_odds_american ?? side.book_odds)}
+                                </span>
+                              )}
                             </div>
                             {/* Tertiary: kickoff time */}
                             <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
