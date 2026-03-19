@@ -244,3 +244,514 @@ def test_ops_status_returns_snapshot_when_token_valid(monkeypatch):
     assert "summary" in payload["ops"]["odds_api_activity"]
     assert "recent_calls" in payload["ops"]["odds_api_activity"]
 
+
+def test_paper_autolog_env_variables(monkeypatch):
+    main = _reload_main(monkeypatch)
+
+    monkeypatch.delenv("ENABLE_PAPER_EXPERIMENT_AUTOLOG", raising=False)
+    monkeypatch.delenv("PAPER_EXPERIMENT_ACCOUNT_USER_ID", raising=False)
+
+    assert main._is_paper_experiment_autolog_enabled() is False
+    assert main._paper_experiment_account_user_id() == ""
+
+    monkeypatch.setenv("ENABLE_PAPER_EXPERIMENT_AUTOLOG", "1")
+    monkeypatch.setenv("PAPER_EXPERIMENT_ACCOUNT_USER_ID", "user-a")
+    assert main._is_paper_experiment_autolog_enabled() is True
+    assert main._paper_experiment_account_user_id() == "user-a"
+
+
+def test_validate_environment_warns_when_autolog_enabled_without_user_id(monkeypatch):
+    main = _reload_main(monkeypatch)
+
+    monkeypatch.setenv("ENABLE_PAPER_EXPERIMENT_AUTOLOG", "1")
+    monkeypatch.delenv("PAPER_EXPERIMENT_ACCOUNT_USER_ID", raising=False)
+
+    captured = []
+
+    def _capture(event: str, level: str = "info", **fields):
+        captured.append((event, level, fields))
+
+    monkeypatch.setattr(main, "_log_event", _capture, raising=True)
+
+    main._validate_environment()
+
+    warning_events = [e for e, _level, _f in captured]
+    assert "startup.env_paper_autolog_without_user_id" in warning_events
+
+
+def test_annotate_sides_with_duplicate_state_uses_pending_best_price(monkeypatch):
+    main = _reload_main(monkeypatch)
+
+    class _FakeQuery:
+        def __init__(self, data):
+            self._data = data
+
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            return types.SimpleNamespace(data=self._data)
+
+    class _FakeDB:
+        def __init__(self, data):
+            self._data = data
+
+        def table(self, _name):
+            return _FakeQuery(self._data)
+
+    pending_rows = [
+        {
+            "id": "bet-old",
+            "odds_american": 120,
+            "market": "ML",
+            "sportsbook": "DraftKings",
+            "commence_time": "2026-03-19T20:00:00Z",
+            "clv_team": "Lakers",
+            "clv_sport_key": "basketball_nba",
+        },
+        {
+            "id": "bet-best",
+            "odds_american": 130,
+            "market": "ML",
+            "sportsbook": "DraftKings",
+            "commence_time": "2026-03-19T20:00:00Z",
+            "clv_team": "Lakers",
+            "clv_sport_key": "basketball_nba",
+        },
+    ]
+
+    db = _FakeDB(pending_rows)
+
+    sides = [
+        {
+            "sport": "basketball_nba",
+            "commence_time": "2026-03-19T20:00:00Z",
+            "team": "Lakers",
+            "sportsbook": "DraftKings",
+            "book_odds": 125,
+        },
+        {
+            "sport": "basketball_nba",
+            "commence_time": "2026-03-19T20:00:00Z",
+            "team": "Lakers",
+            "sportsbook": "DraftKings",
+            "book_odds": 145,
+        },
+        {
+            "sport": "basketball_nba",
+            "commence_time": "2026-03-19T21:00:00Z",
+            "team": "Celtics",
+            "sportsbook": "DraftKings",
+            "book_odds": 140,
+        },
+    ]
+
+    annotated = main._annotate_sides_with_duplicate_state(db, "user-1", sides)
+
+    assert annotated[0]["scanner_duplicate_state"] == "already_logged"
+    assert annotated[0]["best_logged_odds_american"] == 130
+    assert annotated[0]["matched_pending_bet_id"] == "bet-best"
+
+    assert annotated[1]["scanner_duplicate_state"] == "better_now"
+    assert annotated[1]["best_logged_odds_american"] == 130
+
+    assert annotated[2]["scanner_duplicate_state"] == "new"
+    assert annotated[2]["matched_pending_bet_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_longshot_autolog_guardrails(monkeypatch):
+    main = _reload_main(monkeypatch)
+
+    class _FakeQuery:
+        def __init__(self, db):
+            self._db = db
+            self._eq_filters = []
+            self._in_filters = []
+
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, field, value):
+            self._eq_filters.append((field, value))
+            return self
+
+        def in_(self, field, values):
+            self._in_filters.append((field, set(values)))
+            return self
+
+        def limit(self, _n):
+            return self
+
+        def insert(self, payload):
+            self._db.rows.append(payload)
+            return self
+
+        def execute(self):
+            rows = list(self._db.rows)
+            for field, value in self._eq_filters:
+                rows = [r for r in rows if r.get(field) == value]
+            for field, values in self._in_filters:
+                rows = [r for r in rows if r.get(field) in values]
+            return types.SimpleNamespace(data=rows)
+
+    class _FakeDB:
+        def __init__(self):
+            self.rows = []
+
+        def table(self, _name):
+            return _FakeQuery(self)
+
+    db = _FakeDB()
+    sides = [
+        {
+            "sport": "basketball_nba",
+            "ev_percentage": 1.0,
+            "book_odds": 120,
+            "commence_time": "2026-03-19T20:00:00Z",
+            "team": "Lakers",
+            "sportsbook": "DraftKings",
+            "pinnacle_odds": 110,
+            "true_prob": 0.51,
+        }
+    ]
+
+    monkeypatch.setenv("ENABLE_PAPER_EXPERIMENT_AUTOLOG", "0")
+    monkeypatch.setenv("PAPER_EXPERIMENT_ACCOUNT_USER_ID", "user-a")
+    out = await main._run_longshot_autolog_for_sides(db, run_id="run-1", sides=sides)
+    assert out["enabled"] is False
+    assert len(db.rows) == 0
+
+    monkeypatch.setenv("ENABLE_PAPER_EXPERIMENT_AUTOLOG", "1")
+    monkeypatch.delenv("PAPER_EXPERIMENT_ACCOUNT_USER_ID", raising=False)
+    out = await main._run_longshot_autolog_for_sides(db, run_id="run-2", sides=sides)
+    assert out["enabled"] is True
+    assert out["configured"] is False
+    assert len(db.rows) == 0
+
+
+@pytest.mark.asyncio
+async def test_longshot_autolog_caps_and_idempotency(monkeypatch):
+    main = _reload_main(monkeypatch)
+
+    class _FakeQuery:
+        def __init__(self, db):
+            self._db = db
+            self._eq_filters = []
+            self._in_filters = []
+
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, field, value):
+            self._eq_filters.append((field, value))
+            return self
+
+        def in_(self, field, values):
+            self._in_filters.append((field, set(values)))
+            return self
+
+        def limit(self, _n):
+            return self
+
+        def insert(self, payload):
+            payload = dict(payload)
+            payload.setdefault("id", f"insert-{len(self._db.rows)+1}")
+            self._db.rows.append(payload)
+            return self
+
+        def execute(self):
+            rows = list(self._db.rows)
+            for field, value in self._eq_filters:
+                rows = [r for r in rows if r.get(field) == value]
+            for field, values in self._in_filters:
+                rows = [r for r in rows if r.get(field) in values]
+            return types.SimpleNamespace(data=rows)
+
+    class _FakeDB:
+        def __init__(self):
+            self.rows = []
+
+        def table(self, _name):
+            return _FakeQuery(self)
+
+    db = _FakeDB()
+
+    monkeypatch.setenv("ENABLE_PAPER_EXPERIMENT_AUTOLOG", "1")
+    monkeypatch.setenv("PAPER_EXPERIMENT_ACCOUNT_USER_ID", "user-a")
+
+    # 3 low-edge candidates and 4 high-edge candidates. Cap should keep at most 2 low + 3 high.
+    sides = []
+    for i in range(3):
+        sides.append(
+            {
+                "sport": "basketball_nba",
+                "ev_percentage": 1.0,
+                "book_odds": 110 + i,
+                "commence_time": f"2026-03-19T2{i}:00:00Z",
+                "team": f"LowTeam{i}",
+                "sportsbook": "DraftKings",
+                "pinnacle_odds": 100,
+                "true_prob": 0.5,
+            }
+        )
+    for i in range(4):
+        sides.append(
+            {
+                "sport": "basketball_ncaab",
+                "ev_percentage": 12.0,
+                "book_odds": 700 + i,
+                "commence_time": f"2026-03-20T2{i}:00:00Z",
+                "team": f"HighTeam{i}",
+                "sportsbook": "FanDuel",
+                "pinnacle_odds": 650,
+                "true_prob": 0.2,
+            }
+        )
+
+    out = await main._run_longshot_autolog_for_sides(db, run_id="run-1", sides=sides)
+    assert out["inserted_total"] == 5
+    assert out["inserted_by_cohort"][main.LOW_EDGE_COHORT] == 2
+    assert out["inserted_by_cohort"][main.HIGH_EDGE_COHORT] == 3
+
+    # Re-run with same run_id and sides: idempotency avoids duplicate inserts for already-written keys,
+    # but remaining eligible keys can still be inserted on later runs because of per-run caps.
+    out2 = await main._run_longshot_autolog_for_sides(db, run_id="run-1", sides=sides)
+    assert out2["inserted_total"] == 2
+
+    # Third run should be fully exhausted for this side set.
+    out3 = await main._run_longshot_autolog_for_sides(db, run_id="run-1", sides=sides)
+    assert out3["inserted_total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_scan_markets_returns_backend_duplicate_state_enum(monkeypatch):
+    main = _reload_main(monkeypatch)
+
+    class _FakeQuery:
+        def __init__(self, table_name, db):
+            self._table = table_name
+            self._db = db
+            self._eq_filters = []
+
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, field, value):
+            self._eq_filters.append((field, value))
+            return self
+
+        def limit(self, _n):
+            return self
+
+        def upsert(self, payload, **_kwargs):
+            if self._table == "global_scan_cache":
+                self._db.cache_payload = payload.get("payload")
+            return self
+
+        def execute(self):
+            if self._table == "bets":
+                rows = list(self._db.pending_rows)
+                for field, value in self._eq_filters:
+                    rows = [r for r in rows if r.get(field) == value]
+                return types.SimpleNamespace(data=rows)
+            if self._table == "global_scan_cache":
+                return types.SimpleNamespace(data=[{"payload": self._db.cache_payload}] if self._db.cache_payload else [])
+            return types.SimpleNamespace(data=[])
+
+    class _FakeDB:
+        def __init__(self, pending_rows):
+            self.pending_rows = pending_rows
+            self.cache_payload = None
+
+        def table(self, name):
+            return _FakeQuery(name, self)
+
+    db = _FakeDB(
+        pending_rows=[
+            {
+                "id": "pending-1",
+                "user_id": "user-1",
+                "result": "pending",
+                "market": "ML",
+                "odds_american": 120,
+                "sportsbook": "DraftKings",
+                "commence_time": "2026-03-19T20:00:00Z",
+                "clv_team": "Lakers",
+                "clv_sport_key": "basketball_nba",
+            }
+        ]
+    )
+
+    monkeypatch.setattr(main, "get_db", lambda: db, raising=True)
+    monkeypatch.setattr(main, "_retry_supabase", lambda f, retries=2: f(), raising=True)
+
+    import services.odds_api as odds_api
+
+    async def _fake_cached_or_scan(_sport, source="unknown"):
+        return {
+            "sides": [
+                {
+                    "sportsbook": "DraftKings",
+                    "sport": "basketball_nba",
+                    "event": "Lakers @ Celtics",
+                    "commence_time": "2026-03-19T20:00:00Z",
+                    "team": "Lakers",
+                    "pinnacle_odds": 110,
+                    "book_odds": 130,
+                    "true_prob": 0.52,
+                    "base_kelly_fraction": 0.01,
+                    "book_decimal": 2.3,
+                    "ev_percentage": 2.0,
+                },
+                {
+                    "sportsbook": "DraftKings",
+                    "sport": "basketball_nba",
+                    "event": "Knicks @ Bulls",
+                    "commence_time": "2026-03-19T21:00:00Z",
+                    "team": "Knicks",
+                    "pinnacle_odds": 105,
+                    "book_odds": 120,
+                    "true_prob": 0.5,
+                    "base_kelly_fraction": 0.01,
+                    "book_decimal": 2.2,
+                    "ev_percentage": 1.0,
+                },
+            ],
+            "events_fetched": 2,
+            "events_with_both_books": 2,
+            "api_requests_remaining": "100",
+            "fetched_at": 1_700_000_000,
+        }
+
+    monkeypatch.setattr(odds_api, "get_cached_or_scan", _fake_cached_or_scan, raising=True)
+    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)
+
+    response = await main.scan_markets(sport="basketball_nba", user={"id": "user-1"})
+
+    assert len(response.sides) == 2
+    assert response.sides[0].scanner_duplicate_state == "better_now"
+    assert response.sides[0].best_logged_odds_american == 120
+    assert response.sides[0].matched_pending_bet_id == "pending-1"
+    assert response.sides[1].scanner_duplicate_state == "new"
+
+
+@pytest.mark.asyncio
+async def test_scan_latest_enriches_duplicate_state_from_cached_payload(monkeypatch):
+    main = _reload_main(monkeypatch)
+
+    class _FakeQuery:
+        def __init__(self, table_name, db):
+            self._table = table_name
+            self._db = db
+            self._eq_filters = []
+
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, field, value):
+            self._eq_filters.append((field, value))
+            return self
+
+        def limit(self, _n):
+            return self
+
+        def execute(self):
+            if self._table == "global_scan_cache":
+                return types.SimpleNamespace(data=[{"payload": self._db.cache_payload}])
+            if self._table == "bets":
+                rows = list(self._db.pending_rows)
+                for field, value in self._eq_filters:
+                    rows = [r for r in rows if r.get(field) == value]
+                return types.SimpleNamespace(data=rows)
+            return types.SimpleNamespace(data=[])
+
+    class _FakeDB:
+        def __init__(self):
+            self.pending_rows = [
+                {
+                    "id": "pending-1",
+                    "user_id": "user-1",
+                    "result": "pending",
+                    "market": "ML",
+                    "odds_american": 120,
+                    "sportsbook": "DraftKings",
+                    "commence_time": "2026-03-19T20:00:00Z",
+                    "clv_team": "Lakers",
+                    "clv_sport_key": "basketball_nba",
+                }
+            ]
+            self.cache_payload = {
+                "sport": "all",
+                "sides": [
+                    {
+                        "sportsbook": "DraftKings",
+                        "sport": "basketball_nba",
+                        "event": "Lakers @ Celtics",
+                        "commence_time": "2026-03-19T20:00:00Z",
+                        "team": "Lakers",
+                        "pinnacle_odds": 110,
+                        "book_odds": 130,
+                        "true_prob": 0.52,
+                        "base_kelly_fraction": 0.01,
+                        "book_decimal": 2.3,
+                        "ev_percentage": 2.0,
+                    }
+                ],
+                "events_fetched": 1,
+                "events_with_both_books": 1,
+                "api_requests_remaining": "100",
+                "scanned_at": "2026-03-19T19:55:00Z",
+            }
+
+        def table(self, name):
+            return _FakeQuery(name, self)
+
+    db = _FakeDB()
+    monkeypatch.setattr(main, "get_db", lambda: db, raising=True)
+    monkeypatch.setattr(main, "_retry_supabase", lambda f, retries=2: f(), raising=True)
+
+    payload = await main.scan_latest(user={"id": "user-1"})
+    assert payload["sides"][0]["scanner_duplicate_state"] == "better_now"
+    assert payload["sides"][0]["best_logged_odds_american"] == 120
+
+
+@pytest.mark.asyncio
+async def test_scheduled_scan_ops_status_includes_autolog_summary(monkeypatch):
+    main = _reload_main(monkeypatch)
+
+    import services.odds_api as odds_api
+    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)
+
+    async def _fake_cached_or_scan(_sport, source="unknown"):
+        return {
+            "sides": [],
+            "events_fetched": 0,
+            "events_with_both_books": 0,
+            "api_requests_remaining": "99",
+        }
+
+    monkeypatch.setattr(odds_api, "get_cached_or_scan", _fake_cached_or_scan, raising=True)
+
+    async def _fake_autolog(db, *, run_id: str, sides: list[dict]):
+        return {
+            "enabled": True,
+            "configured": True,
+            "run_id": run_id,
+            "inserted_total": 0,
+            "selected_by_cohort": {main.LOW_EDGE_COHORT: 0, main.HIGH_EDGE_COHORT: 0},
+        }
+
+    monkeypatch.setattr(main, "_run_longshot_autolog_for_sides", _fake_autolog, raising=True)
+
+    await main._run_scheduled_scan_job()
+
+    snapshot = main.app.state.ops_status["last_scheduler_scan"]
+    assert isinstance(snapshot, dict)
+    assert "autolog_summary" in snapshot
+    assert snapshot["autolog_summary"]["enabled"] is True
+    assert snapshot["autolog_summary"]["configured"] is True
+

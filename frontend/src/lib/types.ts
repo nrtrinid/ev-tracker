@@ -43,6 +43,15 @@ export interface Bet {
   clv_sport_key: string | null;
   clv_ev_percent: number | null;  // computed: edge vs. Pinnacle close
   beat_close: boolean | null;
+  // V1 paper experiment metadata
+  is_paper: boolean;
+  strategy_cohort: string | null;
+  auto_logged: boolean;
+  auto_log_run_at: string | null;
+  auto_log_run_key: string | null;
+  scan_ev_percent_at_log: number | null;
+  book_odds_at_log: number | null;
+  reference_odds_at_log: number | null;
 }
 
 export interface BetCreate {
@@ -168,6 +177,10 @@ export interface MarketSide {
   base_kelly_fraction: number;
   book_decimal: number;
   ev_percentage: number;
+  scanner_duplicate_state?: "new" | "already_logged" | "better_now";
+  best_logged_odds_american?: number | null;
+  current_odds_american?: number | null;
+  matched_pending_bet_id?: string | null;
 }
 
 export interface ScanResult {
@@ -319,6 +332,11 @@ export interface ScannedBetData {
   kelly_suggestion?: number;    // deprecated: use raw_kelly_stake / stealth_kelly_stake
   raw_kelly_stake?: number;     // raw Kelly $ (base_kelly * multiplier * bankroll)
   stealth_kelly_stake?: number; // stealth-rounded stake for display and auto-fill
+  // Backend duplicate/exposure awareness for scanner UX
+  scanner_duplicate_state?: "new" | "already_logged" | "better_now";
+  best_logged_odds_american?: number | null;
+  current_odds_american?: number | null;
+  matched_pending_bet_id?: string | null;
 }
 
 // Constants

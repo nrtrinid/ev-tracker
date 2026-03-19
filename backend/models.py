@@ -6,6 +6,7 @@ Define the data structures for bets and API requests/responses.
 from pydantic import BaseModel, Field
 from datetime import datetime, date
 from enum import Enum
+from typing import Literal
 
 
 class PromoType(str, Enum):
@@ -116,6 +117,16 @@ class BetResponse(BaseModel):
     ev_total_locked: float | None = None
     win_payout_locked: float | None = None
     ev_lock_version: int = 1
+
+    # Paper experiment metadata (server-managed)
+    is_paper: bool = False
+    strategy_cohort: str | None = None
+    auto_logged: bool = False
+    auto_log_run_at: datetime | None = None
+    auto_log_run_key: str | None = None
+    scan_ev_percent_at_log: float | None = None
+    book_odds_at_log: float | None = None
+    reference_odds_at_log: float | None = None
 
 
 class SettingsUpdate(BaseModel):
@@ -239,6 +250,10 @@ class MarketSide(BaseModel):
     base_kelly_fraction: float
     book_decimal: float
     ev_percentage: float
+    scanner_duplicate_state: Literal["new", "already_logged", "better_now"] | None = None
+    best_logged_odds_american: float | None = None
+    current_odds_american: float | None = None
+    matched_pending_bet_id: str | None = None
 
 
 class FullScanResponse(BaseModel):

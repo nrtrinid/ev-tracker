@@ -47,10 +47,12 @@ import type { Bet } from "@/lib/types";
 const TIMEFRAME_OPTIONS = ["All Time", "YTD", "Last 30 Days", "Last 7 Days"] as const;
 const BET_TYPE_OPTIONS = ["All Types", "Bonus Bets", "Boosts", "Standard"] as const;
 const SPORT_OPTIONS = ["All Sports", "NFL", "NBA", "MLB", "NHL", "NCAAF", "NCAAB", "Soccer", "Tennis", "UFC"] as const;
+const BUCKET_OPTIONS = ["All Buckets", "Low Edge", "High Edge"] as const;
 
 type TimeframeOption = typeof TIMEFRAME_OPTIONS[number];
 type BetTypeOption = typeof BET_TYPE_OPTIONS[number];
 type SportOption = typeof SPORT_OPTIONS[number];
+type BucketOption = typeof BUCKET_OPTIONS[number];
 type SportsbookOption = "All Books" | string;
 
 // Filter Pill component
@@ -86,6 +88,9 @@ function AnalyticsFilterBar({
   setBetType,
   sport,
   setSport,
+  bucket,
+  setBucket,
+  showBucketFilter,
   sportsbook,
   setSportsbook,
   sportsbookOptions,
@@ -98,6 +103,9 @@ function AnalyticsFilterBar({
   setBetType: (v: BetTypeOption) => void;
   sport: SportOption;
   setSport: (v: SportOption) => void;
+  bucket: BucketOption;
+  setBucket: (v: BucketOption) => void;
+  showBucketFilter: boolean;
   sportsbook: SportsbookOption;
   setSportsbook: (v: SportsbookOption) => void;
   sportsbookOptions: string[];
@@ -155,6 +163,22 @@ function AnalyticsFilterBar({
           ))}
         </div>
       </div>
+
+      {showBucketFilter && (
+        <div>
+          <span className="text-xs text-muted-foreground font-medium block mb-2">Bucket</span>
+          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+            {BUCKET_OPTIONS.map((option) => (
+              <FilterPill
+                key={option}
+                label={option}
+                active={bucket === option}
+                onClick={() => setBucket(option)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
       
       {/* Sport - Horizontal Scroll */}
       <div>
@@ -218,24 +242,17 @@ export default function AnalyticsPage() {
   const [timeframe, setTimeframe] = useState<TimeframeOption>("All Time");
   const [betType, setBetType] = useState<BetTypeOption>("All Types");
   const [sport, setSport] = useState<SportOption>("All Sports");
+  const [bucket, setBucket] = useState<BucketOption>("All Buckets");
   const [sportsbook, setSportsbook] = useState<SportsbookOption>("All Books");
   const [filterOpen, setFilterOpen] = useState(false);
   const [breakdownTab, setBreakdownTab] = useState<"book" | "sport" | "type">("book");
   const [bookMetric, setBookMetric] = useState<"ev" | "profit">("ev");
 
-  const activeFilterCount = [
-    timeframe !== "All Time",
-    betType !== "All Types",
-    sport !== "All Sports",
-    sportsbook !== "All Books",
-  ].filter(Boolean).length;
-
-  const hasActiveFilters = activeFilterCount > 0;
-
   const clearFilters = () => {
     setTimeframe("All Time");
     setBetType("All Types");
     setSport("All Sports");
+    setBucket("All Buckets");
     setSportsbook("All Books");
   };
 
@@ -248,6 +265,21 @@ export default function AnalyticsPage() {
     queryKey: ["bets"],
     queryFn: () => getBets(),
   });
+
+  const showBucketFilter = useMemo(() => {
+    if (!bets || bets.length === 0) return false;
+    return bets.some((b) => b.auto_logged || !!b.strategy_cohort);
+  }, [bets]);
+
+  const activeFilterCount = [
+    timeframe !== "All Time",
+    betType !== "All Types",
+    sport !== "All Sports",
+    showBucketFilter && bucket !== "All Buckets",
+    sportsbook !== "All Books",
+  ].filter(Boolean).length;
+
+  const hasActiveFilters = activeFilterCount > 0;
 
   const { data: balances, isLoading: balancesLoading } = useQuery({
     queryKey: ["balances"],
@@ -300,10 +332,20 @@ export default function AnalyticsPage() {
       
       // Sport filter
       const sportMatch = sport === "All Sports" || bet.sport === sport;
+
+      // Cohort bucket filter (shown only for experiment/autolog accounts)
+      let bucketMatch = true;
+      if (showBucketFilter && bucket !== "All Buckets") {
+        if (bucket === "Low Edge") {
+          bucketMatch = bet.strategy_cohort === "low_edge_test";
+        } else if (bucket === "High Edge") {
+          bucketMatch = bet.strategy_cohort === "high_edge_longshot_test";
+        }
+      }
       
-      return dateMatch && bookMatch && typeMatch && sportMatch;
+      return dateMatch && bookMatch && typeMatch && sportMatch && bucketMatch;
     });
-  }, [bets, timeframe, sportsbook, betType, sport]);
+  }, [bets, timeframe, sportsbook, betType, sport, showBucketFilter, bucket]);
 
   // Calculate metrics from filtered bets
   const settledBets = filteredBets.filter(b => b.result !== "pending");
@@ -652,6 +694,9 @@ export default function AnalyticsPage() {
                   setBetType={setBetType}
                   sport={sport}
                   setSport={setSport}
+                  bucket={bucket}
+                  setBucket={setBucket}
+                  showBucketFilter={showBucketFilter}
                   sportsbook={sportsbook}
                   setSportsbook={setSportsbook}
                   sportsbookOptions={sportsbookOptions}
@@ -685,6 +730,9 @@ export default function AnalyticsPage() {
                 )}
                 {betType !== "All Types" && (
                   <span className="px-2 py-1 bg-muted rounded-full text-xs font-medium">{betType}</span>
+                )}
+                {showBucketFilter && bucket !== "All Buckets" && (
+                  <span className="px-2 py-1 bg-muted rounded-full text-xs font-medium">{bucket}</span>
                 )}
                 {sport !== "All Sports" && (
                   <span className="px-2 py-1 bg-muted rounded-full text-xs font-medium">{sport}</span>

@@ -45,6 +45,51 @@ SCHEDULER_STALE_WINDOWS = {
     "scheduled_scan": timedelta(hours=20),
 }
 
+# ---- V1 paper autolog constants ----
+LONGSHOT_AUTOLOG_SPORTS = {"basketball_nba", "basketball_ncaab"}
+LOW_EDGE_COHORT = "low_edge_test"
+HIGH_EDGE_COHORT = "high_edge_longshot_test"
+LOW_EDGE_EV_MIN = 0.5
+LOW_EDGE_EV_MAX = 1.5
+LOW_EDGE_ODDS_MIN = -200
+LOW_EDGE_ODDS_MAX = 300
+HIGH_EDGE_EV_MIN = 10.0
+# V1 decision: hard-code stricter floor to suppress noisy longshot volume.
+HIGH_EDGE_ODDS_MIN = 700
+AUTOLOG_MAX_TOTAL = 5
+AUTOLOG_MAX_LOW = 2
+AUTOLOG_MAX_HIGH = 3
+AUTOLOG_PAPER_STAKE = 10.0
+
+# Optional one-off scan schedule in Phoenix local time, format HH:MM (24h).
+# Example: SCHEDULED_SCAN_TEMP_TIME_PHOENIX=14:45
+SCHEDULED_SCAN_TEMP_TIME_ENV = "SCHEDULED_SCAN_TEMP_TIME_PHOENIX"
+
+
+def _is_paper_experiment_autolog_enabled() -> bool:
+    return (os.getenv("ENABLE_PAPER_EXPERIMENT_AUTOLOG") or "0") == "1"
+
+
+def _paper_experiment_account_user_id() -> str:
+    return (os.getenv("PAPER_EXPERIMENT_ACCOUNT_USER_ID") or "").strip()
+
+
+def _parse_hhmm(value: str | None) -> tuple[int, int] | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    parts = raw.split(":")
+    if len(parts) != 2:
+        return None
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+    except ValueError:
+        return None
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        return None
+    return (hour, minute)
+
 
 def _new_run_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:12]}"
@@ -58,6 +103,297 @@ def _log_event(event: str, level: str = "info", **fields):
     }
     message = json.dumps(payload, default=str)
     getattr(logger, level.lower(), logger.info)(message)
+
+
+def _normalize_text(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def _team_from_bet_row(row: dict) -> str:
+    team = _normalize_text(row.get("clv_team"))
+    if team:
+        return team
+    event = str(row.get("event") or "").strip()
+    if event.upper().endswith(" ML"):
+        return _normalize_text(event[:-3])
+    return ""
+
+
+def _scanner_match_key_from_side(side: dict) -> tuple[str, str, str, str, str]:
+    return (
+        _normalize_text(side.get("sport")),
+        str(side.get("commence_time") or "").strip(),
+        "ml",
+        _normalize_text(side.get("team")),
+        _normalize_text(side.get("sportsbook")),
+    )
+
+
+def _scanner_match_key_from_bet(row: dict) -> tuple[str, str, str, str, str]:
+    return (
+        _normalize_text(row.get("clv_sport_key") or row.get("sport")),
+        str(row.get("commence_time") or "").strip(),
+        _normalize_text(row.get("market")),
+        _team_from_bet_row(row),
+        _normalize_text(row.get("sportsbook")),
+    )
+
+
+def _price_quality_from_american(american: float | int | None) -> float | None:
+    if american is None:
+        return None
+    try:
+        return american_to_decimal(float(american))
+    except Exception:
+        return None
+
+
+def _annotate_sides_with_duplicate_state(db, user_id: str, sides: list[dict]) -> list[dict]:
+    """
+    Backend-owned scanner duplicate state.
+
+    Matching scope: pending (unsettled exposure) only.
+    State enum: new | already_logged | better_now
+    """
+    if not sides:
+        return sides
+
+    pending_res = (
+        db.table("bets")
+        .select("id,odds_american,sport,market,sportsbook,commence_time,clv_team,event,clv_sport_key,result")
+        .eq("user_id", user_id)
+        .eq("result", "pending")
+        .eq("market", "ML")
+        .execute()
+    )
+
+    matches_by_key: dict[tuple[str, str, str, str, str], list[dict]] = {}
+    for row in pending_res.data or []:
+        key = _scanner_match_key_from_bet(row)
+        if not all([key[0], key[1], key[2], key[3], key[4]]):
+            continue
+        matches_by_key.setdefault(key, []).append(row)
+
+    annotated: list[dict] = []
+    for side in sides:
+        side_out = dict(side)
+        key = _scanner_match_key_from_side(side)
+        matched = matches_by_key.get(key, [])
+        current_odds = side.get("book_odds")
+        current_quality = _price_quality_from_american(current_odds)
+        side_out["current_odds_american"] = current_odds
+
+        if not matched:
+            side_out["scanner_duplicate_state"] = "new"
+            side_out["best_logged_odds_american"] = None
+            side_out["matched_pending_bet_id"] = None
+            annotated.append(side_out)
+            continue
+
+        best_row = None
+        best_quality = None
+        for row in matched:
+            q = _price_quality_from_american(row.get("odds_american"))
+            if q is None:
+                continue
+            if best_quality is None or q > best_quality:
+                best_quality = q
+                best_row = row
+
+        if best_row is None:
+            side_out["scanner_duplicate_state"] = "already_logged"
+            side_out["best_logged_odds_american"] = None
+            side_out["matched_pending_bet_id"] = matched[0].get("id") if matched else None
+            annotated.append(side_out)
+            continue
+
+        side_out["best_logged_odds_american"] = best_row.get("odds_american")
+        side_out["matched_pending_bet_id"] = best_row.get("id")
+        if current_quality is not None and best_quality is not None and current_quality > best_quality:
+            side_out["scanner_duplicate_state"] = "better_now"
+        else:
+            side_out["scanner_duplicate_state"] = "already_logged"
+        annotated.append(side_out)
+
+    return annotated
+
+
+def _cohort_for_side(side: dict) -> str | None:
+    sport = _normalize_text(side.get("sport"))
+    if sport not in LONGSHOT_AUTOLOG_SPORTS:
+        return None
+
+    try:
+        ev = float(side.get("ev_percentage"))
+        odds = float(side.get("book_odds"))
+    except Exception:
+        return None
+
+    if LOW_EDGE_EV_MIN <= ev <= LOW_EDGE_EV_MAX and LOW_EDGE_ODDS_MIN <= odds <= LOW_EDGE_ODDS_MAX:
+        return LOW_EDGE_COHORT
+    if ev >= HIGH_EDGE_EV_MIN and odds >= HIGH_EDGE_ODDS_MIN:
+        return HIGH_EDGE_COHORT
+    return None
+
+
+def _sport_display(sport_key: str) -> str:
+    mapping = {
+        "basketball_nba": "NBA",
+        "basketball_ncaab": "NCAAB",
+    }
+    return mapping.get(sport_key, sport_key)
+
+
+def _autolog_key_for_side(side: dict, cohort: str) -> str:
+    return "|".join([
+        "v1",
+        cohort,
+        _normalize_text(side.get("sport")),
+        str(side.get("commence_time") or "").strip(),
+        _normalize_text(side.get("team")),
+        _normalize_text(side.get("sportsbook")),
+        "ml",
+    ])
+
+
+async def _run_longshot_autolog_for_sides(db, *, run_id: str, sides: list[dict]) -> dict:
+    """Autolog paper tickets from existing scan sides with deterministic caps and dedupe."""
+    if not _is_paper_experiment_autolog_enabled():
+        return {"enabled": False, "inserted_total": 0}
+
+    user_id = _paper_experiment_account_user_id()
+    if not user_id:
+        return {"enabled": True, "configured": False, "inserted_total": 0, "reason": "missing_user_id"}
+
+    eligible: list[dict] = []
+    for side in sides:
+        cohort = _cohort_for_side(side)
+        if not cohort:
+            continue
+        side_copy = dict(side)
+        side_copy["strategy_cohort"] = cohort
+        eligible.append(side_copy)
+
+    # Deterministic ordering: higher EV first, then kickoff, then stable composite key.
+    eligible.sort(
+        key=lambda s: (
+            -float(s.get("ev_percentage") or 0),
+            str(s.get("commence_time") or ""),
+            _autolog_key_for_side(s, s["strategy_cohort"]),
+        )
+    )
+
+    existing_pending = (
+        db.table("bets")
+        .select("strategy_cohort,clv_sport_key,commence_time,clv_team,sportsbook,market")
+        .eq("user_id", user_id)
+        .eq("result", "pending")
+        .eq("market", "ML")
+        .in_("strategy_cohort", [LOW_EDGE_COHORT, HIGH_EDGE_COHORT])
+        .execute()
+    )
+    pending_keys = set()
+    for row in existing_pending.data or []:
+        key = "|".join([
+            "v1",
+            str(row.get("strategy_cohort") or ""),
+            _normalize_text(row.get("clv_sport_key") or row.get("sport")),
+            str(row.get("commence_time") or "").strip(),
+            _normalize_text(row.get("clv_team")),
+            _normalize_text(row.get("sportsbook")),
+            _normalize_text(row.get("market")),
+        ])
+        pending_keys.add(key)
+
+    inserted_total = 0
+    selected_by_cohort = {LOW_EDGE_COHORT: 0, HIGH_EDGE_COHORT: 0}
+    inserted_by_cohort = {LOW_EDGE_COHORT: 0, HIGH_EDGE_COHORT: 0}
+    skipped_duplicate = 0
+    skipped_rule = 0
+    run_at = datetime.now(UTC).isoformat()
+    in_run_keys: set[str] = set()
+
+    for side in eligible:
+        cohort = side["strategy_cohort"]
+        key = _autolog_key_for_side(side, cohort)
+
+        if key in pending_keys or key in in_run_keys:
+            skipped_duplicate += 1
+            continue
+
+        if inserted_total >= AUTOLOG_MAX_TOTAL:
+            skipped_rule += 1
+            continue
+
+        if cohort == LOW_EDGE_COHORT and inserted_by_cohort[LOW_EDGE_COHORT] >= AUTOLOG_MAX_LOW:
+            skipped_rule += 1
+            continue
+        if cohort == HIGH_EDGE_COHORT and inserted_by_cohort[HIGH_EDGE_COHORT] >= AUTOLOG_MAX_HIGH:
+            skipped_rule += 1
+            continue
+
+        selected_by_cohort[cohort] += 1
+
+        run_key = f"{run_id}|{key}"
+        existing_run = (
+            db.table("bets")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("auto_log_run_key", run_key)
+            .limit(1)
+            .execute()
+        )
+        if existing_run.data:
+            skipped_duplicate += 1
+            continue
+
+        commence_time = str(side.get("commence_time") or "")
+        event_date = commence_time[:10] if len(commence_time) >= 10 else datetime.now(UTC).date().isoformat()
+
+        payload = {
+            "user_id": user_id,
+            "sport": _sport_display(str(side.get("sport") or "")),
+            "event": f"{side.get('team')} ML",
+            "market": "ML",
+            "sportsbook": side.get("sportsbook"),
+            "promo_type": "standard",
+            "odds_american": side.get("book_odds"),
+            "stake": AUTOLOG_PAPER_STAKE,
+            "result": BetResult.PENDING.value,
+            "event_date": event_date,
+            "pinnacle_odds_at_entry": side.get("pinnacle_odds"),
+            "commence_time": commence_time,
+            "clv_team": side.get("team"),
+            "clv_sport_key": side.get("sport"),
+            "true_prob_at_entry": side.get("true_prob"),
+            "is_paper": True,
+            "strategy_cohort": cohort,
+            "auto_logged": True,
+            "auto_log_run_at": run_at,
+            "auto_log_run_key": run_key,
+            "scan_ev_percent_at_log": side.get("ev_percentage"),
+            "book_odds_at_log": side.get("book_odds"),
+            "reference_odds_at_log": side.get("pinnacle_odds"),
+        }
+
+        db.table("bets").insert(payload).execute()
+        inserted_total += 1
+        inserted_by_cohort[cohort] += 1
+        in_run_keys.add(key)
+        pending_keys.add(key)
+
+    return {
+        "enabled": True,
+        "configured": True,
+        "run_id": run_id,
+        "candidates_seen": len(sides),
+        "eligible_seen": len(eligible),
+        "selected_by_cohort": selected_by_cohort,
+        "inserted_total": inserted_total,
+        "inserted_by_cohort": inserted_by_cohort,
+        "skipped_duplicate": skipped_duplicate,
+        "skipped_rule": skipped_rule,
+    }
 
 
 def _validate_environment() -> None:
@@ -77,6 +413,9 @@ def _validate_environment() -> None:
     scheduler_enabled = os.getenv("ENABLE_SCHEDULER") == "1"
     odds_api_configured = bool(os.getenv("ODDS_API_KEY"))
     cron_token_configured = bool(os.getenv("CRON_TOKEN"))
+    paper_autolog_enabled = _is_paper_experiment_autolog_enabled()
+    paper_autolog_user_id = _paper_experiment_account_user_id()
+    temp_scan_time_raw = os.getenv(SCHEDULED_SCAN_TEMP_TIME_ENV)
 
     if scheduler_enabled and not odds_api_configured:
         _log_event(
@@ -92,12 +431,30 @@ def _validate_environment() -> None:
             message="CRON_TOKEN is missing; cron endpoints will reject requests.",
         )
 
+    if paper_autolog_enabled and not paper_autolog_user_id:
+        _log_event(
+            "startup.env_paper_autolog_without_user_id",
+            level="warning",
+            message="Paper autolog is enabled but no account user id is configured; autolog inserts will be skipped.",
+        )
+
+    if temp_scan_time_raw and _parse_hhmm(temp_scan_time_raw) is None:
+        _log_event(
+            "startup.env_temp_scan_time_invalid",
+            level="warning",
+            env_var=SCHEDULED_SCAN_TEMP_TIME_ENV,
+            provided_value=temp_scan_time_raw,
+            message="Invalid temp scan time format; expected HH:MM in 24h format.",
+        )
+
     _log_event(
         "startup.env_validated",
         environment=environment,
         scheduler_enabled=scheduler_enabled,
         cron_token_configured=cron_token_configured,
         odds_api_key_configured=odds_api_configured,
+        paper_autolog_enabled=paper_autolog_enabled,
+        paper_autolog_user_id_configured=bool(paper_autolog_user_id),
     )
 
 
@@ -458,6 +815,11 @@ async def _run_scheduled_scan_job():
     total_sides = 0
     alerts_scheduled = 0
     hard_errors = 0
+    all_sides: list[dict] = []
+    total_events = 0
+    total_with_both = 0
+    min_remaining: str | None = None
+    oldest_fetched: float | None = None
     from services.discord_alerts import schedule_alerts
 
     for sport_key in SUPPORTED_SPORTS:
@@ -467,7 +829,23 @@ async def _run_scheduled_scan_job():
             fetched = result.get("events_fetched")
             with_both = result.get("events_with_both_books")
             sides = result.get("sides") or []
+            all_sides.extend(sides)
             total_sides += len(sides)
+            total_events += int(fetched or 0)
+            total_with_both += int(with_both or 0)
+
+            rem = result.get("api_requests_remaining")
+            if rem is not None:
+                try:
+                    r = int(rem)
+                    min_remaining = str(r) if min_remaining is None else str(min(r, int(min_remaining)))
+                except ValueError:
+                    min_remaining = str(rem)
+
+            ft = result.get("fetched_at")
+            if ft is not None:
+                oldest_fetched = ft if oldest_fetched is None else min(oldest_fetched, ft)
+
             alerts_scheduled += schedule_alerts(sides)
             _log_event(
                 "scheduler.scan.sport_completed",
@@ -508,13 +886,61 @@ async def _run_scheduled_scan_job():
             )
             hard_errors += 1
 
+    scanned_at = (
+        datetime.fromtimestamp(oldest_fetched, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        if oldest_fetched
+        else _utc_now_iso()
+    )
+
+    # Keep Scanner's "latest scan" payload in sync for scheduled runs, not only manual scans.
+    try:
+        persist_response = FullScanResponse(
+            sport="all",
+            sides=all_sides,
+            events_fetched=total_events,
+            events_with_both_books=total_with_both,
+            api_requests_remaining=min_remaining,
+            scanned_at=scanned_at,
+        )
+        _retry_supabase(lambda: (
+            get_db().table("global_scan_cache").upsert(
+                {"key": "latest", "payload": persist_response.model_dump()},
+                on_conflict="key",
+            ).execute()
+        ))
+    except Exception as e:
+        _log_event(
+            "scheduler.scan.latest_cache_persist_failed",
+            level="warning",
+            run_id=run_id,
+            error_class=type(e).__name__,
+            error=str(e),
+        )
+
     finished = datetime.now(UTC).isoformat()
+    autolog_summary = None
+    try:
+        autolog_summary = await _run_longshot_autolog_for_sides(db=get_db(), run_id=run_id, sides=all_sides)
+    except Exception as e:
+        autolog_summary = {
+            "enabled": _is_paper_experiment_autolog_enabled(),
+            "error": f"{type(e).__name__}: {e}",
+        }
+        _log_event(
+            "scheduler.scan.autolog.failed",
+            level="error",
+            run_id=run_id,
+            error_class=type(e).__name__,
+            error=str(e),
+        )
+
     _log_event(
         "scheduler.scan.completed",
         run_id=run_id,
         finished_at=finished + "Z",
         total_sides=total_sides,
         alerts_scheduled=alerts_scheduled,
+        autolog_summary=autolog_summary,
         duration_ms=round((time.monotonic() - started_at) * 1000, 2),
     )
     duration_ms = round((time.monotonic() - started_at) * 1000, 2)
@@ -544,6 +970,7 @@ async def _run_scheduled_scan_job():
             "total_sides": total_sides,
             "alerts_scheduled": alerts_scheduled,
             "hard_errors": hard_errors,
+            "autolog_summary": autolog_summary,
         },
     )
 
@@ -611,14 +1038,16 @@ async def start_scheduler():
         coalesce=True,
     )
     if PHOENIX_TZ is not None:
-        scheduler.add_job(
-            _run_scheduled_scan_job,
-            CronTrigger(hour=16, minute=30, timezone=PHOENIX_TZ),
-        )
-        scheduler.add_job(
-            _run_scheduled_scan_job,
-            CronTrigger(hour=18, minute=30, timezone=PHOENIX_TZ),
-        )
+        scheduled_scan_times: list[tuple[int, int]] = [(16, 30), (18, 30)]
+        temp_scan_time = _parse_hhmm(os.getenv(SCHEDULED_SCAN_TEMP_TIME_ENV))
+        if temp_scan_time is not None and temp_scan_time not in scheduled_scan_times:
+            scheduled_scan_times.append(temp_scan_time)
+
+        for hour, minute in scheduled_scan_times:
+            scheduler.add_job(
+                _run_scheduled_scan_job,
+                CronTrigger(hour=hour, minute=minute, timezone=PHOENIX_TZ),
+            )
     else:
         print("[Scheduler] Phoenix timezone unavailable; skipping scheduled scan jobs.")
     scheduler.start()
@@ -752,7 +1181,7 @@ def compute_k_user(db, user_id: str) -> dict:
             .select("stake, result, win_payout, payout_override, promo_type")
             .eq("user_id", user_id)
             .eq("promo_type", "bonus_bet")
-            .neq("result", "pending")
+            .in_("result", ["win", "loss", "push", "void"])
             .execute()
         ))
         rows = res.data or []
@@ -902,6 +1331,14 @@ def build_bet_response(row: dict, k_factor: float) -> BetResponse:
         ev_total_locked=row.get("ev_total_locked"),
         win_payout_locked=row.get("win_payout_locked"),
         ev_lock_version=row.get("ev_lock_version") or 1,
+        is_paper=bool(row.get("is_paper") or False),
+        strategy_cohort=row.get("strategy_cohort"),
+        auto_logged=bool(row.get("auto_logged") or False),
+        auto_log_run_at=row.get("auto_log_run_at"),
+        auto_log_run_key=row.get("auto_log_run_key"),
+        scan_ev_percent_at_log=row.get("scan_ev_percent_at_log"),
+        book_odds_at_log=row.get("book_odds_at_log"),
+        reference_odds_at_log=row.get("reference_odds_at_log"),
     )
 
 
@@ -1701,6 +2138,8 @@ async def scan_markets(
     try:
         if sport is not None:
             result = await get_cached_or_scan(sport, source="manual_scan")
+            base_sides = result["sides"]
+            response_sides = _annotate_sides_with_duplicate_state(db, user["id"], base_sides)
             scanned_at = datetime.fromtimestamp(result["fetched_at"], tz=timezone.utc).isoformat().replace("+00:00", "Z")
             _set_ops_status(
                 "last_manual_scan",
@@ -1709,15 +2148,23 @@ async def scan_markets(
                     "sport": sport,
                     "events_fetched": result.get("events_fetched"),
                     "events_with_both_books": result.get("events_with_both_books"),
-                    "total_sides": len(result.get("sides") or []),
+                    "total_sides": len(base_sides or []),
                     "api_requests_remaining": result.get("api_requests_remaining"),
                 },
             )
             # Piggyback CLV update — zero extra API calls
-            asyncio.create_task(_piggyback_clv(result["sides"]))
+            asyncio.create_task(_piggyback_clv(base_sides))
             response = FullScanResponse(
                 sport=sport,
-                sides=result["sides"],
+                sides=response_sides,
+                events_fetched=result["events_fetched"],
+                events_with_both_books=result["events_with_both_books"],
+                api_requests_remaining=result.get("api_requests_remaining"),
+                scanned_at=scanned_at,
+            )
+            persist_response = FullScanResponse(
+                sport=sport,
+                sides=base_sides,
                 events_fetched=result["events_fetched"],
                 events_with_both_books=result["events_with_both_books"],
                 api_requests_remaining=result.get("api_requests_remaining"),
@@ -1727,7 +2174,7 @@ async def scan_markets(
             try:
                 _retry_supabase(lambda: (
                     db.table("global_scan_cache").upsert(
-                        {"key": "latest", "payload": response.model_dump()},
+                        {"key": "latest", "payload": persist_response.model_dump()},
                         on_conflict="key",
                     ).execute()
                 ))
@@ -1787,7 +2234,16 @@ async def scan_markets(
         )
         # Piggyback CLV update across all scanned sides — zero extra API calls
         asyncio.create_task(_piggyback_clv(all_sides))
+        response_sides = _annotate_sides_with_duplicate_state(db, user["id"], all_sides)
         response = FullScanResponse(
+            sport="all",
+            sides=response_sides,
+            events_fetched=total_events,
+            events_with_both_books=total_with_both,
+            api_requests_remaining=min_remaining,
+            scanned_at=scanned_at,
+        )
+        persist_response = FullScanResponse(
             sport="all",
             sides=all_sides,
             events_fetched=total_events,
@@ -1799,7 +2255,7 @@ async def scan_markets(
         try:
             _retry_supabase(lambda: (
                 db.table("global_scan_cache").upsert(
-                    {"key": "latest", "payload": response.model_dump()},
+                    {"key": "latest", "payload": persist_response.model_dump()},
                     on_conflict="key",
                 ).execute()
             ))
@@ -1862,6 +2318,8 @@ async def scan_latest(user: dict = Depends(require_scan_rate_limit)):
         payload = res.data[0].get("payload")
         if not isinstance(payload, dict):
             raise HTTPException(status_code=500, detail="Invalid scan cache payload")
+        sides = payload.get("sides") if isinstance(payload.get("sides"), list) else []
+        payload["sides"] = _annotate_sides_with_duplicate_state(db, user["id"], sides)
         return payload
     except HTTPException:
         raise

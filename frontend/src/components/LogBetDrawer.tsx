@@ -256,6 +256,11 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
   const vigNudgeValue = evWithBetterVig.evTotal - ev.evTotal;
 
   const invalidBoost = formState.promo_type === "boost_custom" && (isNaN(boostPercentRaw) || boostPercentNum < 0 || boostPercentNum > 300);
+  const duplicateState = initialValues?.scanner_duplicate_state ?? "new";
+  const hasDuplicateExposure = duplicateState === "already_logged" || duplicateState === "better_now";
+
+  const bestLoggedOdds = initialValues?.best_logged_odds_american;
+  const currentOdds = initialValues?.current_odds_american ?? initialValues?.odds_american;
 
   const updateField = (field: keyof FormState, value: string) => {
     setFormState(prev => ({ ...prev, [field]: value }));
@@ -356,6 +361,24 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
 
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto px-4 pb-32">
+          {hasDuplicateExposure && (
+            <div className="mb-4 rounded-lg border border-[#B85C38]/30 bg-[#B85C38]/10 px-3 py-2 text-xs text-[#8B3D20]">
+              {duplicateState === "better_now" ? (
+                <>
+                  <p className="font-semibold">You already logged this side at a lower price.</p>
+                  <p className="mt-0.5">
+                    You already logged this side at {bestLoggedOdds != null ? formatAmerican(bestLoggedOdds) : "previous odds"}. The scanner now shows {currentOdds != null ? formatAmerican(currentOdds) : "a better line"}.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="font-semibold">You already logged this side.</p>
+                  <p className="mt-0.5">Logging again will increase exposure on the same outcome.</p>
+                </>
+              )}
+            </div>
+          )}
+
           {/* Sportsbook Carousel */}
           <div className="mb-4">
             <label className="text-xs font-medium text-muted-foreground mb-2 block">
@@ -810,7 +833,7 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
             {createBet.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              "Log Bet"
+              hasDuplicateExposure ? "Log Another Ticket" : "Log Bet"
             )}
           </Button>
         </div>
