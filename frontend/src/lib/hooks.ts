@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api";
 import type { BetCreate, BetUpdate, BetResult, PromoType, TransactionCreate } from "@/lib/types";
 
@@ -13,6 +13,20 @@ export const queryKeys = {
   transactions: ["transactions"] as const,
   balances: ["balances"] as const,
 };
+
+function invalidateBetDerivedQueries(queryClient: QueryClient, betId?: string) {
+  queryClient.invalidateQueries({ queryKey: queryKeys.bets });
+  if (betId) {
+    queryClient.invalidateQueries({ queryKey: queryKeys.bet(betId) });
+  }
+  queryClient.invalidateQueries({ queryKey: queryKeys.summary });
+  queryClient.invalidateQueries({ queryKey: queryKeys.balances });
+}
+
+function invalidateTransactionDerivedQueries(queryClient: QueryClient) {
+  queryClient.invalidateQueries({ queryKey: queryKeys.transactions });
+  queryClient.invalidateQueries({ queryKey: queryKeys.balances });
+}
 
 // ============ Bets Hooks ============
 
@@ -41,10 +55,7 @@ export function useCreateBet() {
   return useMutation({
     mutationFn: (bet: BetCreate) => api.createBet(bet),
     onSuccess: () => {
-      // Invalidate and refetch bets list and summary
-      queryClient.invalidateQueries({ queryKey: queryKeys.bets });
-      queryClient.invalidateQueries({ queryKey: queryKeys.summary });
-      queryClient.invalidateQueries({ queryKey: queryKeys.balances });
+      invalidateBetDerivedQueries(queryClient);
     },
   });
 }
@@ -56,10 +67,7 @@ export function useUpdateBet() {
     mutationFn: ({ id, data }: { id: string; data: BetUpdate }) =>
       api.updateBet(id, data),
     onSuccess: (_, { id }) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.bets });
-      queryClient.invalidateQueries({ queryKey: queryKeys.bet(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.summary });
-      queryClient.invalidateQueries({ queryKey: queryKeys.balances });
+      invalidateBetDerivedQueries(queryClient, id);
     },
   });
 }
@@ -93,9 +101,7 @@ export function useUpdateBetResult() {
       }
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.bets });
-      queryClient.invalidateQueries({ queryKey: queryKeys.summary });
-      queryClient.invalidateQueries({ queryKey: queryKeys.balances });
+      invalidateBetDerivedQueries(queryClient);
     },
   });
 }
@@ -106,9 +112,7 @@ export function useDeleteBet() {
   return useMutation({
     mutationFn: (id: string) => api.deleteBet(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.bets });
-      queryClient.invalidateQueries({ queryKey: queryKeys.summary });
-      queryClient.invalidateQueries({ queryKey: queryKeys.balances });
+      invalidateBetDerivedQueries(queryClient);
     },
   });
 }
@@ -197,8 +201,7 @@ export function useCreateTransaction() {
   return useMutation({
     mutationFn: (transaction: TransactionCreate) => api.createTransaction(transaction),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.transactions });
-      queryClient.invalidateQueries({ queryKey: queryKeys.balances });
+      invalidateTransactionDerivedQueries(queryClient);
     },
   });
 }
@@ -235,8 +238,7 @@ export function useDeleteTransaction() {
     },
     onSettled: () => {
       // Refetch to ensure consistency
-      queryClient.invalidateQueries({ queryKey: queryKeys.transactions });
-      queryClient.invalidateQueries({ queryKey: queryKeys.balances });
+      invalidateTransactionDerivedQueries(queryClient);
     },
   });
 }

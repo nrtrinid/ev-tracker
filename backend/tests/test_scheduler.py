@@ -1,39 +1,9 @@
-import importlib
-import os
-import sys
 import types
 from datetime import datetime, UTC, timedelta
 
 import pytest
 from fastapi import HTTPException
-
-
-def _reload_main(monkeypatch, *, zoneinfo_zoneinfo_override=None):
-    """
-    Reload backend main module with optional ZoneInfo override.
-
-    main.py does `from zoneinfo import ZoneInfo` at import time, so to simulate
-    missing tzdata we patch `zoneinfo.ZoneInfo` before reload.
-    """
-    if zoneinfo_zoneinfo_override is not None:
-        import zoneinfo as _zoneinfo_mod
-        monkeypatch.setattr(_zoneinfo_mod, "ZoneInfo", zoneinfo_zoneinfo_override, raising=True)
-
-    # Unit tests should not require real backend secrets just to import main.
-    monkeypatch.setenv("SUPABASE_URL", os.getenv("SUPABASE_URL") or "https://example.supabase.co")
-    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "unit-test-key")
-
-    # Allow importing main.py even when backend deps aren't installed in the current interpreter.
-    # (These are unit tests; we stub the client to avoid touching the network/DB.)
-    if "supabase" not in sys.modules:
-        sys.modules["supabase"] = types.SimpleNamespace(
-            create_client=lambda *args, **kwargs: None,
-            Client=object,
-        )
-
-    if "main" in sys.modules:
-        return importlib.reload(sys.modules["main"])
-    return importlib.import_module("main")
+from .test_utils import import_main_for_tests, install_apscheduler_stubs
 
 
 class DummyScheduler:
@@ -53,47 +23,12 @@ class DummyScheduler:
         self.shutdown_called = True
         self.shutdown_wait = wait
 
-
-def _install_apscheduler_stubs(*, scheduler_cls=DummyScheduler):
-    """
-    Provide minimal apscheduler module stubs so `main.start_scheduler()` can import them
-    even when apscheduler isn't installed in the current interpreter.
-    """
-    apscheduler_mod = types.ModuleType("apscheduler")
-    schedulers_mod = types.ModuleType("apscheduler.schedulers")
-    sched_asyncio_mod = types.ModuleType("apscheduler.schedulers.asyncio")
-    triggers_mod = types.ModuleType("apscheduler.triggers")
-    triggers_cron_mod = types.ModuleType("apscheduler.triggers.cron")
-    triggers_interval_mod = types.ModuleType("apscheduler.triggers.interval")
-
-    class CronTrigger:
-        def __init__(self, *, hour, minute, timezone=None):
-            self.hour = hour
-            self.minute = minute
-            self.timezone = timezone
-
-    class IntervalTrigger:
-        def __init__(self, *, minutes):
-            self.minutes = minutes
-
-    sched_asyncio_mod.AsyncIOScheduler = scheduler_cls
-    triggers_cron_mod.CronTrigger = CronTrigger
-    triggers_interval_mod.IntervalTrigger = IntervalTrigger
-
-    sys.modules.setdefault("apscheduler", apscheduler_mod)
-    sys.modules.setdefault("apscheduler.schedulers", schedulers_mod)
-    sys.modules.setdefault("apscheduler.schedulers.asyncio", sched_asyncio_mod)
-    sys.modules.setdefault("apscheduler.triggers", triggers_mod)
-    sys.modules.setdefault("apscheduler.triggers.cron", triggers_cron_mod)
-    sys.modules.setdefault("apscheduler.triggers.interval", triggers_interval_mod)
-
-
 @pytest.mark.asyncio
 async def test_does_not_start_scheduler_when_enable_scheduler_not_1(monkeypatch):
     monkeypatch.setenv("TESTING", "0")
     monkeypatch.delenv("ENABLE_SCHEDULER", raising=False)
 
-    main = _reload_main(monkeypatch)
+    main = import_main_for_tests(monkeypatch)
     await main.start_scheduler()
 
     assert not hasattr(main.app.state, "scheduler")
@@ -107,10 +42,10 @@ async def test_uses_america_phoenix_timezone_when_available(monkeypatch):
     class FakeTz:
         key = "America/Phoenix"
 
-    main = _reload_main(monkeypatch, zoneinfo_zoneinfo_override=lambda _name: FakeTz())
+    main = import_main_for_tests(monkeypatch, zoneinfo_zoneinfo_override=lambda _name: FakeTz())
     assert main.PHOENIX_TZ is not None
 
-    _install_apscheduler_stubs(scheduler_cls=DummyScheduler)
+    install_apscheduler_stubs(scheduler_cls=DummyScheduler)
 
     await main.start_scheduler()
 
@@ -136,10 +71,10 @@ async def test_skips_scheduled_scans_cleanly_if_phoenix_zone_cannot_load(monkeyp
     def _raise_zoneinfo(_name: str):
         raise Exception("ZoneInfo not available")
 
-    main = _reload_main(monkeypatch, zoneinfo_zoneinfo_override=_raise_zoneinfo)
+    main = import_main_for_tests(monkeypatch, zoneinfo_zoneinfo_override=_raise_zoneinfo)
     assert main.PHOENIX_TZ is None
 
-    _install_apscheduler_stubs(scheduler_cls=DummyScheduler)
+    install_apscheduler_stubs(scheduler_cls=DummyScheduler)
 
     await main.start_scheduler()
     scheduler = main.app.state.scheduler
@@ -153,7 +88,7 @@ async def test_skips_scheduled_scans_cleanly_if_phoenix_zone_cannot_load(monkeyp
 
 @pytest.mark.asyncio
 async def test_scheduled_scan_job_continues_if_one_sport_scan_throws(monkeypatch):
-    main = _reload_main(monkeypatch)
+    main = import_main_for_tests(monkeypatch)
 
     called = []
 
@@ -174,7 +109,7 @@ async def test_scheduled_scan_job_continues_if_one_sport_scan_throws(monkeypatch
 
 @pytest.mark.asyncio
 async def test_scheduled_scan_job_calls_get_cached_or_scan_for_all_supported_sports(monkeypatch):
-    main = _reload_main(monkeypatch)
+    main = import_main_for_tests(monkeypatch)
 
     called = []
 
@@ -193,7 +128,7 @@ async def test_scheduled_scan_job_calls_get_cached_or_scan_for_all_supported_spo
 
 
 def test_scheduler_freshness_uses_startup_grace_when_no_success(monkeypatch):
-    main = _reload_main(monkeypatch)
+    main = import_main_for_tests(monkeypatch)
     main._init_scheduler_heartbeats()
     main.app.state.scheduler_started_at = datetime.now(UTC).isoformat() + "Z"
 
@@ -206,7 +141,7 @@ def test_scheduler_freshness_uses_startup_grace_when_no_success(monkeypatch):
 
 
 def test_scheduler_freshness_fails_if_no_success_past_stale_window(monkeypatch):
-    main = _reload_main(monkeypatch)
+    main = import_main_for_tests(monkeypatch)
     main._init_scheduler_heartbeats()
     main.app.state.scheduler_started_at = (datetime.now(UTC) - timedelta(hours=48)).isoformat() + "Z"
 
@@ -218,7 +153,7 @@ def test_scheduler_freshness_fails_if_no_success_past_stale_window(monkeypatch):
 
 
 def test_ops_status_requires_valid_cron_token(monkeypatch):
-    main = _reload_main(monkeypatch)
+    main = import_main_for_tests(monkeypatch)
     main._init_ops_status()
     monkeypatch.setenv("CRON_TOKEN", "secret-token")
 
@@ -229,7 +164,7 @@ def test_ops_status_requires_valid_cron_token(monkeypatch):
 
 
 def test_ops_status_returns_snapshot_when_token_valid(monkeypatch):
-    main = _reload_main(monkeypatch)
+    main = import_main_for_tests(monkeypatch)
     main._init_ops_status()
     monkeypatch.setenv("CRON_TOKEN", "secret-token")
     monkeypatch.setenv("ENABLE_SCHEDULER", "0")
@@ -246,7 +181,7 @@ def test_ops_status_returns_snapshot_when_token_valid(monkeypatch):
 
 
 def test_paper_autolog_env_variables(monkeypatch):
-    main = _reload_main(monkeypatch)
+    main = import_main_for_tests(monkeypatch)
 
     monkeypatch.delenv("ENABLE_PAPER_EXPERIMENT_AUTOLOG", raising=False)
     monkeypatch.delenv("PAPER_EXPERIMENT_ACCOUNT_USER_ID", raising=False)
@@ -261,7 +196,7 @@ def test_paper_autolog_env_variables(monkeypatch):
 
 
 def test_validate_environment_warns_when_autolog_enabled_without_user_id(monkeypatch):
-    main = _reload_main(monkeypatch)
+    main = import_main_for_tests(monkeypatch)
 
     monkeypatch.setenv("ENABLE_PAPER_EXPERIMENT_AUTOLOG", "1")
     monkeypatch.delenv("PAPER_EXPERIMENT_ACCOUNT_USER_ID", raising=False)
@@ -280,7 +215,7 @@ def test_validate_environment_warns_when_autolog_enabled_without_user_id(monkeyp
 
 
 def test_annotate_sides_with_duplicate_state_uses_pending_best_price(monkeypatch):
-    main = _reload_main(monkeypatch)
+    main = import_main_for_tests(monkeypatch)
 
     class _FakeQuery:
         def __init__(self, data):
@@ -349,7 +284,7 @@ def test_annotate_sides_with_duplicate_state_uses_pending_best_price(monkeypatch
         },
     ]
 
-    annotated = main._annotate_sides_with_duplicate_state(db, "user-1", sides)
+    annotated = main.annotate_sides_with_duplicate_state(db, "user-1", sides)
 
     assert annotated[0]["scanner_duplicate_state"] == "already_logged"
     assert annotated[0]["best_logged_odds_american"] == 130
@@ -364,7 +299,7 @@ def test_annotate_sides_with_duplicate_state_uses_pending_best_price(monkeypatch
 
 @pytest.mark.asyncio
 async def test_longshot_autolog_guardrails(monkeypatch):
-    main = _reload_main(monkeypatch)
+    main = import_main_for_tests(monkeypatch)
 
     class _FakeQuery:
         def __init__(self, db):
@@ -435,7 +370,7 @@ async def test_longshot_autolog_guardrails(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_longshot_autolog_caps_and_idempotency(monkeypatch):
-    main = _reload_main(monkeypatch)
+    main = import_main_for_tests(monkeypatch)
 
     class _FakeQuery:
         def __init__(self, db):
@@ -529,7 +464,7 @@ async def test_longshot_autolog_caps_and_idempotency(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_scan_markets_returns_backend_duplicate_state_enum(monkeypatch):
-    main = _reload_main(monkeypatch)
+    main = import_main_for_tests(monkeypatch)
 
     class _FakeQuery:
         def __init__(self, table_name, db):
@@ -641,7 +576,7 @@ async def test_scan_markets_returns_backend_duplicate_state_enum(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_scan_latest_enriches_duplicate_state_from_cached_payload(monkeypatch):
-    main = _reload_main(monkeypatch)
+    main = import_main_for_tests(monkeypatch)
 
     class _FakeQuery:
         def __init__(self, table_name, db):
@@ -721,7 +656,7 @@ async def test_scan_latest_enriches_duplicate_state_from_cached_payload(monkeypa
 
 @pytest.mark.asyncio
 async def test_scheduled_scan_ops_status_includes_autolog_summary(monkeypatch):
-    main = _reload_main(monkeypatch)
+    main = import_main_for_tests(monkeypatch)
 
     import services.odds_api as odds_api
     monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)

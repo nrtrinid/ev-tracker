@@ -1,28 +1,9 @@
-import importlib
-import os
-import sys
-import types
-
 import pytest
+from .test_utils import import_main_for_tests
 
 
-def _import_main_with_supabase_stub():
-    os.environ.setdefault("SUPABASE_URL", "https://example.supabase.co")
-    os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "unit-test-key")
-
-    # Allow importing main.py even if supabase isn't installed in the active interpreter.
-    if "supabase" not in sys.modules:
-        sys.modules["supabase"] = types.SimpleNamespace(
-            create_client=lambda *args, **kwargs: None,
-            Client=object,
-        )
-    if "main" in sys.modules:
-        return importlib.reload(sys.modules["main"])
-    return importlib.import_module("main")
-
-
-def test_payout_override_recomputes_entry_ev_for_standard():
-    main = _import_main_with_supabase_stub()
+def test_payout_override_recomputes_entry_ev_for_standard(monkeypatch):
+    main = import_main_for_tests(monkeypatch)
 
     row = {
         "id": "bet1",

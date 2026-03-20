@@ -41,6 +41,7 @@ import {
   CartesianGrid,
   ComposedChart
 } from "recharts";
+import { SPORTSBOOK_CHART_COLORS } from "@/lib/sportsbook-config";
 import type { Bet } from "@/lib/types";
 
 // Filter options
@@ -208,18 +209,6 @@ function AnalyticsFilterBar({
     </div>
   );
 }
-
-// Sportsbook colors for charts (authentic brand colors)
-const SPORTSBOOK_COLORS: Record<string, string> = {
-  DraftKings: "#4CBB17",
-  FanDuel: "#0E7ACA",
-  BetMGM: "#C5A562",
-  Caesars: "#C49A6C",
-  "ESPN Bet": "#ED174C",
-  Fanatics: "#0047BB",
-  "Hard Rock": "#FDB913",
-  bet365: "#00843D",
-};
 
 const CHART_COLORS = ["#4A7C59", "#C4A35A", "#6B5E4F", "#B85C38", "#8B7355", "#7A9E7E", "#D4C4A8", "#9B8A7B"];
 
@@ -473,7 +462,7 @@ export default function AnalyticsPage() {
         name: name.replace("ESPN Bet", "ESPN").replace("Hard Rock", "HR"),
         ev,
         profit: profitBySportsbook[name] || 0,
-        color: SPORTSBOOK_COLORS[name] || "#888",
+        color: SPORTSBOOK_CHART_COLORS[name] || "#888",
       }))
       .sort((a, b) => b.ev - a.ev);
   }, [filteredBets]);

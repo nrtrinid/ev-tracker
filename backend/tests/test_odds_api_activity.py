@@ -1,8 +1,9 @@
 import importlib
+from .test_utils import reload_service_module
 
 
 def _reload_odds_api():
-    import services.odds_api as mod
+    mod = reload_service_module("odds_api")
     return importlib.reload(mod)
 
 

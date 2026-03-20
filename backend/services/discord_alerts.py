@@ -5,6 +5,7 @@ from urllib.parse import urlencode
 
 import httpx
 from services.shared_state import mark_alert_if_new
+from services.match_keys import alert_key_from_side
 
 ALERTED_KEYS: set[str] = set()
 _warned_missing_webhook = False
@@ -37,12 +38,7 @@ def should_alert(side: dict[str, Any]) -> bool:
 
 
 def make_alert_key(side: dict[str, Any]) -> str:
-    sport = str(side.get("sport", ""))
-    commence = str(side.get("commence_time", ""))
-    event = str(side.get("event", ""))
-    sportsbook = str(side.get("sportsbook", ""))
-    team = str(side.get("team", ""))
-    return "|".join([sport, commence, event, sportsbook, team])
+    return alert_key_from_side(side)
 
 
 def build_scanner_deeplink(side: dict[str, Any]) -> str:

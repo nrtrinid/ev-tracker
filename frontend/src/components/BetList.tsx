@@ -27,6 +27,11 @@ import type { Bet, BetResult } from "@/lib/types";
 import { PROMO_TYPE_CONFIG } from "@/lib/types";
 import { formatCurrency, formatOdds, cn, formatRelativeTime, formatShortDate, formatFullDateTime, americanToDecimal, decimalToAmerican, calculateImpliedProb, calculateHoldFromOdds } from "@/lib/utils";
 import {
+  MARKET_VIG_DEFAULTS,
+  SPORTSBOOK_BADGE_COLORS,
+  SPORTSBOOK_TEXT_COLORS,
+} from "@/lib/sportsbook-config";
+import {
   Check,
   X,
   Clock,
@@ -85,56 +90,7 @@ const resultConfig: Record<
   },
 };
 
-// ============ SPORTSBOOK COLOR MAP ============
-const sportsbookColors: Record<string, string> = {
-  DraftKings: "bg-draftkings",
-  FanDuel: "bg-fanduel",
-  BetMGM: "bg-betmgm",
-  Caesars: "bg-caesars",
-  "ESPN Bet": "bg-espnbet",
-  Fanatics: "bg-fanatics",
-  "Hard Rock": "bg-hardrock",
-  bet365: "bg-bet365",
-};
-
-const sportsbookTextColors: Record<string, string> = {
-  DraftKings: "text-draftkings",
-  FanDuel: "text-fanduel",
-  BetMGM: "text-betmgm",
-  Caesars: "text-caesars",
-  "ESPN Bet": "text-espnbet",
-  Fanatics: "text-fanatics",
-  "Hard Rock": "text-hardrock",
-  bet365: "text-bet365",
-};
-
 // Using shared PROMO_TYPE_CONFIG from types.ts
-
-// ============ SPORTSBOOK ABBREVIATIONS ============
-function bookAbbrev(name: string): string {
-  const map: Record<string, string> = {
-    DraftKings: "DK",
-    FanDuel: "FD",
-    BetMGM: "MGM",
-    Caesars: "CZR",
-    "ESPN Bet": "ESPN",
-    Fanatics: "FAN",
-    "Hard Rock": "HR",
-    bet365: "B365",
-  };
-  return map[name] || name.slice(0, 3).toUpperCase();
-}
-
-// ============ MARKET VIG DEFAULTS ============
-const MARKET_VIG: Record<string, number> = {
-  ML: 0.045,
-  Spread: 0.045,
-  Total: 0.045,
-  Parlay: 0.15,
-  Prop: 0.09,
-  Futures: 0.20,
-  SGP: 0.20,
-};
 
 // ============ HELPER FUNCTIONS ============
 // Note: calculateImpliedProb, calculateHoldFromOdds, decimalToAmerican imported from @/lib/utils
@@ -184,8 +140,8 @@ interface BetCardBaseProps {
 
 function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
   const [expanded, setExpanded] = useState(false);
-  const borderColor = sportsbookColors[bet.sportsbook] || "bg-gray-400";
-  const textColor = sportsbookTextColors[bet.sportsbook] || "text-gray-600";
+  const borderColor = SPORTSBOOK_BADGE_COLORS[bet.sportsbook] || "bg-gray-400";
+  const textColor = SPORTSBOOK_TEXT_COLORS[bet.sportsbook] || "text-gray-600";
   const promoConfig = PROMO_TYPE_CONFIG[bet.promo_type] || PROMO_TYPE_CONFIG.standard;
   
   // Short promo label (BB, 30%, etc.)
@@ -207,7 +163,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
   // Use calculated vig or default based on market
   const displayVig = calculatedVig !== null 
     ? calculatedVig 
-    : (MARKET_VIG[bet.market] || 0.045);
+    : (MARKET_VIG_DEFAULTS[bet.market] || 0.045);
 
   return (
     <div className="border rounded-lg overflow-hidden flex card-hover bg-card">
@@ -970,7 +926,7 @@ export function BetList() {
                 {selectedBook !== "all" && (
                   <span className={cn(
                     "px-2 py-0.5 rounded-full text-xs font-medium text-white",
-                    sportsbookColors[selectedBook] || "bg-foreground"
+                    SPORTSBOOK_BADGE_COLORS[selectedBook] || "bg-foreground"
                   )}>
                     {selectedBook}
                   </span>
@@ -1009,6 +965,12 @@ export function BetList() {
                 </p>
               </div>
               <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-center">
+                <p className="text-xs text-muted-foreground">To Win</p>
+                <p className="font-mono font-semibold text-foreground">
+                  {formatCurrency(pendingBets.reduce((s, b) => s + b.win_payout, 0))}
+                </p>
+              </div>
+              <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-center">
                 <p className="text-xs text-muted-foreground">Pending EV</p>
                 {(() => {
                   const pendingEvTotal = pendingBets.reduce((s, b) => s + b.ev_total, 0);
@@ -1024,10 +986,6 @@ export function BetList() {
                     </p>
                   );
                 })()}
-              </div>
-              <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-center">
-                <p className="text-xs text-muted-foreground">Open Bets</p>
-                <p className="font-mono font-semibold text-foreground">{pendingBets.length}</p>
               </div>
             </div>
           )}
@@ -1126,7 +1084,7 @@ export function BetList() {
                     className={cn(
                       "px-3 py-1.5 rounded-full text-sm font-medium transition-colors whitespace-nowrap shrink-0",
                       selectedBook === book
-                        ? `${sportsbookColors[book] || "bg-foreground"} text-white shadow-sm`
+                        ? `${SPORTSBOOK_BADGE_COLORS[book] || "bg-foreground"} text-white shadow-sm`
                         : "bg-muted text-muted-foreground hover:bg-secondary"
                     )}
                   >

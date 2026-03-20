@@ -1,10 +1,11 @@
 import importlib
 
 import pytest
+from .test_utils import reload_service_module
 
 
 def _reload_discord_alerts():
-    import services.discord_alerts as mod
+    mod = reload_service_module("discord_alerts")
     return importlib.reload(mod)
 
 

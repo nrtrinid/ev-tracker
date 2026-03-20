@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { LogBetDrawer } from "@/components/LogBetDrawer";
 import { cn, formatCurrency, formatOdds, calculateStealthStake } from "@/lib/utils";
+import { SPORTSBOOK_BADGE_COLORS, sportsbookAbbrev } from "@/lib/sportsbook-config";
 import {
   Radar,
   TrendingUp,
@@ -47,14 +48,6 @@ const LONGSHOT_MAX_AMERICAN = 500;
 type Lens = "standard" | "profit_boost" | "bonus_bet" | "qualifier";
 
 const BOOST_PRESETS = [25, 30, 50];
-
-const bookColors: Record<string, string> = {
-  DraftKings: "bg-draftkings",
-  FanDuel: "bg-fanduel",
-  BetMGM: "bg-betmgm",
-  Caesars: "bg-caesars",
-  "ESPN Bet": "bg-espnbet",
-};
 
 // ============ Helpers ============
 
@@ -124,17 +117,6 @@ function minutesAgo(isoString: string): number {
   if (!isoString) return 0;
   const then = new Date(isoString).getTime();
   return Math.max(0, Math.floor((Date.now() - then) / 60_000));
-}
-
-function bookAbbrev(name: string): string {
-  const map: Record<string, string> = {
-    DraftKings: "DK",
-    FanDuel: "FD",
-    BetMGM: "MGM",
-    Caesars: "CZR",
-    "ESPN Bet": "ESPN",
-  };
-  return map[name] || name;
 }
 
 // ============ Page ============
@@ -446,7 +428,7 @@ export default function ScannerPage() {
                   className={cn(
                     "flex-shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap",
                     isSelected
-                      ? `${bookColors[book] || "bg-foreground"} text-white shadow-md`
+                      ? `${SPORTSBOOK_BADGE_COLORS[book] || "bg-foreground"} text-white shadow-md`
                       : "bg-muted text-muted-foreground hover:bg-secondary"
                   )}
                 >
@@ -670,9 +652,9 @@ export default function ScannerPage() {
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className={cn(
                               "text-[10px] font-bold uppercase tracking-wider text-white px-1.5 py-0.5 rounded",
-                              bookColors[side.sportsbook] || "bg-foreground"
+                              SPORTSBOOK_BADGE_COLORS[side.sportsbook] || "bg-foreground"
                             )}>
-                              {bookAbbrev(side.sportsbook)}
+                              {sportsbookAbbrev(side.sportsbook)}
                             </span>
                             <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
                               {SPORT_KEY_TO_DISPLAY[side.sport] || side.sport}

@@ -1,15 +1,10 @@
 import importlib
-import sys
-import types
+from .test_utils import ensure_supabase_stub, reload_service_module
 
 
 def _reload_odds_api():
-    if "supabase" not in sys.modules:
-        supabase_stub = types.ModuleType("supabase")
-        setattr(supabase_stub, "create_client", lambda *args, **kwargs: None)
-        setattr(supabase_stub, "Client", object)
-        sys.modules["supabase"] = supabase_stub
-    import services.odds_api as mod
+    ensure_supabase_stub()
+    mod = reload_service_module("odds_api")
     return importlib.reload(mod)
 
 

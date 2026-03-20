@@ -1,9 +1,10 @@
 import importlib
+from .test_utils import reload_service_module
 
 
 def _reload_shared_state(monkeypatch):
     monkeypatch.delenv("REDIS_URL", raising=False)
-    import services.shared_state as mod
+    mod = reload_service_module("shared_state")
     return importlib.reload(mod)
 
 
