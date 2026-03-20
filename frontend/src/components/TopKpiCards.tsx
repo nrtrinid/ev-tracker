@@ -140,7 +140,7 @@ function TopKpiCardsInner({ netProfit, expectedProfit, totalBalance, beatClose }
           >
             {totalBalance === null || totalBalance === undefined
               ? "—"
-              : `${totalBalance >= 0 ? "+" : ""}${formatCurrency(totalBalance)}`}
+              : `${formatCurrency(totalBalance)}`}
           </p>
           <p className="text-[10px] text-muted-foreground mt-0.5">across books</p>
         </CardContent>
