@@ -965,12 +965,6 @@ export function BetList() {
                 </p>
               </div>
               <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-center">
-                <p className="text-xs text-muted-foreground">To Win</p>
-                <p className="font-mono font-semibold text-foreground">
-                  {formatCurrency(pendingBets.reduce((s, b) => s + b.win_payout, 0))}
-                </p>
-              </div>
-              <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-center">
                 <p className="text-xs text-muted-foreground">Pending EV</p>
                 {(() => {
                   const pendingEvTotal = pendingBets.reduce((s, b) => s + b.ev_total, 0);
@@ -986,6 +980,12 @@ export function BetList() {
                     </p>
                   );
                 })()}
+              </div>
+              <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-center">
+                <p className="text-xs text-muted-foreground">To Win</p>
+                <p className="font-mono font-semibold text-foreground">
+                  {formatCurrency(pendingBets.reduce((s, b) => s + b.win_payout, 0))}
+                </p>
               </div>
             </div>
           )}
