@@ -29,7 +29,8 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 
 <img width="667" height="991" alt="image" src="https://github.com/user-attachments/assets/914aba31-737b-4c22-8b4f-b4b9f2b927ba" />
 
-<img width="596" height="484" alt="image" src="https://github.com/user-attachments/assets/b2dad98b-74c9-4773-9b9b-bd858a1393db" />
+<img width="667" height="643" alt="image" src="https://github.com/user-attachments/assets/baceec86-14a0-402c-8fa6-09fd019fa6ae" />
+
 
 ---
 
