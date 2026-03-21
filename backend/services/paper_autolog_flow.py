@@ -1,6 +1,11 @@
 from typing import Any, Callable
 
-from services.paper_autolog_utils import cohort_for_side, autolog_key_for_side, sport_display
+from services.paper_autolog_utils import (
+    autolog_key_for_side,
+    autolog_legacy_key_for_side,
+    cohort_for_side,
+    sport_display,
+)
 
 
 def _normalize_text(value: str | None) -> str:
@@ -57,12 +62,25 @@ def build_pending_autolog_keys(pending_rows: list[dict[str, Any]]) -> set[str]:
             "v1",
             str(row.get("strategy_cohort") or ""),
             _normalize_text(row.get("clv_sport_key") or row.get("sport")),
-            str(row.get("commence_time") or "").strip(),
+            (
+                f"id:{_normalize_text(row.get('clv_event_id'))}"
+                if _normalize_text(row.get("clv_event_id"))
+                else str(row.get("commence_time") or "").strip()
+            ),
             _normalize_text(row.get("clv_team")),
             _normalize_text(row.get("sportsbook")),
             _normalize_text(row.get("market")),
         ])
         pending_keys.add(key)
+        pending_keys.add("|".join([
+            "v1",
+            str(row.get("strategy_cohort") or ""),
+            _normalize_text(row.get("clv_sport_key") or row.get("sport")),
+            str(row.get("commence_time") or "").strip(),
+            _normalize_text(row.get("clv_team")),
+            _normalize_text(row.get("sportsbook")),
+            _normalize_text(row.get("market")),
+        ]))
     return pending_keys
 
 
@@ -95,6 +113,7 @@ def build_autolog_insert_payload(
         "commence_time": commence_time,
         "clv_team": side.get("team"),
         "clv_sport_key": side.get("sport"),
+        "clv_event_id": side.get("event_id"),
         "true_prob_at_entry": side.get("true_prob"),
         "is_paper": True,
         "strategy_cohort": cohort,
@@ -131,8 +150,9 @@ def run_autolog_insert_loop(
     for side in eligible_sides:
         cohort = side["strategy_cohort"]
         key = autolog_key_for_side(side, cohort)
+        legacy_key = autolog_legacy_key_for_side(side, cohort)
 
-        if key in pending_keys or key in in_run_keys:
+        if key in pending_keys or key in in_run_keys or legacy_key in pending_keys or legacy_key in in_run_keys:
             skipped_duplicate += 1
             continue
 
@@ -160,7 +180,9 @@ def run_autolog_insert_loop(
         inserted_total += 1
         inserted_by_cohort[cohort] += 1
         in_run_keys.add(key)
+        in_run_keys.add(legacy_key)
         pending_keys.add(key)
+        pending_keys.add(legacy_key)
 
     return {
         "selected_by_cohort": selected_by_cohort,

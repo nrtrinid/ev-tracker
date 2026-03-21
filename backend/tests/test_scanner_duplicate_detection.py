@@ -29,7 +29,7 @@ class _DB:
         return _Query(self._rows)
 
 
-def _side(*, team, commence_time, sportsbook, odds):
+def _side(*, team, commence_time, sportsbook, odds, event_id=None):
     return {
         "sport": "basketball_nba",
         "market": "ML",
@@ -37,10 +37,11 @@ def _side(*, team, commence_time, sportsbook, odds):
         "commence_time": commence_time,
         "team": team,
         "book_odds": odds,
+        "event_id": event_id,
     }
 
 
-def _pending_bet(*, bet_id, team, commence_time, sportsbook, odds):
+def _pending_bet(*, bet_id, team, commence_time, sportsbook, odds, clv_event_id=None):
     return {
         "id": bet_id,
         "clv_sport_key": "basketball_nba",
@@ -48,6 +49,7 @@ def _pending_bet(*, bet_id, team, commence_time, sportsbook, odds):
         "sportsbook": sportsbook,
         "commence_time": commence_time,
         "clv_team": team,
+        "clv_event_id": clv_event_id,
         "odds_american": odds,
         "result": "pending",
     }
@@ -124,4 +126,33 @@ def test_annotate_sides_with_duplicate_state_handles_unparseable_logged_odds():
 
     assert out[0]["scanner_duplicate_state"] == "already_logged"
     assert out[0]["best_logged_odds_american"] is None
+    assert out[0]["matched_pending_bet_id"] == "b1"
+
+
+def test_annotate_sides_with_duplicate_state_matches_by_event_id_before_time():
+    db = _DB(
+        rows=[
+            _pending_bet(
+                bet_id="b1",
+                team="lakers",
+                commence_time="2026-01-01T00:00:00Z",
+                sportsbook="fanduel",
+                odds=100,
+                clv_event_id="evt_abc",
+            )
+        ]
+    )
+    sides = [
+        _side(
+            team="lakers",
+            commence_time="2026-01-01T00:05:00Z",
+            sportsbook="fanduel",
+            odds=130,
+            event_id="evt_abc",
+        )
+    ]
+
+    out = annotate_sides_with_duplicate_state(db, "user-1", sides)
+
+    assert out[0]["scanner_duplicate_state"] == "better_now"
     assert out[0]["matched_pending_bet_id"] == "b1"

@@ -48,6 +48,9 @@ def build_scanner_deeplink(side: dict[str, Any]) -> str:
         "team": side.get("team", ""),
         "book": side.get("sportsbook", ""),
     }
+    event_id = str(side.get("event_id") or "").strip()
+    if event_id:
+        params["event_id"] = event_id
     return f"{FRONTEND_BASE_URL}/scanner?{urlencode(params)}"
 
 

@@ -5,6 +5,13 @@ def _normalize_text(value: str | None) -> str:
     return (value or "").strip().lower()
 
 
+def _event_ref(event_id: str | None, commence_time: str | None) -> str:
+    normalized_id = _normalize_text(event_id)
+    if normalized_id:
+        return f"id:{normalized_id}"
+    return str(commence_time or "").strip()
+
+
 def cohort_for_side(
     side: dict[str, Any],
     *,
@@ -44,6 +51,18 @@ def sport_display(sport_key: str) -> str:
 
 
 def autolog_key_for_side(side: dict[str, Any], cohort: str) -> str:
+    return "|".join([
+        "v1",
+        cohort,
+        _normalize_text(side.get("sport")),
+        _event_ref(side.get("event_id"), side.get("commence_time")),
+        _normalize_text(side.get("team")),
+        _normalize_text(side.get("sportsbook")),
+        "ml",
+    ])
+
+
+def autolog_legacy_key_for_side(side: dict[str, Any], cohort: str) -> str:
     return "|".join([
         "v1",
         cohort,

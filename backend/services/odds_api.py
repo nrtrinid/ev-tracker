@@ -506,9 +506,14 @@ def update_clv_snapshots(sides: list[dict], db) -> int:
     Layer 2 — Piggyback CLV update. Zero extra API calls.
 
     After any scan returns, this is called synchronously before responding.
-    It builds a lookup of (commence_time, team) → pinnacle_odds from the fresh
-    scan data, then finds every pending bet with CLV tracking enabled and writes
-    the latest Pinnacle line to pinnacle_odds_at_close.
+    It builds lookups from the fresh scan data, then finds every pending bet
+    with CLV tracking enabled and writes the latest Pinnacle line to
+    pinnacle_odds_at_close.
+
+    Preferred match path:
+    - (clv_event_id, clv_team) -> pinnacle_odds
+    Fallback match path:
+    - (commence_time, clv_team) -> pinnacle_odds
 
     Args:
         sides: The `sides` list from scan_all_sides / get_cached_or_scan.
@@ -522,25 +527,40 @@ def update_clv_snapshots(sides: list[dict], db) -> int:
     if not sides:
         return 0
 
-    # Build a fast lookup: (commence_time, team) -> pinnacle_odds
-    snapshot: dict[tuple[str, str], float] = {}
+    # Build fast lookups for id-first matching with legacy time/team fallback.
+    snapshot_by_event: dict[tuple[str, str], float] = {}
+    snapshot_by_time: dict[tuple[str, str], float] = {}
     for side in sides:
+        event_id = str(side.get("event_id") or "").strip()
         ct = side.get("commence_time", "")
         team = side.get("team", "")
         if ct and team:
-            snapshot[(ct, team)] = side["pinnacle_odds"]
+            snapshot_by_time[(ct, team)] = side["pinnacle_odds"]
+        if event_id and team:
+            snapshot_by_event[(event_id, team)] = side["pinnacle_odds"]
 
-    if not snapshot:
+    if not snapshot_by_event and not snapshot_by_time:
         return 0
 
     # Fetch all pending bets that have CLV tracking data
-    result = (
-        db.table("bets")
-        .select("id,clv_team,commence_time")
-        .eq("result", "pending")
-        .not_.is_("clv_team", "null")
-        .execute()
-    )
+    try:
+        result = (
+            db.table("bets")
+            .select("id,clv_team,commence_time,clv_event_id")
+            .eq("result", "pending")
+            .not_.is_("clv_team", "null")
+            .execute()
+        )
+    except Exception as e:
+        if "clv_event_id" not in str(e):
+            raise
+        result = (
+            db.table("bets")
+            .select("id,clv_team,commence_time")
+            .eq("result", "pending")
+            .not_.is_("clv_team", "null")
+            .execute()
+        )
 
     if not result.data:
         return 0
@@ -551,10 +571,15 @@ def update_clv_snapshots(sides: list[dict], db) -> int:
     for bet in result.data:
         team = bet.get("clv_team")
         ct = bet.get("commence_time")
-        if not team or not ct:
+        event_id = str(bet.get("clv_event_id") or "").strip()
+        if not team:
             continue
 
-        pinnacle_close = snapshot.get((ct, team))
+        pinnacle_close = None
+        if event_id:
+            pinnacle_close = snapshot_by_event.get((event_id, team))
+        if pinnacle_close is None and ct:
+            pinnacle_close = snapshot_by_time.get((ct, team))
         if pinnacle_close is None:
             continue
 
@@ -616,6 +641,10 @@ async def fetch_clv_for_pending_bets(db) -> int:
 
                 sides.append({"commence_time": ct, "team": home, "pinnacle_odds": pin_home})
                 sides.append({"commence_time": ct, "team": away, "pinnacle_odds": pin_away})
+                event_id = str(event.get("id") or "").strip()
+                if event_id:
+                    sides[-2]["event_id"] = event_id
+                    sides[-1]["event_id"] = event_id
 
             updated = update_clv_snapshots(sides, db)
             total_updated += updated
@@ -646,16 +675,30 @@ async def run_jit_clv_snatcher(db) -> int:
     now_iso = now.isoformat()
     window_end_iso = window_end.isoformat()
 
-    result = (
-        db.table("bets")
-        .select("id,clv_sport_key,clv_team,commence_time")
-        .eq("result", "pending")
-        .is_("pinnacle_odds_at_close", "null")
-        .not_.is_("clv_sport_key", "null")
-        .gt("commence_time", now_iso)
-        .lte("commence_time", window_end_iso)
-        .execute()
-    )
+    try:
+        result = (
+            db.table("bets")
+            .select("id,clv_sport_key,clv_team,commence_time,clv_event_id")
+            .eq("result", "pending")
+            .is_("pinnacle_odds_at_close", "null")
+            .not_.is_("clv_sport_key", "null")
+            .gt("commence_time", now_iso)
+            .lte("commence_time", window_end_iso)
+            .execute()
+        )
+    except Exception as e:
+        if "clv_event_id" not in str(e):
+            raise
+        result = (
+            db.table("bets")
+            .select("id,clv_sport_key,clv_team,commence_time")
+            .eq("result", "pending")
+            .is_("pinnacle_odds_at_close", "null")
+            .not_.is_("clv_sport_key", "null")
+            .gt("commence_time", now_iso)
+            .lte("commence_time", window_end_iso)
+            .execute()
+        )
 
     if not result.data:
         return 0
@@ -674,24 +717,36 @@ async def run_jit_clv_snatcher(db) -> int:
             data, _ = await fetch_odds(sport_key, source="jit_clv")
             events = data if isinstance(data, list) else []
 
-            snapshot: dict[tuple[str, str], float] = {}
+            snapshot_by_event: dict[tuple[str, str], float] = {}
+            snapshot_by_time: dict[tuple[str, str], float] = {}
             for event in events:
                 home = event["home_team"]
                 away = event["away_team"]
                 ct = event.get("commence_time", "")
+                event_id = str(event.get("id") or "").strip()
                 pin_outcomes = _extract_outcomes(event.get("bookmakers", []), SHARP_BOOK)
                 if not pin_outcomes:
                     continue
                 pin_home = pin_outcomes.get(home)
                 pin_away = pin_outcomes.get(away)
                 if pin_home:
-                    snapshot[(ct, home)] = pin_home
+                    snapshot_by_time[(ct, home)] = pin_home
+                    if event_id:
+                        snapshot_by_event[(event_id, home)] = pin_home
                 if pin_away:
-                    snapshot[(ct, away)] = pin_away
+                    snapshot_by_time[(ct, away)] = pin_away
+                    if event_id:
+                        snapshot_by_event[(event_id, away)] = pin_away
 
             for bet in bets:
-                key = (bet.get("commence_time", ""), bet.get("clv_team", ""))
-                close_odds = snapshot.get(key)
+                close_odds = None
+                team = bet.get("clv_team", "")
+                event_id = str(bet.get("clv_event_id") or "").strip()
+                if event_id and team:
+                    close_odds = snapshot_by_event.get((event_id, team))
+                if close_odds is None:
+                    key = (bet.get("commence_time", ""), team)
+                    close_odds = snapshot_by_time.get(key)
                 if close_odds is not None:
                     db.table("bets").update({
                         "pinnacle_odds_at_close": close_odds,
@@ -836,14 +891,58 @@ def _canonical_team_name(name: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", "", lowered)
 
 
+def _parse_utc_iso(timestamp: str | None) -> datetime | None:
+    if not timestamp:
+        return None
+    raw = str(timestamp).strip()
+    if not raw:
+        return None
+    normalized = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _commence_times_match(event_commence_time: str | None, bet_commence_time: str | None) -> bool:
+    # Fast path for exact string equality.
+    if event_commence_time == bet_commence_time:
+        return True
+
+    event_dt = _parse_utc_iso(event_commence_time)
+    bet_dt = _parse_utc_iso(bet_commence_time)
+    if event_dt is None or bet_dt is None:
+        return False
+
+    # The Odds API score commence_time can drift by seconds from stored scanner values.
+    return abs((event_dt - bet_dt).total_seconds()) <= 90
+
+
 def _select_completed_event_for_bet(bet: dict, completed_events: list[dict]) -> tuple[dict | None, str]:
     """
     Deterministic settlement match to prevent accidental auto-grading.
 
-    We only auto-grade when there is exactly one completed event matching:
-    - exact commence_time equality
+    We auto-grade when there is exactly one completed event matching.
+    Preferred match path:
+    - clv_event_id equals event.id
+    Fallback match path:
+    - commence_time equality after UTC normalization (with small seconds tolerance)
     - clv_team equals home_team or away_team (canonicalized)
     """
+    clv_event_id = str(bet.get("clv_event_id") or "").strip()
+    if clv_event_id:
+        id_candidates = [
+            event for event in completed_events
+            if str(event.get("id") or "").strip() == clv_event_id
+        ]
+        if len(id_candidates) == 1:
+            return id_candidates[0], "matched"
+        if len(id_candidates) > 1:
+            return None, "ambiguous_match"
+
     clv_team = bet.get("clv_team")
     commence_time = bet.get("commence_time")
     if not clv_team:
@@ -854,7 +953,7 @@ def _select_completed_event_for_bet(bet: dict, completed_events: list[dict]) -> 
     target_team = _canonical_team_name(clv_team)
     candidates: list[dict] = []
     for event in completed_events:
-        if event.get("commence_time") != commence_time:
+        if not _commence_times_match(event.get("commence_time"), commence_time):
             continue
 
         home = _canonical_team_name(event.get("home_team"))
@@ -886,14 +985,28 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
 
-    result = (
-        db.table("bets")
-        .select("id,market,clv_sport_key,clv_team,commence_time")
-        .eq("result", "pending")
-        .not_.is_("clv_sport_key", "null")
-        .lt("commence_time", now_iso)
-        .execute()
-    )
+    try:
+        result = (
+            db.table("bets")
+            .select("id,market,clv_sport_key,clv_team,commence_time,clv_event_id")
+            .eq("result", "pending")
+            .not_.is_("clv_sport_key", "null")
+            .lt("commence_time", now_iso)
+            .execute()
+        )
+    except Exception as e:
+        # Backward compatibility: if migration for clv_event_id is not applied yet,
+        # settle using legacy fields only.
+        if "clv_event_id" not in str(e):
+            raise
+        result = (
+            db.table("bets")
+            .select("id,market,clv_sport_key,clv_team,commence_time")
+            .eq("result", "pending")
+            .not_.is_("clv_sport_key", "null")
+            .lt("commence_time", now_iso)
+            .execute()
+        )
 
     if not result.data:
         return 0
@@ -1079,6 +1192,7 @@ async def scan_all_sides(sport: str = "basketball_nba", source: str = "unknown")
             away_edge = calculate_edge(true_probs["team_b"], book_away)
 
             all_sides.append({
+                "event_id": event.get("id"),
                 "sportsbook": book_display,
                 "sport": event.get("sport_key", sport),
                 "event": f"{away} @ {home}",
@@ -1093,6 +1207,7 @@ async def scan_all_sides(sport: str = "basketball_nba", source: str = "unknown")
             })
 
             all_sides.append({
+                "event_id": event.get("id"),
                 "sportsbook": book_display,
                 "sport": event.get("sport_key", sport),
                 "event": f"{away} @ {home}",
@@ -1111,6 +1226,7 @@ async def scan_all_sides(sport: str = "basketball_nba", source: str = "unknown")
                 if book_draw_key and book_draw_key in book_outcomes:
                     draw_edge = calculate_edge(true_prob_draw, book_outcomes[book_draw_key])
                     all_sides.append({
+                        "event_id": event.get("id"),
                         "sportsbook": book_display,
                         "sport": event.get("sport_key", sport),
                         "event": f"{away} @ {home}",

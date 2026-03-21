@@ -70,6 +70,25 @@ def test_build_pending_autolog_keys_normalizes_components():
     assert keys == {"v1|high|basketball_nba|2026-03-19T20:00:00Z|lakers|draftkings|ml"}
 
 
+def test_build_pending_autolog_keys_prefers_event_id_and_keeps_legacy():
+    keys = build_pending_autolog_keys(
+        [
+            {
+                "strategy_cohort": "high",
+                "clv_sport_key": "Basketball_NBA",
+                "commence_time": "2026-03-19T20:00:00Z",
+                "clv_event_id": "evt_777",
+                "clv_team": "Lakers",
+                "sportsbook": "DraftKings",
+                "market": "ML",
+            }
+        ]
+    )
+
+    assert "v1|high|basketball_nba|id:evt_777|lakers|draftkings|ml" in keys
+    assert "v1|high|basketball_nba|2026-03-19T20:00:00Z|lakers|draftkings|ml" in keys
+
+
 def test_build_autolog_insert_payload_sets_fields_and_fallback_event_date():
     side = {
         "sport": "basketball_nba",
@@ -83,7 +102,7 @@ def test_build_autolog_insert_payload_sets_fields_and_fallback_event_date():
 
     payload = build_autolog_insert_payload(
         user_id="u1",
-        side=side,
+        side={**side, "event_id": "evt_333"},
         cohort="low",
         run_key="run|key",
         run_at="2026-03-19T00:00:00Z",
@@ -99,6 +118,7 @@ def test_build_autolog_insert_payload_sets_fields_and_fallback_event_date():
     assert payload["result"] == "pending"
     assert payload["strategy_cohort"] == "low"
     assert payload["auto_log_run_key"] == "run|key"
+    assert payload["clv_event_id"] == "evt_333"
 
 
 def test_run_autolog_insert_loop_applies_caps_duplicate_checks_and_counts():

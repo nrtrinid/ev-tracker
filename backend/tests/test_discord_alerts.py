@@ -41,6 +41,33 @@ def test_make_alert_key_stable_fields():
     assert k1 == k2
 
 
+def test_make_alert_key_prefers_event_id_when_present():
+    mod = _reload_discord_alerts()
+    side = {
+        "sport": "basketball_nba",
+        "commence_time": "2026-03-17T01:00:00Z",
+        "event": "Away @ Home",
+        "sportsbook": "FanDuel",
+        "team": "Home",
+        "event_id": "evt_123",
+    }
+    key = mod.make_alert_key(side)
+    assert key == "basketball_nba|id:evt_123|FanDuel|Home"
+
+
+def test_build_scanner_deeplink_includes_event_id_when_available():
+    mod = _reload_discord_alerts()
+    side = {
+        "sport": "basketball_nba",
+        "event": "Away @ Home",
+        "team": "Home",
+        "sportsbook": "FanDuel",
+        "event_id": "evt_123",
+    }
+    link = mod.build_scanner_deeplink(side)
+    assert "event_id=evt_123" in link
+
+
 def test_schedule_alerts_dedupes(monkeypatch):
     mod = _reload_discord_alerts()
     mod.ALERTED_KEYS.clear()

@@ -53,6 +53,7 @@ class BetCreate(BaseModel):
     commence_time: str | None = None             # ISO-8601 game start (for snapshot matching)
     clv_team: str | None = None                  # Team name (e.g. "Los Angeles Lakers")
     clv_sport_key: str | None = None             # Odds API key (e.g. "basketball_nba")
+    clv_event_id: str | None = None              # Odds API event id for deterministic settlement matching
     true_prob_at_entry: float | None = None      # De-vigged Pinnacle probability — enables accurate EV for standard scanner bets
 
 
@@ -107,6 +108,7 @@ class BetResponse(BaseModel):
     commence_time: str | None = None
     clv_team: str | None = None
     clv_sport_key: str | None = None
+    clv_event_id: str | None = None
     true_prob_at_entry: float | None = None
     # Calculated CLV — only set when both entry and close Pinnacle odds are present
     clv_ev_percent: float | None = None
@@ -239,6 +241,7 @@ class ScanResponse(BaseModel):
 
 class MarketSide(BaseModel):
     """A single side (team) with odds from a target book and true probability."""
+    event_id: str | None = None
     sportsbook: str
     sport: str
     event: str

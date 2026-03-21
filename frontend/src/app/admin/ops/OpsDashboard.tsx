@@ -113,7 +113,7 @@ function normalizeSettleSource(source: string | undefined): "Scheduler" | "Cron"
   if (!source) return "Unknown";
   const normalized = source.trim().toLowerCase();
   if (normalized === "scheduler") return "Scheduler";
-  if (normalized === "cron") return "Cron";
+  if (normalized === "cron" || normalized === "ops_trigger") return "Manual";
   if (normalized === "manual") return "Manual";
   return "Unknown";
 }
@@ -126,7 +126,7 @@ function schedulerFreshnessLabel(data: OperatorStatusResponse | undefined): stri
 function deriveScannerState(data: OperatorStatusResponse | undefined): HealthState {
   if (!data) return "unknown";
   const scheduler = data.ops?.last_scheduler_scan;
-  const cron = data.ops?.last_cron_scan;
+  const cron = data.ops?.last_ops_trigger_scan;
   const manual = data.ops?.last_manual_scan;
   const schedulerAge = ageMinutes(scheduler?.finished_at || scheduler?.captured_at);
   const cronAge = ageMinutes(cron?.finished_at || cron?.captured_at);
@@ -217,7 +217,7 @@ function buildFallbackOddsActivity(data: OperatorStatusResponse | undefined): {
   recentCalls: OddsActivityCall[];
 } {
   const scheduler = data?.ops?.last_scheduler_scan;
-  const cron = data?.ops?.last_cron_scan;
+  const cron = data?.ops?.last_ops_trigger_scan;
   const manual = data?.ops?.last_manual_scan;
 
   const candidates: OddsActivityCall[] = [
@@ -314,7 +314,7 @@ export function OpsDashboard() {
   const oddsApiState = useMemo(() => deriveOddsApiState(query.data), [query.data]);
 
   const schedulerScan = query.data?.ops?.last_scheduler_scan;
-  const cronScan = query.data?.ops?.last_cron_scan;
+  const cronScan = query.data?.ops?.last_ops_trigger_scan;
   const manualScan = query.data?.ops?.last_manual_scan;
   const autoSettle = query.data?.ops?.last_auto_settle;
   const readinessFailure = query.data?.ops?.last_readiness_failure;
@@ -390,7 +390,7 @@ export function OpsDashboard() {
               <div className="mt-3 rounded-md border border-border/60 bg-muted/30 p-2.5 space-y-1.5">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Fallback Trigger Path</p>
                 <Row label="Available" value={fallbackAvailable} />
-                <Row label="Last cron-triggered run" value={formatTime(cronScan?.finished_at || cronScan?.captured_at)} />
+                <Row label="Last ops-triggered run" value={formatTime(cronScan?.finished_at || cronScan?.captured_at)} />
                 <p className="text-[11px] text-muted-foreground">Note: backup/manual use only</p>
               </div>
 

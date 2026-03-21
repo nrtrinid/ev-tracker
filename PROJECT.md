@@ -35,8 +35,8 @@ Operational hardening adds:
 2. **Bets**: `LogBetDrawer` / `EditBetModal` → `api.createBet` / `api.updateBet` → FastAPI → Supabase `bets`.
 3. **EV**: `calculate_ev` in `calculations.py` → `build_bet_response` in `main.py` → frontend.
 4. **Scanner**: Frontend `scanMarkets()` → `/api/scan-markets` → `services/odds_api.get_cached_or_scan` → The Odds API → de-vig Pinnacle → compare to target books.
-5. **Operator status**: `/admin/ops` → protected frontend bridge `/api/ops/status` → backend `/api/ops/status` (server-side cron token).
-6. **Automation fallback**: scheduler or external cron → `/api/cron/run-scan` and `/api/cron/run-auto-settle`.
+5. **Operator status**: `/admin/ops` → protected frontend bridge `/api/ops/status` → backend `/api/ops/status` (server-side ops token).
+6. **Automation fallback**: scheduler or external trigger → `/api/ops/trigger/scan` and `/api/ops/trigger/auto-settle`.
 
 ### Multi-Tenancy
 
@@ -100,7 +100,7 @@ ev-betting-tracker/
 ├── frontend/                # Next.js React frontend
 │   └── src/
 │       ├── app/             # App Router pages (scanner, settings, analytics, login, admin/ops)
-│       │   └── api/         # Protected bridge routes (cron + ops)
+│       │   └── api/         # Protected bridge routes (ops + wakeup)
 │       ├── components/      # UI (Dashboard, BetList, LogBetDrawer, EditBetModal, TopNav, SmartOddsInput, ui/)
 │       ├── lib/             # api.ts, auth-context, hooks, kelly-context, supabase, types, utils
 │       └── middleware.ts    # Auth redirects
@@ -133,9 +133,9 @@ ev-betting-tracker/
 | GET | `/balances` | Per-sportsbook balances |
 | GET | `/api/scan-bets` | +EV scan (single sport) |
 | GET | `/api/scan-markets` | Full market scan (all sports, cached) |
-| POST | `/api/cron/run-scan` | Cron-triggered cache warm + alert scheduling |
-| POST | `/api/cron/run-auto-settle` | Cron-triggered auto-settle run |
-| POST | `/api/cron/test-discord` | Test Discord message |
+| POST | `/api/ops/trigger/scan` | Operator-triggered cache warm + alert scheduling |
+| POST | `/api/ops/trigger/auto-settle` | Operator-triggered auto-settle run |
+| POST | `/api/ops/trigger/test-discord` | Test Discord message |
 | GET | `/api/ops/status` | Protected operator status payload |
 
 ---
@@ -214,7 +214,7 @@ ev-betting-tracker/
 
 - **Scheduler-first posture**: readiness and operator dashboards evaluate scheduler health/freshness first.
 - **Cron fallback paths**: external schedulers can trigger scan/settle safely through token-protected cron endpoints.
-- **Operator endpoint protection**: backend `/api/ops/status` is protected by `X-Cron-Token`; frontend exposes data only through allowlisted, authenticated bridge routes.
+- **Operator endpoint protection**: backend `/api/ops/status` is protected by `X-Ops-Token`; frontend exposes data only through allowlisted, authenticated bridge routes.
 - **Observability**: odds/scores calls are tracked in-memory with bounded recent history and one-hour summary counters.
 
 ### EV & Promo Logic

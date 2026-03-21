@@ -43,7 +43,7 @@ export async function GET() {
       cache: "no-store",
       headers: {
         accept: "application/json",
-        "x-cron-token": cronToken,
+        "x-ops-token": cronToken,
       },
     });
 

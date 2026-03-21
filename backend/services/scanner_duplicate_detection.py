@@ -1,5 +1,7 @@
 from calculations import american_to_decimal
 from services.match_keys import (
+    scanner_legacy_match_key_from_bet,
+    scanner_legacy_match_key_from_side,
     scanner_match_key_from_bet,
     scanner_match_key_from_side,
 )
@@ -26,7 +28,7 @@ def annotate_sides_with_duplicate_state(db, user_id: str, sides: list[dict]) -> 
 
     pending_res = (
         db.table("bets")
-        .select("id,odds_american,sport,market,sportsbook,commence_time,clv_team,event,clv_sport_key,result")
+        .select("id,odds_american,sport,market,sportsbook,commence_time,clv_team,event,clv_sport_key,clv_event_id,result")
         .eq("user_id", user_id)
         .eq("result", "pending")
         .eq("market", "ML")
@@ -36,15 +38,20 @@ def annotate_sides_with_duplicate_state(db, user_id: str, sides: list[dict]) -> 
     matches_by_key: dict[tuple[str, str, str, str, str], list[dict]] = {}
     for row in pending_res.data or []:
         key = scanner_match_key_from_bet(row)
+        legacy_key = scanner_legacy_match_key_from_bet(row)
         if not all([key[0], key[1], key[2], key[3], key[4]]):
             continue
         matches_by_key.setdefault(key, []).append(row)
+        matches_by_key.setdefault(legacy_key, []).append(row)
 
     annotated: list[dict] = []
     for side in sides:
         side_out = dict(side)
         key = scanner_match_key_from_side(side)
+        legacy_key = scanner_legacy_match_key_from_side(side)
         matched = matches_by_key.get(key, [])
+        if not matched:
+            matched = matches_by_key.get(legacy_key, [])
         current_odds = side.get("book_odds")
         current_quality = _price_quality_from_american(current_odds)
         side_out["current_odds_american"] = current_odds

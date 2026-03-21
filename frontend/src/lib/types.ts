@@ -41,6 +41,7 @@ export interface Bet {
   commence_time: string | null;
   clv_team: string | null;
   clv_sport_key: string | null;
+  clv_event_id: string | null;
   clv_ev_percent: number | null;  // computed: edge vs. Pinnacle close
   beat_close: boolean | null;
   // V1 paper experiment metadata
@@ -73,6 +74,7 @@ export interface BetCreate {
   commence_time?: string;
   clv_team?: string;
   clv_sport_key?: string;
+  clv_event_id?: string;
   true_prob_at_entry?: number;
 }
 
@@ -166,6 +168,7 @@ export interface Balance {
 
 // Scanner types
 export interface MarketSide {
+  event_id?: string | null;
   sportsbook: string;
   sport: string;
   event: string;
@@ -251,7 +254,7 @@ export interface OperatorStatusResponse {
       hard_errors?: number;
       captured_at?: string;
     } | null;
-    last_cron_scan?: {
+    last_ops_trigger_scan?: {
       run_id?: string;
       started_at?: string;
       finished_at?: string;
@@ -328,6 +331,7 @@ export interface ScannedBetData {
   commence_time?: string;
   clv_team?: string;
   clv_sport_key?: string;
+  clv_event_id?: string;
   true_prob_at_entry?: number;  // de-vigged Pinnacle probability — enables accurate EV display
   kelly_suggestion?: number;    // deprecated: use raw_kelly_stake / stealth_kelly_stake
   raw_kelly_stake?: number;     // raw Kelly $ (base_kelly * multiplier * bankroll)

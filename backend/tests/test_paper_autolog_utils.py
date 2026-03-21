@@ -1,4 +1,9 @@
-from services.paper_autolog_utils import cohort_for_side, sport_display, autolog_key_for_side
+from services.paper_autolog_utils import (
+    autolog_key_for_side,
+    autolog_legacy_key_for_side,
+    cohort_for_side,
+    sport_display,
+)
 
 
 def test_cohort_for_side_selects_low_and_high_edge_and_handles_invalid():
@@ -82,3 +87,27 @@ def test_sport_display_and_autolog_key_for_side():
         "high_edge",
     )
     assert key == "v1|high_edge|basketball_nba|2026-03-19T20:00:00Z|lakers|draftkings|ml"
+
+    key_with_event_id = autolog_key_for_side(
+        {
+            "sport": "Basketball_NBA",
+            "commence_time": "2026-03-19T20:00:00Z",
+            "team": "Lakers",
+            "sportsbook": "DraftKings",
+            "event_id": "evt_900",
+        },
+        "high_edge",
+    )
+    assert key_with_event_id == "v1|high_edge|basketball_nba|id:evt_900|lakers|draftkings|ml"
+
+    legacy = autolog_legacy_key_for_side(
+        {
+            "sport": "Basketball_NBA",
+            "commence_time": "2026-03-19T20:00:00Z",
+            "team": "Lakers",
+            "sportsbook": "DraftKings",
+            "event_id": "evt_900",
+        },
+        "high_edge",
+    )
+    assert legacy == "v1|high_edge|basketball_nba|2026-03-19T20:00:00Z|lakers|draftkings|ml"

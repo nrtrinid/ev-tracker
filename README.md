@@ -135,26 +135,26 @@ REDIS_URL=redis://localhost:6379/0
 ALERT_DEDUPE_TTL_SECONDS=21600
 ```
 
-### Cron-job friendly automation (Render free sleep)
+### Operator-triggered automation
 If your backend sleeps when idle (Render free tier), use an external scheduler (cron-job.org, GitHub Actions, etc.) to hit these endpoints:
 
-- `POST /api/cron/run-scan` (warms scanner cache; sends Discord +EV alerts if configured)
-- `POST /api/cron/run-auto-settle` (grades eligible pending ML bets)
-- `POST /api/cron/test-discord` (sends a test Discord message)
+- `POST /api/ops/trigger/scan` (warms scanner cache; sends Discord +EV alerts if configured)
+- `POST /api/ops/trigger/auto-settle` (grades eligible pending ML bets)
+- `POST /api/ops/trigger/test-discord` (sends a test Discord message)
 
-All cron endpoints require the header `X-Cron-Token` matching `CRON_TOKEN`.
+All operator endpoints require the header `X-Ops-Token` matching `CRON_TOKEN`.
 
 Frontend bridge routes (for serverless schedulers that should not hold backend secrets directly):
 
 - `GET /api/cron/wakeup` (requires `Authorization: Bearer ${CRON_SECRET}`)
-- `GET /api/cron/trigger-backend?target=run-scan|run-auto-settle|test-discord` (same auth)
+- `GET /api/cron/trigger-backend?target=scan|auto-settle|test-discord` (same auth)
 
-`target=settle` is accepted and mapped to `run-auto-settle` for compatibility.
+`target=settle` is accepted and mapped to `auto-settle` for compatibility.
 
 Health endpoints:
 - `GET /health` for liveness (process is up)
 - `GET /ready` for readiness (Supabase env + DB connectivity + scheduler state/freshness)
-- `GET /api/ops/status` for operator status (requires `X-Cron-Token`)
+- `GET /api/ops/status` for operator status (requires `X-Ops-Token`)
 
 Readiness scheduler freshness uses a startup grace window equal to each job's expected
 stale window, so a fresh deploy is not marked degraded before the first scheduled run.
@@ -191,7 +191,7 @@ OPS_ADMIN_EMAILS=ops@example.com
 
 - Route: `/admin/ops` (internal use)
 - Data source: frontend server bridge `GET /api/ops/status` -> backend `GET /api/ops/status`
-- Security: the browser never receives `X-Cron-Token`; token is injected server-side only
+- Security: the browser never receives `X-Ops-Token`; token is injected server-side only
 
 Operator access control:
 - Both `/admin/ops` and `/api/ops/status` require a logged-in user

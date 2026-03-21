@@ -8,7 +8,7 @@ import json
 import logging
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime, UTC, timedelta, timezone
+from datetime import datetime, UTC, timedelta
 from contextlib import asynccontextmanager
 import os
 import time
@@ -25,70 +25,10 @@ from models import (
 )
 from calculations import (
     american_to_decimal, calculate_ev, calculate_real_profit, calculate_clv,
-    compute_blend_weight,
+    compute_blend_weight, estimate_bonus_retention,
 )
 from auth import get_current_user
 from services.shared_state import allow_fixed_window_rate_limit, is_redis_enabled
-from services.scanner_duplicate_detection import annotate_sides_with_duplicate_state
-from services.scheduler_utils import (
-    merge_scheduled_scan_times,
-    scanned_at_from_oldest_fetch,
-    scheduled_scan_rollup,
-)
-from services.scheduler_bootstrap import (
-    build_auto_settle_trigger,
-    register_scheduled_scan_jobs,
-    mark_scheduler_started,
-    shutdown_scheduler,
-)
-from services.scheduler_scan import (
-    run_scheduled_scan_sports,
-    persist_latest_scheduled_scan_payload,
-    maybe_send_scheduled_scan_no_alert_heartbeat,
-    run_scheduled_scan_autolog,
-    finalize_scheduled_scan_run,
-)
-from services.scheduler_runner import run_scheduler_job
-from services.scan_cache import (
-    persist_latest_full_scan,
-    load_and_enrich_latest_scan_payload,
-    resolve_scan_latest_response,
-    scan_cache_exception_to_http_exception,
-)
-from services.scan_markets import (
-    run_single_sport_manual_scan,
-    run_all_sports_manual_scan,
-    apply_manual_scan_bundle,
-    scan_exception_to_http_exception,
-)
-from services.balance_stats import compute_balances_by_sportsbook
-from services.summary_stats import summarize_bets
-from services.transaction_records import (
-    build_transaction_insert_payload,
-    transaction_row_to_response_payload,
-    transaction_rows_to_response_payloads,
-)
-from services.settings_response import build_settings_response
-from services.paper_autolog_runner import execute_longshot_autolog
-from routes.ops_cron import (
-    cron_run_scan_impl,
-    cron_run_auto_settle_impl,
-    ops_status_impl,
-    cron_test_discord_impl,
-)
-from routes.scan_routes import scan_latest_impl, scan_impl, scan_markets_impl
-from routes.transactions_routes import (
-    create_transaction_impl,
-    list_transactions_impl,
-    delete_transaction_impl,
-)
-from routes.settings_routes import (
-    build_settings_update_payload,
-    get_settings_impl,
-    update_settings_impl,
-)
-from routes.utility_routes import calculate_ev_preview_impl
-from routes.admin_routes import backfill_ev_locks_impl
 
 load_dotenv()
 
@@ -165,6 +105,232 @@ def _log_event(event: str, level: str = "info", **fields):
     getattr(logger, level.lower(), logger.info)(message)
 
 
+def _normalize_text(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def _team_from_bet_row(row: dict) -> str:
+    team = _normalize_text(row.get("clv_team"))
+    if team:
+        return team
+    event = str(row.get("event") or "").strip()
+    if event.upper().endswith(" ML"):
+        return _normalize_text(event[:-3])
+    return ""
+
+
+def _event_ref(event_id: str | None, commence_time: str | None) -> str:
+    normalized_id = _normalize_text(event_id)
+    if normalized_id:
+        return f"id:{normalized_id}"
+    return f"time:{str(commence_time or '').strip()}"
+
+
+def _scanner_match_key_from_side(side: dict) -> tuple[str, str, str, str, str]:
+    return (
+        _normalize_text(side.get("sport")),
+        _event_ref(side.get("event_id"), side.get("commence_time")),
+        "ml",
+        _normalize_text(side.get("team")),
+        _normalize_text(side.get("sportsbook")),
+    )
+
+
+def _scanner_match_key_from_bet(row: dict) -> tuple[str, str, str, str, str]:
+    return (
+        _normalize_text(row.get("clv_sport_key") or row.get("sport")),
+        _event_ref(row.get("clv_event_id"), row.get("commence_time")),
+        _normalize_text(row.get("market")),
+        _team_from_bet_row(row),
+        _normalize_text(row.get("sportsbook")),
+    )
+
+
+def _scanner_legacy_match_key_from_side(side: dict) -> tuple[str, str, str, str, str]:
+    return (
+        _normalize_text(side.get("sport")),
+        str(side.get("commence_time") or "").strip(),
+        "ml",
+        _normalize_text(side.get("team")),
+        _normalize_text(side.get("sportsbook")),
+    )
+
+
+def _scanner_legacy_match_key_from_bet(row: dict) -> tuple[str, str, str, str, str]:
+    return (
+        _normalize_text(row.get("clv_sport_key") or row.get("sport")),
+        str(row.get("commence_time") or "").strip(),
+        _normalize_text(row.get("market")),
+        _team_from_bet_row(row),
+        _normalize_text(row.get("sportsbook")),
+    )
+
+
+def _price_quality_from_american(american: float | int | None) -> float | None:
+    if american is None:
+        return None
+    try:
+        return american_to_decimal(float(american))
+    except Exception:
+        return None
+
+
+def _annotate_sides_with_duplicate_state(db, user_id: str, sides: list[dict]) -> list[dict]:
+    """
+    Backend-owned scanner duplicate state.
+
+    Matching scope: pending (unsettled exposure) only.
+    State enum: new | already_logged | better_now
+    """
+    if not sides:
+        return sides
+
+    pending_res = (
+        db.table("bets")
+        .select("id,odds_american,sport,market,sportsbook,commence_time,clv_team,event,clv_sport_key,clv_event_id,result")
+        .eq("user_id", user_id)
+        .eq("result", "pending")
+        .eq("market", "ML")
+        .execute()
+    )
+
+    matches_by_key: dict[tuple[str, str, str, str, str], list[dict]] = {}
+    for row in pending_res.data or []:
+        key = _scanner_match_key_from_bet(row)
+        legacy_key = _scanner_legacy_match_key_from_bet(row)
+        if not all([key[0], key[1], key[2], key[3], key[4]]):
+            continue
+        matches_by_key.setdefault(key, []).append(row)
+        matches_by_key.setdefault(legacy_key, []).append(row)
+
+    annotated: list[dict] = []
+    for side in sides:
+        side_out = dict(side)
+        key = _scanner_match_key_from_side(side)
+        legacy_key = _scanner_legacy_match_key_from_side(side)
+        matched = matches_by_key.get(key, [])
+        if not matched:
+            matched = matches_by_key.get(legacy_key, [])
+        current_odds = side.get("book_odds")
+        current_quality = _price_quality_from_american(current_odds)
+        side_out["current_odds_american"] = current_odds
+
+        if not matched:
+            side_out["scanner_duplicate_state"] = "new"
+            side_out["best_logged_odds_american"] = None
+            side_out["matched_pending_bet_id"] = None
+            annotated.append(side_out)
+            continue
+
+        best_row = None
+        best_quality = None
+        for row in matched:
+            q = _price_quality_from_american(row.get("odds_american"))
+            if q is None:
+                continue
+            if best_quality is None or q > best_quality:
+                best_quality = q
+                best_row = row
+
+        if best_row is None:
+            side_out["scanner_duplicate_state"] = "already_logged"
+            side_out["best_logged_odds_american"] = None
+            side_out["matched_pending_bet_id"] = matched[0].get("id") if matched else None
+            annotated.append(side_out)
+            continue
+
+        side_out["best_logged_odds_american"] = best_row.get("odds_american")
+        side_out["matched_pending_bet_id"] = best_row.get("id")
+        if current_quality is not None and best_quality is not None and current_quality > best_quality:
+            side_out["scanner_duplicate_state"] = "better_now"
+        else:
+            side_out["scanner_duplicate_state"] = "already_logged"
+        annotated.append(side_out)
+
+    return annotated
+
+
+def annotate_sides_with_duplicate_state(db, user_id: str, sides: list[dict]) -> list[dict]:
+    """Backward-compatible alias for tests and internal callers."""
+    return _annotate_sides_with_duplicate_state(db, user_id, sides)
+
+
+def _cohort_for_side(side: dict) -> str | None:
+    sport = _normalize_text(side.get("sport"))
+    if sport not in LONGSHOT_AUTOLOG_SPORTS:
+        return None
+
+    try:
+        ev = float(side.get("ev_percentage"))
+        odds = float(side.get("book_odds"))
+    except Exception:
+        return None
+
+    if LOW_EDGE_EV_MIN <= ev <= LOW_EDGE_EV_MAX and LOW_EDGE_ODDS_MIN <= odds <= LOW_EDGE_ODDS_MAX:
+        return LOW_EDGE_COHORT
+    if ev >= HIGH_EDGE_EV_MIN and odds >= HIGH_EDGE_ODDS_MIN:
+        return HIGH_EDGE_COHORT
+    return None
+
+
+def _sport_display(sport_key: str) -> str:
+    mapping = {
+        "basketball_nba": "NBA",
+        "basketball_ncaab": "NCAAB",
+    }
+    return mapping.get(sport_key, sport_key)
+
+
+def _autolog_key_for_side(side: dict, cohort: str) -> str:
+    event_ref = _event_ref(side.get("event_id"), side.get("commence_time"))
+    return "|".join([
+        "v1",
+        cohort,
+        _normalize_text(side.get("sport")),
+        event_ref,
+        _normalize_text(side.get("team")),
+        _normalize_text(side.get("sportsbook")),
+        "ml",
+    ])
+
+
+def _autolog_legacy_key_for_side(side: dict, cohort: str) -> str:
+    return "|".join([
+        "v1",
+        cohort,
+        _normalize_text(side.get("sport")),
+        str(side.get("commence_time") or "").strip(),
+        _normalize_text(side.get("team")),
+        _normalize_text(side.get("sportsbook")),
+        "ml",
+    ])
+
+
+def _autolog_key_from_pending_row(row: dict) -> str:
+    event_ref = _event_ref(row.get("clv_event_id"), row.get("commence_time"))
+    return "|".join([
+        "v1",
+        str(row.get("strategy_cohort") or ""),
+        _normalize_text(row.get("clv_sport_key") or row.get("sport")),
+        event_ref,
+        _normalize_text(row.get("clv_team")),
+        _normalize_text(row.get("sportsbook")),
+        _normalize_text(row.get("market")),
+    ])
+
+
+def _autolog_legacy_key_from_pending_row(row: dict) -> str:
+    return "|".join([
+        "v1",
+        str(row.get("strategy_cohort") or ""),
+        _normalize_text(row.get("clv_sport_key") or row.get("sport")),
+        str(row.get("commence_time") or "").strip(),
+        _normalize_text(row.get("clv_team")),
+        _normalize_text(row.get("sportsbook")),
+        _normalize_text(row.get("market")),
+    ])
+
+
 async def _run_longshot_autolog_for_sides(db, *, run_id: str, sides: list[dict]) -> dict:
     """Autolog paper tickets from existing scan sides with deterministic caps and dedupe."""
     if not _is_paper_experiment_autolog_enabled():
@@ -174,33 +340,130 @@ async def _run_longshot_autolog_for_sides(db, *, run_id: str, sides: list[dict])
     if not user_id:
         return {"enabled": True, "configured": False, "inserted_total": 0, "reason": "missing_user_id"}
 
-    summary = execute_longshot_autolog(
-        db=db,
-        run_id=run_id,
-        user_id=user_id,
-        sides=sides,
-        supported_sports=LONGSHOT_AUTOLOG_SPORTS,
-        low_edge_cohort=LOW_EDGE_COHORT,
-        high_edge_cohort=HIGH_EDGE_COHORT,
-        low_edge_ev_min=LOW_EDGE_EV_MIN,
-        low_edge_ev_max=LOW_EDGE_EV_MAX,
-        low_edge_odds_min=LOW_EDGE_ODDS_MIN,
-        low_edge_odds_max=LOW_EDGE_ODDS_MAX,
-        high_edge_ev_min=HIGH_EDGE_EV_MIN,
-        high_edge_odds_min=HIGH_EDGE_ODDS_MIN,
-        max_total=AUTOLOG_MAX_TOTAL,
-        max_low=AUTOLOG_MAX_LOW,
-        max_high=AUTOLOG_MAX_HIGH,
-        paper_stake=AUTOLOG_PAPER_STAKE,
-        pending_result_value=BetResult.PENDING.value,
-        now_iso=datetime.now(UTC).isoformat(),
-        today_iso=datetime.now(UTC).date().isoformat(),
+    eligible: list[dict] = []
+    for side in sides:
+        cohort = _cohort_for_side(side)
+        if not cohort:
+            continue
+        side_copy = dict(side)
+        side_copy["strategy_cohort"] = cohort
+        eligible.append(side_copy)
+
+    # Deterministic ordering: higher EV first, then kickoff, then stable composite key.
+    eligible.sort(
+        key=lambda s: (
+            -float(s.get("ev_percentage") or 0),
+            str(s.get("commence_time") or ""),
+            _autolog_key_for_side(s, s["strategy_cohort"]),
+        )
     )
+
+    existing_pending = (
+        db.table("bets")
+        .select("strategy_cohort,clv_sport_key,commence_time,clv_team,clv_event_id,sportsbook,market")
+        .eq("user_id", user_id)
+        .eq("result", "pending")
+        .eq("market", "ML")
+        .in_("strategy_cohort", [LOW_EDGE_COHORT, HIGH_EDGE_COHORT])
+        .execute()
+    )
+    pending_keys = set()
+    for row in existing_pending.data or []:
+        pending_keys.add(_autolog_key_from_pending_row(row))
+        pending_keys.add(_autolog_legacy_key_from_pending_row(row))
+
+    inserted_total = 0
+    selected_by_cohort = {LOW_EDGE_COHORT: 0, HIGH_EDGE_COHORT: 0}
+    inserted_by_cohort = {LOW_EDGE_COHORT: 0, HIGH_EDGE_COHORT: 0}
+    skipped_duplicate = 0
+    skipped_rule = 0
+    run_at = datetime.now(UTC).isoformat()
+    in_run_keys: set[str] = set()
+
+    for side in eligible:
+        cohort = side["strategy_cohort"]
+        key = _autolog_key_for_side(side, cohort)
+        legacy_key = _autolog_legacy_key_for_side(side, cohort)
+
+        if key in pending_keys or key in in_run_keys or legacy_key in pending_keys or legacy_key in in_run_keys:
+            skipped_duplicate += 1
+            continue
+
+        if inserted_total >= AUTOLOG_MAX_TOTAL:
+            skipped_rule += 1
+            continue
+
+        if cohort == LOW_EDGE_COHORT and inserted_by_cohort[LOW_EDGE_COHORT] >= AUTOLOG_MAX_LOW:
+            skipped_rule += 1
+            continue
+        if cohort == HIGH_EDGE_COHORT and inserted_by_cohort[HIGH_EDGE_COHORT] >= AUTOLOG_MAX_HIGH:
+            skipped_rule += 1
+            continue
+
+        selected_by_cohort[cohort] += 1
+
+        run_key = f"{run_id}|{key}"
+        existing_run = (
+            db.table("bets")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("auto_log_run_key", run_key)
+            .limit(1)
+            .execute()
+        )
+        if existing_run.data:
+            skipped_duplicate += 1
+            continue
+
+        commence_time = str(side.get("commence_time") or "")
+        event_date = commence_time[:10] if len(commence_time) >= 10 else datetime.now(UTC).date().isoformat()
+
+        payload = {
+            "user_id": user_id,
+            "sport": _sport_display(str(side.get("sport") or "")),
+            "event": f"{side.get('team')} ML",
+            "market": "ML",
+            "sportsbook": side.get("sportsbook"),
+            "promo_type": "standard",
+            "odds_american": side.get("book_odds"),
+            "stake": AUTOLOG_PAPER_STAKE,
+            "result": BetResult.PENDING.value,
+            "event_date": event_date,
+            "pinnacle_odds_at_entry": side.get("pinnacle_odds"),
+            "commence_time": commence_time,
+            "clv_team": side.get("team"),
+            "clv_sport_key": side.get("sport"),
+            "clv_event_id": side.get("event_id"),
+            "true_prob_at_entry": side.get("true_prob"),
+            "is_paper": True,
+            "strategy_cohort": cohort,
+            "auto_logged": True,
+            "auto_log_run_at": run_at,
+            "auto_log_run_key": run_key,
+            "scan_ev_percent_at_log": side.get("ev_percentage"),
+            "book_odds_at_log": side.get("book_odds"),
+            "reference_odds_at_log": side.get("pinnacle_odds"),
+        }
+
+        db.table("bets").insert(payload).execute()
+        inserted_total += 1
+        inserted_by_cohort[cohort] += 1
+        in_run_keys.add(key)
+        in_run_keys.add(legacy_key)
+        pending_keys.add(key)
+        pending_keys.add(legacy_key)
 
     return {
         "enabled": True,
         "configured": True,
-        **summary,
+        "run_id": run_id,
+        "candidates_seen": len(sides),
+        "eligible_seen": len(eligible),
+        "selected_by_cohort": selected_by_cohort,
+        "inserted_total": inserted_total,
+        "inserted_by_cohort": inserted_by_cohort,
+        "skipped_duplicate": skipped_duplicate,
+        "skipped_rule": skipped_rule,
     }
 
 
@@ -415,7 +678,7 @@ def _check_db_ready() -> tuple[bool, str | None]:
 def _init_ops_status() -> None:
     app.state.ops_status = {
         "last_scheduler_scan": None,
-        "last_cron_scan": None,
+        "last_ops_trigger_scan": None,
         "last_manual_scan": None,
         "last_auto_settle": None,
         "last_auto_settle_summary": None,
@@ -440,12 +703,15 @@ def _set_ops_status(key: str, value: dict) -> None:
     state[key] = value
 
 
-def _require_valid_cron_token(x_cron_token: str | None) -> None:
+def _require_ops_token(x_ops_token: str | None, x_cron_token: str | None = None) -> None:
     expected = os.getenv("CRON_TOKEN")
+    ops_token = x_ops_token if isinstance(x_ops_token, str) else None
+    cron_token = x_cron_token if isinstance(x_cron_token, str) else None
+    provided = ops_token or cron_token
     if not expected:
         raise HTTPException(status_code=503, detail="CRON_TOKEN not configured on server")
-    if not x_cron_token or x_cron_token != expected:
-        raise HTTPException(status_code=401, detail="Invalid cron token")
+    if not provided or provided != expected:
+        raise HTTPException(status_code=401, detail="Invalid ops token")
 
 PHOENIX_TZ = None
 try:
@@ -465,31 +731,69 @@ async def _run_clv_daily_job():
     """Safety-net: fetch closing Pinnacle lines for all pending CLV-tracked bets."""
     from services.odds_api import fetch_clv_for_pending_bets
 
-    async def _run(_run_id: str):
-        updated = await fetch_clv_for_pending_bets(get_db())
-        return {"updated": updated}
-
-    await run_scheduler_job(
-        job_name="clv_daily",
-        runner=_run,
-        new_run_id=_new_run_id,
-        record_scheduler_heartbeat=_record_scheduler_heartbeat,
-        log_event=_log_event,
-    )
+    run_id = _new_run_id("clv_daily")
+    started_at = time.monotonic()
+    _record_scheduler_heartbeat("clv_daily", run_id, "started")
+    _log_event("scheduler.clv_daily.started", run_id=run_id)
+    db = get_db()
+    try:
+        updated = await fetch_clv_for_pending_bets(db)
+        _log_event(
+            "scheduler.clv_daily.completed",
+            run_id=run_id,
+            updated=updated,
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        )
+        _record_scheduler_heartbeat(
+            "clv_daily",
+            run_id,
+            "success",
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        )
+    except Exception as e:
+        _record_scheduler_heartbeat(
+            "clv_daily",
+            run_id,
+            "failure",
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+            error=str(e),
+        )
+        _log_event(
+            "scheduler.clv_daily.failed",
+            level="error",
+            run_id=run_id,
+            error_class=type(e).__name__,
+            error=str(e),
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        )
 
 
 async def _run_jit_clv_snatcher_job():
     """JIT CLV Snatcher: capture closing Pinnacle lines for games starting in the next 20 min."""
     from services.odds_api import run_jit_clv_snatcher
 
-    async def _run(_run_id: str):
-        updated = await run_jit_clv_snatcher(get_db())
-        return {"updated": updated}
-
-    async def _on_success(_run_id: str, details: dict, _duration_ms: float):
-        updated = int(details.get("updated") or 0)
+    run_id = _new_run_id("jit_clv")
+    started_at = time.monotonic()
+    _record_scheduler_heartbeat("jit_clv", run_id, "started")
+    _log_event("scheduler.jit_clv.started", run_id=run_id)
+    db = get_db()
+    try:
+        updated = await run_jit_clv_snatcher(db)
+        _log_event(
+            "scheduler.jit_clv.completed",
+            run_id=run_id,
+            updated=updated,
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        )
+        _record_scheduler_heartbeat(
+            "jit_clv",
+            run_id,
+            "success",
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        )
         if updated:
             print(f"[JIT CLV] Captured closing lines for {updated} bet(s).")
+            # Optional notification (guarded to avoid Discord spam).
             if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1":
                 from services.discord_alerts import send_discord_webhook
 
@@ -505,49 +809,97 @@ async def _run_jit_clv_snatcher_job():
                     ]
                 }
                 asyncio.create_task(send_discord_webhook(payload))
-
-    await run_scheduler_job(
-        job_name="jit_clv",
-        runner=_run,
-        new_run_id=_new_run_id,
-        record_scheduler_heartbeat=_record_scheduler_heartbeat,
-        log_event=_log_event,
-        on_success=_on_success,
-    )
+    except Exception as e:
+        _record_scheduler_heartbeat(
+            "jit_clv",
+            run_id,
+            "failure",
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+            error=str(e),
+        )
+        _log_event(
+            "scheduler.jit_clv.failed",
+            level="error",
+            run_id=run_id,
+            error_class=type(e).__name__,
+            error=str(e),
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        )
 
 
 async def _run_auto_settler_job():
     """Auto-Settler: grade completed ML bets using The Odds API /scores endpoint."""
     from services.odds_api import run_auto_settler, get_last_auto_settler_summary
 
-    async def _run(_run_id: str):
-        settled = await run_auto_settler(get_db(), source="auto_settle_scheduler")
-        return {"settled": settled}
-
-    async def _on_success(run_id: str, details: dict, duration_ms: float):
-        settled = details.get("settled")
+    run_id = _new_run_id("auto_settler")
+    started_at = time.monotonic()
+    _record_scheduler_heartbeat("auto_settler", run_id, "started")
+    _log_event("scheduler.auto_settler.started", run_id=run_id)
+    db = get_db()
+    try:
+        settled = await run_auto_settler(db, source="auto_settle_scheduler")
+        _log_event(
+            "scheduler.auto_settler.completed",
+            run_id=run_id,
+            settled=settled,
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        )
+        _record_scheduler_heartbeat(
+            "auto_settler",
+            run_id,
+            "success",
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        )
         _set_ops_status(
             "last_auto_settle",
             {
                 "source": "scheduler",
                 "run_id": run_id,
                 "settled": settled,
-                "duration_ms": duration_ms,
+                "duration_ms": round((time.monotonic() - started_at) * 1000, 2),
                 "captured_at": _utc_now_iso(),
             },
         )
         summary = get_last_auto_settler_summary()
         if summary:
             _set_ops_status("last_auto_settle_summary", summary)
+        if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1":
+            from services.discord_alerts import send_discord_webhook
 
-    await run_scheduler_job(
-        job_name="auto_settler",
-        runner=_run,
-        new_run_id=_new_run_id,
-        record_scheduler_heartbeat=_record_scheduler_heartbeat,
-        log_event=_log_event,
-        on_success=_on_success,
-    )
+            payload = {
+                "embeds": [
+                    {
+                        "title": "Auto-settle run complete",
+                        "description": f"Graded **{settled}** bet(s).",
+                        "fields": [
+                            {"name": "Source", "value": "scheduler", "inline": True},
+                            {"name": "Run id", "value": run_id, "inline": True},
+                            {
+                                "name": "Duration",
+                                "value": f"{round((time.monotonic() - started_at) * 1000, 2)} ms",
+                                "inline": True,
+                            },
+                        ],
+                    }
+                ]
+            }
+            asyncio.create_task(send_discord_webhook(payload))
+    except Exception as e:
+        _record_scheduler_heartbeat(
+            "auto_settler",
+            run_id,
+            "failure",
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+            error=str(e),
+        )
+        _log_event(
+            "scheduler.auto_settler.failed",
+            level="error",
+            run_id=run_id,
+            error_class=type(e).__name__,
+            error=str(e),
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        )
 
 
 async def _run_scheduled_scan_job():
@@ -563,45 +915,102 @@ async def _run_scheduled_scan_job():
     _record_scheduler_heartbeat("scheduled_scan", run_id, "started")
     _log_event("scheduler.scan.started", run_id=run_id, started_at=started + "Z")
 
+    total_sides = 0
+    alerts_scheduled = 0
+    hard_errors = 0
+    all_sides: list[dict] = []
+    total_events = 0
+    total_with_both = 0
+    min_remaining: str | None = None
+    oldest_fetched: float | None = None
     from services.discord_alerts import schedule_alerts
-    scan_summary = await run_scheduled_scan_sports(
-        run_id=run_id,
-        supported_sports=SUPPORTED_SPORTS,
-        get_cached_or_scan=lambda sport_key: get_cached_or_scan(sport_key, source="scheduled_scan"),
-        schedule_alerts=schedule_alerts,
-        log_event=_log_event,
-    )
-    (
-        total_sides,
-        alerts_scheduled,
-        hard_errors,
-        all_sides,
-        total_events,
-        total_with_both,
-        min_remaining,
-        oldest_fetched,
-    ) = scheduled_scan_rollup(scan_summary)
 
-    scanned_at = scanned_at_from_oldest_fetch(
-        oldest_fetched,
-        _utc_now_iso(),
+    for sport_key in SUPPORTED_SPORTS:
+        try:
+            result = await get_cached_or_scan(sport_key, source="scheduled_scan")
+            sides_count = len(result.get("sides") or [])
+            fetched = result.get("events_fetched")
+            with_both = result.get("events_with_both_books")
+            sides = result.get("sides") or []
+            all_sides.extend(sides)
+            total_sides += len(sides)
+            total_events += int(fetched or 0)
+            total_with_both += int(with_both or 0)
+
+            rem = result.get("api_requests_remaining")
+            if rem is not None:
+                try:
+                    r = int(rem)
+                    min_remaining = str(r) if min_remaining is None else str(min(r, int(min_remaining)))
+                except ValueError:
+                    min_remaining = str(rem)
+
+            ft = result.get("fetched_at")
+            if ft is not None:
+                oldest_fetched = ft if oldest_fetched is None else min(oldest_fetched, ft)
+
+            alerts_scheduled += schedule_alerts(sides)
+            _log_event(
+                "scheduler.scan.sport_completed",
+                run_id=run_id,
+                sport=sport_key,
+                sides=sides_count,
+                events_fetched=fetched,
+                events_with_both_books=with_both,
+            )
+        except httpx.HTTPStatusError as e:
+            if e.response is not None and e.response.status_code == 404:
+                _log_event(
+                    "scheduler.scan.sport_skipped",
+                    run_id=run_id,
+                    sport=sport_key,
+                    status=404,
+                    reason="no odds",
+                )
+                continue
+            _log_event(
+                "scheduler.scan.sport_failed",
+                level="error",
+                run_id=run_id,
+                sport=sport_key,
+                error_class=type(e).__name__,
+                error=str(e),
+            )
+            hard_errors += 1
+        except Exception as e:
+            # Never crash the server/scheduler; log and continue.
+            _log_event(
+                "scheduler.scan.sport_failed",
+                level="error",
+                run_id=run_id,
+                sport=sport_key,
+                error_class=type(e).__name__,
+                error=str(e),
+            )
+            hard_errors += 1
+
+    scanned_at = (
+        datetime.fromtimestamp(oldest_fetched, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        if oldest_fetched
+        else _utc_now_iso()
     )
 
     # Keep Scanner's "latest scan" payload in sync for scheduled runs, not only manual scans.
     try:
-        persist_latest_scheduled_scan_payload(
-            all_sides=all_sides,
-            total_events=total_events,
-            total_with_both=total_with_both,
-            min_remaining=min_remaining,
+        persist_response = FullScanResponse(
+            sport="all",
+            sides=all_sides,
+            events_fetched=total_events,
+            events_with_both_books=total_with_both,
+            api_requests_remaining=min_remaining,
             scanned_at=scanned_at,
-            persist_latest_payload=lambda payload: _retry_supabase(lambda: (
-                get_db().table("global_scan_cache").upsert(
-                    {"key": "latest", "payload": payload},
-                    on_conflict="key",
-                ).execute()
-            )),
         )
+        _retry_supabase(lambda: (
+            get_db().table("global_scan_cache").upsert(
+                {"key": "latest", "payload": persist_response.model_dump()},
+                on_conflict="key",
+            ).execute()
+        ))
     except Exception as e:
         _log_event(
             "scheduler.scan.latest_cache_persist_failed",
@@ -612,40 +1021,82 @@ async def _run_scheduled_scan_job():
         )
 
     finished = datetime.now(UTC).isoformat()
-    autolog_summary = await run_scheduled_scan_autolog(
+    autolog_summary = None
+    try:
+        autolog_summary = await _run_longshot_autolog_for_sides(db=get_db(), run_id=run_id, sides=all_sides)
+    except Exception as e:
+        autolog_summary = {
+            "enabled": _is_paper_experiment_autolog_enabled(),
+            "error": f"{type(e).__name__}: {e}",
+        }
+        _log_event(
+            "scheduler.scan.autolog.failed",
+            level="error",
+            run_id=run_id,
+            error_class=type(e).__name__,
+            error=str(e),
+        )
+
+    _log_event(
+        "scheduler.scan.completed",
         run_id=run_id,
-        all_sides=all_sides,
-        run_autolog=lambda *, run_id, sides: _run_longshot_autolog_for_sides(db=get_db(), run_id=run_id, sides=sides),
-        is_autolog_enabled=_is_paper_experiment_autolog_enabled,
-        log_event=_log_event,
-    )
-    duration_ms = round((time.monotonic() - started_at) * 1000, 2)
-    finalize_scheduled_scan_run(
-        run_id=run_id,
-        started=started,
-        finished=finished,
-        duration_ms=duration_ms,
+        finished_at=finished + "Z",
         total_sides=total_sides,
         alerts_scheduled=alerts_scheduled,
-        hard_errors=hard_errors,
         autolog_summary=autolog_summary,
-        log_event=_log_event,
-        record_scheduler_heartbeat=_record_scheduler_heartbeat,
-        set_ops_status=_set_ops_status,
+        duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+    )
+    duration_ms = round((time.monotonic() - started_at) * 1000, 2)
+    if hard_errors:
+        _record_scheduler_heartbeat(
+            "scheduled_scan",
+            run_id,
+            "failure",
+            duration_ms=duration_ms,
+            error=f"{hard_errors} sport(s) failed",
+        )
+    else:
+        _record_scheduler_heartbeat(
+            "scheduled_scan",
+            run_id,
+            "success",
+            duration_ms=duration_ms,
+        )
+
+    _set_ops_status(
+        "last_scheduler_scan",
+        {
+            "run_id": run_id,
+            "started_at": started + "Z",
+            "finished_at": finished + "Z",
+            "duration_ms": duration_ms,
+            "total_sides": total_sides,
+            "alerts_scheduled": alerts_scheduled,
+            "hard_errors": hard_errors,
+            "autolog_summary": autolog_summary,
+        },
     )
 
     # Optional heartbeat so we can confirm the scheduled scan ran even when it finds no lines.
-    from services.discord_alerts import send_discord_webhook
+    # Send only when enabled and when no alerts were scheduled.
+    if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1" and alerts_scheduled == 0:
+        from services.discord_alerts import send_discord_webhook
 
-    maybe_send_scheduled_scan_no_alert_heartbeat(
-        heartbeat_enabled=os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1",
-        started=started,
-        finished=finished,
-        total_sides=total_sides,
-        alerts_scheduled=alerts_scheduled,
-        send_discord_webhook=send_discord_webhook,
-        create_task=lambda coro: asyncio.create_task(coro),
-    )
+        payload = {
+            "embeds": [
+                {
+                    "title": "Scheduled scan complete (no alerts)",
+                    "description": "The scheduled scan ran successfully but found no qualifying lines to alert on.",
+                    "fields": [
+                        {"name": "Started (UTC)", "value": started + "Z", "inline": True},
+                        {"name": "Finished (UTC)", "value": finished + "Z", "inline": True},
+                        {"name": "Total sides", "value": str(total_sides), "inline": True},
+                        {"name": "Alerts scheduled", "value": str(alerts_scheduled), "inline": True},
+                    ],
+                }
+            ]
+        }
+        asyncio.create_task(send_discord_webhook(payload))
 
 
 async def _piggyback_clv(sides: list[dict]):
@@ -677,36 +1128,47 @@ async def start_scheduler():
     # Every 15 min: capture closing Pinnacle lines for games starting within 20 min
     scheduler.add_job(_run_jit_clv_snatcher_job, IntervalTrigger(minutes=15))
     # 4:00 AM Phoenix daily: auto-grade completed ML bets via /scores.
-    auto_settle_trigger = build_auto_settle_trigger(cron_trigger_cls=CronTrigger, phoenix_tz=PHOENIX_TZ)
+    # Explicit timezone keeps scheduler behavior consistent across hosts.
+    auto_settle_trigger = (
+        CronTrigger(hour=4, minute=0, timezone=PHOENIX_TZ)
+        if PHOENIX_TZ is not None
+        else CronTrigger(hour=4, minute=0)
+    )
     scheduler.add_job(
         _run_auto_settler_job,
         auto_settle_trigger,
         misfire_grace_time=60 * 60,
         coalesce=True,
     )
-    register_scheduled_scan_jobs(
-        scheduler=scheduler,
-        cron_trigger_cls=CronTrigger,
-        phoenix_tz=PHOENIX_TZ,
-        temp_scan_time_raw=os.getenv(SCHEDULED_SCAN_TEMP_TIME_ENV),
-        parse_hhmm=_parse_hhmm,
-        merge_scan_times=merge_scheduled_scan_times,
-        run_scheduled_scan_job=_run_scheduled_scan_job,
-    )
+    if PHOENIX_TZ is not None:
+        scheduled_scan_times: list[tuple[int, int]] = [(16, 30), (18, 30)]
+        temp_scan_time = _parse_hhmm(os.getenv(SCHEDULED_SCAN_TEMP_TIME_ENV))
+        if temp_scan_time is not None and temp_scan_time not in scheduled_scan_times:
+            scheduled_scan_times.append(temp_scan_time)
+
+        for hour, minute in scheduled_scan_times:
+            scheduler.add_job(
+                _run_scheduled_scan_job,
+                CronTrigger(hour=hour, minute=minute, timezone=PHOENIX_TZ),
+            )
+    else:
+        print("[Scheduler] Phoenix timezone unavailable; skipping scheduled scan jobs.")
     scheduler.start()
-    mark_scheduler_started(
-        scheduler=scheduler,
-        app_state=app.state,
-        utc_now_iso=_utc_now_iso,
-        log_event=_log_event,
-    )
+    app.state.scheduler_started_at = _utc_now_iso()
+    if hasattr(scheduler, "get_jobs"):
+        jobs_count = len(scheduler.get_jobs())
+    else:
+        jobs_count = len(getattr(scheduler, "jobs", []))
+    _log_event("scheduler.started", jobs=jobs_count)
+    app.state.scheduler = scheduler
 
 
 async def stop_scheduler():
     scheduler = getattr(app.state, "scheduler", None)
     if scheduler:
         try:
-            shutdown_scheduler(scheduler=scheduler, log_event=_log_event)
+            scheduler.shutdown(wait=False)
+            _log_event("scheduler.stopped")
         except Exception as e:
             _log_event(
                 "scheduler.stop_failed",
@@ -965,6 +1427,7 @@ def build_bet_response(row: dict, k_factor: float) -> BetResponse:
         commence_time=row.get("commence_time"),
         clv_team=row.get("clv_team"),
         clv_sport_key=row.get("clv_sport_key"),
+        clv_event_id=row.get("clv_event_id"),
         true_prob_at_entry=row.get("true_prob_at_entry"),
         clv_ev_percent=clv_ev_percent,
         beat_close=beat_close,
@@ -1136,6 +1599,7 @@ def create_bet(bet: BetCreate, user: dict = Depends(get_current_user)):
         "commence_time": bet.commence_time,
         "clv_team": bet.clv_team,
         "clv_sport_key": bet.clv_sport_key,
+        "clv_event_id": bet.clv_event_id,
         "true_prob_at_entry": bet.true_prob_at_entry,
     }
 
@@ -1351,15 +1815,26 @@ def backfill_ev_locks(user: dict = Depends(get_current_user)):
     locked EV fields. Safe to call multiple times (idempotent: skips rows that
     already have ev_locked_at set).
     """
-    return backfill_ev_locks_impl(
-        user=user,
-        get_db=get_db,
-        get_user_settings=get_user_settings,
-        retry_supabase=_retry_supabase,
-        ev_lock_promo_types=EV_LOCK_PROMO_TYPES,
-        lock_ev_for_row=_lock_ev_for_row,
-        log_warning=logger.warning,
-    )
+    db = get_db()
+    settings = get_user_settings(db, user["id"])
+
+    res = _retry_supabase(lambda: (
+        db.table("bets")
+        .select("*")
+        .eq("user_id", user["id"])
+        .is_("ev_locked_at", "null")
+        .in_("promo_type", list(EV_LOCK_PROMO_TYPES))
+        .execute()
+    ))
+    rows = res.data or []
+    locked = 0
+    for row in rows:
+        try:
+            _lock_ev_for_row(db, row["id"], user["id"], row, settings)
+            locked += 1
+        except Exception as e:
+            logger.warning("backfill_ev_lock.failed bet_id=%s err=%s", row["id"], e)
+    return {"backfilled": locked, "total_eligible": len(rows)}
 
 
 # ============ Summary / Dashboard ============
@@ -1369,13 +1844,78 @@ def get_summary(user: dict = Depends(get_current_user)):
     """Get dashboard summary statistics."""
     db = get_db()
     settings = get_user_settings(db, user["id"])
+    k_factor = settings["k_factor"]
+
     result = _retry_supabase(lambda: db.table("bets").select("*").eq("user_id", user["id"]).execute())
-    payload = summarize_bets(
-        bets=result.data,
-        k_factor=settings["k_factor"],
-        build_bet_response=build_bet_response,
+    bets = result.data
+
+    if not bets:
+        return SummaryResponse(
+            total_bets=0,
+            pending_bets=0,
+            total_ev=0.0,
+            total_real_profit=0.0,
+            variance=0.0,
+            win_count=0,
+            loss_count=0,
+            win_rate=None,
+            ev_by_sportsbook={},
+            profit_by_sportsbook={},
+            ev_by_sport={},
+        )
+
+    total_ev = 0.0
+    total_real_profit = 0.0
+    win_count = 0
+    loss_count = 0
+    pending_count = 0
+
+    ev_by_sportsbook: dict[str, float] = {}
+    profit_by_sportsbook: dict[str, float] = {}
+    ev_by_sport: dict[str, float] = {}
+
+    for row in bets:
+        bet_response = build_bet_response(row, k_factor)
+
+        # Totals
+        total_ev += bet_response.ev_total
+        if bet_response.real_profit is not None:
+            total_real_profit += bet_response.real_profit
+
+        # Counts
+        if bet_response.result == BetResult.WIN:
+            win_count += 1
+        elif bet_response.result == BetResult.LOSS:
+            loss_count += 1
+        elif bet_response.result == BetResult.PENDING:
+            pending_count += 1
+
+        # By sportsbook
+        book = bet_response.sportsbook
+        ev_by_sportsbook[book] = ev_by_sportsbook.get(book, 0) + bet_response.ev_total
+        if bet_response.real_profit is not None:
+            profit_by_sportsbook[book] = profit_by_sportsbook.get(book, 0) + bet_response.real_profit
+
+        # By sport
+        sport = bet_response.sport
+        ev_by_sport[sport] = ev_by_sport.get(sport, 0) + bet_response.ev_total
+
+    settled_count = win_count + loss_count
+    win_rate = (win_count / settled_count) if settled_count > 0 else None
+
+    return SummaryResponse(
+        total_bets=len(bets),
+        pending_bets=pending_count,
+        total_ev=round(total_ev, 2),
+        total_real_profit=round(total_real_profit, 2),
+        variance=round(total_real_profit - total_ev, 2),
+        win_count=win_count,
+        loss_count=loss_count,
+        win_rate=round(win_rate, 4) if win_rate else None,
+        ev_by_sportsbook={k: round(v, 2) for k, v in ev_by_sportsbook.items()},
+        profit_by_sportsbook={k: round(v, 2) for k, v in profit_by_sportsbook.items()},
+        ev_by_sport={k: round(v, 2) for k, v in ev_by_sport.items()},
     )
-    return SummaryResponse(**payload)
 
 
 # ============ Transactions ============
@@ -1386,13 +1926,33 @@ def create_transaction(
     user: dict = Depends(get_current_user),
 ):
     """Create a new deposit or withdrawal."""
-    return create_transaction_impl(
-        transaction=transaction,
-        user=user,
-        get_db=get_db,
-        build_insert_payload=build_transaction_insert_payload,
-        map_row_to_response_payload=transaction_row_to_response_payload,
-        build_transaction_response=lambda payload: TransactionResponse(**payload),
+    db = get_db()
+
+    data = {
+        "user_id": user["id"],
+        "sportsbook": transaction.sportsbook,
+        "type": transaction.type.value,
+        "amount": transaction.amount,
+        "notes": transaction.notes,
+    }
+
+    # If created_at is provided (for undo), use it; otherwise let database set it
+    if transaction.created_at:
+        data["created_at"] = transaction.created_at.isoformat()
+
+    result = db.table("transactions").insert(data).execute()
+
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to create transaction")
+
+    row = result.data[0]
+    return TransactionResponse(
+        id=row["id"],
+        created_at=row["created_at"],
+        sportsbook=row["sportsbook"],
+        type=row["type"],
+        amount=row["amount"],
+        notes=row.get("notes"),
     )
 
 
@@ -1402,13 +1962,31 @@ def list_transactions(
     user: dict = Depends(get_current_user),
 ):
     """List all transactions, optionally filtered by sportsbook."""
-    return list_transactions_impl(
-        sportsbook=sportsbook,
-        user=user,
-        get_db=get_db,
-        map_rows_to_response_payloads=transaction_rows_to_response_payloads,
-        build_transaction_response=lambda payload: TransactionResponse(**payload),
+    db = get_db()
+
+    query = (
+        db.table("transactions")
+        .select("*")
+        .eq("user_id", user["id"])
+        .order("created_at", desc=True)
     )
+
+    if sportsbook:
+        query = query.eq("sportsbook", sportsbook)
+
+    result = query.execute()
+
+    return [
+        TransactionResponse(
+            id=row["id"],
+            created_at=row["created_at"],
+            sportsbook=row["sportsbook"],
+            type=row["type"],
+            amount=row["amount"],
+            notes=row.get("notes"),
+        )
+        for row in result.data
+    ]
 
 
 @app.delete("/transactions/{transaction_id}")
@@ -1417,11 +1995,22 @@ def delete_transaction(
     user: dict = Depends(get_current_user),
 ):
     """Delete a transaction."""
-    return delete_transaction_impl(
-        transaction_id=transaction_id,
-        user=user,
-        get_db=get_db,
+    db = get_db()
+    result = (
+        db.table("transactions")
+        .delete()
+        .eq("id", transaction_id)
+        .eq("user_id", user["id"])
+        .execute()
     )
+
+    if result.status_code and result.status_code >= 400:
+        raise HTTPException(status_code=500, detail="Failed to delete transaction")
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    return {"deleted": True, "id": transaction_id}
 
 
 @app.get("/balances", response_model=list[BalanceResponse])
@@ -1429,6 +2018,7 @@ def get_balances(user: dict = Depends(get_current_user)):
     """Get computed balance for each sportsbook."""
     db = get_db()
     settings = get_user_settings(db, user["id"])
+    k_factor = settings["k_factor"]
 
     # Get all transactions for this user
     tx_result = _retry_supabase(lambda: (
@@ -1441,35 +2031,81 @@ def get_balances(user: dict = Depends(get_current_user)):
 
     # Get all bets for profit calculation
     bets_result = _retry_supabase(lambda: db.table("bets").select("*").eq("user_id", user["id"]).execute())
-    payload = compute_balances_by_sportsbook(
-        transactions=transactions,
-        bets=bets_result.data or [],
-        k_factor=settings["k_factor"],
-        build_bet_response=build_bet_response,
-    )
-    return [BalanceResponse(**row) for row in payload]
+    bets = bets_result.data or []
+
+    # Aggregate by sportsbook
+    sportsbook_data = {}
+
+    # Process transactions
+    for tx in transactions:
+        book = tx["sportsbook"]
+        if book not in sportsbook_data:
+            sportsbook_data[book] = {"deposits": 0, "withdrawals": 0, "profit": 0, "pending": 0}
+
+        if tx["type"] == "deposit":
+            sportsbook_data[book]["deposits"] += float(tx["amount"])
+        else:
+            sportsbook_data[book]["withdrawals"] += float(tx["amount"])
+
+    # Process bets for profit and pending
+    for row in bets:
+        book = row["sportsbook"]
+        if book not in sportsbook_data:
+            sportsbook_data[book] = {"deposits": 0, "withdrawals": 0, "profit": 0, "pending": 0}
+
+        bet = build_bet_response(row, k_factor)
+
+        if bet.result == BetResult.PENDING:
+            # Pending cash exposure: bonus bet stake is not real cash.
+            if bet.promo_type != "bonus_bet":
+                sportsbook_data[book]["pending"] += bet.stake
+        elif bet.real_profit is not None:
+            sportsbook_data[book]["profit"] += bet.real_profit
+
+    # Build response
+    balances = []
+    for book, data in sorted(sportsbook_data.items()):
+        net_deposits = data["deposits"] - data["withdrawals"]
+        balance = net_deposits + data["profit"] - data["pending"]
+
+        balances.append(BalanceResponse(
+            sportsbook=book,
+            deposits=round(data["deposits"], 2),
+            withdrawals=round(data["withdrawals"], 2),
+            net_deposits=round(net_deposits, 2),
+            profit=round(data["profit"], 2),
+            pending=round(data["pending"], 2),
+            balance=round(balance, 2),
+        ))
+
+    return balances
 
 
 # ============ Settings ============
+
+def _build_settings_response(db, user_id: str, s: dict) -> SettingsResponse:
+    """Construct SettingsResponse including derived k-factor fields."""
+    k_data = compute_k_user(db, user_id)
+    k_derived = build_effective_k(s, k_data["k_obs"], k_data["bonus_stake_settled"])
+    return SettingsResponse(
+        k_factor=s["k_factor"],
+        default_stake=s.get("default_stake"),
+        preferred_sportsbooks=s.get("preferred_sportsbooks") or DEFAULT_SPORTSBOOKS,
+        k_factor_mode=s.get("k_factor_mode") or "baseline",
+        k_factor_min_stake=float(s.get("k_factor_min_stake") or 300.0),
+        k_factor_smoothing=float(s.get("k_factor_smoothing") or 700.0),
+        k_factor_clamp_min=float(s.get("k_factor_clamp_min") or 0.50),
+        k_factor_clamp_max=float(s.get("k_factor_clamp_max") or 0.95),
+        **k_derived,
+    )
 
 
 @app.get("/settings", response_model=SettingsResponse)
 def get_settings(user: dict = Depends(get_current_user)):
     """Get user settings."""
-    return get_settings_impl(
-        user=user,
-        get_db=get_db,
-        get_user_settings=get_user_settings,
-        build_settings_response=lambda db, user_id, settings: build_settings_response(
-            db=db,
-            user_id=user_id,
-            settings=settings,
-            default_sportsbooks=DEFAULT_SPORTSBOOKS,
-            compute_k_user=compute_k_user,
-            build_effective_k=build_effective_k,
-            settings_response_cls=SettingsResponse,
-        ),
-    )
+    db = get_db()
+    settings = get_user_settings(db, user["id"])
+    return _build_settings_response(db, user["id"], settings)
 
 
 @app.patch("/settings", response_model=SettingsResponse)
@@ -1478,23 +2114,35 @@ def update_settings(
     user: dict = Depends(get_current_user),
 ):
     """Update user settings."""
-    return update_settings_impl(
-        settings_update=settings,
-        user=user,
-        get_db=get_db,
-        get_user_settings=get_user_settings,
-        build_settings_response=lambda db, user_id, settings_data: build_settings_response(
-            db=db,
-            user_id=user_id,
-            settings=settings_data,
-            default_sportsbooks=DEFAULT_SPORTSBOOKS,
-            compute_k_user=compute_k_user,
-            build_effective_k=build_effective_k,
-            settings_response_cls=SettingsResponse,
-        ),
-        build_update_payload=build_settings_update_payload,
-        utc_now_iso=lambda: datetime.now(UTC).isoformat(),
-    )
+    db = get_db()
+
+    # Ensure settings row exists
+    get_user_settings(db, user["id"])
+
+    data = {}
+    if settings.k_factor is not None:
+        data["k_factor"] = settings.k_factor
+    if settings.default_stake is not None:
+        data["default_stake"] = settings.default_stake
+    if settings.preferred_sportsbooks is not None:
+        data["preferred_sportsbooks"] = settings.preferred_sportsbooks
+    if settings.k_factor_mode is not None:
+        data["k_factor_mode"] = settings.k_factor_mode
+    if settings.k_factor_min_stake is not None:
+        data["k_factor_min_stake"] = settings.k_factor_min_stake
+    if settings.k_factor_smoothing is not None:
+        data["k_factor_smoothing"] = settings.k_factor_smoothing
+    if settings.k_factor_clamp_min is not None:
+        data["k_factor_clamp_min"] = settings.k_factor_clamp_min
+    if settings.k_factor_clamp_max is not None:
+        data["k_factor_clamp_max"] = settings.k_factor_clamp_max
+
+    if data:
+        data["updated_at"] = datetime.now(UTC).isoformat()
+        db.table("settings").update(data).eq("user_id", user["id"]).execute()
+
+    updated = get_user_settings(db, user["id"])
+    return _build_settings_response(db, user["id"], updated)
 
 
 # ============ Utility ============
@@ -1512,18 +2160,27 @@ def calculate_ev_preview(
     Preview EV calculation without saving a bet.
     Useful for real-time calculation as user types.
     """
-    return calculate_ev_preview_impl(
-        odds_american=odds_american,
+    db = get_db()
+    settings = get_user_settings(db, user["id"])
+
+    decimal_odds = american_to_decimal(odds_american)
+
+    result = calculate_ev(
         stake=stake,
-        promo_type=promo_type,
+        decimal_odds=decimal_odds,
+        promo_type=promo_type.value,
+        k_factor=settings["k_factor"],
         boost_percent=boost_percent,
         winnings_cap=winnings_cap,
-        user=user,
-        get_db=get_db,
-        get_user_settings=get_user_settings,
-        american_to_decimal=american_to_decimal,
-        calculate_ev=calculate_ev,
     )
+
+    return {
+        "odds_american": odds_american,
+        "odds_decimal": decimal_odds,
+        "stake": stake,
+        "promo_type": promo_type.value,
+        **result,
+    }
 
 
 # ============ Odds Scanner ============
@@ -1537,20 +2194,27 @@ async def scan_bets(
     Scan live odds: de-vig Pinnacle, compare to DraftKings,
     return any +EV moneyline opportunities.
     """
-    from services.odds_api import scan_for_ev, SUPPORTED_SPORTS
+    from services.odds_api import scan_for_ev, fetch_odds, SUPPORTED_SPORTS
 
-    return await scan_impl(
+    if sport not in SUPPORTED_SPORTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported sport. Choose from: {', '.join(SUPPORTED_SPORTS)}",
+        )
+
+    try:
+        result = await scan_for_ev(sport)
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odds API error: {e}")
+
+    return ScanResponse(
         sport=sport,
-        supported_sports=SUPPORTED_SPORTS,
-        scan_for_ev=scan_for_ev,
-        map_error=scan_exception_to_http_exception,
-        build_scan_response=lambda result: ScanResponse(
-            sport=sport,
-            opportunities=result["opportunities"],
-            events_fetched=result["events_fetched"],
-            events_with_both_books=result["events_with_both_books"],
-            api_requests_remaining=result.get("api_requests_remaining"),
-        ),
+        opportunities=result["opportunities"],
+        events_fetched=result["events_fetched"],
+        events_with_both_books=result["events_with_both_books"],
+        api_requests_remaining=result.get("api_requests_remaining"),
     )
 
 
@@ -1566,27 +2230,152 @@ async def scan_markets(
     stale sports hit the API).
     """
     from services.odds_api import get_cached_or_scan, SUPPORTED_SPORTS
+    from datetime import datetime, timezone
 
-    return await scan_markets_impl(
-        sport=sport,
-        user=user,
-        get_db=get_db,
-        supported_sports=SUPPORTED_SPORTS,
-        get_cached_or_scan=get_cached_or_scan,
-        run_single_sport_manual_scan=run_single_sport_manual_scan,
-        run_all_sports_manual_scan=run_all_sports_manual_scan,
-        apply_manual_scan_bundle=apply_manual_scan_bundle,
-        set_ops_status=_set_ops_status,
-        utc_now_iso=_utc_now_iso,
-        piggyback_clv=lambda sides: asyncio.create_task(_piggyback_clv(sides)),
-        persist_latest_full_scan=persist_latest_full_scan,
-        retry_supabase=_retry_supabase,
-        log_event=_log_event,
-        annotate_sides=annotate_sides_with_duplicate_state,
-        map_error=scan_exception_to_http_exception,
-        build_full_scan_response=lambda payload: FullScanResponse(**payload),
-        get_environment=lambda: os.getenv("ENVIRONMENT", "production").lower(),
-    )
+    db = get_db()
+
+    if sport is not None and sport not in SUPPORTED_SPORTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported sport. Choose from: {', '.join(SUPPORTED_SPORTS)}",
+        )
+
+    try:
+        if sport is not None:
+            result = await get_cached_or_scan(sport, source="manual_scan")
+            base_sides = result["sides"]
+            response_sides = _annotate_sides_with_duplicate_state(db, user["id"], base_sides)
+            scanned_at = datetime.fromtimestamp(result["fetched_at"], tz=timezone.utc).isoformat().replace("+00:00", "Z")
+            _set_ops_status(
+                "last_manual_scan",
+                {
+                    "captured_at": _utc_now_iso(),
+                    "sport": sport,
+                    "events_fetched": result.get("events_fetched"),
+                    "events_with_both_books": result.get("events_with_both_books"),
+                    "total_sides": len(base_sides or []),
+                    "api_requests_remaining": result.get("api_requests_remaining"),
+                },
+            )
+            # Piggyback CLV update — zero extra API calls
+            asyncio.create_task(_piggyback_clv(base_sides))
+            response = FullScanResponse(
+                sport=sport,
+                sides=response_sides,
+                events_fetched=result["events_fetched"],
+                events_with_both_books=result["events_with_both_books"],
+                api_requests_remaining=result.get("api_requests_remaining"),
+                scanned_at=scanned_at,
+            )
+            persist_response = FullScanResponse(
+                sport=sport,
+                sides=base_sides,
+                events_fetched=result["events_fetched"],
+                events_with_both_books=result["events_with_both_books"],
+                api_requests_remaining=result.get("api_requests_remaining"),
+                scanned_at=scanned_at,
+            )
+            # Persist as the latest global scan (durable across devices/accounts).
+            try:
+                _retry_supabase(lambda: (
+                    db.table("global_scan_cache").upsert(
+                        {"key": "latest", "payload": persist_response.model_dump()},
+                        on_conflict="key",
+                    ).execute()
+                ))
+            except Exception as e:
+                # Best-effort; scan results still return even if persistence fails.
+                _log_event(
+                    "scan_latest_cache.persist_failed",
+                    level="warning",
+                    error_class=type(e).__name__,
+                    error=str(e),
+                )
+            return response
+        # Full scan: all sports (skip any that 404 — e.g. out of season)
+        all_sides = []
+        total_events = 0
+        total_with_both = 0
+        min_remaining = None
+        oldest_fetched = None
+        from os import getenv
+        env = getenv("ENVIRONMENT", "production").lower()
+        sports_to_scan = ["basketball_nba"] if env == "development" else SUPPORTED_SPORTS
+        for s in sports_to_scan:
+            try:
+                result = await get_cached_or_scan(s, source="manual_scan")
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    continue  # sport has no odds right now (e.g. off-season)
+                raise
+            all_sides.extend(result["sides"])
+            total_events += result["events_fetched"]
+            total_with_both += result["events_with_both_books"]
+            rem = result.get("api_requests_remaining")
+            if rem is not None:
+                try:
+                    r = int(rem)
+                    min_remaining = str(r) if min_remaining is None else str(min(r, int(min_remaining)))
+                except ValueError:
+                    min_remaining = rem
+            ft = result.get("fetched_at")
+            if ft is not None:
+                oldest_fetched = ft if oldest_fetched is None else min(oldest_fetched, ft)
+        scanned_at = (
+            datetime.fromtimestamp(oldest_fetched, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+            if oldest_fetched
+            else None
+        )
+        _set_ops_status(
+            "last_manual_scan",
+            {
+                "captured_at": _utc_now_iso(),
+                "sport": "all",
+                "events_fetched": total_events,
+                "events_with_both_books": total_with_both,
+                "total_sides": len(all_sides),
+                "api_requests_remaining": min_remaining,
+            },
+        )
+        # Piggyback CLV update across all scanned sides — zero extra API calls
+        asyncio.create_task(_piggyback_clv(all_sides))
+        response_sides = _annotate_sides_with_duplicate_state(db, user["id"], all_sides)
+        response = FullScanResponse(
+            sport="all",
+            sides=response_sides,
+            events_fetched=total_events,
+            events_with_both_books=total_with_both,
+            api_requests_remaining=min_remaining,
+            scanned_at=scanned_at,
+        )
+        persist_response = FullScanResponse(
+            sport="all",
+            sides=all_sides,
+            events_fetched=total_events,
+            events_with_both_books=total_with_both,
+            api_requests_remaining=min_remaining,
+            scanned_at=scanned_at,
+        )
+        # Persist as the latest global scan (durable across devices/accounts).
+        try:
+            _retry_supabase(lambda: (
+                db.table("global_scan_cache").upsert(
+                    {"key": "latest", "payload": persist_response.model_dump()},
+                    on_conflict="key",
+                ).execute()
+            ))
+        except Exception as e:
+            _log_event(
+                "scan_latest_cache.persist_failed",
+                level="warning",
+                error_class=type(e).__name__,
+                error=str(e),
+            )
+        return response
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odds API error: {e}")
 
 
 @app.get("/api/scan-latest", response_model=FullScanResponse)
@@ -1597,86 +2386,336 @@ async def scan_latest(user: dict = Depends(require_scan_rate_limit)):
     This is a UX convenience so the Scanner can show something on first load
     (across devices/accounts) without requiring an immediate rescan.
     """
-    return scan_latest_impl(
-        user=user,
-        get_db=get_db,
-        resolve_scan_latest_response=resolve_scan_latest_response,
-        retry_supabase=_retry_supabase,
-        annotate_sides=annotate_sides_with_duplicate_state,
-        map_error=scan_cache_exception_to_http_exception,
-    )
+    db = get_db()
+    try:
+        try:
+            res = _retry_supabase(lambda: (
+                db.table("global_scan_cache")
+                .select("payload")
+                .eq("key", "latest")
+                .limit(1)
+                .execute()
+            ))
+        except Exception as e:
+            # Supabase PostgREST returns PGRST205 when the table doesn't exist / schema cache is stale.
+            # Treat as "no scans yet" so the UI doesn't show scary errors.
+            msg = str(e)
+            if "PGRST205" in msg or ("global_scan_cache" in msg and "schema cache" in msg):
+                return FullScanResponse(
+                    sport="all",
+                    sides=[],
+                    events_fetched=0,
+                    events_with_both_books=0,
+                    api_requests_remaining=None,
+                    scanned_at=None,
+                )
+            raise
+        if not res.data:
+            # Return an empty payload (200) so the UI doesn't treat this as an error.
+            return FullScanResponse(
+                sport="all",
+                sides=[],
+                events_fetched=0,
+                events_with_both_books=0,
+                api_requests_remaining=None,
+                scanned_at=None,
+            )
+        payload = res.data[0].get("payload")
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=500, detail="Invalid scan cache payload")
+        sides = payload.get("sides") if isinstance(payload.get("sides"), list) else []
+        payload["sides"] = _annotate_sides_with_duplicate_state(db, user["id"], sides)
+        return payload
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to load scan cache: {e}")
 
 
-@app.post("/api/cron/run-scan")
-async def cron_run_scan(x_cron_token: str | None = Header(default=None, alias="X-Cron-Token")):
-    """
-    Cron-triggered scan runner (for Render free sleep). This endpoint is intended to be
-    called by an external scheduler (cron-job.org, GitHub Actions, etc.) to wake the
-    service and warm the scan cache.
-
-    Security: requires X-Cron-Token header matching the CRON_TOKEN environment variable.
-    """
-    return await cron_run_scan_impl(
-        x_cron_token,
-        require_valid_cron_token=_require_valid_cron_token,
-        new_run_id=_new_run_id,
-        log_event=_log_event,
-        set_ops_status=_set_ops_status,
-    )
-
-
-@app.post("/api/cron/run-auto-settle")
-async def cron_run_auto_settle(
+@app.post("/api/ops/trigger/scan")
+async def ops_trigger_scan(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
 ):
     """
-    Cron-triggered auto-settler runner (for Render free sleep).
+    Manual operator scan trigger.
 
-    Security: requires X-Cron-Token header matching the CRON_TOKEN environment variable.
+    Security: requires X-Ops-Token header matching CRON_TOKEN.
     """
-    return await cron_run_auto_settle_impl(
-        x_cron_token,
-        require_valid_cron_token=_require_valid_cron_token,
-        new_run_id=_new_run_id,
-        log_event=_log_event,
-        set_ops_status=_set_ops_status,
-        get_db=get_db,
+    _require_ops_token(x_ops_token, x_cron_token)
+
+    run_id = _new_run_id("ops_scan")
+    started_clock = time.monotonic()
+    _log_event("ops.trigger.scan.started", run_id=run_id)
+
+    from services.odds_api import get_cached_or_scan, SUPPORTED_SPORTS
+
+    started = datetime.now(UTC).isoformat() + "Z"
+    scanned = []
+    errors: list[dict] = []
+    total_sides = 0
+    alerts_scheduled = 0
+    from services.discord_alerts import schedule_alerts
+
+    for sport_key in SUPPORTED_SPORTS:
+        try:
+            result = await get_cached_or_scan(sport_key, source="ops_trigger_scan")
+            sides = result.get("sides") or []
+            scanned.append(
+                {
+                    "sport": sport_key,
+                    "sides": len(sides),
+                    "events_fetched": result.get("events_fetched"),
+                    "events_with_both_books": result.get("events_with_both_books"),
+                    "api_requests_remaining": result.get("api_requests_remaining"),
+                }
+            )
+            total_sides += len(sides)
+            alerts_scheduled += schedule_alerts(sides)
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code if e.response is not None else None
+            # 404 just means out of season / no odds; treat as non-fatal.
+            if status == 404:
+                errors.append({"sport": sport_key, "status": 404, "error": "no odds"})
+                _log_event("ops.trigger.scan.sport_skipped", run_id=run_id, sport=sport_key, status=404, reason="no odds")
+                continue
+            errors.append({"sport": sport_key, "status": status, "error": str(e)})
+            _log_event(
+                "ops.trigger.scan.sport_failed",
+                level="error",
+                run_id=run_id,
+                sport=sport_key,
+                status=status,
+                error_class=type(e).__name__,
+                error=str(e),
+            )
+        except Exception as e:
+            errors.append({"sport": sport_key, "error": str(e)})
+            _log_event(
+                "ops.trigger.scan.sport_failed",
+                level="error",
+                run_id=run_id,
+                sport=sport_key,
+                error_class=type(e).__name__,
+                error=str(e),
+            )
+
+    finished = datetime.now(UTC).isoformat() + "Z"
+    duration_ms = round((time.monotonic() - started_clock) * 1000, 2)
+    _log_event(
+        "ops.trigger.scan.completed",
+        run_id=run_id,
+        total_sides=total_sides,
+        alerts_scheduled=alerts_scheduled,
+        error_count=len(errors),
+        duration_ms=duration_ms,
     )
+
+    _set_ops_status(
+        "last_ops_trigger_scan",
+        {
+            "run_id": run_id,
+            "started_at": started,
+            "finished_at": finished,
+            "duration_ms": duration_ms,
+            "total_sides": total_sides,
+            "alerts_scheduled": alerts_scheduled,
+            "error_count": len(errors),
+            "errors": errors,
+        },
+    )
+
+    # Optional heartbeat so we can confirm the scheduled scan ran even when it finds no lines.
+    # Reuse the existing heartbeat flag to avoid adding another env var.
+    # Sends only when enabled and when no alerts were scheduled.
+    if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1" and alerts_scheduled == 0:
+        from services.discord_alerts import send_discord_webhook
+
+        payload = {
+            "embeds": [
+                {
+                    "title": "Scan run complete (no alerts)",
+                    "description": "The scheduled scan ran successfully but found no qualifying lines to alert on.",
+                    "fields": [
+                        {"name": "Started (UTC)", "value": started, "inline": True},
+                        {"name": "Finished (UTC)", "value": finished, "inline": True},
+                        {"name": "Total sides", "value": str(total_sides), "inline": True},
+                        {"name": "Alerts scheduled", "value": str(alerts_scheduled), "inline": True},
+                    ],
+                }
+            ]
+        }
+        asyncio.create_task(send_discord_webhook(payload))
+
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "started_at": started,
+        "finished_at": finished,
+        "duration_ms": duration_ms,
+        "sports_scanned": scanned,
+        "errors": errors,
+        "total_sides": total_sides,
+        "alerts_scheduled": alerts_scheduled,
+    }
+
+
+@app.post("/api/ops/trigger/auto-settle")
+async def ops_trigger_auto_settle(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+):
+    """
+    Manual operator auto-settler trigger.
+
+    Security: requires X-Ops-Token header matching CRON_TOKEN.
+    """
+    _require_ops_token(x_ops_token, x_cron_token)
+
+    run_id = _new_run_id("ops_auto_settle")
+    started_clock = time.monotonic()
+    _log_event("ops.trigger.auto_settle.started", run_id=run_id)
+
+    from services.odds_api import get_last_auto_settler_summary
+
+    db = get_db()
+    started = datetime.now(UTC).isoformat() + "Z"
+    try:
+        from services.odds_api import run_auto_settler
+
+        settled = await run_auto_settler(db, source="auto_settle_ops_trigger")
+        _log_event("ops.trigger.auto_settle.completed", run_id=run_id, settled=settled)
+    except Exception as e:
+        # Never crash the server; return error for cron logs.
+        _log_event(
+            "ops.trigger.auto_settle.failed",
+            level="error",
+            run_id=run_id,
+            error_class=type(e).__name__,
+            error=str(e),
+            duration_ms=round((time.monotonic() - started_clock) * 1000, 2),
+        )
+        raise HTTPException(status_code=502, detail=f"Auto-settler error: {e}")
+    finally:
+        finished = datetime.now(UTC).isoformat() + "Z"
+
+    duration_ms = round((time.monotonic() - started_clock) * 1000, 2)
+
+    _set_ops_status(
+        "last_auto_settle",
+        {
+            "source": "ops_trigger",
+            "run_id": run_id,
+            "started_at": started,
+            "finished_at": finished,
+            "duration_ms": duration_ms,
+            "settled": settled,
+        },
+    )
+    summary = get_last_auto_settler_summary()
+    if summary:
+        _set_ops_status("last_auto_settle_summary", summary)
+
+    if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1":
+        from services.discord_alerts import send_discord_webhook
+
+        payload = {
+            "embeds": [
+                {
+                    "title": "Auto-settle run complete",
+                    "description": f"Graded **{settled}** bet(s).",
+                    "fields": [
+                        {"name": "Started (UTC)", "value": started, "inline": True},
+                        {"name": "Finished (UTC)", "value": finished, "inline": True},
+                    ],
+                }
+            ]
+        }
+        asyncio.create_task(send_discord_webhook(payload))
+
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "started_at": started,
+        "finished_at": finished,
+        "duration_ms": duration_ms,
+        "settled": settled,
+    }
 
 
 @app.get("/api/ops/status")
-def ops_status(x_cron_token: str | None = Header(default=None, alias="X-Cron-Token")):
+def ops_status(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+):
     """
     Protected operator status endpoint.
 
-    Uses the same CRON_TOKEN auth as cron routes to avoid exposing internals publicly.
+    Uses CRON_TOKEN auth (via X-Ops-Token) to avoid exposing internals publicly.
     """
-    return ops_status_impl(
-        x_cron_token,
-        require_valid_cron_token=_require_valid_cron_token,
-        runtime_state=_runtime_state,
-        check_db_ready=_check_db_ready,
-        check_scheduler_freshness=_check_scheduler_freshness,
-        utc_now_iso=_utc_now_iso,
-        get_ops_status=lambda: getattr(app.state, "ops_status", {}),
-    )
+    _require_ops_token(x_ops_token, x_cron_token)
+
+    runtime = _runtime_state()
+    db_ok, db_error = _check_db_ready()
+    scheduler_fresh_ok, scheduler_freshness = _check_scheduler_freshness(runtime["scheduler_expected"])
+    ops = getattr(app.state, "ops_status", {})
+    from services.odds_api import get_odds_api_activity_snapshot
+
+    odds_api_activity = get_odds_api_activity_snapshot()
+    if isinstance(ops, dict):
+        ops["odds_api_activity"] = odds_api_activity
+
+    return {
+        "timestamp": _utc_now_iso(),
+        "runtime": runtime,
+        "checks": {
+            "db_connectivity": db_ok,
+            "scheduler_freshness": scheduler_fresh_ok,
+        },
+        "db_error": db_error,
+        "scheduler_freshness": scheduler_freshness,
+        "ops": ops,
+    }
 
 
-@app.post("/api/cron/test-discord")
-async def cron_test_discord(
+@app.post("/api/ops/trigger/test-discord")
+async def ops_trigger_test_discord(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
 ):
     """
     Send a test Discord message (no EV/odds filtering).
 
-    Security: requires X-Cron-Token header matching the CRON_TOKEN environment variable.
+    Security: requires X-Ops-Token header matching CRON_TOKEN.
     """
-    return await cron_test_discord_impl(
-        x_cron_token,
-        require_valid_cron_token=_require_valid_cron_token,
-        new_run_id=_new_run_id,
-        log_event=_log_event,
+    _require_ops_token(x_ops_token, x_cron_token)
+
+    run_id = _new_run_id("ops_discord_test")
+    started_at = time.monotonic()
+    _log_event("ops.trigger.discord_test.started", run_id=run_id)
+
+    from services.discord_alerts import send_discord_webhook
+
+    payload = {
+        "embeds": [
+            {
+                "title": "Webhook test",
+                "description": "If you can read this, DISCORD_WEBHOOK_URL is working.",
+                "fields": [
+                    {"name": "Server time (UTC)", "value": datetime.now(UTC).isoformat() + "Z", "inline": False},
+                ],
+            }
+        ]
+    }
+
+    # Awaited directly so any Discord error surfaces in logs/response.
+    await send_discord_webhook(payload)
+    _log_event(
+        "ops.trigger.discord_test.completed",
+        run_id=run_id,
+        duration_ms=round((time.monotonic() - started_at) * 1000, 2),
     )
+    return {"ok": True, "scheduled": True, "run_id": run_id}
 
 
 if __name__ == "__main__":

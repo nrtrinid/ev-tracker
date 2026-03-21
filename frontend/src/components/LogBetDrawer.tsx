@@ -27,9 +27,31 @@ import {
   calculateHoldFromOdds,
   calculateStealthStake,
 } from "@/lib/utils";
-import { MARKET_VIG_DEFAULTS, SPORTSBOOK_BADGE_COLORS } from "@/lib/sportsbook-config";
 import { Loader2, Plus, ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
+
+// Smart vig defaults based on market type
+const MARKET_VIG: Record<string, number> = {
+  ML: 0.045,
+  Spread: 0.045,
+  Total: 0.045,
+  Parlay: 0.15,
+  Prop: 0.09,
+  Futures: 0.20,
+  SGP: 0.20,
+};
+
+// Sportsbook colors for selected state
+const sportsbookColors: Record<string, string> = {
+  DraftKings: "bg-draftkings",
+  FanDuel: "bg-fanduel",
+  BetMGM: "bg-betmgm",
+  Caesars: "bg-caesars",
+  "ESPN Bet": "bg-espnbet",
+  Fanatics: "bg-fanatics",
+  "Hard Rock": "bg-hardrock",
+  bet365: "bg-bet365",
+};
 
 interface LogBetDrawerProps {
   open: boolean;
@@ -43,6 +65,7 @@ interface ClvMeta {
   commence_time?: string;
   clv_team?: string;
   clv_sport_key?: string;
+  clv_event_id?: string;
   true_prob_at_entry?: number;
 }
 
@@ -140,6 +163,7 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
       commence_time: initialValues.commence_time,
       clv_team: initialValues.clv_team,
       clv_sport_key: initialValues.clv_sport_key,
+      clv_event_id: initialValues.clv_event_id,
       true_prob_at_entry: initialValues.true_prob_at_entry,
     };
   }
@@ -199,7 +223,7 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
   const payoutOverrideNum = parseFloat(formState.payout_override) || 0;
 
   // Get smart vig default based on market
-  const defaultVig = MARKET_VIG_DEFAULTS[formState.market] || 0.045;
+  const defaultVig = MARKET_VIG[formState.market] || 0.045;
 
   // Calculate actual vig if opposing odds provided
   const calculatedVig = opposingOddsNum !== 0 
@@ -371,7 +395,7 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
                   className={cn(
                     "flex-shrink-0 px-3 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap",
                     formState.sportsbook === book
-                      ? `${SPORTSBOOK_BADGE_COLORS[book] || "bg-foreground"} text-white shadow-md scale-105`
+                      ? `${sportsbookColors[book] || "bg-foreground"} text-white shadow-md scale-105`
                       : "bg-muted text-muted-foreground hover:bg-secondary"
                   )}
                 >

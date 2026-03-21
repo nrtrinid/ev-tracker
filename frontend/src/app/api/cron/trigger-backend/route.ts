@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 
 /**
- * Sniper route: once backend is awake, trigger specific backend cron tasks.
- * Accepts `?target=...` and POSTs to ${BACKEND_BASE_URL}/api/cron/{target}
+ * Sniper route: once backend is awake, trigger specific backend ops tasks.
+ * Accepts `?target=...` and POSTs to ${BACKEND_BASE_URL}/api/ops/trigger/{target}
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -30,20 +30,20 @@ export async function GET(request: Request) {
   // Keep the public query parameter stable, but map to backend route names.
   const target =
     targetParam === 'settle'
-      ? 'run-auto-settle'
+      ? 'auto-settle'
       : targetParam;
 
-  // Only allow known cron targets so this route can't be used as a generic backend proxy.
-  const allowedTargets = new Set(['run-scan', 'run-auto-settle', 'test-discord']);
+  // Only allow known ops targets so this route can't be used as a generic backend proxy.
+  const allowedTargets = new Set(['scan', 'auto-settle', 'test-discord']);
   if (!allowedTargets.has(target)) {
     return NextResponse.json({ error: 'Invalid target' }, { status: 400 });
   }
 
-  // The backend expects X-Cron-Token (see backend/main.py). By default, reuse CRON_SECRET.
+  // The backend expects X-Ops-Token (see backend/main.py). By default, reuse CRON_SECRET.
   // If you want separate secrets, set CRON_TOKEN on Vercel and on the backend as CRON_TOKEN.
   const backendCronToken = process.env.CRON_TOKEN ?? cronSecret;
 
-  const endpoint = `${backendBaseUrl.replace(/\/$/, '')}/api/cron/${target}`;
+  const endpoint = `${backendBaseUrl.replace(/\/$/, '')}/api/ops/trigger/${target}`;
 
   try {
     const resp = await fetch(endpoint, {
@@ -51,7 +51,7 @@ export async function GET(request: Request) {
       headers: {
         'accept': 'application/json',
         'content-type': 'application/json',
-        'x-cron-token': backendCronToken,
+        'x-ops-token': backendCronToken,
       },
       // Send empty JSON body; adjust if backend expects payload
       body: JSON.stringify({}),
