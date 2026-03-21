@@ -34,7 +34,7 @@ def should_alert(side: dict[str, Any]) -> bool:
         odds = float(side.get("book_odds", 0))
     except Exception:
         return False
-    return ev >= 3.0 and odds <= 500
+    return ev >= 1.5 and odds <= 500
 
 
 def make_alert_key(side: dict[str, Any]) -> str:
@@ -72,13 +72,27 @@ def build_discord_payload(side: dict[str, Any]) -> dict[str, Any]:
 
     link = build_scanner_deeplink(side)
 
+    try:
+        ev_value = float(ev)
+    except Exception:
+        ev_value = None
+
+    is_high_edge = ev_value is not None and ev_value >= 3.0
+    tier_label = "HIGH EDGE" if is_high_edge else "Solid Edge"
+    title_prefix = "HIGH EDGE" if is_high_edge else "Solid Edge"
+
     return {
         "embeds": [
             {
-                "title": f"+EV Alert ({float(ev):.2f}%)" if isinstance(ev, (int, float)) or str(ev).replace('.', '', 1).isdigit() else "+EV Alert",
+                "title": (
+                    f"{title_prefix} ({ev_value:.2f}% EV)"
+                    if ev_value is not None
+                    else title_prefix
+                ),
                 "description": f"**{team} ML** at **{book}**",
                 "url": link,
                 "fields": [
+                    {"name": "Tier", "value": tier_label, "inline": True},
                     {"name": "Sport", "value": sport or "—", "inline": True},
                     {"name": "Matchup", "value": event or "—", "inline": False},
                     {"name": "Odds", "value": f"{odds:+}" if isinstance(odds, (int, float)) else str(odds), "inline": True},

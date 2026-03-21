@@ -12,8 +12,8 @@ def _reload_discord_alerts():
 @pytest.mark.parametrize(
     ("ev", "odds", "expected"),
     [
-        (3.0, 500, True),
-        (2.99, 500, False),
+        (1.5, 500, True),
+        (1.49, 500, False),
         (3.0, 501, False),
         (10.0, -110, True),
     ],
@@ -66,6 +66,38 @@ def test_build_scanner_deeplink_includes_event_id_when_available():
     }
     link = mod.build_scanner_deeplink(side)
     assert "event_id=evt_123" in link
+
+
+def test_build_discord_payload_tiers():
+    mod = _reload_discord_alerts()
+
+    solid_payload = mod.build_discord_payload(
+        {
+            "sport": "basketball_nba",
+            "event": "Away @ Home",
+            "team": "Home",
+            "sportsbook": "FanDuel",
+            "book_odds": 120,
+            "ev_percentage": 2.2,
+        }
+    )
+    solid_embed = solid_payload["embeds"][0]
+    assert "Solid Edge" in solid_embed["title"]
+    assert any(f["name"] == "Tier" and f["value"] == "Solid Edge" for f in solid_embed["fields"])
+
+    high_payload = mod.build_discord_payload(
+        {
+            "sport": "basketball_nba",
+            "event": "Away @ Home",
+            "team": "Home",
+            "sportsbook": "FanDuel",
+            "book_odds": 120,
+            "ev_percentage": 3.1,
+        }
+    )
+    high_embed = high_payload["embeds"][0]
+    assert "HIGH EDGE" in high_embed["title"]
+    assert any(f["name"] == "Tier" and f["value"] == "HIGH EDGE" for f in high_embed["fields"])
 
 
 def test_schedule_alerts_dedupes(monkeypatch):
