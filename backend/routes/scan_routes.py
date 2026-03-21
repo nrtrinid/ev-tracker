@@ -1,4 +1,10 @@
-from fastapi import HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+
+from dependencies import require_scan_rate_limit
+from models import FullScanResponse, ScanResponse
+
+
+router = APIRouter()
 
 
 async def scan_impl(
@@ -105,3 +111,30 @@ def scan_latest_impl(
         )
     except Exception as e:
         raise map_error(e)
+
+
+@router.get("/api/scan-bets", response_model=ScanResponse)
+async def scan_bets(
+    sport: str = "basketball_nba",
+    user: dict = Depends(require_scan_rate_limit),
+):
+    import main
+
+    return await main.scan_bets(sport=sport, user=user)
+
+
+@router.get("/api/scan-markets", response_model=FullScanResponse)
+async def scan_markets(
+    sport: str | None = None,
+    user: dict = Depends(require_scan_rate_limit),
+):
+    import main
+
+    return await main.scan_markets(sport=sport, user=user)
+
+
+@router.get("/api/scan-latest", response_model=FullScanResponse)
+async def scan_latest(user: dict = Depends(require_scan_rate_limit)):
+    import main
+
+    return await main.scan_latest(user=user)

@@ -1,0 +1,40 @@
+{
+  "timestamp": "2026-03-20T18:00:00Z",
+  "runtime": {
+    "environment": "development",
+    "scheduler_expected": false,
+    "scheduler_running": false,
+    "redis_configured": false,
+    "cron_token_configured": true,
+    "odds_api_key_configured": true,
+    "supabase_url_configured": true,
+    "supabase_service_role_configured": true
+  },
+  "checks": {
+    "db_connectivity": true,
+    "scheduler_freshness": true
+  },
+  "db_error": null,
+  "scheduler_freshness": {
+    "enabled": false,
+    "fresh": true,
+    "jobs": {}
+  },
+  "ops": {
+    "last_manual_scan": null,
+    "last_ops_trigger_scan": null,
+    "last_auto_settle": null,
+    "last_auto_settle_summary": null,
+    "last_scheduler_scan": null,
+    "last_readiness_failure": null,
+    "odds_api_activity": {
+      "summary": {
+        "calls_last_hour": 0,
+        "errors_last_hour": 0,
+        "last_success_at": null,
+        "last_error_at": null
+      },
+      "recent_calls": []
+    }
+  }
+}

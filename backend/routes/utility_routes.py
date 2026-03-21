@@ -1,5 +1,13 @@
 from typing import Any, Callable
 
+from fastapi import APIRouter, Depends
+
+from dependencies import require_current_user
+from models import PromoType
+
+
+router = APIRouter()
+
 
 def calculate_ev_preview_impl(
     *,
@@ -34,3 +42,24 @@ def calculate_ev_preview_impl(
         "promo_type": promo_type.value,
         **result,
     }
+
+
+@router.get("/calculate-ev")
+def calculate_ev_preview(
+    odds_american: float,
+    stake: float,
+    promo_type: PromoType,
+    boost_percent: float | None = None,
+    winnings_cap: float | None = None,
+    user: dict = Depends(require_current_user),
+):
+    import main
+
+    return main.calculate_ev_preview(
+        odds_american=odds_american,
+        stake=stake,
+        promo_type=promo_type,
+        boost_percent=boost_percent,
+        winnings_cap=winnings_cap,
+        user=user,
+    )

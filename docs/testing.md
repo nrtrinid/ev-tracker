@@ -8,6 +8,7 @@ This project touches money-adjacent calculations (EV, profit, balances), user-fa
 - **Unit (backend, fast)**: deterministic tests for calculation and odds-activity summarization logic.
 - **Integration (backend routes, Supabase-backed)**: route-level behavior against a real Supabase DB + Auth user.
 - **Automation route checks (backend)**: cron/ops/scheduler status behavior with controlled fixtures.
+- **Contract checks (backend/frontend)**: scanner and ops payload shape/null-state guardrails to prevent silent contract drift.
 - **Smoke (frontend, Playwright)**: a couple critical UI flows against local dev servers.
 - **Manual dogfooding**: scanner realism, scheduler behavior, and UX edge cases.
 
@@ -35,12 +36,14 @@ From `backend/` with your venv activated:
 
 - `pytest tests/test_scheduler.py -v`
 - `pytest tests/test_scheduler.py tests/test_odds_api_activity.py -v`
+- `pytest tests/test_scan_ops_contracts.py -v`
 
 What these cover:
 
 - Scheduler heartbeat/status payload behavior.
 - Protected ops status response expectations.
 - Odds API activity summary and recent-call sanitization.
+- Scanner/ops payload contract-shape parity against golden fixtures.
 
 #### Backend integration tests (Supabase-backed)
 
@@ -79,6 +82,18 @@ From `frontend/`:
 - Run (Windows PowerShell):
   - `$env:PLAYWRIGHT_TEST_EMAIL="<email>"; $env:PLAYWRIGHT_TEST_PASSWORD="<password>"; npm run test:e2e`
 
+#### Frontend scanner contract/filter helper tests
+
+From `frontend/`:
+
+- `npx playwright test tests/scanner-contract.spec.ts tests/scanner-filters.spec.ts`
+
+What these cover:
+
+- Scan payload shape guard checks (`isScanResultContractShape`).
+- Null-state classification (`backend_empty` vs `filter_empty`).
+- Search normalization, time presets, edge/lens behavior, and active-filter chip generation.
+
 #### Frontend operator-access tests
 
 These tests cover the new ops hardening layer:
@@ -105,6 +120,7 @@ Notes:
 - High confidence in EV math and profit computation.
 - Good confidence that core CRUD + summary-style backend routes behave correctly against a real database.
 - Better confidence that automation/ops hardening paths behave correctly.
+- Better confidence that scanner payload and null-state/filter semantics stay stable.
 - Basic “does it still work?” coverage for a couple critical UI flows.
 
 ### Known gaps (intentionally not automated yet)
@@ -118,7 +134,9 @@ Notes:
 
 - Run unit tests.
 - Run scheduler/odds-activity backend tests.
+- Run backend scan/ops contract fixture tests.
 - Run backend integration tests against a dedicated test user.
+- Run frontend scanner contract/filter helper tests.
 - Run Playwright smokes with a test login.
 - Run `npm run test:ops-utils`.
 - Run `npm run test:ops-access` with non-admin credentials.

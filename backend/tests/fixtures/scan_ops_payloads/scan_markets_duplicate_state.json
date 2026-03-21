@@ -1,0 +1,28 @@
+{
+  "sport": "all",
+  "sides": [
+    {
+      "event_id": "evt-dup-1",
+      "sportsbook": "DraftKings",
+      "sportsbook_deeplink_url": null,
+      "sport": "basketball_nba",
+      "event": "Celtics @ Knicks",
+      "commence_time": "2026-03-21T01:00:00Z",
+      "team": "Celtics",
+      "pinnacle_odds": 105,
+      "book_odds": 115,
+      "true_prob": 0.5,
+      "base_kelly_fraction": 0.02,
+      "book_decimal": 2.15,
+      "ev_percentage": 2.4,
+      "scanner_duplicate_state": "already_logged",
+      "best_logged_odds_american": 110,
+      "current_odds_american": 115,
+      "matched_pending_bet_id": "bet-abc"
+    }
+  ],
+  "events_fetched": 5,
+  "events_with_both_books": 5,
+  "api_requests_remaining": "497",
+  "scanned_at": "2026-03-20T18:10:00Z"
+}

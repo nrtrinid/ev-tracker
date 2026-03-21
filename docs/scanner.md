@@ -11,7 +11,7 @@ User taps "Full Scan"
         │
         ▼
 frontend/src/app/scanner/page.tsx
-  → React Query refetch (staleTime: 5 min)
+        → React Query load latest persisted scan payload (staleTime: 1 min)
         │
         ▼
 GET /api/scan-markets  (FastAPI)
@@ -37,21 +37,26 @@ scan_all_sides(sport)
 API response: { sides[], events_fetched, events_with_both_books, scanned_at }
         │
         ▼
-frontend: lens filtering + sorting (useMemo)
-  → Standard EV / Profit Boost / Bonus Bet / Qualifier
-  → Filter by selected books
-  → Display top 10
+frontend: lens ranking + result filters (client-side)
+        → Rank per lens (Standard EV / Profit Boost / Bonus Bet / Qualifier)
+        → Apply result filters (Search / Time / Edge / More)
+        → Distinguish backend-empty vs filter-empty null states
+        → Display top 10 (load more in batches)
 ```
 
 ---
 
 ## Backend: `GET /api/scan-markets`
 
-**File:** `backend/main.py`
+**Route file:** `backend/routes/scan_routes.py`
+
+**Handler implementation:** `backend/main.py`
 
 **Auth:** Requires a valid Supabase JWT in the `Authorization: Bearer` header.
 
-**Rate limit:** 12 requests per 15 minutes per user (in-memory, resets on server restart).
+**Rate limit:** 12 requests per 15 minutes per user.
+
+Rate-limit dependency is centralized in `backend/dependencies.py` and can use shared state when `REDIS_URL` is configured.
 
 **Request parameters:**
 - `sport` (optional): If provided, scans only that sport. If omitted, scans all supported sports.
@@ -144,33 +149,37 @@ Unlike the older `scan_for_ev()`, this function returns **all sides** (including
 
 ---
 
-## Frontend: Lens Logic
+## Frontend: Ranking And Result Filters
 
-**File:** `frontend/src/app/scanner/page.tsx`
+**Page file:** `frontend/src/app/scanner/page.tsx`
 
-All filtering and sorting runs in a `useMemo()` that re-runs whenever `scanData`, `activeLens`, `boostPercent`, or `selectedBooks` changes. There's no re-fetch — the same scan data is re-sliced per lens.
+**Filter component:** `frontend/src/app/scanner/components/ScannerResultFilters.tsx`
+
+**Filter utilities:** `frontend/src/lib/scanner-filters.ts`
+
+The scanner pipeline is now split into two client-side stages with no extra backend fetch:
+
+1. Lens ranking stage (`fullResults`): selected books, then lens-specific ranking/sorting.
+2. Result filter stage (`filteredResults`): Search, Time presets, Standard-only Edge threshold, and More controls (Hide Longshots, Hide Already Logged, risk presets).
+
+When result count is zero, the page distinguishes:
+
+- **backend_empty**: source data has no lens results.
+- **filter_empty**: source has lens results, but active filters removed all visible rows.
+
+`hideAlreadyLogged` is persisted via localStorage (`scanner_hide_already_logged`).
 
 ```ts
-// Standard EV
-sides.filter(s => s.ev_percentage > 0)
-     .sort((a, b) => b.ev_percentage - a.ev_percentage)
-     .slice(0, 10)
+// Stage 1: rank by active lens (book-filtered source)
+// Stage 2: apply result filters client-side
+const filtered = applyScannerResultFilters({
+  sides: fullResults,
+  activeLens,
+  filters,
+  longshotMaxAmerican: 500,
+});
 
-// Profit Boost
-sides.map(s => ({ ...s, _boostedEV: calculateBoostedEV(s, boostPercent) }))
-     .filter(s => s._boostedEV > 0)
-     .sort((a, b) => b._boostedEV - a._boostedEV)
-     .slice(0, 10)
-
-// Bonus Bet
-sides.map(s => ({ ...s, _retention: (s.book_decimal - 1) * s.true_prob }))
-     .sort((a, b) => b._retention - a._retention)
-     .slice(0, 10)
-
-// Qualifier
-sides.filter(s => s.book_odds >= -250 && s.book_odds <= 150)
-     .sort((a, b) => b.ev_percentage - a.ev_percentage)
-     .slice(0, 10)
+const visible = filtered.slice(0, visibleCount);
 ```
 
 See [promos.md](./promos.md) for the mathematical rationale behind each lens.
@@ -184,4 +193,7 @@ See [promos.md](./promos.md) for the mathematical rationale behind each lens.
 3. **Place** — go to the book and place the bet. You're now logged before placing, creating a clean record.
 4. **Settle** — come back after the game and mark win/loss. The system calculates your actual P&L vs. expected EV.
 
-The 5-minute front-end `staleTime` (React Query) and the 5-minute server-side cache are intentionally aligned. If you switch away from the scanner and come back within 5 minutes, you see the same results without triggering a re-fetch or a cooldown timer reset.
+Front-end fetch staleness (1 minute) and server-side cache freshness (5 minutes) are intentionally decoupled:
+
+- Frontend can revalidate the latest persisted payload frequently.
+- Backend still protects The Odds API with per-sport TTL caching.

@@ -170,6 +170,7 @@ export interface Balance {
 export interface MarketSide {
   event_id?: string | null;
   sportsbook: string;
+  sportsbook_deeplink_url?: string | null;
   sport: string;
   event: string;
   commence_time: string;

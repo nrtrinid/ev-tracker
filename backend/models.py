@@ -243,6 +243,7 @@ class MarketSide(BaseModel):
     """A single side (team) with odds from a target book and true probability."""
     event_id: str | None = None
     sportsbook: str
+    sportsbook_deeplink_url: str | None = None
     sport: str
     event: str
     commence_time: str

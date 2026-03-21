@@ -1,6 +1,13 @@
 from typing import Any, Callable
 
 from fastapi import HTTPException
+from fastapi import APIRouter, Depends
+
+from dependencies import require_current_user
+from models import TransactionCreate, TransactionResponse
+
+
+router = APIRouter()
 
 
 def create_transaction_impl(
@@ -69,3 +76,33 @@ def delete_transaction_impl(
         raise HTTPException(status_code=404, detail="Transaction not found")
 
     return {"deleted": True, "id": transaction_id}
+
+
+@router.post("/transactions", response_model=TransactionResponse, status_code=201)
+def create_transaction(
+    transaction: TransactionCreate,
+    user: dict = Depends(require_current_user),
+):
+    import main
+
+    return main.create_transaction(transaction=transaction, user=user)
+
+
+@router.get("/transactions", response_model=list[TransactionResponse])
+def list_transactions(
+    sportsbook: str | None = None,
+    user: dict = Depends(require_current_user),
+):
+    import main
+
+    return main.list_transactions(sportsbook=sportsbook, user=user)
+
+
+@router.delete("/transactions/{transaction_id}")
+def delete_transaction(
+    transaction_id: str,
+    user: dict = Depends(require_current_user),
+):
+    import main
+
+    return main.delete_transaction(transaction_id=transaction_id, user=user)

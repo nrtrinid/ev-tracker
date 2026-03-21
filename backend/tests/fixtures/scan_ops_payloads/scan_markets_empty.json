@@ -1,0 +1,8 @@
+{
+  "sport": "all",
+  "sides": [],
+  "events_fetched": 0,
+  "events_with_both_books": 0,
+  "api_requests_remaining": null,
+  "scanned_at": null
+}

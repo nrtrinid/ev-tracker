@@ -87,10 +87,12 @@ Operational hardening adds:
 ev-betting-tracker/
 ├── backend/                 # FastAPI Python backend
 │   ├── main.py              # App, routes, CORS, rate limiting
+│   ├── dependencies.py      # Shared auth/rate-limit/ops dependencies
 │   ├── models.py            # Pydantic schemas (Bet, Settings, Summary, etc.)
 │   ├── calculations.py      # EV, odds conversion, Kelly, vig
 │   ├── auth.py              # JWT validation via Supabase
 │   ├── database.py          # Supabase client
+│   ├── routes/              # APIRouter route groups (scan/ops/settings/etc.)
 │   ├── services/
 │   │   ├── odds_api.py      # Odds/scores integration + activity snapshot
 │   │   └── discord_alerts.py
@@ -145,7 +147,9 @@ ev-betting-tracker/
 | Concern | Location |
 |---------|----------|
 | **EV calculations** | `backend/calculations.py` — `calculate_ev`, `american_to_decimal`, `kelly_fraction`, `calculate_real_profit`, `calculate_hold_from_odds` |
-| **Bet CRUD + response building** | `backend/main.py` — `build_bet_response`, `get_user_settings`, route handlers |
+| **Bet CRUD + response building** | `backend/main.py` — `build_bet_response`, `get_user_settings`, handler implementations |
+| **Router ownership** | `backend/routes/*.py` — APIRouter endpoint registration by domain |
+| **Shared dependencies** | `backend/dependencies.py` — current-user, scan-rate-limit, ops-token checks |
 | **Odds / scanner** | `backend/services/odds_api.py` — `fetch_odds`, `devig_pinnacle`, `calculate_edge`, `scan_for_ev`, `scan_all_sides`, `get_cached_or_scan` |
 | **Odds API activity** | `backend/services/odds_api.py` — `_append_odds_api_activity`, `get_odds_api_activity_snapshot` |
 | **Automation/scheduler health** | `backend/main.py` — scheduler jobs, heartbeats, readiness freshness, ops status |
@@ -153,7 +157,8 @@ ev-betting-tracker/
 | **Frontend API** | `frontend/src/lib/api.ts` — `fetchAPI`, all API wrappers |
 | **React Query hooks** | `frontend/src/lib/hooks.ts` — `useBets`, `useCreateBet`, `useSummary`, etc. |
 | **Kelly settings** | `frontend/src/lib/kelly-context.tsx` — bankroll, multiplier, localStorage |
-| **Scanner UI** | `frontend/src/app/scanner/page.tsx` — lenses (standard, profit_boost, bonus_bet, qualifier), book filter, Log Bet flow |
+| **Scanner UI** | `frontend/src/app/scanner/page.tsx` — lens ranking orchestration, null-state handling, Log Bet flow |
+| **Scanner result filters** | `frontend/src/app/scanner/components/ScannerResultFilters.tsx` + `frontend/src/lib/scanner-filters.ts` |
 | **Ops dashboard UI** | `frontend/src/app/admin/ops/OpsDashboard.tsx` — scheduler-first health + odds activity card |
 | **Protected ops bridge** | `frontend/src/app/api/ops/status/route.ts` + `frontend/src/lib/server/admin-access.ts` |
 | **Log Bet form** | `frontend/src/components/LogBetDrawer.tsx` — form, EV preview, vig handling |

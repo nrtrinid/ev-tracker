@@ -146,3 +146,132 @@ async def test_send_discord_webhook_noop_without_env(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "DISCORD_WEBHOOK_URL not set" in out
 
+
+def test_get_webhook_and_role_alert_routing(monkeypatch):
+    """Test that alert messages route to dedicated alert webhook when set."""
+    mod = _reload_discord_alerts()
+    
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://primary-webhook")
+    monkeypatch.setenv("DISCORD_MENTION_ROLE_ID", "primary-role")
+    monkeypatch.setenv("DISCORD_ALERT_WEBHOOK_URL", "https://alert-webhook")
+    monkeypatch.setenv("DISCORD_ALERT_MENTION_ROLE_ID", "alert-role")
+    monkeypatch.delenv("DISCORD_DEBUG_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("DISCORD_DEBUG_MENTION_ROLE_ID", raising=False)
+    
+    webhook, role = mod._get_webhook_and_role("alert")
+    assert webhook == "https://alert-webhook"
+    assert role == "alert-role"
+
+
+def test_get_webhook_and_role_heartbeat_routing(monkeypatch):
+    """Test that heartbeat messages route to dedicated debug webhook when set."""
+    mod = _reload_discord_alerts()
+    
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://primary-webhook")
+    monkeypatch.setenv("DISCORD_MENTION_ROLE_ID", "primary-role")
+    monkeypatch.setenv("DISCORD_DEBUG_WEBHOOK_URL", "https://debug-webhook")
+    monkeypatch.setenv("DISCORD_DEBUG_MENTION_ROLE_ID", "debug-role")
+    monkeypatch.delenv("DISCORD_ALERT_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("DISCORD_ALERT_MENTION_ROLE_ID", raising=False)
+    
+    webhook, role = mod._get_webhook_and_role("heartbeat")
+    assert webhook == "https://debug-webhook"
+    assert role == "debug-role"
+
+
+def test_get_webhook_and_role_test_routing(monkeypatch):
+    """Test that test messages route to dedicated debug webhook when set."""
+    mod = _reload_discord_alerts()
+    
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://primary-webhook")
+    monkeypatch.setenv("DISCORD_MENTION_ROLE_ID", "primary-role")
+    monkeypatch.setenv("DISCORD_DEBUG_WEBHOOK_URL", "https://debug-webhook")
+    monkeypatch.setenv("DISCORD_DEBUG_MENTION_ROLE_ID", "debug-role")
+    monkeypatch.delenv("DISCORD_ALERT_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("DISCORD_ALERT_MENTION_ROLE_ID", raising=False)
+    
+    webhook, role = mod._get_webhook_and_role("test")
+    assert webhook == "https://debug-webhook"
+    assert role == "debug-role"
+
+
+def test_get_webhook_and_role_alert_fallback_to_primary(monkeypatch):
+    """Test that alert messages fall back to primary webhook when alert webhook not set."""
+    mod = _reload_discord_alerts()
+    
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://primary-webhook")
+    monkeypatch.setenv("DISCORD_MENTION_ROLE_ID", "primary-role")
+    monkeypatch.delenv("DISCORD_ALERT_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("DISCORD_ALERT_MENTION_ROLE_ID", raising=False)
+    monkeypatch.setenv("DISCORD_DEBUG_WEBHOOK_URL", "https://debug-webhook")
+    monkeypatch.setenv("DISCORD_DEBUG_MENTION_ROLE_ID", "debug-role")
+    
+    webhook, role = mod._get_webhook_and_role("alert")
+    assert webhook == "https://primary-webhook"
+    assert role == "primary-role"
+
+
+def test_get_webhook_and_role_heartbeat_fallback_to_primary(monkeypatch):
+    """Test that heartbeat messages fall back to primary webhook when debug webhook not set."""
+    mod = _reload_discord_alerts()
+    
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://primary-webhook")
+    monkeypatch.setenv("DISCORD_MENTION_ROLE_ID", "primary-role")
+    monkeypatch.delenv("DISCORD_DEBUG_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("DISCORD_DEBUG_MENTION_ROLE_ID", raising=False)
+    monkeypatch.delenv("DISCORD_ALERT_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("DISCORD_ALERT_MENTION_ROLE_ID", raising=False)
+    
+    webhook, role = mod._get_webhook_and_role("heartbeat")
+    assert webhook == "https://primary-webhook"
+    assert role == "primary-role"
+
+
+def test_get_webhook_and_role_unknown_type_fallback(monkeypatch):
+    """Test that unknown message types fall back to primary webhook."""
+    mod = _reload_discord_alerts()
+    
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://primary-webhook")
+    monkeypatch.setenv("DISCORD_MENTION_ROLE_ID", "primary-role")
+    monkeypatch.delenv("DISCORD_DEBUG_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("DISCORD_ALERT_WEBHOOK_URL", raising=False)
+    
+    webhook, role = mod._get_webhook_and_role("unknown_type")
+    assert webhook == "https://primary-webhook"
+    assert role == "primary-role"
+
+
+def test_with_role_mention_custom_role(monkeypatch):
+    """Test that _with_role_mention uses provided role_id parameter."""
+    mod = _reload_discord_alerts()
+    
+    monkeypatch.delenv("DISCORD_MENTION_ROLE_ID", raising=False)
+    
+    payload = {"content": "Hello"}
+    result = mod._with_role_mention(payload, role_id="custom-role-123")
+    assert "<@&custom-role-123>" in result["content"]
+    assert "Hello" in result["content"]
+
+
+def test_with_role_mention_fallback_to_env(monkeypatch):
+    """Test that _with_role_mention falls back to environment variable when no role_id provided."""
+    mod = _reload_discord_alerts()
+    
+    monkeypatch.setenv("DISCORD_MENTION_ROLE_ID", "env-role-456")
+    
+    payload = {"content": "Hello"}
+    result = mod._with_role_mention(payload, role_id=None)
+    assert "<@&env-role-456>" in result["content"]
+    assert "Hello" in result["content"]
+
+
+def test_with_role_mention_no_role_set(monkeypatch):
+    """Test that _with_role_mention leaves payload unchanged when no role is set."""
+    mod = _reload_discord_alerts()
+    
+    monkeypatch.delenv("DISCORD_MENTION_ROLE_ID", raising=False)
+    
+    payload = {"content": "Hello"}
+    result = mod._with_role_mention(payload, role_id=None)
+    assert result["content"] == "Hello"
+

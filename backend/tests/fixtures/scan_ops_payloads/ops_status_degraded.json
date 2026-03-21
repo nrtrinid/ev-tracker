@@ -1,0 +1,56 @@
+{
+  "timestamp": "2026-03-20T18:00:00Z",
+  "runtime": {
+    "environment": "production",
+    "scheduler_expected": true,
+    "scheduler_running": true,
+    "redis_configured": true,
+    "cron_token_configured": true,
+    "odds_api_key_configured": true,
+    "supabase_url_configured": true,
+    "supabase_service_role_configured": true
+  },
+  "checks": {
+    "db_connectivity": false,
+    "scheduler_freshness": false
+  },
+  "db_error": "database timeout",
+  "scheduler_freshness": {
+    "enabled": true,
+    "fresh": false,
+    "reason": "stale"
+  },
+  "ops": {
+    "last_readiness_failure": {
+      "captured_at": "2026-03-20T17:58:00Z",
+      "checks": {
+        "db_connectivity": false,
+        "scheduler_freshness": false
+      },
+      "db_error": "database timeout"
+    },
+    "odds_api_activity": {
+      "summary": {
+        "calls_last_hour": 7,
+        "errors_last_hour": 2,
+        "last_success_at": "2026-03-20T17:54:00Z",
+        "last_error_at": "2026-03-20T17:56:00Z"
+      },
+      "recent_calls": [
+        {
+          "timestamp": "2026-03-20T17:56:00Z",
+          "source": "manual_scan",
+          "endpoint": "odds",
+          "sport": "basketball_ncaab",
+          "cache_hit": false,
+          "outbound_call_made": true,
+          "status_code": 502,
+          "duration_ms": 384,
+          "api_requests_remaining": "490",
+          "error_type": "HTTPStatusError",
+          "error_message": "bad gateway"
+        }
+      ]
+    }
+  }
+}

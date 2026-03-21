@@ -808,7 +808,7 @@ async def _run_jit_clv_snatcher_job():
                         }
                     ]
                 }
-                asyncio.create_task(send_discord_webhook(payload))
+                asyncio.create_task(send_discord_webhook(payload, message_type="heartbeat"))
     except Exception as e:
         _record_scheduler_heartbeat(
             "jit_clv",
@@ -883,7 +883,7 @@ async def _run_auto_settler_job():
                     }
                 ]
             }
-            asyncio.create_task(send_discord_webhook(payload))
+            asyncio.create_task(send_discord_webhook(payload, message_type="heartbeat"))
     except Exception as e:
         _record_scheduler_heartbeat(
             "auto_settler",
@@ -990,7 +990,7 @@ async def _run_scheduled_scan_job():
             hard_errors += 1
 
     scanned_at = (
-        datetime.fromtimestamp(oldest_fetched, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        datetime.fromtimestamp(oldest_fetched, tz=UTC).isoformat().replace("+00:00", "Z")
         if oldest_fetched
         else _utc_now_iso()
     )
@@ -1096,7 +1096,7 @@ async def _run_scheduled_scan_job():
                 }
             ]
         }
-        asyncio.create_task(send_discord_webhook(payload))
+        asyncio.create_task(send_discord_webhook(payload, message_type="heartbeat"))
 
 
 async def _piggyback_clv(sides: list[dict]):
@@ -1208,6 +1208,21 @@ app.add_middleware(
 # Import database after app setup to avoid circular imports
 from database import get_db
 
+# Route modules (APIRouter)
+from routes.scan_routes import router as scan_router
+from routes.ops_cron import router as ops_router
+from routes.settings_routes import router as settings_router
+from routes.transactions_routes import router as transactions_router
+from routes.utility_routes import router as utility_router
+from routes.admin_routes import router as admin_router
+
+app.include_router(scan_router)
+app.include_router(ops_router)
+app.include_router(settings_router)
+app.include_router(transactions_router)
+app.include_router(utility_router)
+app.include_router(admin_router)
+
 # ---------- Scan rate limit ----------
 # 12 full scans per 15 minutes per user; uses shared state when REDIS_URL is configured.
 _scan_rate_window_sec = 15 * 60
@@ -1284,7 +1299,8 @@ def compute_k_user(db, user_id: str) -> dict:
             .select("stake, result, win_payout, payout_override, promo_type")
             .eq("user_id", user_id)
             .eq("promo_type", "bonus_bet")
-            .in_("result", ["win", "loss", "push", "void"])
+            .gte("created_at", (datetime.now(UTC) - timedelta(days=999)).isoformat())  # All settled bets
+            .neq("result", "pending")  # Exclude pending bets
             .execute()
         ))
         rows = res.data or []
@@ -1808,7 +1824,6 @@ def delete_bet(bet_id: str, user: dict = Depends(get_current_user)):
     return {"deleted": True, "id": bet_id}
 
 
-@app.post("/admin/backfill-ev-locks")
 def backfill_ev_locks(user: dict = Depends(get_current_user)):
     """
     One-off endpoint: freeze EV on all existing promo bets that don't yet have
@@ -1920,7 +1935,6 @@ def get_summary(user: dict = Depends(get_current_user)):
 
 # ============ Transactions ============
 
-@app.post("/transactions", response_model=TransactionResponse, status_code=201)
 def create_transaction(
     transaction: TransactionCreate,
     user: dict = Depends(get_current_user),
@@ -1956,7 +1970,6 @@ def create_transaction(
     )
 
 
-@app.get("/transactions", response_model=list[TransactionResponse])
 def list_transactions(
     sportsbook: str | None = None,
     user: dict = Depends(get_current_user),
@@ -1989,7 +2002,6 @@ def list_transactions(
     ]
 
 
-@app.delete("/transactions/{transaction_id}")
 def delete_transaction(
     transaction_id: str,
     user: dict = Depends(get_current_user),
@@ -2100,7 +2112,6 @@ def _build_settings_response(db, user_id: str, s: dict) -> SettingsResponse:
     )
 
 
-@app.get("/settings", response_model=SettingsResponse)
 def get_settings(user: dict = Depends(get_current_user)):
     """Get user settings."""
     db = get_db()
@@ -2108,7 +2119,6 @@ def get_settings(user: dict = Depends(get_current_user)):
     return _build_settings_response(db, user["id"], settings)
 
 
-@app.patch("/settings", response_model=SettingsResponse)
 def update_settings(
     settings: SettingsUpdate,
     user: dict = Depends(get_current_user),
@@ -2147,7 +2157,6 @@ def update_settings(
 
 # ============ Utility ============
 
-@app.get("/calculate-ev")
 def calculate_ev_preview(
     odds_american: float,
     stake: float,
@@ -2185,7 +2194,6 @@ def calculate_ev_preview(
 
 # ============ Odds Scanner ============
 
-@app.get("/api/scan-bets", response_model=ScanResponse)
 async def scan_bets(
     sport: str = "basketball_nba",
     user: dict = Depends(require_scan_rate_limit),
@@ -2218,7 +2226,6 @@ async def scan_bets(
     )
 
 
-@app.get("/api/scan-markets", response_model=FullScanResponse)
 async def scan_markets(
     sport: str | None = None,
     user: dict = Depends(require_scan_rate_limit),
@@ -2245,7 +2252,7 @@ async def scan_markets(
             result = await get_cached_or_scan(sport, source="manual_scan")
             base_sides = result["sides"]
             response_sides = _annotate_sides_with_duplicate_state(db, user["id"], base_sides)
-            scanned_at = datetime.fromtimestamp(result["fetched_at"], tz=timezone.utc).isoformat().replace("+00:00", "Z")
+            scanned_at = datetime.fromtimestamp(result["fetched_at"], tz=UTC).isoformat().replace("+00:00", "Z")
             _set_ops_status(
                 "last_manual_scan",
                 {
@@ -2322,7 +2329,7 @@ async def scan_markets(
             if ft is not None:
                 oldest_fetched = ft if oldest_fetched is None else min(oldest_fetched, ft)
         scanned_at = (
-            datetime.fromtimestamp(oldest_fetched, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+            datetime.fromtimestamp(oldest_fetched, tz=UTC).isoformat().replace("+00:00", "Z")
             if oldest_fetched
             else None
         )
@@ -2378,7 +2385,6 @@ async def scan_markets(
         raise HTTPException(status_code=502, detail=f"Odds API error: {e}")
 
 
-@app.get("/api/scan-latest", response_model=FullScanResponse)
 async def scan_latest(user: dict = Depends(require_scan_rate_limit)):
     """
     Return the most recent *global* scan payload, even if stale.
@@ -2432,7 +2438,6 @@ async def scan_latest(user: dict = Depends(require_scan_rate_limit)):
         raise HTTPException(status_code=502, detail=f"Failed to load scan cache: {e}")
 
 
-@app.post("/api/ops/trigger/scan")
 async def ops_trigger_scan(
     x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
@@ -2545,7 +2550,7 @@ async def ops_trigger_scan(
                 }
             ]
         }
-        asyncio.create_task(send_discord_webhook(payload))
+        asyncio.create_task(send_discord_webhook(payload, message_type="heartbeat"))
 
     return {
         "ok": True,
@@ -2560,7 +2565,6 @@ async def ops_trigger_scan(
     }
 
 
-@app.post("/api/ops/trigger/auto-settle")
 async def ops_trigger_auto_settle(
     x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
@@ -2631,7 +2635,7 @@ async def ops_trigger_auto_settle(
                 }
             ]
         }
-        asyncio.create_task(send_discord_webhook(payload))
+        asyncio.create_task(send_discord_webhook(payload, message_type="heartbeat"))
 
     return {
         "ok": True,
@@ -2643,7 +2647,6 @@ async def ops_trigger_auto_settle(
     }
 
 
-@app.get("/api/ops/status")
 def ops_status(
     x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
@@ -2678,7 +2681,6 @@ def ops_status(
     }
 
 
-@app.post("/api/ops/trigger/test-discord")
 async def ops_trigger_test_discord(
     x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
@@ -2709,9 +2711,47 @@ async def ops_trigger_test_discord(
     }
 
     # Awaited directly so any Discord error surfaces in logs/response.
-    await send_discord_webhook(payload)
+    await send_discord_webhook(payload, message_type="test")
     _log_event(
         "ops.trigger.discord_test.completed",
+        run_id=run_id,
+        duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+    )
+    return {"ok": True, "scheduled": True, "run_id": run_id}
+
+
+async def ops_trigger_test_discord_alert(
+    x_ops_token: str | None = None, x_cron_token: str | None = None
+) -> dict[str, bool | str]:
+    """
+    Trigger a test message to the alert webhook (DISCORD_ALERT_WEBHOOK_URL).
+    Useful for verifying the dedicated alert webhook is configured and working.
+    Security: requires X-Ops-Token header matching CRON_TOKEN.
+    """
+    _require_ops_token(x_ops_token, x_cron_token)
+
+    run_id = _new_run_id("ops_discord_alert_test")
+    started_at = time.monotonic()
+    _log_event("ops.trigger.discord_alert_test.started", run_id=run_id)
+
+    from services.discord_alerts import send_discord_webhook
+
+    payload = {
+        "embeds": [
+            {
+                "title": "Alert Webhook Test",
+                "description": "If you can read this, DISCORD_ALERT_WEBHOOK_URL is working.",
+                "fields": [
+                    {"name": "Server time (UTC)", "value": datetime.now(UTC).isoformat() + "Z", "inline": False},
+                ],
+            }
+        ]
+    }
+
+    # Awaited directly so any Discord error surfaces in logs/response.
+    await send_discord_webhook(payload, message_type="alert")
+    _log_event(
+        "ops.trigger.discord_alert_test.completed",
         run_id=run_id,
         duration_ms=round((time.monotonic() - started_at) * 1000, 2),
     )

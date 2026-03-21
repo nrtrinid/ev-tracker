@@ -1,5 +1,13 @@
 from typing import Any, Callable
 
+from fastapi import APIRouter, Depends
+
+from dependencies import require_current_user
+from models import SettingsResponse, SettingsUpdate
+
+
+router = APIRouter()
+
 
 def build_settings_update_payload(settings_update) -> dict[str, Any]:
     data: dict[str, Any] = {}
@@ -55,3 +63,20 @@ def update_settings_impl(
 
     updated = get_user_settings(db, user["id"])
     return build_settings_response(db, user["id"], updated)
+
+
+@router.get("/settings", response_model=SettingsResponse)
+def get_settings(user: dict = Depends(require_current_user)):
+    import main
+
+    return main.get_settings(user=user)
+
+
+@router.patch("/settings", response_model=SettingsResponse)
+def update_settings(
+    settings: SettingsUpdate,
+    user: dict = Depends(require_current_user),
+):
+    import main
+
+    return main.update_settings(settings=settings, user=user)

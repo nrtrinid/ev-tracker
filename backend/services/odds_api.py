@@ -378,14 +378,20 @@ async def fetch_odds(
         raise
 
 
-def _extract_outcomes(bookmakers: list[dict], book_key: str) -> dict | None:
-    """Pull the h2h outcomes dict for a given bookmaker from the event data."""
+def _extract_bookmaker_meta(bookmakers: list[dict], book_key: str) -> tuple[dict | None, str | None]:
+    """Pull h2h outcomes + optional bookmaker deep link for a bookmaker key."""
     for bm in bookmakers:
         if bm["key"] == book_key:
+            deep_link = bm.get("link") or bm.get("url")
             for market in bm.get("markets", []):
                 if market["key"] == "h2h":
-                    return {o["name"]: o["price"] for o in market["outcomes"]}
-    return None
+                    return {o["name"]: o["price"] for o in market["outcomes"]}, deep_link
+    return None, None
+
+
+def _extract_outcomes(bookmakers: list[dict], book_key: str) -> dict | None:
+    outcomes, _deep_link = _extract_bookmaker_meta(bookmakers, book_key)
+    return outcomes
 
 
 async def scan_for_ev(sport: str = "basketball_nba") -> dict:
@@ -424,7 +430,10 @@ async def scan_for_ev(sport: str = "basketball_nba") -> dict:
         had_any_book = False
 
         for book_key, book_display in TARGET_BOOKS.items():
-            book_outcomes = _extract_outcomes(event.get("bookmakers", []), book_key)
+            book_outcomes, sportsbook_deeplink_url = _extract_bookmaker_meta(
+                event.get("bookmakers", []),
+                book_key,
+            )
             if not book_outcomes:
                 continue
 
@@ -1177,7 +1186,10 @@ async def scan_all_sides(sport: str = "basketball_nba", source: str = "unknown")
         had_any_book = False
 
         for book_key, book_display in TARGET_BOOKS.items():
-            book_outcomes = _extract_outcomes(event.get("bookmakers", []), book_key)
+            book_outcomes, sportsbook_deeplink_url = _extract_bookmaker_meta(
+                event.get("bookmakers", []),
+                book_key,
+            )
             if not book_outcomes:
                 continue
 
@@ -1194,6 +1206,7 @@ async def scan_all_sides(sport: str = "basketball_nba", source: str = "unknown")
             all_sides.append({
                 "event_id": event.get("id"),
                 "sportsbook": book_display,
+                "sportsbook_deeplink_url": sportsbook_deeplink_url,
                 "sport": event.get("sport_key", sport),
                 "event": f"{away} @ {home}",
                 "commence_time": commence,
@@ -1209,6 +1222,7 @@ async def scan_all_sides(sport: str = "basketball_nba", source: str = "unknown")
             all_sides.append({
                 "event_id": event.get("id"),
                 "sportsbook": book_display,
+                "sportsbook_deeplink_url": sportsbook_deeplink_url,
                 "sport": event.get("sport_key", sport),
                 "event": f"{away} @ {home}",
                 "commence_time": commence,
@@ -1228,6 +1242,7 @@ async def scan_all_sides(sport: str = "basketball_nba", source: str = "unknown")
                     all_sides.append({
                         "event_id": event.get("id"),
                         "sportsbook": book_display,
+                        "sportsbook_deeplink_url": sportsbook_deeplink_url,
                         "sport": event.get("sport_key", sport),
                         "event": f"{away} @ {home}",
                         "commence_time": commence,

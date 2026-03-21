@@ -1,0 +1,28 @@
+{
+  "sport": "all",
+  "sides": [
+    {
+      "event_id": "evt-123",
+      "sportsbook": "DraftKings",
+      "sportsbook_deeplink_url": "https://sportsbook.example/dk/event/evt-123",
+      "sport": "basketball_nba",
+      "event": "Lakers @ Warriors",
+      "commence_time": "2026-03-20T18:00:00Z",
+      "team": "Lakers",
+      "pinnacle_odds": 110,
+      "book_odds": 120,
+      "true_prob": 0.51,
+      "base_kelly_fraction": 0.03,
+      "book_decimal": 2.2,
+      "ev_percentage": 3.2,
+      "scanner_duplicate_state": "new",
+      "best_logged_odds_american": null,
+      "current_odds_american": 120,
+      "matched_pending_bet_id": null
+    }
+  ],
+  "events_fetched": 12,
+  "events_with_both_books": 10,
+  "api_requests_remaining": "498",
+  "scanned_at": "2026-03-20T17:55:00Z"
+}

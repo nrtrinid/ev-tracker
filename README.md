@@ -39,6 +39,9 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 - **Profit Boost** lens: recalculates EV after applying a 30% or 50% profit multiplier
 - **Bonus Bet** lens: sorts by retention rate (`true_prob × decimal_odds`) to maximize free-bet conversion
 - **Qualifier** lens: filters odds between −250 and +150, minimizing expected qualifying loss
+- Result filter bar: Search, Time presets, Standard-only Edge threshold, and More menu controls
+- More controls: Hide longshots, Hide already logged, and risk presets (Any/Safer/Balanced)
+- Distinct null states: "no scanner results" vs "no matches for active filters"
 - Per-book badges (DK, FD, MGM, CZR, ESPN)
 - "Fair Odds" line shows the de-vigged Pinnacle line for every result
 - One-tap pre-fill into the log drawer
@@ -94,8 +97,12 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 **Key files:**
 - `backend/services/odds_api.py` — fetch, de-vig, edge calculation, cache
 - `backend/calculations.py` — EV math, Kelly criterion, odds conversion
-- `backend/main.py` — FastAPI endpoints, auth, rate limiting
-- `frontend/src/app/scanner/page.tsx` — scanner UI, lens logic
+- `backend/routes/scan_routes.py` — scan endpoint routing
+- `backend/dependencies.py` — shared auth/rate-limit/ops-token dependencies
+- `backend/main.py` — FastAPI app bootstrap + scanner handler implementations
+- `frontend/src/app/scanner/page.tsx` — scanner orchestration and lens ranking
+- `frontend/src/app/scanner/components/ScannerResultFilters.tsx` — scanner filter bar UI
+- `frontend/src/lib/scanner-filters.ts` — scanner result-filter helpers
 - `frontend/src/lib/kelly-context.tsx` — global Kelly/bankroll state
 
 See [PROJECT.md](./PROJECT.md) for full architecture, conventions, and key decisions.

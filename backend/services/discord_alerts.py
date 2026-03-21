@@ -13,12 +13,42 @@ ALERT_DEDUPE_TTL_SECONDS = int(os.getenv("ALERT_DEDUPE_TTL_SECONDS", "21600"))
 
 FRONTEND_BASE_URL = "https://ev-tracker-gamma.vercel.app"
 
-def _with_role_mention(payload: dict[str, Any]) -> dict[str, Any]:
+
+def _get_webhook_and_role(message_type: str = "alert") -> tuple[str | None, str | None]:
     """
-    If DISCORD_MENTION_ROLE_ID is set, prepend a role mention to the message content.
+    Route to appropriate webhook and role mention based on message type.
+    
+    Args:
+        message_type: "alert" (bet alerts), "heartbeat" (debug/operational), or "test" (webhook validation)
+    
+    Returns:
+        Tuple of (webhook_url, mention_role_id) with fallback to primary webhook if secondary not set.
+    """
+    if message_type == "alert":
+        # Bet alerts route to dedicated alert webhook (beta server)
+        webhook = os.getenv("DISCORD_ALERT_WEBHOOK_URL") or os.getenv("DISCORD_WEBHOOK_URL")
+        role = os.getenv("DISCORD_ALERT_MENTION_ROLE_ID") or os.getenv("DISCORD_MENTION_ROLE_ID")
+    elif message_type in ("heartbeat", "test"):
+        # Heartbeat and test messages route to debug webhook (current/debug channel)
+        webhook = os.getenv("DISCORD_DEBUG_WEBHOOK_URL") or os.getenv("DISCORD_WEBHOOK_URL")
+        role = os.getenv("DISCORD_DEBUG_MENTION_ROLE_ID") or os.getenv("DISCORD_MENTION_ROLE_ID")
+    else:
+        # Unknown message type; fall back to primary webhook
+        webhook = os.getenv("DISCORD_WEBHOOK_URL")
+        role = os.getenv("DISCORD_MENTION_ROLE_ID")
+    
+    return webhook, role
+
+
+def _with_role_mention(payload: dict[str, Any], role_id: str | None = None) -> dict[str, Any]:
+    """
+    If role_id is provided (or DISCORD_MENTION_ROLE_ID fallback is set), 
+    prepend a role mention to the message content.
     This will only notify users if the role is mentionable and the channel allows role mentions.
     """
-    role_id = os.getenv("DISCORD_MENTION_ROLE_ID")
+    if role_id is None:
+        role_id = os.getenv("DISCORD_MENTION_ROLE_ID")
+    
     if not role_id:
         return payload
 
@@ -61,14 +91,7 @@ def build_discord_payload(side: dict[str, Any]) -> dict[str, Any]:
     book = str(side.get("sportsbook", ""))
     odds = side.get("book_odds", "")
     ev = side.get("ev_percentage", "")
-    kelly = side.get("base_kelly_fraction", None)
 
-    kelly_text = "—"
-    try:
-        if kelly is not None:
-            kelly_text = f"{float(kelly) * 100:.2f}% bankroll"
-    except Exception:
-        kelly_text = "—"
 
     link = build_scanner_deeplink(side)
 
@@ -97,7 +120,6 @@ def build_discord_payload(side: dict[str, Any]) -> dict[str, Any]:
                     {"name": "Matchup", "value": event or "—", "inline": False},
                     {"name": "Odds", "value": f"{odds:+}" if isinstance(odds, (int, float)) else str(odds), "inline": True},
                     {"name": "EV", "value": f"{float(ev):.2f}%" if isinstance(ev, (int, float)) else str(ev), "inline": True},
-                    {"name": "Kelly", "value": kelly_text, "inline": True},
                     {"name": "Link", "value": f"[Open scanner]({link})", "inline": False},
                 ],
             }
@@ -105,10 +127,12 @@ def build_discord_payload(side: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def send_discord_webhook(payload: dict[str, Any]) -> None:
+async def send_discord_webhook(payload: dict[str, Any], message_type: str = "alert") -> None:
     global _warned_missing_webhook
-    url = os.getenv("DISCORD_WEBHOOK_URL")
-    if not url:
+    
+    webhook_url, role_id = _get_webhook_and_role(message_type)
+    
+    if not webhook_url:
         if not _warned_missing_webhook:
             _warned_missing_webhook = True
             print("[Discord] DISCORD_WEBHOOK_URL not set; alerts disabled.")
@@ -116,9 +140,9 @@ async def send_discord_webhook(payload: dict[str, Any]) -> None:
 
     timeout = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
     try:
-        payload = _with_role_mention(payload)
+        payload = _with_role_mention(payload, role_id)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(url, json=payload)
+            resp = await client.post(webhook_url, json=payload)
             print(f"[Discord] Webhook response: {resp.status_code} {resp.text}")
             resp.raise_for_status()
     except Exception as e:
@@ -128,14 +152,6 @@ async def send_discord_webhook(payload: dict[str, Any]) -> None:
 
 
 async def alert_for_side(side: dict[str, Any]) -> None:
-    key = make_alert_key(side)
-    if key in ALERTED_KEYS:
-        return
-    if not mark_alert_if_new(key, ALERT_DEDUPE_TTL_SECONDS):
-        return
-    if not should_alert(side):
-        return
-    ALERTED_KEYS.add(key)
     payload = build_discord_payload(side)
     await send_discord_webhook(payload)
 

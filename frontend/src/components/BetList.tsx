@@ -129,6 +129,16 @@ function calculateBoostedOdds(originalOdds: number, boostPercent: number | null,
   return decimalToAmerican(boostedDecimal);
 }
 
+function formatGameStartCompact(isoString: string): string {
+  if (!isoString) return "";
+  const date = new Date(isoString);
+  return date.toLocaleDateString("en-US", {
+    weekday: "short",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 // ============ SHARED BET CARD BASE ============
 // Compact layout with context-aware data row
 interface BetCardBaseProps {
@@ -300,7 +310,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
                   </div>
                   {/* Col 2: Pinnacle close */}
                   <div>
-                    <p className="text-muted-foreground text-xs mb-1">Closing Odds <span className="text-muted-foreground/50">(Pin)</span></p>
+                    <p className="text-muted-foreground text-xs mb-1">Closing Odds</p>
                     {bet.pinnacle_odds_at_close != null ? (
                       <p className="font-mono text-sm font-semibold">{formatOdds(bet.pinnacle_odds_at_close)}</p>
                     ) : (
@@ -352,7 +362,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
                   {bet.commence_time ? "Game Start" : "Event Date"}
                 </p>
                 <p className="font-mono text-xs text-muted-foreground">
-                  {bet.commence_time ? formatFullDateTime(bet.commence_time) : formatShortDate(bet.event_date)}
+                  {bet.commence_time ? formatGameStartCompact(bet.commence_time) : formatShortDate(bet.event_date)}
                 </p>
               </div>
               {/* Timestamp spans full width on mobile so it never truncates */}

@@ -5,7 +5,12 @@ from datetime import datetime, UTC
 from typing import Any, Callable
 
 import httpx
-from fastapi import HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
+
+from dependencies import require_ops_token
+
+
+router = APIRouter()
 
 
 async def cron_run_scan_impl(
@@ -116,7 +121,7 @@ async def cron_run_scan_impl(
                 }
             ]
         }
-        asyncio.create_task(send_discord_webhook(payload))
+        asyncio.create_task(send_discord_webhook(payload, message_type="heartbeat"))
 
     return {
         "ok": True,
@@ -201,7 +206,7 @@ async def cron_run_auto_settle_impl(
                 }
             ]
         }
-        asyncio.create_task(send_discord_webhook(payload))
+        asyncio.create_task(send_discord_webhook(payload, message_type="heartbeat"))
 
     return {
         "ok": True,
@@ -277,10 +282,102 @@ async def cron_test_discord_impl(
         ]
     }
 
-    await send_discord_webhook(payload)
+    await send_discord_webhook(payload, message_type="test")
     log_event(
         "cron.discord_test.completed",
         run_id=run_id,
         duration_ms=round((time.monotonic() - started_at) * 1000, 2),
     )
     return {"ok": True, "scheduled": True, "run_id": run_id}
+
+
+async def cron_test_discord_alert_impl(
+    x_cron_token: str | None,
+    *,
+    require_valid_cron_token: Callable[[str | None], None],
+    new_run_id: Callable[[str], str],
+    log_event: Callable[..., None],
+) -> dict[str, Any]:
+    """Send a test message to the alert webhook (DISCORD_ALERT_WEBHOOK_URL)."""
+    require_valid_cron_token(x_cron_token)
+
+    run_id = new_run_id("cron_discord_alert_test")
+    started_at = time.monotonic()
+    log_event("cron.discord_alert_test.started", run_id=run_id)
+
+    from services.discord_alerts import send_discord_webhook
+
+    payload = {
+        "embeds": [
+            {
+                "title": "Alert Webhook Test",
+                "description": "If you can read this, DISCORD_ALERT_WEBHOOK_URL is working.",
+                "fields": [
+                    {"name": "Server time (UTC)", "value": datetime.now(UTC).isoformat() + "Z", "inline": False},
+                ],
+            }
+        ]
+    }
+
+    await send_discord_webhook(payload, message_type="alert")
+    log_event(
+        "cron.discord_alert_test.completed",
+        run_id=run_id,
+        duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+    )
+    return {"ok": True, "scheduled": True, "run_id": run_id}
+
+
+@router.post("/api/ops/trigger/scan")
+async def ops_trigger_scan(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    import main
+
+    return await main.ops_trigger_scan(x_ops_token=x_ops_token, x_cron_token=x_cron_token)
+
+
+@router.post("/api/ops/trigger/auto-settle")
+async def ops_trigger_auto_settle(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    import main
+
+    return await main.ops_trigger_auto_settle(x_ops_token=x_ops_token, x_cron_token=x_cron_token)
+
+
+@router.get("/api/ops/status")
+def ops_status(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    import main
+
+    return main.ops_status(x_ops_token=x_ops_token, x_cron_token=x_cron_token)
+
+
+@router.post("/api/ops/trigger/test-discord")
+async def ops_trigger_test_discord(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    import main
+
+    return await main.ops_trigger_test_discord(x_ops_token=x_ops_token, x_cron_token=x_cron_token)
+
+
+@router.post("/api/ops/trigger/test-discord-alert")
+async def ops_trigger_test_discord_alert(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    import main
+
+    return await main.ops_trigger_test_discord_alert(x_ops_token=x_ops_token, x_cron_token=x_cron_token)

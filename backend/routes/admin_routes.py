@@ -1,5 +1,12 @@
 from typing import Any, Callable
 
+from fastapi import APIRouter, Depends
+
+from dependencies import require_current_user
+
+
+router = APIRouter()
+
 
 def backfill_ev_locks_impl(
     *,
@@ -33,3 +40,10 @@ def backfill_ev_locks_impl(
             log_warning("backfill_ev_lock.failed bet_id=%s err=%s", row["id"], e)
 
     return {"backfilled": locked, "total_eligible": len(rows)}
+
+
+@router.post("/admin/backfill-ev-locks")
+def backfill_ev_locks(user: dict = Depends(require_current_user)):
+    import main
+
+    return main.backfill_ev_locks(user=user)

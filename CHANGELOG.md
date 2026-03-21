@@ -7,6 +7,32 @@ Version labels use pre-release suffixes until the app is ready for outside users
 
 ---
 
+## [2.2.0-alpha.3] - 2026-03-20
+
+### Added
+
+- **Scanner and ops contract guardrails (PR1)**
+  - Backend fixture-based contract tests for scan + ops payload shape parity (`backend/tests/test_scan_ops_contracts.py`).
+  - Frontend scanner contract helper module (`scanner-contract.ts`) with null-state helpers and tests.
+- **Backend route modularization (PR2)**
+  - Centralized dependency module (`backend/dependencies.py`) for auth, scan rate limiting, and ops token checks.
+  - APIRouter endpoint ownership for scan/ops/settings/transactions/utility/admin route groups.
+- **Scanner filter decomposition (PR3)**
+  - New scanner filter utility layer (`scanner-filters.ts`) and dedicated filter-bar component.
+  - Search/Time/Edge/More controls with client-side derived filtering and reset behavior.
+  - Persisted "Hide Already Logged" preference and explicit backend-empty vs filter-empty messaging.
+
+### Changed
+
+- Scanner page now runs a two-stage client pipeline: lens ranking first, then result filters.
+- Backend app bootstrap now includes router registration while keeping core handler implementations in `main.py`.
+
+### Docs
+
+- Updated scanner, testing, and architecture docs to match the PR1-PR3 implementation details and test commands.
+
+---
+
 ## [2.2.0-alpha.2] - 2026-03-18
 
 ### Added
@@ -71,4 +97,5 @@ Version labels use pre-release suffixes until the app is ready for outside users
 
 [2.2.0-alpha.1]: https://github.com/your-org/ev-betting-tracker/compare/v2.1.0...v2.2.0-alpha.1
 [2.2.0-alpha.2]: https://github.com/your-org/ev-betting-tracker/compare/v2.2.0-alpha.1...v2.2.0-alpha.2
+[2.2.0-alpha.3]: https://github.com/your-org/ev-betting-tracker/compare/v2.2.0-alpha.2...v2.2.0-alpha.3
 [2.1.0]: https://github.com/your-org/ev-betting-tracker/compare/v2.0.0...v2.1.0

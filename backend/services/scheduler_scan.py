@@ -144,7 +144,7 @@ def maybe_send_scheduled_scan_no_alert_heartbeat(
             }
         ]
     }
-    create_task(send_discord_webhook(payload))
+    create_task(send_discord_webhook(payload, message_type="heartbeat"))
 
 
 async def run_scheduled_scan_autolog(
