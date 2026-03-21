@@ -188,10 +188,34 @@ export default function SettingsPage() {
                   <div className="rounded-lg bg-muted p-3 space-y-2">
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Your Retention Stats</p>
                     <div className="grid grid-cols-2 gap-2 text-sm">
-
                       <div>
                         <p className="text-xs text-muted-foreground">Baseline</p>
                         <p className="font-mono font-semibold">{(baselineK * 100).toFixed(0)}%</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Observed</p>
+                        <p className="font-mono font-semibold">
+                          {observedK !== null ? (observedK * 100).toFixed(1) + "%" : "—"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Blend weight</p>
+                        <p className="font-mono font-semibold">{(blendWeight * 100).toFixed(0)}%</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Effective k</p>
+                        <p className="font-mono font-semibold">{(effectiveK * 100).toFixed(1)}%</p>
+                      </div>
+                      <div className="col-span-2">
+                        <span className="text-xs text-muted-foreground">
+                          Sample: <span className="font-mono font-semibold">{formatCurrency(settledBonusStake)}</span> in settled bonus-bet stake.
+                          {settings?.k_factor_mode === "auto" && blendWeight < 1 && minStakeForBlend > 0 && (
+                            <>
+                              {" "}
+                              Reach {formatCurrency(minStakeForBlend)} in settled bonus-bet stake to start blending.
+                            </>
+                          )}
+                        </span>
                       </div>
                     </div>
                   </div>
