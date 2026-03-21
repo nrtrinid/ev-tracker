@@ -121,7 +121,7 @@ export default function ScannerPage() {
   const [hideLongshots, setHideLongshots] = useState(DEFAULT_RESULT_FILTERS.hideLongshots);
   const [hideAlreadyLogged, setHideAlreadyLogged] = useState(DEFAULT_RESULT_FILTERS.hideAlreadyLogged);
   const [riskPreset, setRiskPreset] = useState<ScannerRiskPreset>(DEFAULT_RESULT_FILTERS.riskPreset);
-  // const [ageTick, setAgeTick] = useState(0); // Removed to fix lint error
+  const [, setAgeTick] = useState(0);
   const showBackendHint = !!readiness && (readiness.status !== "ready" || !readiness.checks.scheduler_freshness);
   const backendHint = readiness?.status === "unreachable"
     ? "Scanner is reconnecting. Odds may be slightly delayed."

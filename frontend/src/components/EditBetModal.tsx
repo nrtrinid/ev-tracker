@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Button } from "@/components/ui/button";
+import { Button, type ButtonProps } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SmartOddsInput, type SmartOddsInputRef } from "@/components/SmartOddsInput";
 import {
@@ -19,7 +19,9 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 // Map sportsbook names to button variants
-const sportsbookVariants: Record<string, string> = {
+type SportsbookButtonVariant = NonNullable<ButtonProps["variant"]>;
+
+const sportsbookVariants: Record<string, SportsbookButtonVariant> = {
   DraftKings: "draftkings",
   FanDuel: "fanduel",
   BetMGM: "betmgm",
@@ -151,7 +153,7 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
                   type="button"
                   variant={
                     formData.sportsbook === book
-                      ? (sportsbookVariants[book] as string)
+                      ? sportsbookVariants[book]
                       : "outline"
                   }
                   size="sm"

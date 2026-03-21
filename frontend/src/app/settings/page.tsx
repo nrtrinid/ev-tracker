@@ -7,9 +7,16 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, formatCurrency } from "@/lib/utils";
 import { Plus, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, Target as TargetIcon } from "lucide-react";
-import { useTransactions, useCreateTransaction, useBalances, useSettings, useUpdateSettings } from "@/lib/hooks";
+import {
+  useTransactions,
+  useCreateTransaction,
+  useDeleteTransaction,
+  useBalances,
+  useSettings,
+  useUpdateSettings,
+} from "@/lib/hooks";
 import { SPORTSBOOKS } from "@/lib/types";
-import type { TransactionType } from "@/lib/types";
+import type { Transaction, TransactionType } from "@/lib/types";
 import { useKellySettings } from "@/lib/kelly-context";
 
 export default function SettingsPage() {
@@ -25,6 +32,7 @@ export default function SettingsPage() {
     setKellyMultiplier,
   } = useKellySettings();
   const createTransaction = useCreateTransaction();
+  const deleteTransaction = useDeleteTransaction();
   const updateSettings = useUpdateSettings();
 
   // Transaction form state
@@ -46,6 +54,28 @@ export default function SettingsPage() {
     }
     await updateSettings.mutateAsync({ k_factor: value });
     setKFactor("");
+  };
+
+  const handleAddTransaction = async () => {
+    const amount = parseFloat(txAmount);
+    if (!txSportsbook || !Number.isFinite(amount) || amount <= 0) {
+      return;
+    }
+
+    await createTransaction.mutateAsync({
+      sportsbook: txSportsbook,
+      type: txType,
+      amount,
+      notes: txNotes.trim() || undefined,
+    });
+
+    setTxAmount("");
+    setTxNotes("");
+    setShowTxForm(false);
+  };
+
+  const handleDeleteTransaction = async (tx: Transaction) => {
+    await deleteTransaction.mutateAsync(tx.id);
   };
 
   const computedBankroll = (balances || []).reduce((sum, b) => sum + (b.balance || 0), 0);

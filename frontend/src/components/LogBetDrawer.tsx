@@ -85,6 +85,14 @@ interface FormState {
   notes: string;
 }
 
+interface BoostRowValue {
+  type: "boost";
+  book: string;
+  boosted: string;
+  fair: string | null;
+  fairPct: string | null;
+}
+
 // Get sticky values from localStorage
 const getStickySportsbook = (): string => {
   if (typeof window === "undefined") return "";
@@ -99,6 +107,16 @@ const getStickyPromoType = (): PromoType => {
   }
   return "standard";
 };
+
+function isBoostRowValue(value: unknown): value is BoostRowValue {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<BoostRowValue>;
+  return candidate.type === "boost" &&
+    typeof candidate.book === "string" &&
+    typeof candidate.boosted === "string" &&
+    (typeof candidate.fair === "string" || candidate.fair === null) &&
+    (typeof candidate.fairPct === "string" || candidate.fairPct === null);
+}
 
 export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawerProps) {
   const [formState, setFormState] = useState<FormState>(() => {
@@ -767,8 +785,7 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
                   } catch {
                     parsed = null;
                   }
-                  // If you need to check parsed.type, use type guards or cast after validation
-                  const isBoostRow = typeof parsed === "object" && parsed !== null && (parsed as { type?: string }).type === "boost";
+                  const boostRow = isBoostRowValue(parsed) ? parsed : null;
 
                   return (
                     <div
@@ -777,19 +794,19 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
                     >
                       <span>{row.label}</span>
                       <span className="font-mono text-[11px] text-right">
-                        {isBoostRow ? (
+                        {boostRow ? (
                           <>
                             Book:{" "}
                             <span className="line-through text-muted-foreground/70 mr-1">
-                              {parsed.book}
+                              {boostRow.book}
                             </span>
                             <span className="text-foreground">
-                              {parsed.boosted}
+                              {boostRow.boosted}
                             </span>
-                            {parsed.fair && parsed.fairPct && (
+                            {boostRow.fair && boostRow.fairPct && (
                               <>
                                 {" "}
-                                | Fair: {parsed.fair} ({parsed.fairPct}%)
+                                | Fair: {boostRow.fair} ({boostRow.fairPct}%)
                               </>
                             )}
                           </>
@@ -912,4 +929,3 @@ function formatAmerican(odds: number): string {
   if (rounded === 0) return "0";
   return rounded > 0 ? `+${rounded}` : `${rounded}`;
 }
-
