@@ -40,7 +40,9 @@ def require_ops_token(
 ) -> None:
     expected = os.getenv("CRON_TOKEN")
     provided = x_ops_token or x_cron_token
+    if not provided:
+        raise HTTPException(status_code=401, detail="Invalid ops token")
     if not expected:
         raise HTTPException(status_code=503, detail="CRON_TOKEN not configured on server")
-    if not provided or provided != expected:
+    if provided != expected:
         raise HTTPException(status_code=401, detail="Invalid ops token")
