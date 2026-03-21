@@ -107,6 +107,7 @@ def persist_latest_scheduled_scan_payload(
     persist_latest_payload: Callable[[dict[str, Any]], None],
 ) -> None:
     payload = FullScanResponse(
+        surface="straight_bets",
         sport="all",
         sides=cast(Any, all_sides),
         events_fetched=total_events,
