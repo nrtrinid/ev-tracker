@@ -1,0 +1,16 @@
+import { notFound } from "next/navigation";
+
+import { ScannerSurfacePage } from "../ScannerSurfacePage";
+import { getScannerSurface } from "../scanner-surfaces";
+
+export default function ScannerSurfaceRoute({
+  params,
+}: {
+  params: { surface: string };
+}) {
+  const surface = getScannerSurface(params.surface);
+  if (surface.id !== params.surface && params.surface !== "straight_bets") {
+    notFound();
+  }
+  return <ScannerSurfacePage surface={surface.id} />;
+}

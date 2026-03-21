@@ -12,6 +12,7 @@ interface StraightBetListProps {
   canLoadMore: boolean;
   onLoadMore: () => void;
   onLogBet: (side: MarketSide) => void;
+  onAddToCart: (side: MarketSide) => void;
   bookColors: Record<string, string>;
   sportDisplayMap: Record<string, string>;
 }
@@ -25,6 +26,7 @@ export function StraightBetList({
   canLoadMore,
   onLoadMore,
   onLogBet,
+  onAddToCart,
   bookColors,
   sportDisplayMap,
 }: StraightBetListProps) {
@@ -39,6 +41,7 @@ export function StraightBetList({
           bankroll={bankroll}
           boostPercent={boostPercent}
           onLogBet={onLogBet}
+          onAddToCart={onAddToCart}
           bookColors={bookColors}
           sportDisplayMap={sportDisplayMap}
         />

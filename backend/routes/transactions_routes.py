@@ -85,7 +85,32 @@ def create_transaction(
 ):
     import main
 
-    return main.create_transaction(transaction=transaction, user=user)
+    return create_transaction_impl(
+        transaction=transaction,
+        user=user,
+        get_db=main.get_db,
+        build_insert_payload=lambda *, user_id, transaction: {
+            "user_id": user_id,
+            "sportsbook": transaction.sportsbook,
+            "type": transaction.type.value,
+            "amount": transaction.amount,
+            "notes": transaction.notes,
+            **(
+                {"created_at": transaction.created_at.isoformat()}
+                if transaction.created_at
+                else {}
+            ),
+        },
+        map_row_to_response_payload=lambda row: {
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "sportsbook": row["sportsbook"],
+            "type": row["type"],
+            "amount": row["amount"],
+            "notes": row.get("notes"),
+        },
+        build_transaction_response=lambda payload: TransactionResponse(**payload),
+    )
 
 
 @router.get("/transactions", response_model=list[TransactionResponse])
@@ -95,7 +120,23 @@ def list_transactions(
 ):
     import main
 
-    return main.list_transactions(sportsbook=sportsbook, user=user)
+    return list_transactions_impl(
+        sportsbook=sportsbook,
+        user=user,
+        get_db=main.get_db,
+        map_rows_to_response_payloads=lambda rows: [
+            {
+                "id": row["id"],
+                "created_at": row["created_at"],
+                "sportsbook": row["sportsbook"],
+                "type": row["type"],
+                "amount": row["amount"],
+                "notes": row.get("notes"),
+            }
+            for row in rows
+        ],
+        build_transaction_response=lambda payload: TransactionResponse(**payload),
+    )
 
 
 @router.delete("/transactions/{transaction_id}")
@@ -105,4 +146,8 @@ def delete_transaction(
 ):
     import main
 
-    return main.delete_transaction(transaction_id=transaction_id, user=user)
+    return delete_transaction_impl(
+        transaction_id=transaction_id,
+        user=user,
+        get_db=main.get_db,
+    )

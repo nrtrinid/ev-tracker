@@ -3,14 +3,16 @@ Pydantic Models
 Define the data structures for bets and API requests/responses.
 """
 
-from pydantic import BaseModel, Field
-from datetime import datetime, date
+from datetime import date, datetime
 from enum import Enum
-from typing import Literal
+from typing import Annotated, Any, Literal
+
+from pydantic import BaseModel, Field
 
 
 class PromoType(str, Enum):
     """Promo types that determine EV calculation method."""
+
     STANDARD = "standard"
     BONUS_BET = "bonus_bet"
     NO_SWEAT = "no_sweat"
@@ -23,6 +25,7 @@ class PromoType(str, Enum):
 
 class BetResult(str, Enum):
     """Possible outcomes for a bet."""
+
     PENDING = "pending"
     WIN = "win"
     LOSS = "loss"
@@ -30,38 +33,49 @@ class BetResult(str, Enum):
     VOID = "void"
 
 
+ScannerSurface = Literal["straight_bets", "player_props"]
+
+
 class BetCreate(BaseModel):
     """Schema for creating a new bet."""
+
     sport: str
     event: str
     market: str  # ML, Spread, Total, SGP, Prop
+    surface: ScannerSurface = "straight_bets"
     sportsbook: str
     promo_type: PromoType
     odds_american: float
     stake: float = Field(gt=0)
-    boost_percent: float | None = None  # For custom boosts
+    boost_percent: float | None = None
     winnings_cap: float | None = None
     notes: str | None = None
-    event_date: date | None = None  # Defaults to today if not provided
-    opposing_odds: float | None = None  # For accurate vig calculation
-
-    # Optional override for edge cases
+    event_date: date | None = None
+    opposing_odds: float | None = None
     payout_override: float | None = None
-
-    # CLV tracking — populated automatically when logging from scanner
-    pinnacle_odds_at_entry: float | None = None  # Pinnacle line for this side at bet time
-    commence_time: str | None = None             # ISO-8601 game start (for snapshot matching)
-    clv_team: str | None = None                  # Team name (e.g. "Los Angeles Lakers")
-    clv_sport_key: str | None = None             # Odds API key (e.g. "basketball_nba")
-    clv_event_id: str | None = None              # Odds API event id for deterministic settlement matching
-    true_prob_at_entry: float | None = None      # De-vigged Pinnacle probability — enables accurate EV for standard scanner bets
+    pinnacle_odds_at_entry: float | None = None
+    commence_time: str | None = None
+    clv_team: str | None = None
+    clv_sport_key: str | None = None
+    clv_event_id: str | None = None
+    true_prob_at_entry: float | None = None
+    source_event_id: str | None = None
+    source_market_key: str | None = None
+    source_selection_key: str | None = None
+    participant_name: str | None = None
+    participant_id: str | None = None
+    selection_side: str | None = None
+    line_value: float | None = None
+    selection_meta: dict[str, Any] | None = None
 
 
 class BetUpdate(BaseModel):
     """Schema for updating an existing bet."""
+
     sport: str | None = None
     event: str | None = None
     market: str | None = None
+    surface: ScannerSurface | None = None
     sportsbook: str | None = None
     promo_type: PromoType | None = None
     odds_american: float | None = None
@@ -71,12 +85,13 @@ class BetUpdate(BaseModel):
     notes: str | None = None
     result: BetResult | None = None
     payout_override: float | None = None
-    opposing_odds: float | None = None  # For accurate vig calculation
-    event_date: date | None = None  # Allow correction in Edit modal
+    opposing_odds: float | None = None
+    event_date: date | None = None
 
 
 class BetResponse(BaseModel):
     """Schema for bet data returned from API."""
+
     id: str
     created_at: datetime
     event_date: date
@@ -84,6 +99,7 @@ class BetResponse(BaseModel):
     sport: str
     event: str
     market: str
+    surface: ScannerSurface = "straight_bets"
     sportsbook: str
     promo_type: PromoType
     odds_american: float
@@ -94,14 +110,10 @@ class BetResponse(BaseModel):
     notes: str | None
     opposing_odds: float | None
     result: BetResult
-
-    # Calculated fields
     win_payout: float
     ev_per_dollar: float
     ev_total: float
     real_profit: float | None
-
-    # CLV fields
     pinnacle_odds_at_entry: float | None = None
     pinnacle_odds_at_close: float | None = None
     clv_updated_at: datetime | None = None
@@ -110,17 +122,12 @@ class BetResponse(BaseModel):
     clv_sport_key: str | None = None
     clv_event_id: str | None = None
     true_prob_at_entry: float | None = None
-    # Calculated CLV — only set when both entry and close Pinnacle odds are present
     clv_ev_percent: float | None = None
     beat_close: bool | None = None
-
-    # Locked EV — frozen at bet-creation time so history is stable when k updates
     ev_per_dollar_locked: float | None = None
     ev_total_locked: float | None = None
     win_payout_locked: float | None = None
     ev_lock_version: int = 1
-
-    # Paper experiment metadata (server-managed)
     is_paper: bool = False
     strategy_cohort: str | None = None
     auto_logged: bool = False
@@ -129,51 +136,59 @@ class BetResponse(BaseModel):
     scan_ev_percent_at_log: float | None = None
     book_odds_at_log: float | None = None
     reference_odds_at_log: float | None = None
+    source_event_id: str | None = None
+    source_market_key: str | None = None
+    source_selection_key: str | None = None
+    participant_name: str | None = None
+    participant_id: str | None = None
+    selection_side: str | None = None
+    line_value: float | None = None
+    selection_meta: dict[str, Any] | None = None
 
 
 class SettingsUpdate(BaseModel):
     """User settings."""
+
     k_factor: float | None = Field(default=None, ge=0, le=1)
     default_stake: float | None = None
     preferred_sportsbooks: list[str] | None = None
-    # Personalized k-factor auto mode
-    k_factor_mode: str | None = None          # 'baseline' | 'auto'
-    k_factor_min_stake: float | None = None   # minimum bonus stake to start blending
-    k_factor_smoothing: float | None = None   # smoothing stake denominator
+    k_factor_mode: str | None = None
+    k_factor_min_stake: float | None = None
+    k_factor_smoothing: float | None = None
     k_factor_clamp_min: float | None = None
     k_factor_clamp_max: float | None = None
+    onboarding_state: dict[str, Any] | None = None
 
 
 class SettingsResponse(BaseModel):
     """Settings returned from API."""
+
     k_factor: float
     default_stake: float | None
     preferred_sportsbooks: list[str]
-    # Personalized k-factor auto mode
     k_factor_mode: str
     k_factor_min_stake: float
     k_factor_smoothing: float
     k_factor_clamp_min: float
     k_factor_clamp_max: float
-    # Derived fields (computed from settled bonus bets)
-    k_factor_observed: float | None       # user's actual observed retention
-    k_factor_weight: float                # current blend weight w
-    k_factor_effective: float             # effective k actually used = (1-w)*k0 + w*k_obs
-    k_factor_bonus_stake_settled: float   # total settled bonus stake (sample size indicator)
+    k_factor_observed: float | None
+    k_factor_weight: float
+    k_factor_effective: float
+    k_factor_bonus_stake_settled: float
+    onboarding_state: dict[str, Any] | None = None
 
 
 class SummaryResponse(BaseModel):
     """Dashboard summary statistics."""
+
     total_bets: int
     pending_bets: int
     total_ev: float
     total_real_profit: float
-    variance: float  # Real Profit - EV
+    variance: float
     win_count: int
     loss_count: int
-    win_rate: float | None  # None if no settled bets
-    
-    # Breakdowns
+    win_rate: float | None
     ev_by_sportsbook: dict[str, float]
     profit_by_sportsbook: dict[str, float]
     ev_by_sport: dict[str, float]
@@ -181,12 +196,14 @@ class SummaryResponse(BaseModel):
 
 class TransactionType(str, Enum):
     """Transaction types for bankroll tracking."""
+
     DEPOSIT = "deposit"
     WITHDRAWAL = "withdrawal"
 
 
 class TransactionCreate(BaseModel):
     """Schema for creating a transaction."""
+
     sportsbook: str
     type: TransactionType
     amount: float = Field(gt=0)
@@ -196,6 +213,7 @@ class TransactionCreate(BaseModel):
 
 class TransactionResponse(BaseModel):
     """Schema for transaction data returned from API."""
+
     id: str
     created_at: datetime
     sportsbook: str
@@ -206,17 +224,19 @@ class TransactionResponse(BaseModel):
 
 class BalanceResponse(BaseModel):
     """Per-sportsbook balance."""
+
     sportsbook: str
     deposits: float
     withdrawals: float
-    net_deposits: float  # deposits - withdrawals
-    profit: float        # from betting
-    pending: float       # pending exposure
-    balance: float       # net_deposits + profit - pending
+    net_deposits: float
+    profit: float
+    pending: float
+    balance: float
 
 
 class EVOpportunity(BaseModel):
     """A single +EV bet opportunity from the odds scanner."""
+
     sportsbook: str
     sport: str
     event: str
@@ -232,16 +252,21 @@ class EVOpportunity(BaseModel):
 
 class ScanResponse(BaseModel):
     """Response from the odds scanner endpoint."""
+
     sport: str
     opportunities: list[EVOpportunity]
-    events_fetched: int  # events returned by the Odds API
-    events_with_both_books: int  # events that had Pinnacle + DraftKings
+    events_fetched: int
+    events_with_both_books: int
     api_requests_remaining: str | None = None
 
 
-class MarketSide(BaseModel):
-    """A single side (team) with odds from a target book and true probability."""
+class StraightBetSide(BaseModel):
+    """A single side with odds from a target book and true probability."""
+
+    surface: Literal["straight_bets"] = "straight_bets"
     event_id: str | None = None
+    market_key: str = "h2h"
+    selection_key: str | None = None
     sportsbook: str
     sportsbook_deeplink_url: str | None = None
     sport: str
@@ -260,11 +285,49 @@ class MarketSide(BaseModel):
     matched_pending_bet_id: str | None = None
 
 
+class PlayerPropSide(BaseModel):
+    """A player prop selection with surface-aware identity fields."""
+
+    surface: Literal["player_props"] = "player_props"
+    event_id: str | None = None
+    market_key: str
+    selection_key: str
+    sportsbook: str
+    sportsbook_deeplink_url: str | None = None
+    sport: str
+    event: str
+    commence_time: str
+    market: str
+    player_name: str
+    participant_id: str | None = None
+    team: str | None = None
+    opponent: str | None = None
+    selection_side: str
+    line_value: float | None = None
+    display_name: str
+    pinnacle_odds: float
+    book_odds: float
+    true_prob: float
+    base_kelly_fraction: float
+    book_decimal: float
+    ev_percentage: float
+    scanner_duplicate_state: Literal["new", "already_logged", "better_now"] | None = None
+    best_logged_odds_american: float | None = None
+    current_odds_american: float | None = None
+    matched_pending_bet_id: str | None = None
+
+
+ScannerSide = Annotated[StraightBetSide | PlayerPropSide, Field(discriminator="surface")]
+MarketSide = StraightBetSide
+
+
 class FullScanResponse(BaseModel):
-    """Response from the full market scanner — all sides, not just +EV."""
-    sport: str  # "all" for full scan, or single sport key
-    sides: list[MarketSide]
+    """Response from the full market scanner, by surface."""
+
+    surface: ScannerSurface
+    sport: str
+    sides: list[ScannerSide]
     events_fetched: int
     events_with_both_books: int
     api_requests_remaining: str | None = None
-    scanned_at: str | None = None  # ISO datetime of oldest cache used (for "Data as of X min ago")
+    scanned_at: str | None = None

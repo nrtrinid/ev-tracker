@@ -55,11 +55,15 @@ def calculate_ev_preview(
 ):
     import main
 
-    return main.calculate_ev_preview(
+    return calculate_ev_preview_impl(
         odds_american=odds_american,
         stake=stake,
         promo_type=promo_type,
         boost_percent=boost_percent,
         winnings_cap=winnings_cap,
         user=user,
+        get_db=main.get_db,
+        get_user_settings=main.get_user_settings,
+        american_to_decimal=main.american_to_decimal,
+        calculate_ev=main.calculate_ev,
     )

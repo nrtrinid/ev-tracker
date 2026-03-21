@@ -27,6 +27,9 @@ def build_settings_update_payload(settings_update) -> dict[str, Any]:
         data["k_factor_clamp_min"] = settings_update.k_factor_clamp_min
     if settings_update.k_factor_clamp_max is not None:
         data["k_factor_clamp_max"] = settings_update.k_factor_clamp_max
+    onboarding_state = getattr(settings_update, "onboarding_state", None)
+    if onboarding_state is not None:
+        data["onboarding_state"] = onboarding_state
     return data
 
 
@@ -69,7 +72,12 @@ def update_settings_impl(
 def get_settings(user: dict = Depends(require_current_user)):
     import main
 
-    return main.get_settings(user=user)
+    return get_settings_impl(
+        user=user,
+        get_db=main.get_db,
+        get_user_settings=main.get_user_settings,
+        build_settings_response=main._build_settings_response,
+    )
 
 
 @router.patch("/settings", response_model=SettingsResponse)
@@ -79,4 +87,12 @@ def update_settings(
 ):
     import main
 
-    return main.update_settings(settings=settings, user=user)
+    return update_settings_impl(
+        settings_update=settings,
+        user=user,
+        get_db=main.get_db,
+        get_user_settings=main.get_user_settings,
+        build_settings_response=main._build_settings_response,
+        build_update_payload=build_settings_update_payload,
+        utc_now_iso=main._utc_now_iso,
+    )

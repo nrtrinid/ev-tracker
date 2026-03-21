@@ -1,9 +1,12 @@
 import { Card, CardContent } from "@/components/ui/card";
 import type { ScannerNullState } from "@/lib/scanner-contract";
-import type { MarketSide } from "@/lib/types";
+import type { MarketSide, ScannerSurface } from "@/lib/types";
+import { getScannerSurface } from "../scanner-surfaces";
+import { PlayerPropList } from "./PlayerPropList";
 import { StraightBetList } from "./StraightBetList";
 
 interface ScannerResultsPaneProps {
+  surface: ScannerSurface;
   activeLens: "standard" | "profit_boost" | "bonus_bet" | "qualifier";
   results: Array<MarketSide & { _retention?: number; _boostedEV?: number }>;
   filteredCount: number;
@@ -15,11 +18,13 @@ interface ScannerResultsPaneProps {
   canLoadMore: boolean;
   onLoadMore: () => void;
   onLogBet: (side: MarketSide) => void;
+  onAddToCart: (side: MarketSide) => void;
   bookColors: Record<string, string>;
   sportDisplayMap: Record<string, string>;
 }
 
 export function ScannerResultsPane({
+  surface,
   activeLens,
   results,
   filteredCount,
@@ -31,14 +36,20 @@ export function ScannerResultsPane({
   canLoadMore,
   onLoadMore,
   onLogBet,
+  onAddToCart,
   bookColors,
   sportDisplayMap,
 }: ScannerResultsPaneProps) {
+  const surfaceConfig = getScannerSurface(surface);
+  const isPropsSurface = surface === "player_props";
+
   return (
     <div className="space-y-2">
       <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
         Showing {results.length} of {filteredCount}{" "}
-        {activeLens === "standard"
+        {isPropsSurface
+          ? surfaceConfig.resultLabel
+          : activeLens === "standard"
           ? "+EV Lines"
           : activeLens === "bonus_bet"
             ? "Bonus Bet Targets"
@@ -52,13 +63,15 @@ export function ScannerResultsPane({
           <CardContent className="py-8 text-center">
             <p className="text-sm text-muted-foreground">
               {nullState === "backend_empty"
-                ? activeLens === "standard"
-                  ? "No +EV lines right now. Check back when lines move."
-                  : activeLens === "bonus_bet"
-                    ? "No bonus bet targets above 60% retention."
-                    : activeLens === "qualifier"
-                      ? "No qualifier candidates in the target odds range right now."
-                      : "No profitable boost opportunities at this percentage."
+                ? isPropsSurface
+                  ? surfaceConfig.emptyLabel
+                  : activeLens === "standard"
+                    ? "No +EV lines right now. Check back when lines move."
+                    : activeLens === "bonus_bet"
+                      ? "No bonus bet targets above 60% retention."
+                      : activeLens === "qualifier"
+                        ? "No qualifier candidates in the target odds range right now."
+                        : "No profitable boost opportunities at this percentage."
                 : "No results match your current filters."}
             </p>
             {nullState === "filter_empty" && (
@@ -67,18 +80,31 @@ export function ScannerResultsPane({
           </CardContent>
         </Card>
       ) : (
-        <StraightBetList
-          activeLens={activeLens}
-          results={results}
-          kellyMultiplier={kellyMultiplier}
-          bankroll={bankroll}
-          boostPercent={boostPercent}
-          canLoadMore={canLoadMore}
-          onLoadMore={onLoadMore}
-          onLogBet={onLogBet}
-          bookColors={bookColors}
-          sportDisplayMap={sportDisplayMap}
-        />
+        isPropsSurface ? (
+          <PlayerPropList
+            results={results as Array<Extract<MarketSide, { surface: "player_props" }> & { _retention?: number; _boostedEV?: number }>}
+            canLoadMore={canLoadMore}
+            onLoadMore={onLoadMore}
+            onLogBet={(side) => onLogBet(side)}
+            onAddToCart={(side) => onAddToCart(side)}
+            bookColors={bookColors}
+            sportDisplayMap={sportDisplayMap}
+          />
+        ) : (
+          <StraightBetList
+            activeLens={activeLens}
+            results={results}
+            kellyMultiplier={kellyMultiplier}
+            bankroll={bankroll}
+            boostPercent={boostPercent}
+            canLoadMore={canLoadMore}
+            onLoadMore={onLoadMore}
+            onLogBet={onLogBet}
+            onAddToCart={onAddToCart}
+            bookColors={bookColors}
+            sportDisplayMap={sportDisplayMap}
+          />
+        )
       )}
     </div>
   );

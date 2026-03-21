@@ -2,10 +2,10 @@ import type { MarketSide } from "@/lib/types";
 
 import type { ScannerLens } from "./scanner-ui-model";
 
-export interface RankedScannerSide extends MarketSide {
+export type RankedScannerSide = MarketSide & {
   _retention?: number;
   _boostedEV?: number;
-}
+};
 
 export function calculateLensRetention(side: MarketSide, kUser?: number, weight?: number): number {
   const theoretical = (side.book_decimal - 1) * side.true_prob;

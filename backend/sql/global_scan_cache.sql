@@ -2,9 +2,13 @@
 -- Run this once in Supabase SQL editor (or your migration system).
 create table if not exists public.global_scan_cache (
   key text primary key,
+  surface text not null default 'straight_bets',
   payload jsonb not null,
   updated_at timestamptz not null default now()
 );
+
+alter table public.global_scan_cache
+  add column if not exists surface text not null default 'straight_bets';
 
 -- Automatically keep updated_at current on upserts/updates.
 create or replace function public.set_updated_at()

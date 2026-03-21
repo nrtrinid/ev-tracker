@@ -13,6 +13,7 @@ import type {
   ScanResult,
   BackendReadiness,
   OperatorStatusResponse,
+  ScannerSurface,
 } from "./types";
 import { createClient } from "./supabase";
 
@@ -185,13 +186,13 @@ export async function getBalances(): Promise<Balance[]> {
 // ============ Scanner API ============
 
 /** Full scan across all sports. Backend uses 20-min TTL cache per sport. */
-export async function scanMarkets(): Promise<ScanResult> {
-  return fetchAPI<ScanResult>("/api/scan-markets");
+export async function scanMarkets(surface: ScannerSurface = "straight_bets"): Promise<ScanResult> {
+  return fetchAPI<ScanResult>(`/api/scan-markets?surface=${encodeURIComponent(surface)}`);
 }
 
-export async function getLatestScan(): Promise<ScanResult | null> {
+export async function getLatestScan(surface: ScannerSurface = "straight_bets"): Promise<ScanResult | null> {
   try {
-    return await fetchAPI<ScanResult>("/api/scan-latest");
+    return await fetchAPI<ScanResult>(`/api/scan-latest?surface=${encodeURIComponent(surface)}`);
   } catch (e) {
     // Backend returns 404 with detail "No scans yet" when nothing has been persisted.
     if (e instanceof Error && e.message === "No scans yet") return null;

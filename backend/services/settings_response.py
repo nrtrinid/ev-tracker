@@ -22,5 +22,6 @@ def build_settings_response(
         k_factor_smoothing=float(settings.get("k_factor_smoothing") or 700.0),
         k_factor_clamp_min=float(settings.get("k_factor_clamp_min") or 0.50),
         k_factor_clamp_max=float(settings.get("k_factor_clamp_max") or 0.95),
+        onboarding_state=settings.get("onboarding_state"),
         **k_derived,
     )

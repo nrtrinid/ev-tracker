@@ -67,6 +67,15 @@ interface ClvMeta {
   clv_sport_key?: string;
   clv_event_id?: string;
   true_prob_at_entry?: number;
+  source_event_id?: string;
+  source_market_key?: string;
+  source_selection_key?: string;
+  participant_name?: string;
+  participant_id?: string;
+  selection_side?: string;
+  line_value?: number;
+  selection_meta?: Record<string, unknown>;
+  surface?: "straight_bets" | "player_props";
 }
 
 interface FormState {
@@ -183,6 +192,15 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
       clv_sport_key: initialValues.clv_sport_key,
       clv_event_id: initialValues.clv_event_id,
       true_prob_at_entry: initialValues.true_prob_at_entry,
+      source_event_id: initialValues.source_event_id,
+      source_market_key: initialValues.source_market_key,
+      source_selection_key: initialValues.source_selection_key,
+      participant_name: initialValues.participant_name,
+      participant_id: initialValues.participant_id,
+      selection_side: initialValues.selection_side,
+      line_value: initialValues.line_value,
+      selection_meta: initialValues.selection_meta,
+      surface: initialValues.surface,
     };
   }
 

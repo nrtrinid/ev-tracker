@@ -29,6 +29,8 @@ from calculations import (
 )
 from auth import get_current_user
 from services.shared_state import allow_fixed_window_rate_limit, is_redis_enabled
+from services.scan_cache import persist_latest_full_scan as persist_latest_full_scan_service
+from services.settings_response import build_settings_response as build_settings_response_service
 
 load_dotenv()
 
@@ -533,6 +535,84 @@ def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _get_environment() -> str:
+    return os.getenv("ENVIRONMENT", "production").lower()
+
+
+def _scanner_supported_sports(surface: str) -> list[str]:
+    if surface == "player_props":
+        from services.odds_api import SUPPORTED_SPORTS
+
+        return SUPPORTED_SPORTS
+    from services.odds_api import SUPPORTED_SPORTS
+
+    return SUPPORTED_SPORTS
+
+
+async def _get_cached_or_scan_for_surface(surface: str, sport: str, *, source: str = "unknown") -> dict:
+    if surface == "player_props":
+        from services.player_props import get_cached_or_scan_player_props
+
+        return await get_cached_or_scan_player_props(sport, source=source)
+    from services.odds_api import get_cached_or_scan
+
+    return await get_cached_or_scan(sport, source=source)
+
+
+async def _scan_for_ev_surface(sport: str) -> dict:
+    from services.odds_api import scan_for_ev
+
+    return await scan_for_ev(sport)
+
+
+def _build_scan_response(*, sport: str, result: dict) -> ScanResponse:
+    return ScanResponse(
+        sport=sport,
+        opportunities=result["opportunities"],
+        events_fetched=result["events_fetched"],
+        events_with_both_books=result["events_with_both_books"],
+        api_requests_remaining=result.get("api_requests_remaining"),
+    )
+
+
+def _build_full_scan_response(payload: dict) -> FullScanResponse:
+    return FullScanResponse(**payload)
+
+
+def _persist_latest_full_scan(
+    *,
+    db,
+    surface: str,
+    sport: str,
+    sides: list[dict],
+    events_fetched: int,
+    events_with_both_books: int,
+    api_requests_remaining: str | None,
+    scanned_at: str | None,
+    retry_supabase,
+    log_event,
+):
+    return persist_latest_full_scan_service(
+        db=db,
+        surface=surface,
+        sport=sport,
+        sides=sides,
+        events_fetched=events_fetched,
+        events_with_both_books=events_with_both_books,
+        api_requests_remaining=api_requests_remaining,
+        scanned_at=scanned_at,
+        retry_supabase=retry_supabase,
+        log_event=log_event,
+    )
+
+
+def _with_surface(surface: str, sides: list[dict]) -> list[dict]:
+    return [
+        side if isinstance(side, dict) and side.get("surface") else {"surface": surface, **side}
+        for side in sides
+    ]
+
+
 def _init_scheduler_heartbeats() -> None:
     app.state.scheduler_heartbeats = {
         job: {
@@ -999,20 +1079,18 @@ async def _run_scheduled_scan_job():
 
     # Keep Scanner's "latest scan" payload in sync for scheduled runs, not only manual scans.
     try:
-        persist_response = FullScanResponse(
+        _persist_latest_full_scan(
+            db=get_db(),
+            surface="straight_bets",
             sport="all",
             sides=all_sides,
             events_fetched=total_events,
             events_with_both_books=total_with_both,
             api_requests_remaining=min_remaining,
             scanned_at=scanned_at,
+            retry_supabase=_retry_supabase,
+            log_event=_log_event,
         )
-        _retry_supabase(lambda: (
-            get_db().table("global_scan_cache").upsert(
-                {"key": "latest", "payload": persist_response.model_dump()},
-                on_conflict="key",
-            ).execute()
-        ))
     except Exception as e:
         _log_event(
             "scheduler.scan.latest_cache_persist_failed",
@@ -1284,6 +1362,12 @@ def get_user_settings(db, user_id: str) -> dict:
         "k_factor_smoothing": 700.0,
         "k_factor_clamp_min": 0.50,
         "k_factor_clamp_max": 0.95,
+        "onboarding_state": {
+            "version": 1,
+            "completed": [],
+            "dismissed": [],
+            "last_seen_at": None,
+        },
     }
     _retry_supabase(lambda: db.table("settings").upsert(defaults).execute())
     result = _retry_supabase(lambda: db.table("settings").select("*").eq("user_id", user_id).execute())
@@ -1425,6 +1509,7 @@ def build_bet_response(row: dict, k_factor: float) -> BetResponse:
         sport=row["sport"],
         event=row["event"],
         market=row["market"],
+        surface=row.get("surface") or "straight_bets",
         sportsbook=row["sportsbook"],
         promo_type=row["promo_type"],
         odds_american=row["odds_american"],
@@ -1461,6 +1546,14 @@ def build_bet_response(row: dict, k_factor: float) -> BetResponse:
         scan_ev_percent_at_log=row.get("scan_ev_percent_at_log"),
         book_odds_at_log=row.get("book_odds_at_log"),
         reference_odds_at_log=row.get("reference_odds_at_log"),
+        source_event_id=row.get("source_event_id"),
+        source_market_key=row.get("source_market_key"),
+        source_selection_key=row.get("source_selection_key"),
+        participant_name=row.get("participant_name"),
+        participant_id=row.get("participant_id"),
+        selection_side=row.get("selection_side"),
+        line_value=row.get("line_value"),
+        selection_meta=row.get("selection_meta"),
     )
 
 
@@ -1602,6 +1695,7 @@ def create_bet(bet: BetCreate, user: dict = Depends(get_current_user)):
         "sport": bet.sport,
         "event": bet.event,
         "market": bet.market,
+        "surface": bet.surface,
         "sportsbook": bet.sportsbook,
         "promo_type": bet.promo_type.value,
         "odds_american": bet.odds_american,
@@ -1619,6 +1713,14 @@ def create_bet(bet: BetCreate, user: dict = Depends(get_current_user)):
         "clv_sport_key": bet.clv_sport_key,
         "clv_event_id": bet.clv_event_id,
         "true_prob_at_entry": bet.true_prob_at_entry,
+        "source_event_id": bet.source_event_id,
+        "source_market_key": bet.source_market_key,
+        "source_selection_key": bet.source_selection_key,
+        "participant_name": bet.participant_name,
+        "participant_id": bet.participant_id,
+        "selection_side": bet.selection_side,
+        "line_value": bet.line_value,
+        "selection_meta": bet.selection_meta,
     }
 
     # Only include event_date if provided, otherwise let DB default to today
@@ -1705,6 +1807,8 @@ def update_bet(bet_id: str, bet: BetUpdate, user: dict = Depends(get_current_use
         data["event"] = bet.event
     if bet.market is not None:
         data["market"] = bet.market
+    if bet.surface is not None:
+        data["surface"] = bet.surface
     if bet.sportsbook is not None:
         data["sportsbook"] = bet.sportsbook
     if bet.promo_type is not None:
@@ -2099,18 +2203,14 @@ def get_balances(user: dict = Depends(get_current_user)):
 
 def _build_settings_response(db, user_id: str, s: dict) -> SettingsResponse:
     """Construct SettingsResponse including derived k-factor fields."""
-    k_data = compute_k_user(db, user_id)
-    k_derived = build_effective_k(s, k_data["k_obs"], k_data["bonus_stake_settled"])
-    return SettingsResponse(
-        k_factor=s["k_factor"],
-        default_stake=s.get("default_stake"),
-        preferred_sportsbooks=s.get("preferred_sportsbooks") or DEFAULT_SPORTSBOOKS,
-        k_factor_mode=s.get("k_factor_mode") or "baseline",
-        k_factor_min_stake=float(s.get("k_factor_min_stake") or 300.0),
-        k_factor_smoothing=float(s.get("k_factor_smoothing") or 700.0),
-        k_factor_clamp_min=float(s.get("k_factor_clamp_min") or 0.50),
-        k_factor_clamp_max=float(s.get("k_factor_clamp_max") or 0.95),
-        **k_derived,
+    return build_settings_response_service(
+        db=db,
+        user_id=user_id,
+        settings=s,
+        default_sportsbooks=DEFAULT_SPORTSBOOKS,
+        compute_k_user=compute_k_user,
+        build_effective_k=build_effective_k,
+        settings_response_cls=SettingsResponse,
     )
 
 
@@ -2148,6 +2248,8 @@ def update_settings(
         data["k_factor_clamp_min"] = settings.k_factor_clamp_min
     if settings.k_factor_clamp_max is not None:
         data["k_factor_clamp_max"] = settings.k_factor_clamp_max
+    if settings.onboarding_state is not None:
+        data["onboarding_state"] = settings.onboarding_state
 
     if data:
         data["updated_at"] = datetime.now(UTC).isoformat()
@@ -2219,16 +2321,11 @@ async def scan_bets(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Odds API error: {e}")
 
-    return ScanResponse(
-        sport=sport,
-        opportunities=result["opportunities"],
-        events_fetched=result["events_fetched"],
-        events_with_both_books=result["events_with_both_books"],
-        api_requests_remaining=result.get("api_requests_remaining"),
-    )
+    return _build_scan_response(sport=sport, result=result)
 
 
 async def scan_markets(
+    surface: str = "straight_bets",
     sport: str | None = None,
     user: dict = Depends(require_scan_rate_limit),
 ):
@@ -2238,22 +2335,22 @@ async def scan_markets(
     sport. If sport is omitted, scans all supported sports (cached per sport; only
     stale sports hit the API).
     """
-    from services.odds_api import get_cached_or_scan, SUPPORTED_SPORTS
     from datetime import datetime, timezone
 
     db = get_db()
+    supported_sports = _scanner_supported_sports(surface)
 
-    if sport is not None and sport not in SUPPORTED_SPORTS:
+    if sport is not None and sport not in supported_sports:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported sport. Choose from: {', '.join(SUPPORTED_SPORTS)}",
+            detail=f"Unsupported sport. Choose from: {', '.join(supported_sports)}",
         )
 
     try:
         if sport is not None:
-            result = await get_cached_or_scan(sport, source="manual_scan")
-            base_sides = result["sides"]
-            response_sides = _annotate_sides_with_duplicate_state(db, user["id"], base_sides)
+            result = await _get_cached_or_scan_for_surface(surface, sport, source="manual_scan")
+            base_sides = _with_surface(surface, result["sides"])
+            response_sides = _with_surface(surface, _annotate_sides_with_duplicate_state(db, user["id"], base_sides))
             scanned_at = datetime.fromtimestamp(result["fetched_at"], tz=UTC).isoformat().replace("+00:00", "Z")
             _set_ops_status(
                 "last_manual_scan",
@@ -2267,8 +2364,10 @@ async def scan_markets(
                 },
             )
             # Piggyback CLV update — zero extra API calls
-            asyncio.create_task(_piggyback_clv(base_sides))
+            if surface == "straight_bets":
+                asyncio.create_task(_piggyback_clv(base_sides))
             response = FullScanResponse(
+                surface=surface,
                 sport=sport,
                 sides=response_sides,
                 events_fetched=result["events_fetched"],
@@ -2276,30 +2375,18 @@ async def scan_markets(
                 api_requests_remaining=result.get("api_requests_remaining"),
                 scanned_at=scanned_at,
             )
-            persist_response = FullScanResponse(
+            _persist_latest_full_scan(
+                db=db,
+                surface=surface,
                 sport=sport,
                 sides=base_sides,
                 events_fetched=result["events_fetched"],
                 events_with_both_books=result["events_with_both_books"],
                 api_requests_remaining=result.get("api_requests_remaining"),
                 scanned_at=scanned_at,
+                retry_supabase=_retry_supabase,
+                log_event=_log_event,
             )
-            # Persist as the latest global scan (durable across devices/accounts).
-            try:
-                _retry_supabase(lambda: (
-                    db.table("global_scan_cache").upsert(
-                        {"key": "latest", "payload": persist_response.model_dump()},
-                        on_conflict="key",
-                    ).execute()
-                ))
-            except Exception as e:
-                # Best-effort; scan results still return even if persistence fails.
-                _log_event(
-                    "scan_latest_cache.persist_failed",
-                    level="warning",
-                    error_class=type(e).__name__,
-                    error=str(e),
-                )
             return response
         # Full scan: all sports (skip any that 404 — e.g. out of season)
         all_sides = []
@@ -2309,10 +2396,10 @@ async def scan_markets(
         oldest_fetched = None
         from os import getenv
         env = getenv("ENVIRONMENT", "production").lower()
-        sports_to_scan = ["basketball_nba"] if env == "development" else SUPPORTED_SPORTS
+        sports_to_scan = ["basketball_nba"] if env == "development" else supported_sports
         for s in sports_to_scan:
             try:
-                result = await get_cached_or_scan(s, source="manual_scan")
+                result = await _get_cached_or_scan_for_surface(surface, s, source="manual_scan")
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 404:
                     continue  # sport has no odds right now (e.g. off-season)
@@ -2347,9 +2434,12 @@ async def scan_markets(
             },
         )
         # Piggyback CLV update across all scanned sides — zero extra API calls
-        asyncio.create_task(_piggyback_clv(all_sides))
-        response_sides = _annotate_sides_with_duplicate_state(db, user["id"], all_sides)
+        all_sides = _with_surface(surface, all_sides)
+        if surface == "straight_bets":
+            asyncio.create_task(_piggyback_clv(all_sides))
+        response_sides = _with_surface(surface, _annotate_sides_with_duplicate_state(db, user["id"], all_sides))
         response = FullScanResponse(
+            surface=surface,
             sport="all",
             sides=response_sides,
             events_fetched=total_events,
@@ -2357,29 +2447,18 @@ async def scan_markets(
             api_requests_remaining=min_remaining,
             scanned_at=scanned_at,
         )
-        persist_response = FullScanResponse(
+        _persist_latest_full_scan(
+            db=db,
+            surface=surface,
             sport="all",
             sides=all_sides,
             events_fetched=total_events,
             events_with_both_books=total_with_both,
             api_requests_remaining=min_remaining,
             scanned_at=scanned_at,
+            retry_supabase=_retry_supabase,
+            log_event=_log_event,
         )
-        # Persist as the latest global scan (durable across devices/accounts).
-        try:
-            _retry_supabase(lambda: (
-                db.table("global_scan_cache").upsert(
-                    {"key": "latest", "payload": persist_response.model_dump()},
-                    on_conflict="key",
-                ).execute()
-            ))
-        except Exception as e:
-            _log_event(
-                "scan_latest_cache.persist_failed",
-                level="warning",
-                error_class=type(e).__name__,
-                error=str(e),
-            )
         return response
     except ValueError as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -2387,7 +2466,10 @@ async def scan_markets(
         raise HTTPException(status_code=502, detail=f"Odds API error: {e}")
 
 
-async def scan_latest(user: dict = Depends(require_scan_rate_limit)):
+async def scan_latest(
+    surface: str = "straight_bets",
+    user: dict = Depends(require_scan_rate_limit),
+):
     """
     Return the most recent *global* scan payload, even if stale.
 
@@ -2397,10 +2479,11 @@ async def scan_latest(user: dict = Depends(require_scan_rate_limit)):
     db = get_db()
     try:
         try:
+            cache_key = f"{surface}:latest"
             res = _retry_supabase(lambda: (
                 db.table("global_scan_cache")
                 .select("payload")
-                .eq("key", "latest")
+                .eq("key", cache_key)
                 .limit(1)
                 .execute()
             ))
@@ -2410,6 +2493,7 @@ async def scan_latest(user: dict = Depends(require_scan_rate_limit)):
             msg = str(e)
             if "PGRST205" in msg or ("global_scan_cache" in msg and "schema cache" in msg):
                 return FullScanResponse(
+                    surface=surface,
                     sport="all",
                     sides=[],
                     events_fetched=0,
@@ -2418,9 +2502,18 @@ async def scan_latest(user: dict = Depends(require_scan_rate_limit)):
                     scanned_at=None,
                 )
             raise
+        if not res.data and surface == "straight_bets":
+            res = _retry_supabase(lambda: (
+                db.table("global_scan_cache")
+                .select("payload")
+                .eq("key", "latest")
+                .limit(1)
+                .execute()
+            ))
         if not res.data:
             # Return an empty payload (200) so the UI doesn't treat this as an error.
             return FullScanResponse(
+                surface=surface,
                 sport="all",
                 sides=[],
                 events_fetched=0,
@@ -2432,7 +2525,11 @@ async def scan_latest(user: dict = Depends(require_scan_rate_limit)):
         if not isinstance(payload, dict):
             raise HTTPException(status_code=500, detail="Invalid scan cache payload")
         sides = payload.get("sides") if isinstance(payload.get("sides"), list) else []
-        payload["sides"] = _annotate_sides_with_duplicate_state(db, user["id"], sides)
+        payload["surface"] = payload.get("surface") or surface
+        payload["sides"] = [
+            side if isinstance(side, dict) and side.get("surface") else {"surface": surface, **side}
+            for side in _annotate_sides_with_duplicate_state(db, user["id"], sides)
+        ]
         return payload
     except HTTPException:
         raise

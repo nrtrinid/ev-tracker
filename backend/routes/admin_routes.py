@@ -46,4 +46,12 @@ def backfill_ev_locks_impl(
 def backfill_ev_locks(user: dict = Depends(require_current_user)):
     import main
 
-    return main.backfill_ev_locks(user=user)
+    return backfill_ev_locks_impl(
+        user=user,
+        get_db=main.get_db,
+        get_user_settings=main.get_user_settings,
+        retry_supabase=main._retry_supabase,
+        ev_lock_promo_types=main.EV_LOCK_PROMO_TYPES,
+        lock_ev_for_row=main._lock_ev_for_row,
+        log_warning=main.logger.warning,
+    )

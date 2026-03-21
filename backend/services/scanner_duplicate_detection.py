@@ -26,17 +26,29 @@ def annotate_sides_with_duplicate_state(db, user_id: str, sides: list[dict]) -> 
     if not sides:
         return sides
 
+    surfaces = sorted({str(side.get("surface") or "straight_bets") for side in sides})
     pending_res = (
         db.table("bets")
-        .select("id,odds_american,sport,market,sportsbook,commence_time,clv_team,event,clv_sport_key,clv_event_id,result")
+        .select("id,odds_american,sport,market,surface,sportsbook,commence_time,clv_team,event,clv_sport_key,clv_event_id,source_event_id,source_market_key,source_selection_key,result")
         .eq("user_id", user_id)
         .eq("result", "pending")
-        .eq("market", "ML")
         .execute()
     )
 
     matches_by_key: dict[tuple[str, str, str, str, str], list[dict]] = {}
+    prop_matches_by_selection_key: dict[tuple[str, str, str], list[dict]] = {}
     for row in pending_res.data or []:
+        if row.get("surface") == "player_props":
+            selection_key = str(row.get("source_selection_key") or "").strip().lower()
+            market_key = str(row.get("source_market_key") or "").strip().lower()
+            sportsbook = str(row.get("sportsbook") or "").strip().lower()
+            if selection_key and market_key and sportsbook:
+                prop_matches_by_selection_key.setdefault((market_key, selection_key, sportsbook), []).append(row)
+            continue
+        if surfaces == ["player_props"]:
+            continue
+        if str(row.get("market") or "").strip().upper() != "ML":
+            continue
         key = scanner_match_key_from_bet(row)
         legacy_key = scanner_legacy_match_key_from_bet(row)
         if not all([key[0], key[1], key[2], key[3], key[4]]):
@@ -47,11 +59,19 @@ def annotate_sides_with_duplicate_state(db, user_id: str, sides: list[dict]) -> 
     annotated: list[dict] = []
     for side in sides:
         side_out = dict(side)
-        key = scanner_match_key_from_side(side)
-        legacy_key = scanner_legacy_match_key_from_side(side)
-        matched = matches_by_key.get(key, [])
-        if not matched:
-            matched = matches_by_key.get(legacy_key, [])
+        if side.get("surface") == "player_props":
+            prop_key = (
+                str(side.get("market_key") or "").strip().lower(),
+                str(side.get("selection_key") or "").strip().lower(),
+                str(side.get("sportsbook") or "").strip().lower(),
+            )
+            matched = prop_matches_by_selection_key.get(prop_key, [])
+        else:
+            key = scanner_match_key_from_side(side)
+            legacy_key = scanner_legacy_match_key_from_side(side)
+            matched = matches_by_key.get(key, [])
+            if not matched:
+                matched = matches_by_key.get(legacy_key, [])
         current_odds = side.get("book_odds")
         current_quality = _price_quality_from_american(current_odds)
         side_out["current_odds_american"] = current_odds

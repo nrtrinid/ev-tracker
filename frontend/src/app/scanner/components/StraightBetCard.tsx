@@ -12,6 +12,7 @@ interface StraightBetCardProps {
   bankroll: number;
   boostPercent: number;
   onLogBet: (side: MarketSide) => void;
+  onAddToCart: (side: MarketSide) => void;
   bookColors: Record<string, string>;
   sportDisplayMap: Record<string, string>;
 }
@@ -78,6 +79,7 @@ export function StraightBetCard({
   bankroll,
   boostPercent,
   onLogBet,
+  onAddToCart,
   bookColors,
   sportDisplayMap,
 }: StraightBetCardProps) {
@@ -151,9 +153,11 @@ export function StraightBetCard({
 
             {/* Title row: team name + market type (non-wrapping) */}
             <div className="mb-2 flex items-center gap-2">
-              <p className="line-clamp-2 text-sm font-semibold">{side.team}</p>
+              <p className="line-clamp-2 text-sm font-semibold">
+                {side.surface === "player_props" ? side.display_name : side.team}
+              </p>
               <span className="shrink-0 rounded bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                ML
+                {side.surface === "player_props" ? "Prop" : "ML"}
               </span>
             </div>
 
@@ -247,6 +251,13 @@ export function StraightBetCard({
               </a>
               <button
                 type="button"
+                onClick={() => onAddToCart(side)}
+                className="inline-flex h-9 items-center justify-center gap-1 rounded-lg border border-[#C4A35A]/35 bg-[#C4A35A]/10 px-3 text-xs font-medium text-[#5C4D2E] transition-colors hover:bg-[#C4A35A]/20"
+              >
+                Add to Cart
+              </button>
+              <button
+                type="button"
                 onClick={() => onLogBet(side)}
                 className="inline-flex h-9 items-center justify-center gap-1 rounded-lg border border-border bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted"
               >
@@ -262,8 +273,15 @@ export function StraightBetCard({
           <div className="border-t border-border/60 pt-2">
             <button
               type="button"
+              onClick={() => onAddToCart(side)}
+              className="inline-flex h-9 w-full items-center justify-center gap-1 rounded-lg border border-[#C4A35A]/35 bg-[#C4A35A]/10 px-3 text-xs font-semibold text-[#5C4D2E] transition-colors hover:bg-[#C4A35A]/20"
+            >
+              Add to Cart
+            </button>
+            <button
+              type="button"
               onClick={() => onLogBet(side)}
-              className="inline-flex h-9 w-full items-center justify-center gap-1 rounded-lg bg-foreground px-3 text-xs font-semibold text-background transition-opacity hover:opacity-90"
+              className="mt-2 inline-flex h-9 w-full items-center justify-center gap-1 rounded-lg bg-foreground px-3 text-xs font-semibold text-background transition-opacity hover:opacity-90"
             >
               Log Bet
               <ChevronRight className="h-3 w-3" />

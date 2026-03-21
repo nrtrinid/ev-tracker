@@ -77,10 +77,13 @@ def test_build_single_sport_manual_scan_outputs_builds_response_and_persist_payl
         annotate_sides=lambda sides: sides + [{"id": "annotated"}],
     )
 
-    assert out["base_sides"] == [{"id": "a"}]
+    assert out["base_sides"] == [{"surface": "straight_bets", "id": "a"}]
     assert out["response_payload"]["sport"] == "basketball_nba"
-    assert out["response_payload"]["sides"] == [{"id": "a"}, {"id": "annotated"}]
-    assert out["persist_payload"]["sides"] == [{"id": "a"}]
+    assert out["response_payload"]["sides"] == [
+        {"surface": "straight_bets", "id": "a"},
+        {"surface": "straight_bets", "id": "annotated"},
+    ]
+    assert out["persist_payload"]["sides"] == [{"surface": "straight_bets", "id": "a"}]
     assert out["ops_status_payload"]["total_sides"] == 1
 
 
@@ -95,8 +98,11 @@ def test_build_all_sports_manual_scan_outputs_builds_response_and_persist_payloa
     )
 
     assert out["response_payload"]["sport"] == "all"
-    assert out["response_payload"]["sides"] == [{"id": "a"}, {"id": "annotated"}]
-    assert out["persist_payload"]["sides"] == [{"id": "a"}]
+    assert out["response_payload"]["sides"] == [
+        {"surface": "straight_bets", "id": "a"},
+        {"surface": "straight_bets", "id": "annotated"},
+    ]
+    assert out["persist_payload"]["sides"] == [{"surface": "straight_bets", "id": "a"}]
     assert out["ops_status_payload"]["total_sides"] == 1
     assert out["ops_status_payload"]["events_fetched"] == 5
 
@@ -124,8 +130,11 @@ async def test_run_single_sport_manual_scan_builds_bundle_with_annotated_sides()
         annotate_sides=lambda sides: sides + [{"id": "annotated"}],
     )
 
-    assert out["response_payload"]["sides"] == [{"id": "a"}, {"id": "annotated"}]
-    assert out["persist_payload"]["sides"] == [{"id": "a"}]
+    assert out["response_payload"]["sides"] == [
+        {"surface": "straight_bets", "id": "a"},
+        {"surface": "straight_bets", "id": "annotated"},
+    ]
+    assert out["persist_payload"]["sides"] == [{"surface": "straight_bets", "id": "a"}]
     assert out["response_payload"]["scanned_at"] == "1970-01-01T00:00:00Z"
 
 

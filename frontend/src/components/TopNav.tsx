@@ -6,10 +6,12 @@ import { Calculator, BarChart3, Settings, Home, LogOut, Radar, Activity } from "
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
 import { useBackendReadiness } from "@/lib/hooks";
+import { useBettingPlatformStore } from "@/lib/betting-platform-store";
 
 const navItems = [
   { href: "/", label: "Home", icon: Home },
   { href: "/scanner", label: "Scan", icon: Radar },
+  { href: "/parlay", label: "Parlay", icon: Radar },
   { href: "/tools", label: "Tools", icon: Calculator },
   { href: "/analytics", label: "Stats", icon: BarChart3 },
   { href: "/settings", label: "Settings", icon: Settings },
@@ -20,6 +22,7 @@ export function TopNav() {
   const router = useRouter();
   const { signOut } = useAuth();
   const { data: readiness } = useBackendReadiness();
+  const { cart } = useBettingPlatformStore();
 
   if (pathname === "/login") return null;
 
@@ -82,6 +85,11 @@ export function TopNav() {
               >
                 <Icon className="h-4 w-4" />
                 <span className="hidden sm:inline">{item.label}</span>
+                {item.href === "/parlay" && cart.length > 0 && (
+                  <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-[#C4A35A] px-1.5 py-0.5 text-[10px] font-semibold text-[#2C2416]">
+                    {cart.length}
+                  </span>
+                )}
                 {isActive && (
                   <span className="absolute -bottom-[5px] left-1/2 h-0.5 w-8 -translate-x-1/2 rounded-full bg-[#C4A35A]" />
                 )}

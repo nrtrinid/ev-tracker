@@ -10,6 +10,9 @@ import {
 import type { MarketSide } from "@/lib/types";
 
 const BASE_SIDE: MarketSide = {
+  surface: "straight_bets",
+  market_key: "h2h",
+  selection_key: "evt-1:lakers",
   sportsbook: "DraftKings",
   sport: "basketball_nba",
   event: "Lakers @ Warriors",

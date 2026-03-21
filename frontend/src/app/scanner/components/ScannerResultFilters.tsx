@@ -53,6 +53,7 @@ interface ScannerResultFiltersProps {
   boostPresets: number[];
   activeFilterChips: string[];
   hasActiveFilters: boolean;
+  searchPlaceholder?: string;
   onSearchChange: (value: string) => void;
   onTimePresetChange: (value: ScannerTimePreset) => void;
   onEdgeMinChange: (value: number) => void;
@@ -73,6 +74,7 @@ export function ScannerResultFilters({
   boostPresets,
   activeFilterChips,
   hasActiveFilters,
+  searchPlaceholder = "Search team",
   onSearchChange,
   onTimePresetChange,
   onEdgeMinChange,
@@ -157,7 +159,7 @@ export function ScannerResultFilters({
             type="text"
             value={filters.searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search team"
+            placeholder={searchPlaceholder}
             className="h-10 rounded-md border border-border bg-background pl-9 pr-3 text-sm"
           />
         </div>

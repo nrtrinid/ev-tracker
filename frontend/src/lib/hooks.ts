@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api";
-import type { BetCreate, BetUpdate, BetResult, PromoType, TransactionCreate } from "@/lib/types";
+import type { BetCreate, BetUpdate, BetResult, PromoType, ScannerSurface, TransactionCreate } from "@/lib/types";
 
 // Query keys
 export const queryKeys = {
@@ -12,6 +12,7 @@ export const queryKeys = {
   settings: ["settings"] as const,
   transactions: ["transactions"] as const,
   balances: ["balances"] as const,
+  scanMarkets: (surface: ScannerSurface) => ["scan-markets", surface] as const,
 };
 
 function invalidateBetDerivedQueries(queryClient: QueryClient, betId?: string) {

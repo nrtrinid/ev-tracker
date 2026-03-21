@@ -20,13 +20,17 @@ async def cron_run_scan_impl(
     new_run_id: Callable[[str], str],
     log_event: Callable[..., None],
     set_ops_status: Callable[[str, dict], None],
+    run_id_prefix: str = "cron_scan",
+    log_prefix: str = "cron.scan",
+    scan_source: str = "cron_scan",
+    ops_status_key: str = "last_cron_scan",
 ) -> dict[str, Any]:
     """Cron-triggered scan runner implementation used by the API route wrapper."""
     require_valid_cron_token(x_cron_token)
 
-    run_id = new_run_id("cron_scan")
+    run_id = new_run_id(run_id_prefix)
     started_clock = time.monotonic()
-    log_event("cron.scan.started", run_id=run_id)
+    log_event(f"{log_prefix}.started", run_id=run_id)
 
     from services.odds_api import get_cached_or_scan, SUPPORTED_SPORTS
     from services.discord_alerts import schedule_alerts
@@ -39,7 +43,7 @@ async def cron_run_scan_impl(
 
     for sport_key in SUPPORTED_SPORTS:
         try:
-            result = await get_cached_or_scan(sport_key, source="cron_scan")
+            result = await get_cached_or_scan(sport_key, source=scan_source)
             sides = result.get("sides") or []
             scanned.append(
                 {
@@ -56,11 +60,11 @@ async def cron_run_scan_impl(
             status = e.response.status_code if e.response is not None else None
             if status == 404:
                 errors.append({"sport": sport_key, "status": 404, "error": "no odds"})
-                log_event("cron.scan.sport_skipped", run_id=run_id, sport=sport_key, status=404, reason="no odds")
+                log_event(f"{log_prefix}.sport_skipped", run_id=run_id, sport=sport_key, status=404, reason="no odds")
                 continue
             errors.append({"sport": sport_key, "status": status, "error": str(e)})
             log_event(
-                "cron.scan.sport_failed",
+                f"{log_prefix}.sport_failed",
                 level="error",
                 run_id=run_id,
                 sport=sport_key,
@@ -71,7 +75,7 @@ async def cron_run_scan_impl(
         except Exception as e:
             errors.append({"sport": sport_key, "error": str(e)})
             log_event(
-                "cron.scan.sport_failed",
+                f"{log_prefix}.sport_failed",
                 level="error",
                 run_id=run_id,
                 sport=sport_key,
@@ -82,7 +86,7 @@ async def cron_run_scan_impl(
     finished = datetime.now(UTC).isoformat() + "Z"
     duration_ms = round((time.monotonic() - started_clock) * 1000, 2)
     log_event(
-        "cron.scan.completed",
+        f"{log_prefix}.completed",
         run_id=run_id,
         total_sides=total_sides,
         alerts_scheduled=alerts_scheduled,
@@ -91,7 +95,7 @@ async def cron_run_scan_impl(
     )
 
     set_ops_status(
-        "last_cron_scan",
+        ops_status_key,
         {
             "run_id": run_id,
             "started_at": started,
@@ -144,13 +148,17 @@ async def cron_run_auto_settle_impl(
     log_event: Callable[..., None],
     set_ops_status: Callable[[str, dict], None],
     get_db: Callable[[], Any],
+    run_id_prefix: str = "cron_auto_settle",
+    log_prefix: str = "cron.auto_settle",
+    auto_settle_source: str = "auto_settle_cron",
+    ops_status_source: str = "cron",
 ) -> dict[str, Any]:
     """Cron-triggered auto-settle runner implementation used by the API route wrapper."""
     require_valid_cron_token(x_cron_token)
 
-    run_id = new_run_id("cron_auto_settle")
+    run_id = new_run_id(run_id_prefix)
     started_clock = time.monotonic()
-    log_event("cron.auto_settle.started", run_id=run_id)
+    log_event(f"{log_prefix}.started", run_id=run_id)
 
     from services.odds_api import get_last_auto_settler_summary
 
@@ -159,11 +167,11 @@ async def cron_run_auto_settle_impl(
     try:
         from services.odds_api import run_auto_settler
 
-        settled = await run_auto_settler(db, source="auto_settle_cron")
-        log_event("cron.auto_settle.completed", run_id=run_id, settled=settled)
+        settled = await run_auto_settler(db, source=auto_settle_source)
+        log_event(f"{log_prefix}.completed", run_id=run_id, settled=settled)
     except Exception as e:
         log_event(
-            "cron.auto_settle.failed",
+            f"{log_prefix}.failed",
             level="error",
             run_id=run_id,
             error_class=type(e).__name__,
@@ -179,7 +187,7 @@ async def cron_run_auto_settle_impl(
     set_ops_status(
         "last_auto_settle",
         {
-            "source": "cron",
+            "source": ops_status_source,
             "run_id": run_id,
             "started_at": started,
             "finished_at": finished,
@@ -260,13 +268,15 @@ async def cron_test_discord_impl(
     require_valid_cron_token: Callable[[str | None], None],
     new_run_id: Callable[[str], str],
     log_event: Callable[..., None],
+    run_id_prefix: str = "cron_discord_test",
+    log_prefix: str = "cron.discord_test",
 ) -> dict[str, Any]:
     """Send a test Discord message implementation used by the API route wrapper."""
     require_valid_cron_token(x_cron_token)
 
-    run_id = new_run_id("cron_discord_test")
+    run_id = new_run_id(run_id_prefix)
     started_at = time.monotonic()
-    log_event("cron.discord_test.started", run_id=run_id)
+    log_event(f"{log_prefix}.started", run_id=run_id)
 
     from services.discord_alerts import send_discord_webhook
 
@@ -282,9 +292,14 @@ async def cron_test_discord_impl(
         ]
     }
 
-    await send_discord_webhook(payload, message_type="test")
+    try:
+        await send_discord_webhook(payload, message_type="test")
+    except TypeError as exc:
+        if "message_type" not in str(exc):
+            raise
+        await send_discord_webhook(payload)
     log_event(
-        "cron.discord_test.completed",
+        f"{log_prefix}.completed",
         run_id=run_id,
         duration_ms=round((time.monotonic() - started_at) * 1000, 2),
     )
@@ -297,13 +312,15 @@ async def cron_test_discord_alert_impl(
     require_valid_cron_token: Callable[[str | None], None],
     new_run_id: Callable[[str], str],
     log_event: Callable[..., None],
+    run_id_prefix: str = "cron_discord_alert_test",
+    log_prefix: str = "cron.discord_alert_test",
 ) -> dict[str, Any]:
     """Send a test message to the alert webhook (DISCORD_ALERT_WEBHOOK_URL)."""
     require_valid_cron_token(x_cron_token)
 
-    run_id = new_run_id("cron_discord_alert_test")
+    run_id = new_run_id(run_id_prefix)
     started_at = time.monotonic()
-    log_event("cron.discord_alert_test.started", run_id=run_id)
+    log_event(f"{log_prefix}.started", run_id=run_id)
 
     from services.discord_alerts import send_discord_webhook
 
@@ -321,7 +338,7 @@ async def cron_test_discord_alert_impl(
 
     await send_discord_webhook(payload, message_type="alert")
     log_event(
-        "cron.discord_alert_test.completed",
+        f"{log_prefix}.completed",
         run_id=run_id,
         duration_ms=round((time.monotonic() - started_at) * 1000, 2),
     )
@@ -336,7 +353,17 @@ async def ops_trigger_scan(
 ):
     import main
 
-    return await main.ops_trigger_scan(x_ops_token=x_ops_token, x_cron_token=x_cron_token)
+    return await cron_run_scan_impl(
+        x_cron_token=x_ops_token or x_cron_token,
+        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        new_run_id=main._new_run_id,
+        log_event=main._log_event,
+        set_ops_status=main._set_ops_status,
+        run_id_prefix="ops_scan",
+        log_prefix="ops.trigger.scan",
+        scan_source="ops_trigger_scan",
+        ops_status_key="last_ops_trigger_scan",
+    )
 
 
 @router.post("/api/ops/trigger/auto-settle")
@@ -347,7 +374,18 @@ async def ops_trigger_auto_settle(
 ):
     import main
 
-    return await main.ops_trigger_auto_settle(x_ops_token=x_ops_token, x_cron_token=x_cron_token)
+    return await cron_run_auto_settle_impl(
+        x_cron_token=x_ops_token or x_cron_token,
+        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        new_run_id=main._new_run_id,
+        log_event=main._log_event,
+        set_ops_status=main._set_ops_status,
+        get_db=main.get_db,
+        run_id_prefix="ops_auto_settle",
+        log_prefix="ops.trigger.auto_settle",
+        auto_settle_source="auto_settle_ops_trigger",
+        ops_status_source="ops_trigger",
+    )
 
 
 @router.get("/api/ops/status")
@@ -358,7 +396,15 @@ def ops_status(
 ):
     import main
 
-    return main.ops_status(x_ops_token=x_ops_token, x_cron_token=x_cron_token)
+    return ops_status_impl(
+        x_cron_token=x_ops_token or x_cron_token,
+        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        runtime_state=main._runtime_state,
+        check_db_ready=main._check_db_ready,
+        check_scheduler_freshness=main._check_scheduler_freshness,
+        utc_now_iso=main._utc_now_iso,
+        get_ops_status=lambda: getattr(main.app.state, "ops_status", {}),
+    )
 
 
 @router.post("/api/ops/trigger/test-discord")
@@ -369,7 +415,14 @@ async def ops_trigger_test_discord(
 ):
     import main
 
-    return await main.ops_trigger_test_discord(x_ops_token=x_ops_token, x_cron_token=x_cron_token)
+    return await cron_test_discord_impl(
+        x_cron_token=x_ops_token or x_cron_token,
+        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        new_run_id=main._new_run_id,
+        log_event=main._log_event,
+        run_id_prefix="ops_discord_test",
+        log_prefix="ops.trigger.discord_test",
+    )
 
 
 @router.post("/api/ops/trigger/test-discord-alert")
@@ -380,4 +433,11 @@ async def ops_trigger_test_discord_alert(
 ):
     import main
 
-    return await main.ops_trigger_test_discord_alert(x_ops_token=x_ops_token, x_cron_token=x_cron_token)
+    return await cron_test_discord_alert_impl(
+        x_cron_token=x_ops_token or x_cron_token,
+        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        new_run_id=main._new_run_id,
+        log_event=main._log_event,
+        run_id_prefix="ops_discord_alert_test",
+        log_prefix="ops.trigger.discord_alert_test",
+    )

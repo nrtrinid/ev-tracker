@@ -11,6 +11,7 @@ export type PromoType =
   | "boost_custom";
 
 export type BetResult = "pending" | "win" | "loss" | "push" | "void";
+export type ScannerSurface = "straight_bets" | "player_props";
 
 export interface Bet {
   id: string;
@@ -20,6 +21,7 @@ export interface Bet {
   sport: string;
   event: string;
   market: string;
+  surface: ScannerSurface;
   sportsbook: string;
   promo_type: PromoType;
   odds_american: number;
@@ -53,12 +55,21 @@ export interface Bet {
   scan_ev_percent_at_log: number | null;
   book_odds_at_log: number | null;
   reference_odds_at_log: number | null;
+  source_event_id: string | null;
+  source_market_key: string | null;
+  source_selection_key: string | null;
+  participant_name: string | null;
+  participant_id: string | null;
+  selection_side: string | null;
+  line_value: number | null;
+  selection_meta: Record<string, unknown> | null;
 }
 
 export interface BetCreate {
   sport: string;
   event: string;
   market: string;
+  surface?: ScannerSurface;
   sportsbook: string;
   promo_type: PromoType;
   odds_american: number;
@@ -76,12 +87,21 @@ export interface BetCreate {
   clv_sport_key?: string;
   clv_event_id?: string;
   true_prob_at_entry?: number;
+  source_event_id?: string;
+  source_market_key?: string;
+  source_selection_key?: string;
+  participant_name?: string;
+  participant_id?: string;
+  selection_side?: string;
+  line_value?: number;
+  selection_meta?: Record<string, unknown>;
 }
 
 export interface BetUpdate {
   sport?: string;
   event?: string;
   market?: string;
+  surface?: ScannerSurface;
   sportsbook?: string;
   promo_type?: PromoType;
   odds_american?: number;
@@ -110,6 +130,12 @@ export interface Settings {
   k_factor_weight: number;
   k_factor_effective: number;
   k_factor_bonus_stake_settled: number;
+  onboarding_state: {
+    version?: number;
+    completed?: string[];
+    dismissed?: string[];
+    last_seen_at?: string | null;
+  } | null;
 }
 
 export interface Summary {
@@ -167,8 +193,11 @@ export interface Balance {
 }
 
 // Scanner types
-export interface MarketSide {
+export interface StraightBetMarketSide {
+  surface: "straight_bets";
   event_id?: string | null;
+  market_key?: string;
+  selection_key?: string | null;
   sportsbook: string;
   sportsbook_deeplink_url?: string | null;
   sport: string;
@@ -187,7 +216,40 @@ export interface MarketSide {
   matched_pending_bet_id?: string | null;
 }
 
+export interface PlayerPropMarketSide {
+  surface: "player_props";
+  event_id?: string | null;
+  market_key: string;
+  selection_key: string;
+  sportsbook: string;
+  sportsbook_deeplink_url?: string | null;
+  sport: string;
+  event: string;
+  commence_time: string;
+  market: string;
+  player_name: string;
+  participant_id?: string | null;
+  team?: string | null;
+  opponent?: string | null;
+  selection_side: string;
+  line_value?: number | null;
+  display_name: string;
+  pinnacle_odds: number;
+  book_odds: number;
+  true_prob: number;
+  base_kelly_fraction: number;
+  book_decimal: number;
+  ev_percentage: number;
+  scanner_duplicate_state?: "new" | "already_logged" | "better_now";
+  best_logged_odds_american?: number | null;
+  current_odds_american?: number | null;
+  matched_pending_bet_id?: string | null;
+}
+
+export type MarketSide = StraightBetMarketSide | PlayerPropMarketSide;
+
 export interface ScanResult {
+  surface: ScannerSurface;
   sport: string;
   sides: MarketSide[];
   events_fetched: number;
@@ -319,6 +381,7 @@ export interface OperatorStatusResponse {
 }
 
 export interface ScannedBetData {
+  surface?: ScannerSurface;
   sportsbook: string;
   sport: string;
   event: string;
@@ -334,6 +397,14 @@ export interface ScannedBetData {
   clv_sport_key?: string;
   clv_event_id?: string;
   true_prob_at_entry?: number;  // de-vigged Pinnacle probability — enables accurate EV display
+  source_event_id?: string;
+  source_market_key?: string;
+  source_selection_key?: string;
+  participant_name?: string;
+  participant_id?: string;
+  selection_side?: string;
+  line_value?: number;
+  selection_meta?: Record<string, unknown>;
   kelly_suggestion?: number;    // deprecated: use raw_kelly_stake / stealth_kelly_stake
   raw_kelly_stake?: number;     // raw Kelly $ (base_kelly * multiplier * bankroll)
   stealth_kelly_stake?: number; // stealth-rounded stake for display and auto-fill
@@ -342,6 +413,21 @@ export interface ScannedBetData {
   best_logged_odds_american?: number | null;
   current_odds_american?: number | null;
   matched_pending_bet_id?: string | null;
+}
+
+export interface ParlayCartLeg {
+  id: string;
+  surface: ScannerSurface;
+  eventId?: string | null;
+  marketKey: string;
+  selectionKey: string;
+  sportsbook: string;
+  oddsAmerican: number;
+  display: string;
+  event: string;
+  sport: string;
+  commenceTime: string;
+  correlationTags: string[];
 }
 
 // Constants

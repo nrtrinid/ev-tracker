@@ -1,3 +1,5 @@
+import asyncio
+import inspect
 from typing import Any, Awaitable, Callable
 from datetime import datetime, timezone
 
@@ -15,16 +17,25 @@ def scanned_at_from_fetched_timestamp(fetched_at: float | None) -> str | None:
     return datetime.fromtimestamp(fetched_at, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _with_surface(surface: str, sides: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        side if isinstance(side, dict) and side.get("surface") else {"surface": surface, **side}
+        for side in sides
+    ]
+
+
 def build_single_sport_manual_scan_outputs(
     *,
+    surface: str = "straight_bets",
     result: dict[str, Any],
     sport: str,
     scanned_at: str | None,
     annotate_sides: Callable[[list[dict[str, Any]]], list[dict[str, Any]]],
 ) -> dict[str, Any]:
-    base_sides = result["sides"]
-    response_sides = annotate_sides(base_sides)
+    base_sides = _with_surface(surface, result["sides"])
+    response_sides = _with_surface(surface, annotate_sides(base_sides))
     response_payload = {
+        "surface": surface,
         "sport": sport,
         "sides": response_sides,
         "events_fetched": result["events_fetched"],
@@ -33,6 +44,7 @@ def build_single_sport_manual_scan_outputs(
         "scanned_at": scanned_at,
     }
     persist_payload = {
+        "surface": surface,
         "sport": sport,
         "sides": base_sides,
         "events_fetched": result["events_fetched"],
@@ -41,6 +53,7 @@ def build_single_sport_manual_scan_outputs(
         "scanned_at": scanned_at,
     }
     ops_status_payload = {
+        "surface": surface,
         "sport": sport,
         "events_fetched": result.get("events_fetched"),
         "events_with_both_books": result.get("events_with_both_books"),
@@ -57,6 +70,7 @@ def build_single_sport_manual_scan_outputs(
 
 def build_all_sports_manual_scan_outputs(
     *,
+    surface: str = "straight_bets",
     all_sides: list[dict[str, Any]],
     total_events: int,
     total_with_both: int,
@@ -64,8 +78,10 @@ def build_all_sports_manual_scan_outputs(
     scanned_at: str | None,
     annotate_sides: Callable[[list[dict[str, Any]]], list[dict[str, Any]]],
 ) -> dict[str, Any]:
-    response_sides = annotate_sides(all_sides)
+    normalized_sides = _with_surface(surface, all_sides)
+    response_sides = _with_surface(surface, annotate_sides(normalized_sides))
     response_payload = {
+        "surface": surface,
         "sport": "all",
         "sides": response_sides,
         "events_fetched": total_events,
@@ -74,14 +90,16 @@ def build_all_sports_manual_scan_outputs(
         "scanned_at": scanned_at,
     }
     persist_payload = {
+        "surface": surface,
         "sport": "all",
-        "sides": all_sides,
+        "sides": normalized_sides,
         "events_fetched": total_events,
         "events_with_both_books": total_with_both,
         "api_requests_remaining": min_remaining,
         "scanned_at": scanned_at,
     }
     ops_status_payload = {
+        "surface": surface,
         "sport": "all",
         "events_fetched": total_events,
         "events_with_both_books": total_with_both,
@@ -110,7 +128,9 @@ def apply_manual_scan_bundle(
         }
     )
     persist_payload = bundle["persist_payload"]
-    schedule_piggyback(persist_payload["sides"])
+    piggyback_result = schedule_piggyback(persist_payload["sides"])
+    if inspect.isawaitable(piggyback_result):
+        asyncio.create_task(piggyback_result)
     persist_latest_scan(persist_payload)
     return bundle["response_payload"]
 
@@ -169,6 +189,7 @@ async def aggregate_manual_scan_all_sports(
 
 async def run_single_sport_manual_scan(
     *,
+    surface: str = "straight_bets",
     sport: str,
     get_cached_or_scan: Callable[[str], Awaitable[dict[str, Any]]],
     annotate_sides: Callable[[list[dict[str, Any]]], list[dict[str, Any]]],
@@ -176,6 +197,7 @@ async def run_single_sport_manual_scan(
     result = await get_cached_or_scan(sport)
     scanned_at = scanned_at_from_fetched_timestamp(result.get("fetched_at"))
     return build_single_sport_manual_scan_outputs(
+        surface=surface,
         result=result,
         sport=sport,
         scanned_at=scanned_at,
@@ -185,6 +207,7 @@ async def run_single_sport_manual_scan(
 
 async def run_all_sports_manual_scan(
     *,
+    surface: str = "straight_bets",
     environment: str,
     supported_sports: list[str],
     get_cached_or_scan: Callable[[str], Awaitable[dict[str, Any]]],
@@ -197,6 +220,7 @@ async def run_all_sports_manual_scan(
     )
     scanned_at = scanned_at_from_fetched_timestamp(aggregate["oldest_fetched"])
     return build_all_sports_manual_scan_outputs(
+        surface=surface,
         all_sides=aggregate["all_sides"],
         total_events=aggregate["total_events"],
         total_with_both=aggregate["total_with_both"],

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Dashboard } from "@/components/Dashboard";
 import { BetList } from "@/components/BetList";
 import { LogBetDrawer } from "@/components/LogBetDrawer";
+import { OnboardingBanner } from "@/components/OnboardingBanner";
 import { Plus } from "lucide-react";
 
 export default function Home() {
@@ -13,6 +14,11 @@ export default function Home() {
     <main className="min-h-screen bg-background">
       {/* Main Content */}
       <div className="container mx-auto px-4 py-6 space-y-6 max-w-2xl pb-24">
+        <OnboardingBanner
+          step="home_overview"
+          title="Welcome to the V2 betting workspace"
+          body="Home is still your history and bankroll view. The new scanner surfaces and parlay builder live in the top navigation."
+        />
         {/* Dashboard Stats */}
         <Dashboard />
 

@@ -510,6 +510,39 @@ export default function SettingsPage() {
                 )}
               </CardContent>
             </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <h2 className="font-semibold">Onboarding</h2>
+                <p className="text-sm text-muted-foreground">
+                  Control the lightweight walkthrough banners shown on Home, Scanner, and Parlay.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">
+                  Completed steps:{" "}
+                  <span className="font-medium text-foreground">
+                    {settings?.onboarding_state?.completed?.length ?? 0}
+                  </span>
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    updateSettings.mutate({
+                      onboarding_state: {
+                        version: 1,
+                        completed: [],
+                        dismissed: [],
+                        last_seen_at: new Date().toISOString(),
+                      },
+                    })
+                  }
+                  disabled={updateSettings.isPending}
+                >
+                  Reset onboarding
+                </Button>
+              </CardContent>
+            </Card>
           </>
         )}
       </div>

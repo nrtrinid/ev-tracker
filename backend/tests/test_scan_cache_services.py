@@ -155,6 +155,7 @@ def test_persist_latest_full_scan_builds_expected_payload():
 
     persist_latest_full_scan(
         db=db,
+        surface="straight_bets",
         sport="all",
         sides=[valid_side],
         events_fetched=3,
@@ -168,7 +169,8 @@ def test_persist_latest_full_scan_builds_expected_payload():
     assert len(db.query.upsert_calls) == 1
     upsert_payload, on_conflict = db.query.upsert_calls[0]
     assert on_conflict == "key"
-    assert upsert_payload["key"] == "latest"
+    assert upsert_payload["key"] == "straight_bets:latest"
+    assert upsert_payload["surface"] == "straight_bets"
     assert upsert_payload["payload"]["sport"] == "all"
     assert upsert_payload["payload"]["events_fetched"] == 3
     assert upsert_payload["payload"]["events_with_both_books"] == 2

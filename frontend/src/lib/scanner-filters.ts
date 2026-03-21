@@ -30,8 +30,12 @@ export function normalizeSearchQuery(value: string): string {
 
 function matchesSearch(side: MarketSide, normalizedQuery: string): boolean {
   if (!normalizedQuery) return true;
+  const searchableLabel =
+    side.surface === "player_props"
+      ? `${side.player_name} ${side.market} ${side.display_name} ${side.team ?? ""} ${side.opponent ?? ""}`
+      : side.team;
   const haystack = normalizeSearchQuery(
-    `${side.team} ${side.event} ${side.sportsbook} ${side.sport}`
+    `${searchableLabel} ${side.event} ${side.sportsbook} ${side.sport}`
   );
   return haystack.includes(normalizedQuery);
 }
