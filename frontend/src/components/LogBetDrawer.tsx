@@ -187,7 +187,7 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
         input?.focus();
       }, 300);
     }
-  }, [open]);
+  }, [open, initialValues]);
 
   // Smart Stake: auto-fill stake when drawer opens with scanner data.
   // Promos always get $25; standard +EV bets get the stealth-rounded Kelly amount.
@@ -208,7 +208,7 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
         }
       }
     }
-  }, [open]);
+  }, [open, initialValues]);
 
   // Parse numeric values - get signed values from SmartOddsInput refs.
   // Fallback to formState.odds so EV card and submit enable when drawer is prefilled from scanner before ref has updated.
@@ -245,17 +245,10 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
   );
 
   // Vig nudge: only relevant when we're using a vig estimate (not a scanner bet with true_prob)
-  const hasTrueProb = !!clvMeta.current.true_prob_at_entry;
-  const betterVig = effectiveVig - 0.01;
-  const evWithBetterVig = !hasTrueProb && betterVig > 0 ? calculateEVClient(
-    oddsNum,
-    stakeNum,
-    formState.promo_type,
-    boostPercentClamped,
-    payoutOverrideNum || undefined,
-    betterVig,
-  ) : ev;
-  const vigNudgeValue = evWithBetterVig.evTotal - ev.evTotal;
+  // const hasTrueProb = ... // Removed to fix lint error
+  // const betterVig = ... // Removed to fix lint error
+  // const evWithBetterVig = ... // Removed to fix lint error
+  // const vigNudgeValue = evWithBetterVig.evTotal - ev.evTotal; // Removed to fix lint error
 
   const invalidBoost = formState.promo_type === "boost_custom" && (isNaN(boostPercentRaw) || boostPercentNum < 0 || boostPercentNum > 300);
   const duplicateState = initialValues?.scanner_duplicate_state ?? "new";
@@ -273,7 +266,7 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
     !!formState.sport &&
     formState.odds.trim() !== "" &&
     stakeNum > 0;
-  const showVigNudge = calculatedVig === null && vigNudgeValue > 0.15 && isValid;
+  // Removed unused showVigNudge
 
   const handleLogBet = async (keepOpen: boolean) => {
     if (!isValid) return;
@@ -622,7 +615,7 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
                   className="h-10"
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  Override if the book's payout differs from calculated
+                  Override if the book&apos;s payout differs from calculated
                 </p>
               </div>
 
@@ -687,7 +680,7 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
               if (fairAmerican && fairProbPct) {
                 rows.push({
                   label: "Book vs Fair",
-                  value: `Book: ${bookAmerican} | Fair: ${fairAmerican} (${fairProbPct}%)`,
+                  value: `Book: ${bookAmerican} | Fair: ${fairAmerican} (${fairProbPct}%)`
                 });
               }
             } else if (isBoost) {
@@ -767,13 +760,15 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
                   </span>
                 </div>
                 {rows.map((row) => {
-                  let parsed: any = null;
+
+                  let parsed: unknown = null;
                   try {
                     parsed = JSON.parse(row.value);
                   } catch {
                     parsed = null;
                   }
-                  const isBoostRow = parsed && parsed.type === "boost";
+                  // If you need to check parsed.type, use type guards or cast after validation
+                  const isBoostRow = typeof parsed === "object" && parsed !== null && (parsed as { type?: string }).type === "boost";
 
                   return (
                     <div
@@ -877,7 +872,7 @@ function calculateEVClient(
   
   // Calculate win probability from UNBOOSTED odds (the true market)
   const winProbability = 1 / unboostedDecimal;
-  const fairProb = winProbability / (1 + vig);
+  // Removed unused fairProb
 
   let winPayout: number;
   let evTotal: number;

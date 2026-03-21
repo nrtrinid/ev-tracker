@@ -3,7 +3,7 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSummary, useBets, useBackendReadiness, useBalances } from "@/lib/hooks";
-import { cn } from "@/lib/utils";
+
 import { AlertTriangle } from "lucide-react";
 import { TopKpiCards } from "@/components/TopKpiCards";
 

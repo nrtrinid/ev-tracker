@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
@@ -25,9 +25,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EditBetModal } from "@/components/EditBetModal";
 import type { Bet, BetResult } from "@/lib/types";
 import { PROMO_TYPE_CONFIG } from "@/lib/types";
-import { formatCurrency, formatOdds, cn, formatRelativeTime, formatShortDate, formatFullDateTime, americanToDecimal, decimalToAmerican, calculateImpliedProb, calculateHoldFromOdds } from "@/lib/utils";
+import { formatCurrency, formatOdds, cn, formatRelativeTime, formatShortDate, formatFullDateTime, americanToDecimal, decimalToAmerican, calculateImpliedProb } from "@/lib/utils";
 import {
-  MARKET_VIG_DEFAULTS,
   SPORTSBOOK_BADGE_COLORS,
   SPORTSBOOK_TEXT_COLORS,
 } from "@/lib/sportsbook-config";
@@ -44,7 +43,7 @@ import {
   RotateCcw,
   History,
   Target,
-  Wallet,
+
   SlidersHorizontal,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -165,15 +164,8 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
   // Calculate implied probability
   const impliedProb = calculateImpliedProb(bet.odds_american);
   
-  // Calculate vig from opposing odds if present
-  const calculatedVig = bet.opposing_odds 
-    ? calculateHoldFromOdds(bet.odds_american, bet.opposing_odds)
-    : null;
-  
-  // Use calculated vig or default based on market
-  const displayVig = calculatedVig !== null 
-    ? calculatedVig 
-    : (MARKET_VIG_DEFAULTS[bet.market] || 0.045);
+
+
 
   return (
     <div className="border rounded-lg overflow-hidden flex card-hover bg-card">
@@ -858,7 +850,7 @@ export function BetList() {
   // Counts for the current sportsbook selection (before type filter, for accurate numbers)
   const booksWithBetType = bets?.filter(matchesSportsbook) || [];
   const pendingForBook = booksWithBetType.filter(b => b.result === "pending");
-  const settledForBook = booksWithBetType.filter(b => b.result !== "pending");
+
   const pendingCashForBook = pendingForBook.filter((b) => b.promo_type !== "bonus_bet");
 
   return (

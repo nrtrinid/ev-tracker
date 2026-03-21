@@ -14,10 +14,7 @@ import {
 import { useUpdateBet } from "@/lib/hooks";
 import type { Bet, PromoType } from "@/lib/types";
 import { SPORTSBOOKS, SPORTS, MARKETS, PROMO_TYPES, PROMO_TYPE_CONFIG } from "@/lib/types";
-import { 
-  cn, 
-  americanToDecimal,
-} from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -88,7 +85,7 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
 
   const oddsNum = oddsInputRef.current?.getSignedValue() || 0;
   const stakeNum = parseFloat(formData.stake) || 0;
-  const opposingOddsNum = opposingOddsInputRef.current?.getSignedValue() || 0;
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -154,7 +151,7 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
                   type="button"
                   variant={
                     formData.sportsbook === book
-                      ? (sportsbookVariants[book] as any)
+                      ? (sportsbookVariants[book] as string)
                       : "outline"
                   }
                   size="sm"

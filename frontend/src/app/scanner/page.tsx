@@ -13,7 +13,7 @@ import {
   applyScannerResultFilters,
   defaultScannerResultFilters,
   describeScannerResultFilters,
-  hasActiveScannerResultFilters,
+
   type ScannerRiskPreset,
   type ScannerTimePreset,
 } from "@/lib/scanner-filters";
@@ -71,12 +71,8 @@ const bookColors: Record<string, string> = {
 
 // ============ Helpers ============
 
-function calculateBoostedEV(side: MarketSide, boostPercent: number): number {
-  const baseProfit = side.book_decimal - 1;
-  const boostedProfit = baseProfit * (1 + boostPercent / 100);
-  const boostedDecimal = 1 + boostedProfit;
-  return (side.true_prob * boostedDecimal - 1) * 100;
-}
+
+// Removed unused calculateBoostedEV
 
 function minutesAgo(isoString: string): number {
   if (!isoString) return 0;
@@ -125,7 +121,7 @@ export default function ScannerPage() {
   const [hideLongshots, setHideLongshots] = useState(DEFAULT_RESULT_FILTERS.hideLongshots);
   const [hideAlreadyLogged, setHideAlreadyLogged] = useState(DEFAULT_RESULT_FILTERS.hideAlreadyLogged);
   const [riskPreset, setRiskPreset] = useState<ScannerRiskPreset>(DEFAULT_RESULT_FILTERS.riskPreset);
-  const [ageTick, setAgeTick] = useState(0);
+  // const [ageTick, setAgeTick] = useState(0); // Removed to fix lint error
   const showBackendHint = !!readiness && (readiness.status !== "ready" || !readiness.checks.scheduler_freshness);
   const backendHint = readiness?.status === "unreachable"
     ? "Scanner is reconnecting. Odds may be slightly delayed."
@@ -149,7 +145,7 @@ export default function ScannerPage() {
   const scanAgeMinutes = useMemo(() => {
     if (!scanData?.scanned_at) return null;
     return minutesAgo(scanData.scanned_at);
-  }, [scanData?.scanned_at, ageTick]);
+  }, [scanData?.scanned_at]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -286,27 +282,8 @@ export default function ScannerPage() {
     riskPreset,
   ]);
 
-  const hasActiveResultFilters = useMemo(() => {
-    return hasActiveScannerResultFilters({
-      activeLens,
-      filters: {
-        searchQuery,
-        timePreset,
-        edgeMinStandard,
-        hideLongshots,
-        hideAlreadyLogged,
-        riskPreset,
-      },
-    });
-  }, [
-    activeLens,
-    searchQuery,
-    timePreset,
-    edgeMinStandard,
-    hideLongshots,
-    hideAlreadyLogged,
-    riskPreset,
-  ]);
+
+// Removed unused hasActiveResultFilters
 
   const nullState = useMemo(() => {
     return classifyScannerNullState({
@@ -403,14 +380,8 @@ export default function ScannerPage() {
     setCustomBoostInput("");
   };
 
-  const resetResultFilters = () => {
-    setSearchQuery(DEFAULT_RESULT_FILTERS.searchQuery);
-    setTimePreset(DEFAULT_RESULT_FILTERS.timePreset);
-    setEdgeMinStandard(DEFAULT_RESULT_FILTERS.edgeMinStandard);
-    setHideLongshots(DEFAULT_RESULT_FILTERS.hideLongshots);
-    setHideAlreadyLogged(DEFAULT_RESULT_FILTERS.hideAlreadyLogged);
-    setRiskPreset(DEFAULT_RESULT_FILTERS.riskPreset);
-  };
+
+// Removed unused resetResultFilters
 
   const handleLogBet = (side: MarketSide) => {
     setDrawerInitialValues(

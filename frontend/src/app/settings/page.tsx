@@ -7,14 +7,13 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, formatCurrency } from "@/lib/utils";
 import { Plus, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, Target as TargetIcon } from "lucide-react";
-import { useTransactions, useCreateTransaction, useDeleteTransaction, useBalances, useSettings, useUpdateSettings } from "@/lib/hooks";
+import { useTransactions, useCreateTransaction, useBalances, useSettings, useUpdateSettings } from "@/lib/hooks";
 import { SPORTSBOOKS } from "@/lib/types";
-import type { TransactionType, Transaction } from "@/lib/types";
-import { toast } from "sonner";
+import type { TransactionType } from "@/lib/types";
 import { useKellySettings } from "@/lib/kelly-context";
 
 export default function SettingsPage() {
-  const { data: transactions, isLoading: txLoading } = useTransactions();
+  const { data: transactions } = useTransactions();
   const { data: balances } = useBalances();
   const { data: settings, isLoading: settingsLoading } = useSettings();
   const {
@@ -26,7 +25,6 @@ export default function SettingsPage() {
     setKellyMultiplier,
   } = useKellySettings();
   const createTransaction = useCreateTransaction();
-  const deleteTransaction = useDeleteTransaction();
   const updateSettings = useUpdateSettings();
 
   // Transaction form state
@@ -36,56 +34,9 @@ export default function SettingsPage() {
   const [txAmount, setTxAmount] = useState("");
   const [txNotes, setTxNotes] = useState("");
 
+
   // Settings form state
   const [kFactor, setKFactor] = useState<string>("");
-
-  const handleAddTransaction = async () => {
-    if (!txSportsbook || !txAmount || parseFloat(txAmount) <= 0) return;
-
-    await createTransaction.mutateAsync({
-      sportsbook: txSportsbook,
-      type: txType,
-      amount: parseFloat(txAmount),
-      notes: txNotes || undefined,
-    });
-
-    // Reset form
-    setTxSportsbook("");
-    setTxAmount("");
-    setTxNotes("");
-    setShowTxForm(false);
-  };
-
-  const handleDeleteTransaction = (tx: Transaction) => {
-    const txData = {
-      sportsbook: tx.sportsbook,
-      type: tx.type,
-      amount: tx.amount,
-      notes: tx.notes || undefined,
-      created_at: tx.created_at, // Restore original timestamp
-    };
-
-    deleteTransaction.mutate(tx.id, {
-      onSuccess: () => {
-        toast("Transaction deleted", {
-          description: `${tx.type === "deposit" ? "Deposit" : "Withdrawal"} of ${formatCurrency(tx.amount)} from ${tx.sportsbook}`,
-          duration: 5000,
-          action: {
-            label: "Undo",
-            onClick: () => {
-              createTransaction.mutate(txData, {
-                onSuccess: () => toast.success("Transaction restored"),
-                onError: () => toast.error("Failed to restore transaction"),
-              });
-            },
-          },
-        });
-      },
-      onError: () => {
-        toast.error("Failed to delete transaction");
-      },
-    });
-  };
 
   const handleUpdateKFactor = async () => {
     const value = parseFloat(kFactor);
@@ -97,8 +48,8 @@ export default function SettingsPage() {
     setKFactor("");
   };
 
-  const isLoading = txLoading || settingsLoading;
   const computedBankroll = (balances || []).reduce((sum, b) => sum + (b.balance || 0), 0);
+
   const safeNumber = (value: number | null | undefined, fallback: number) =>
     typeof value === "number" && Number.isFinite(value) ? value : fallback;
 
@@ -115,9 +66,8 @@ export default function SettingsPage() {
   return (
     <main className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-6 space-y-6 max-w-2xl">
-        {isLoading ? (
-          <div className="space-y-6">
-            {/* K-Factor Setting Skeleton */}
+        {settingsLoading ? (
+          <>
             <Card>
               <CardHeader className="pb-2">
                 <div className="flex items-center gap-2">
@@ -165,7 +115,7 @@ export default function SettingsPage() {
                 </div>
               </CardContent>
             </Card>
-          </div>
+          </>
         ) : (
           <>
             {/* K-Factor Setting */}
@@ -238,33 +188,12 @@ export default function SettingsPage() {
                   <div className="rounded-lg bg-muted p-3 space-y-2">
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Your Retention Stats</p>
                     <div className="grid grid-cols-2 gap-2 text-sm">
+
                       <div>
                         <p className="text-xs text-muted-foreground">Baseline</p>
                         <p className="font-mono font-semibold">{(baselineK * 100).toFixed(0)}%</p>
                       </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">Observed</p>
-                        <p className="font-mono font-semibold">
-                          {observedK !== null
-                            ? `${(observedK * 100).toFixed(1)}%`
-                            : "—"}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">Blend weight</p>
-                        <p className="font-mono font-semibold">{(blendWeight * 100).toFixed(0)}%</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">Effective k</p>
-                        <p className="font-mono font-semibold">{(effectiveK * 100).toFixed(1)}%</p>
-                      </div>
                     </div>
-                    <p className="text-xs text-muted-foreground pt-1">
-                      Sample: <span className="font-mono">${settledBonusStake.toFixed(0)}</span> in settled bonus-bet stake.
-                      {settings.k_factor_mode === "auto" && blendWeight === 0 && (
-                        <span className="ml-1">Reach ${minStakeForBlend} to start blending.</span>
-                      )}
-                    </p>
                   </div>
                 )}
               </CardContent>
@@ -531,26 +460,5 @@ export default function SettingsPage() {
         )}
       </div>
     </main>
-  );
-}
-
-function Target(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      {...props}
-    >
-      <circle cx="12" cy="12" r="10" />
-      <circle cx="12" cy="12" r="6" />
-      <circle cx="12" cy="12" r="2" />
-    </svg>
   );
 }

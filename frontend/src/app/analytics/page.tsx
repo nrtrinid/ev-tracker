@@ -11,37 +11,30 @@ import {
   SheetTitle,
   SheetClose,
 } from "@/components/ui/sheet";
-import { cn, formatCurrency, formatPercent, formatOdds } from "@/lib/utils";
-import { 
-  TrendingUp, 
-  TrendingDown, 
-  Trophy, 
-  Target, 
-  DollarSign,
-  BarChart3,
-  Activity,
+import { cn, formatCurrency, formatPercent } from "@/lib/utils";
+import {
+  Target,
   X,
   SlidersHorizontal,
-  Info
+  Info,
 } from "lucide-react";
 import { TopKpiCards } from "@/components/TopKpiCards";
 import { useQuery } from "@tanstack/react-query";
 import { getBets, getSummary, getBalances } from "@/lib/api";
 import { useBackendReadiness } from "@/lib/hooks";
-import { 
-  BarChart, 
-  Bar, 
-  XAxis, 
-  YAxis, 
-  Tooltip, 
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
   ResponsiveContainer,
   Cell,
-  LineChart,
+
   Line,
   CartesianGrid,
-  ComposedChart
+  ComposedChart,
 } from "recharts";
-import { SPORTSBOOK_CHART_COLORS } from "@/lib/sportsbook-config";
 import type { Bet } from "@/lib/types";
 
 // Filter options
@@ -210,6 +203,18 @@ function AnalyticsFilterBar({
   );
 }
 
+// Sportsbook colors for charts (authentic brand colors)
+const SPORTSBOOK_COLORS: Record<string, string> = {
+  DraftKings: "#4CBB17",
+  FanDuel: "#0E7ACA",
+  BetMGM: "#C5A562",
+  Caesars: "#C49A6C",
+  "ESPN Bet": "#ED174C",
+  Fanatics: "#0047BB",
+  "Hard Rock": "#FDB913",
+  bet365: "#00843D",
+};
+
 const CHART_COLORS = ["#4A7C59", "#C4A35A", "#6B5E4F", "#B85C38", "#8B7355", "#7A9E7E", "#D4C4A8", "#9B8A7B"];
 
 // Promo type chart colors (distinct hues for readability)
@@ -245,7 +250,7 @@ export default function AnalyticsPage() {
     setSportsbook("All Books");
   };
 
-  const { data: summary, isLoading: summaryLoading } = useQuery({
+  const { isLoading: summaryLoading } = useQuery({
     queryKey: ["summary"],
     queryFn: getSummary,
   });
@@ -342,7 +347,7 @@ export default function AnalyticsPage() {
   
   // Total stake risked (settled bets only for ROI calc)
   const totalSettledStake = settledBets.reduce((sum, b) => sum + b.stake, 0);
-  const totalPendingStake = pendingBets.reduce((sum, b) => sum + b.stake, 0);
+
   
   // Pending EV
   const pendingEV = pendingBets.reduce((sum, b) => sum + b.ev_total, 0);
@@ -370,7 +375,7 @@ export default function AnalyticsPage() {
         : null;
   
   // Calculate filtered totals
-  const filteredTotalEV = filteredBets.reduce((sum, b) => sum + b.ev_total, 0);
+
   const filteredRealProfit = settledBets.reduce((sum, b) => sum + (b.real_profit || 0), 0);
   
   // EV Conversion (Real Profit / Settled EV)
@@ -415,7 +420,7 @@ export default function AnalyticsPage() {
   // pollute the signal.
   const standardBets = filteredBets.filter(b => b.promo_type === "standard");
   const clvBets = standardBets.filter(b => b.clv_ev_percent !== null);
-  const clvTrackedCount = standardBets.filter(b => b.pinnacle_odds_at_entry !== null).length;
+  // const clvTrackedCount = standardBets.filter(b => b.pinnacle_odds_at_entry !== null).length; // Remove if unused
   const beatCloseCount = clvBets.filter(b => b.beat_close === true).length;
   const beatClosePct = clvBets.length > 0 ? (beatCloseCount / clvBets.length) * 100 : null;
   const avgCLV = clvBets.length > 0
@@ -462,7 +467,7 @@ export default function AnalyticsPage() {
         name: name.replace("ESPN Bet", "ESPN").replace("Hard Rock", "HR"),
         ev,
         profit: profitBySportsbook[name] || 0,
-        color: SPORTSBOOK_CHART_COLORS[name] || "#888",
+        color: SPORTSBOOK_COLORS[name] || "#888",
       }))
       .sort((a, b) => b.ev - a.ev);
   }, [filteredBets]);

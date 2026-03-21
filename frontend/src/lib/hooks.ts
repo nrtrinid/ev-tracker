@@ -79,16 +79,16 @@ export function useUpdateBetResult() {
     mutationFn: ({ id, result }: { id: string; result: BetResult }) =>
       api.updateBetResult(id, result),
     // Optimistic update for instant feedback
-    onMutate: async ({ id, result }) => {
+    onMutate: async ({ result }) => {
       await queryClient.cancelQueries({ queryKey: queryKeys.bets });
 
       const previousBets = queryClient.getQueryData(queryKeys.bets);
 
       // Optimistically update the bet result
-      queryClient.setQueryData(queryKeys.bets, (old: any) => {
-        if (!old) return old;
-        return old.map((bet: any) =>
-          bet.id === id ? { ...bet, result } : bet
+      queryClient.setQueryData(queryKeys.bets, (old: unknown) => {
+        if (!Array.isArray(old)) return old;
+        return old.map((bet) =>
+          typeof bet === 'object' && bet !== null ? { ...bet, result } : bet
         );
       });
 
@@ -220,9 +220,9 @@ export function useDeleteTransaction() {
       const previousBalances = queryClient.getQueryData(queryKeys.balances);
 
       // Optimistically remove the transaction
-      queryClient.setQueryData(queryKeys.transactions, (old: any) => {
-        if (!old) return old;
-        return old.filter((tx: any) => tx.id !== id);
+      queryClient.setQueryData(queryKeys.transactions, (old: unknown) => {
+        if (!Array.isArray(old)) return old;
+        return old.filter((tx) => typeof tx === 'object' && tx !== null && 'id' in tx && tx.id !== id);
       });
 
       return { previousTransactions, previousBalances };

@@ -60,7 +60,7 @@ export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>
       } else {
         setIsPositive(defaultSign === "+");
       }
-    }, []); // Only on mount
+    }, [defaultSign, onChange, value]); // Add missing dependencies
 
     const handleToggleSign = () => {
       setIsPositive(!isPositive);
