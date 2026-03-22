@@ -138,6 +138,34 @@ def test_update_clv_snapshots_falls_back_to_time_team_when_id_misses():
     assert db.rows[0]["pinnacle_odds_at_close"] == 140
 
 
+def test_update_clv_snapshots_does_not_overwrite_existing_close():
+    mod = _reload_odds_api()
+    db = _DB([
+        {
+            "id": 25,
+            "result": "pending",
+            "clv_team": "Team Locked",
+            "commence_time": "2026-03-18T03:30:00Z",
+            "clv_event_id": "evt_locked",
+            "pinnacle_odds_at_close": 180,
+        }
+    ])
+
+    sides = [
+        {
+            "event_id": "evt_locked",
+            "commence_time": "2026-03-18T03:30:00Z",
+            "team": "Team Locked",
+            "pinnacle_odds": 3208,
+        }
+    ]
+
+    updated = mod.update_clv_snapshots(sides, db)
+    assert updated == 0
+    assert db.rows[0]["pinnacle_odds_at_close"] == 180
+    assert db.updates == []
+
+
 @pytest.mark.asyncio
 async def test_run_jit_clv_snatcher_prefers_event_id(monkeypatch):
     mod = _reload_odds_api()
