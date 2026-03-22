@@ -3,6 +3,7 @@ import os
 import types
 from pathlib import Path
 
+import httpx
 import pytest
 
 
@@ -232,25 +233,347 @@ def test_scan_latest_duplicate_state_contract_shape(auth_client, auth_headers, m
 
 
 @pytest.mark.integration
-def test_scan_markets_rejects_hidden_surface(auth_client, auth_headers):
+def test_scan_markets_accepts_player_props_surface(auth_client, auth_headers, monkeypatch):
+    import main
+    import services.player_props as player_props
+
+    async def _fake_get_cached_or_scan_player_props(_sport: str, source: str = "manual_scan"):
+        assert source == "manual_scan"
+        return {
+            "surface": "player_props",
+            "sides": [
+                {
+                    "surface": "player_props",
+                    "event_id": "evt-123",
+                    "market_key": "player_points",
+                    "selection_key": "evt-123|player_points|nikola jokic|over:24.5",
+                    "sportsbook": "FanDuel",
+                    "sportsbook_deeplink_url": "https://sportsbook.example/fd/event/evt-123",
+                    "sport": "basketball_nba",
+                    "event": "Nuggets @ Suns",
+                    "commence_time": "2026-03-20T18:00:00Z",
+                    "market": "player_points",
+                    "player_name": "Nikola Jokic",
+                    "participant_id": None,
+                    "team": "Nuggets",
+                    "opponent": "Suns",
+                    "selection_side": "over",
+                    "line_value": 24.5,
+                    "display_name": "Nikola Jokic Over 24.5",
+                    "reference_odds": -108,
+                    "reference_source": "market_median",
+                    "reference_bookmakers": ["bovada", "betmgm"],
+                    "book_odds": 105,
+                    "true_prob": 0.52,
+                    "base_kelly_fraction": 0.03,
+                    "book_decimal": 2.05,
+                    "ev_percentage": 6.6,
+                    "scanner_duplicate_state": "new",
+                    "best_logged_odds_american": None,
+                    "current_odds_american": 105,
+                    "matched_pending_bet_id": None,
+                }
+            ],
+            "events_fetched": 1,
+            "events_with_both_books": 1,
+            "api_requests_remaining": "498",
+            "fetched_at": 1770000000,
+        }
+
+    fake_db_state = {}
+    monkeypatch.setattr(main, "get_db", lambda: _FakeDB(fake_db_state), raising=True)
+    monkeypatch.setattr(main, "_retry_supabase", lambda f: f(), raising=True)
+    monkeypatch.setattr(main, "_annotate_sides_with_duplicate_state", lambda _db, _uid, sides: sides, raising=True)
+    monkeypatch.setattr(player_props, "get_cached_or_scan_player_props", _fake_get_cached_or_scan_player_props, raising=True)
+
     resp = auth_client.get(
         "/api/scan-markets",
-        params={"surface": "player_props"},
+        params={"surface": "player_props", "sport": "basketball_nba"},
         headers=auth_headers,
     )
-    assert resp.status_code == 400
-    assert "Unsupported surface" in str(resp.json().get("detail"))
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["surface"] == "player_props"
+    assert body["sides"][0]["reference_odds"] == -108
+    assert body["sides"][0]["reference_source"] == "market_median"
 
 
 @pytest.mark.integration
-def test_scan_latest_rejects_hidden_surface(auth_client, auth_headers):
+def test_scan_latest_accepts_player_props_surface(auth_client, auth_headers, monkeypatch):
+    import main
+
+    payload = {
+        "surface": "player_props",
+        "sport": "basketball_nba",
+        "sides": [
+            {
+                "surface": "player_props",
+                "event_id": "evt-123",
+                "market_key": "player_points",
+                "selection_key": "evt-123|player_points|nikola jokic|over:24.5",
+                "sportsbook": "FanDuel",
+                "sportsbook_deeplink_url": "https://sportsbook.example/fd/event/evt-123",
+                "sport": "basketball_nba",
+                "event": "Nuggets @ Suns",
+                "commence_time": "2026-03-20T18:00:00Z",
+                "market": "player_points",
+                "player_name": "Nikola Jokic",
+                "participant_id": None,
+                "team": "Nuggets",
+                "opponent": "Suns",
+                "selection_side": "over",
+                "line_value": 24.5,
+                "display_name": "Nikola Jokic Over 24.5",
+                "reference_odds": -108,
+                "reference_source": "market_median",
+                "reference_bookmakers": ["bovada", "betmgm"],
+                "book_odds": 105,
+                "true_prob": 0.52,
+                "base_kelly_fraction": 0.03,
+                "book_decimal": 2.05,
+                "ev_percentage": 6.6,
+                "scanner_duplicate_state": "new",
+                "best_logged_odds_american": None,
+                "current_odds_american": 105,
+                "matched_pending_bet_id": None,
+            }
+        ],
+        "events_fetched": 1,
+        "events_with_both_books": 1,
+        "api_requests_remaining": "498",
+        "scanned_at": "2026-03-20T17:55:00Z",
+    }
+    fake_db_state = {"select_data": [{"payload": payload}]}
+    monkeypatch.setattr(main, "get_db", lambda: _FakeDB(fake_db_state), raising=True)
+    monkeypatch.setattr(main, "_retry_supabase", lambda f: f(), raising=True)
+    monkeypatch.setattr(main, "_annotate_sides_with_duplicate_state", lambda _db, _uid, sides: sides, raising=True)
+
     resp = auth_client.get(
         "/api/scan-latest",
         params={"surface": "player_props"},
         headers=auth_headers,
     )
-    assert resp.status_code == 400
-    assert "Unsupported surface" in str(resp.json().get("detail"))
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["surface"] == "player_props"
+    assert body["sides"][0]["reference_odds"] == -108
+
+
+@pytest.mark.integration
+def test_player_props_manual_scan_end_to_end_contract(auth_client, auth_headers, monkeypatch):
+    import main
+    import services.player_props as player_props
+
+    fake_db_state = {}
+    monkeypatch.setattr(main, "get_db", lambda: _FakeDB(fake_db_state), raising=True)
+    monkeypatch.setattr(main, "_retry_supabase", lambda f: f(), raising=True)
+    monkeypatch.setattr(main, "_annotate_sides_with_duplicate_state", lambda _db, _uid, sides: sides, raising=True)
+
+    async def _fake_scoreboard():
+        return {
+            "events": [
+                {
+                    "id": "401810887",
+                    "competitions": [
+                        {
+                            "broadcasts": [{"names": ["NBA TV"]}],
+                            "competitors": [
+                                {
+                                    "homeAway": "home",
+                                    "team": {"displayName": "Denver Nuggets", "id": "7"},
+                                },
+                                {
+                                    "homeAway": "away",
+                                    "team": {"displayName": "Portland Trail Blazers", "id": "22"},
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+
+    async def _fake_fetch_events(_sport: str, source: str = "unknown"):
+        assert source == "manual_scan_props_events"
+        request = httpx.Request("GET", "https://example.test/events")
+        response = httpx.Response(200, request=request, headers={"x-requests-remaining": "99"})
+        return [
+            {
+                "id": "odds-evt-1",
+                "home_team": "Denver Nuggets",
+                "away_team": "Portland Trail Blazers",
+                "commence_time": "2099-03-21T03:00:00Z",
+            }
+        ], response
+
+    async def _fake_fetch_prop_event(*, sport: str, event_id: str, markets: list[str], source: str):
+        assert sport == "basketball_nba"
+        assert event_id == "odds-evt-1"
+        assert markets == ["player_points"]
+        assert source == "manual_scan"
+        request = httpx.Request("GET", f"https://example.test/{event_id}")
+        response = httpx.Response(200, request=request, headers={"x-requests-remaining": "98"})
+        return {
+            "id": event_id,
+            "home_team": "Denver Nuggets",
+            "away_team": "Portland Trail Blazers",
+            "commence_time": "2099-03-21T03:00:00Z",
+            "bookmakers": [
+                {
+                    "key": "bovada",
+                    "markets": [
+                        {
+                            "key": "player_points",
+                            "outcomes": [
+                                {"name": "Over", "description": "Christian Braun (Denver Nuggets)", "point": 17.5, "price": -110},
+                                {"name": "Under", "description": "Christian Braun (Denver Nuggets)", "point": 17.5, "price": -110},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "betonlineag",
+                    "markets": [
+                        {
+                            "key": "player_points",
+                            "outcomes": [
+                                {"name": "Over", "description": "Christian Braun (Denver Nuggets)", "point": 17.5, "price": -108},
+                                {"name": "Under", "description": "Christian Braun (Denver Nuggets)", "point": 17.5, "price": -112},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "fanduel",
+                    "link": "https://sportsbook.example/fd/christian-braun",
+                    "markets": [
+                        {
+                            "key": "player_points",
+                            "outcomes": [
+                                {"name": "Over", "description": "Christian Braun (Denver Nuggets)", "point": 17.5, "price": 105},
+                                {"name": "Under", "description": "Christian Braun (Denver Nuggets)", "point": 17.5, "price": -125},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }, response
+
+    async def _fake_build_matchup_player_lookup(**_kwargs):
+        return {
+            "christianbraun": {"team": "Denver Nuggets", "participant_id": "4431767"},
+        }
+
+    player_props._props_cache.clear()
+    player_props._props_locks.clear()
+    monkeypatch.setattr(player_props, "get_scan_cache", lambda _slot: None, raising=True)
+    monkeypatch.setattr(player_props, "set_scan_cache", lambda *_args, **_kwargs: None, raising=True)
+    monkeypatch.setattr(player_props, "fetch_nba_scoreboard_window", _fake_scoreboard, raising=True)
+    monkeypatch.setattr(player_props, "fetch_events", _fake_fetch_events, raising=True)
+    monkeypatch.setattr(player_props, "_fetch_prop_market_for_event", _fake_fetch_prop_event, raising=True)
+    monkeypatch.setattr(player_props, "build_matchup_player_lookup", _fake_build_matchup_player_lookup, raising=True)
+    monkeypatch.setattr(player_props, "get_player_prop_markets", lambda: ["player_points"], raising=True)
+    monkeypatch.setattr(player_props, "get_player_prop_min_reference_bookmakers", lambda: 2, raising=True)
+
+    scan_resp = auth_client.get(
+        "/api/scan-markets",
+        params={"surface": "player_props", "sport": "basketball_nba"},
+        headers=auth_headers,
+    )
+
+    assert scan_resp.status_code == 200, scan_resp.text
+    scan_body = scan_resp.json()
+    _assert_shape_like(
+        scan_body,
+        {
+            "surface": "player_props",
+            "sport": "basketball_nba",
+            "sides": [
+                {
+                    "surface": "player_props",
+                    "event_id": "odds-evt-1",
+                    "market_key": "player_points",
+                    "selection_key": "odds-evt-1|player_points|christian braun|over:17.5",
+                    "sportsbook": "FanDuel",
+                    "sportsbook_deeplink_url": "https://sportsbook.example/fd/christian-braun",
+                    "sport": "basketball_nba",
+                    "event": "Portland Trail Blazers @ Denver Nuggets",
+                    "commence_time": "2099-03-21T03:00:00Z",
+                    "market": "player_points",
+                    "player_name": "Christian Braun",
+                    "participant_id": "4431767",
+                    "team": "Denver Nuggets",
+                    "opponent": "Portland Trail Blazers",
+                    "selection_side": "over",
+                    "line_value": 17.5,
+                    "display_name": "Christian Braun Over 17.5",
+                    "reference_odds": -108,
+                    "reference_source": "market_median",
+                    "reference_bookmakers": ["bovada", "betonlineag"],
+                    "reference_bookmaker_count": 2,
+                    "confidence_label": "solid",
+                    "book_odds": 105,
+                    "true_prob": 0.518,
+                    "base_kelly_fraction": 0.047,
+                    "book_decimal": 2.05,
+                    "ev_percentage": 6.19,
+                }
+            ],
+            "events_fetched": 1,
+            "events_with_both_books": 1,
+            "api_requests_remaining": "98",
+            "scanned_at": "2026-03-20T17:55:00Z",
+            "diagnostics": {
+                "scan_mode": "curated_sniper",
+                "scoreboard_event_count": 1,
+                "odds_event_count": 1,
+                "curated_games": [
+                    {
+                        "event_id": "401810887",
+                        "away_team": "Portland Trail Blazers",
+                        "home_team": "Denver Nuggets",
+                        "selection_reason": "nba_tv",
+                        "broadcasts": ["NBA TV"],
+                        "odds_event_id": "odds-evt-1",
+                        "commence_time": "2099-03-21T03:00:00Z",
+                        "matched": True,
+                    }
+                ],
+                "matched_event_count": 1,
+                "unmatched_game_count": 0,
+                "events_fetched": 1,
+                "events_skipped_pregame": 0,
+                "events_with_results": 1,
+                "candidate_sides_count": 6,
+                "quality_gate_filtered_count": 0,
+                "quality_gate_min_reference_bookmakers": 2,
+                "sides_count": 6,
+                "markets_requested": ["player_points"],
+            },
+        },
+    )
+
+    upsert = fake_db_state["last_upsert"]
+    latest_payload = upsert["payload"]["payload"]
+    assert latest_payload["surface"] == "player_props"
+    assert latest_payload["diagnostics"]["quality_gate_min_reference_bookmakers"] == 2
+    assert latest_payload["sides"][0]["participant_id"] == "4431767"
+
+    fake_db_state["select_data"] = [{"payload": latest_payload}]
+    latest_resp = auth_client.get(
+        "/api/scan-latest",
+        params={"surface": "player_props"},
+        headers=auth_headers,
+    )
+
+    assert latest_resp.status_code == 200
+    latest_body = latest_resp.json()
+    assert latest_body["surface"] == "player_props"
+    assert latest_body["events_fetched"] == 1
+    assert latest_body["diagnostics"]["candidate_sides_count"] == 6
+    assert latest_body["sides"][0]["reference_bookmaker_count"] == 2
 
 
 @pytest.mark.integration

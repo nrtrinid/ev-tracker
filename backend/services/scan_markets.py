@@ -42,6 +42,7 @@ def build_single_sport_manual_scan_outputs(
         "events_with_both_books": result["events_with_both_books"],
         "api_requests_remaining": result.get("api_requests_remaining"),
         "scanned_at": scanned_at,
+        "diagnostics": result.get("diagnostics"),
     }
     persist_payload = {
         "surface": surface,
@@ -51,6 +52,7 @@ def build_single_sport_manual_scan_outputs(
         "events_with_both_books": result["events_with_both_books"],
         "api_requests_remaining": result.get("api_requests_remaining"),
         "scanned_at": scanned_at,
+        "diagnostics": result.get("diagnostics"),
     }
     ops_status_payload = {
         "surface": surface,
@@ -76,6 +78,7 @@ def build_all_sports_manual_scan_outputs(
     total_with_both: int,
     min_remaining: str | None,
     scanned_at: str | None,
+    diagnostics: dict[str, Any] | None,
     annotate_sides: Callable[[list[dict[str, Any]]], list[dict[str, Any]]],
 ) -> dict[str, Any]:
     normalized_sides = _with_surface(surface, all_sides)
@@ -88,6 +91,7 @@ def build_all_sports_manual_scan_outputs(
         "events_with_both_books": total_with_both,
         "api_requests_remaining": min_remaining,
         "scanned_at": scanned_at,
+        "diagnostics": diagnostics,
     }
     persist_payload = {
         "surface": surface,
@@ -97,6 +101,7 @@ def build_all_sports_manual_scan_outputs(
         "events_with_both_books": total_with_both,
         "api_requests_remaining": min_remaining,
         "scanned_at": scanned_at,
+        "diagnostics": diagnostics,
     }
     ops_status_payload = {
         "surface": surface,
@@ -153,6 +158,7 @@ async def aggregate_manual_scan_all_sports(
     total_with_both = 0
     min_remaining: str | None = None
     oldest_fetched: float | None = None
+    diagnostics: dict[str, Any] | None = None
 
     for sport in sports_to_scan:
         try:
@@ -178,12 +184,16 @@ async def aggregate_manual_scan_all_sports(
         if ft is not None:
             oldest_fetched = ft if oldest_fetched is None else min(oldest_fetched, ft)
 
+        if diagnostics is None and isinstance(result.get("diagnostics"), dict):
+            diagnostics = result["diagnostics"]
+
     return {
         "all_sides": all_sides,
         "total_events": total_events,
         "total_with_both": total_with_both,
         "min_remaining": min_remaining,
         "oldest_fetched": oldest_fetched,
+        "diagnostics": diagnostics,
     }
 
 
@@ -226,5 +236,6 @@ async def run_all_sports_manual_scan(
         total_with_both=aggregate["total_with_both"],
         min_remaining=aggregate["min_remaining"],
         scanned_at=scanned_at,
+        diagnostics=aggregate.get("diagnostics"),
         annotate_sides=annotate_sides,
     )

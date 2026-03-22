@@ -378,6 +378,80 @@ async def fetch_odds(
         raise
 
 
+async def fetch_events(
+    sport: str = "basketball_nba",
+    *,
+    source: str = "unknown",
+) -> tuple[list[dict], httpx.Response]:
+    """
+    Fetch the upcoming events list for a sport.
+
+    This endpoint returns event ids without market odds and is the cheapest
+    source of truth for mapping ESPN schedule entries to Odds API event ids.
+    """
+    if not ODDS_API_KEY:
+        raise ValueError("ODDS_API_KEY not set in environment")
+
+    url = f"{ODDS_API_BASE}/sports/{sport}/events"
+    started = time.monotonic()
+    endpoint_value = f"/sports/{sport}/events"
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url, params={"apiKey": ODDS_API_KEY})
+            resp.raise_for_status()
+            duration_ms = (time.monotonic() - started) * 1000
+            remaining = resp.headers.get("x-requests-remaining") or resp.headers.get("x-request-remaining")
+            _append_odds_api_activity(
+                source=source,
+                endpoint=endpoint_value,
+                sport=sport,
+                cache_hit=False,
+                outbound_call_made=True,
+                status_code=resp.status_code,
+                duration_ms=duration_ms,
+                api_requests_remaining=remaining,
+                error_type=None,
+                error_message=None,
+            )
+            data = resp.json()
+            return (data if isinstance(data, list) else []), resp
+    except httpx.HTTPStatusError as e:
+        duration_ms = (time.monotonic() - started) * 1000
+        status_code = e.response.status_code if e.response is not None else None
+        remaining = None
+        if e.response is not None:
+            remaining = e.response.headers.get("x-requests-remaining") or e.response.headers.get("x-request-remaining")
+        _append_odds_api_activity(
+            source=source,
+            endpoint=endpoint_value,
+            sport=sport,
+            cache_hit=False,
+            outbound_call_made=True,
+            status_code=status_code,
+            duration_ms=duration_ms,
+            api_requests_remaining=remaining,
+            error_type=type(e).__name__,
+            error_message=str(e),
+        )
+        raise
+    except Exception as e:
+        duration_ms = (time.monotonic() - started) * 1000
+        _append_odds_api_activity(
+            source=source,
+            endpoint=endpoint_value,
+            sport=sport,
+            cache_hit=False,
+            outbound_call_made=True,
+            status_code=None,
+            duration_ms=duration_ms,
+            api_requests_remaining=None,
+            error_type=type(e).__name__,
+            error_message=str(e),
+        )
+        raise
+
+
 def _extract_bookmaker_meta(bookmakers: list[dict], book_key: str) -> tuple[dict | None, str | None]:
     """Pull h2h outcomes + optional bookmaker deep link for a bookmaker key."""
     for bm in bookmakers:

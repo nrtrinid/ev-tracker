@@ -234,7 +234,11 @@ export interface PlayerPropMarketSide {
   selection_side: string;
   line_value?: number | null;
   display_name: string;
-  pinnacle_odds: number;
+  reference_odds: number;
+  reference_source: string;
+  reference_bookmakers: string[];
+  reference_bookmaker_count?: number | null;
+  confidence_label?: string | null;
   book_odds: number;
   true_prob: number;
   base_kelly_fraction: number;
@@ -248,6 +252,34 @@ export interface PlayerPropMarketSide {
 
 export type MarketSide = StraightBetMarketSide | PlayerPropMarketSide;
 
+export interface PlayerPropDiagnosticGame {
+  event_id?: string | null;
+  away_team: string;
+  home_team: string;
+  selection_reason: string;
+  broadcasts: string[];
+  odds_event_id?: string | null;
+  commence_time?: string | null;
+  matched: boolean;
+}
+
+export interface PlayerPropScanDiagnostics {
+  scan_mode: string;
+  scoreboard_event_count: number;
+  odds_event_count: number;
+  curated_games: PlayerPropDiagnosticGame[];
+  matched_event_count: number;
+  unmatched_game_count: number;
+  events_fetched: number;
+  events_skipped_pregame: number;
+  events_with_results: number;
+  candidate_sides_count: number;
+  quality_gate_filtered_count: number;
+  quality_gate_min_reference_bookmakers: number;
+  sides_count: number;
+  markets_requested: string[];
+}
+
 export interface ScanResult {
   surface: ScannerSurface;
   sport: string;
@@ -256,6 +288,7 @@ export interface ScanResult {
   events_with_both_books: number;
   api_requests_remaining: string | null;
   scanned_at?: string | null;
+  diagnostics?: PlayerPropScanDiagnostics | null;
 }
 
 export interface BackendReadiness {

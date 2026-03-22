@@ -15,6 +15,35 @@ from services.scan_markets import (
 )
 
 
+VALID_PROP_DIAGNOSTICS = {
+    "scan_mode": "curated_sniper",
+    "scoreboard_event_count": 10,
+    "odds_event_count": 5,
+    "curated_games": [
+        {
+            "event_id": "espn-1",
+            "away_team": "Boston Celtics",
+            "home_team": "Los Angeles Lakers",
+            "selection_reason": "national_tv",
+            "broadcasts": ["ESPN"],
+            "odds_event_id": "odds-1",
+            "commence_time": "2026-03-19T00:00:00Z",
+            "matched": True,
+        }
+    ],
+    "matched_event_count": 1,
+    "unmatched_game_count": 0,
+    "events_fetched": 1,
+    "events_skipped_pregame": 0,
+    "events_with_results": 1,
+    "candidate_sides_count": 14,
+    "quality_gate_filtered_count": 2,
+    "quality_gate_min_reference_bookmakers": 2,
+    "sides_count": 12,
+    "markets_requested": ["player_points"],
+}
+
+
 def test_manual_scan_sports_for_env_switches_in_development():
     supported = ["basketball_nba", "basketball_ncaab"]
     assert manual_scan_sports_for_env(environment="development", supported_sports=supported) == ["basketball_nba"]
@@ -68,6 +97,7 @@ def test_build_single_sport_manual_scan_outputs_builds_response_and_persist_payl
         "events_fetched": 4,
         "events_with_both_books": 3,
         "api_requests_remaining": "87",
+        "diagnostics": VALID_PROP_DIAGNOSTICS,
     }
 
     out = build_single_sport_manual_scan_outputs(
@@ -85,6 +115,8 @@ def test_build_single_sport_manual_scan_outputs_builds_response_and_persist_payl
     ]
     assert out["persist_payload"]["sides"] == [{"surface": "straight_bets", "id": "a"}]
     assert out["ops_status_payload"]["total_sides"] == 1
+    assert out["response_payload"]["diagnostics"] == VALID_PROP_DIAGNOSTICS
+    assert out["persist_payload"]["diagnostics"] == VALID_PROP_DIAGNOSTICS
 
 
 def test_build_all_sports_manual_scan_outputs_builds_response_and_persist_payloads():
@@ -94,6 +126,7 @@ def test_build_all_sports_manual_scan_outputs_builds_response_and_persist_payloa
         total_with_both=4,
         min_remaining="77",
         scanned_at="2026-03-19T00:00:00Z",
+        diagnostics=VALID_PROP_DIAGNOSTICS,
         annotate_sides=lambda sides: sides + [{"id": "annotated"}],
     )
 
@@ -105,6 +138,7 @@ def test_build_all_sports_manual_scan_outputs_builds_response_and_persist_payloa
     assert out["persist_payload"]["sides"] == [{"surface": "straight_bets", "id": "a"}]
     assert out["ops_status_payload"]["total_sides"] == 1
     assert out["ops_status_payload"]["events_fetched"] == 5
+    assert out["response_payload"]["diagnostics"] == VALID_PROP_DIAGNOSTICS
 
 
 def test_scanned_at_from_fetched_timestamp_handles_none_and_value():
@@ -122,6 +156,7 @@ async def test_run_single_sport_manual_scan_builds_bundle_with_annotated_sides()
             "events_with_both_books": 1,
             "api_requests_remaining": "99",
             "fetched_at": 0.0,
+            "diagnostics": VALID_PROP_DIAGNOSTICS,
         }
 
     out = await run_single_sport_manual_scan(
@@ -136,6 +171,7 @@ async def test_run_single_sport_manual_scan_builds_bundle_with_annotated_sides()
     ]
     assert out["persist_payload"]["sides"] == [{"surface": "straight_bets", "id": "a"}]
     assert out["response_payload"]["scanned_at"] == "1970-01-01T00:00:00Z"
+    assert out["response_payload"]["diagnostics"] == VALID_PROP_DIAGNOSTICS
 
 
 @pytest.mark.asyncio
@@ -150,6 +186,7 @@ async def test_run_all_sports_manual_scan_development_uses_only_nba():
             "events_with_both_books": 1,
             "api_requests_remaining": "80",
             "fetched_at": 10.0,
+            "diagnostics": VALID_PROP_DIAGNOSTICS,
         }
 
     out = await run_all_sports_manual_scan(
@@ -162,6 +199,7 @@ async def test_run_all_sports_manual_scan_development_uses_only_nba():
     assert called == ["basketball_nba"]
     assert out["ops_status_payload"]["events_fetched"] == 1
     assert out["persist_payload"]["sport"] == "all"
+    assert out["response_payload"]["diagnostics"] == VALID_PROP_DIAGNOSTICS
 
 
 def test_apply_manual_scan_bundle_runs_status_piggyback_and_persist():

@@ -541,9 +541,7 @@ def _get_environment() -> str:
 
 def _scanner_supported_sports(surface: str) -> list[str]:
     if surface == "player_props":
-        from services.odds_api import SUPPORTED_SPORTS
-
-        return SUPPORTED_SPORTS
+        return ["basketball_nba"]
     from services.odds_api import SUPPORTED_SPORTS
 
     return SUPPORTED_SPORTS
@@ -589,6 +587,7 @@ def _persist_latest_full_scan(
     events_with_both_books: int,
     api_requests_remaining: str | None,
     scanned_at: str | None,
+    diagnostics: dict | None = None,
     retry_supabase,
     log_event,
 ):
@@ -601,6 +600,7 @@ def _persist_latest_full_scan(
         events_with_both_books=events_with_both_books,
         api_requests_remaining=api_requests_remaining,
         scanned_at=scanned_at,
+        diagnostics=diagnostics,
         retry_supabase=retry_supabase,
         log_event=log_event,
     )
@@ -988,6 +988,8 @@ async def _run_scheduled_scan_job():
     """
     Scheduled scan job: warms the same cache used by GET /api/scan-markets by
     calling services.odds_api.get_cached_or_scan across SUPPORTED_SPORTS.
+
+    Player props are intentionally excluded here and remain manual-only.
     """
     from services.odds_api import get_cached_or_scan, SUPPORTED_SPORTS
 
@@ -1379,14 +1381,14 @@ def compute_k_user(db, user_id: str) -> dict:
     Compute observed bonus retention from settled bonus bets.
     Returns k_obs (None if no data), bonus_stake_settled.
     """
+    created_after = datetime.now(UTC) - timedelta(days=999)
     try:
         res = _retry_supabase(lambda: (
             db.table("bets")
-            .select("stake, result, win_payout, payout_override, promo_type")
+            # Keep this query simple and filter in Python. The narrower PostgREST
+            # filter shape here has produced noisy 400s in local auth contexts.
+            .select("*")
             .eq("user_id", user_id)
-            .eq("promo_type", "bonus_bet")
-            .gte("created_at", (datetime.now(UTC) - timedelta(days=999)).isoformat())  # All settled bets
-            .neq("result", "pending")  # Exclude pending bets
             .execute()
         ))
         rows = res.data or []
@@ -1396,8 +1398,20 @@ def compute_k_user(db, user_id: str) -> dict:
     total_stake = 0.0
     total_profit = 0.0
     for row in rows:
+        if row.get("promo_type") != "bonus_bet":
+            continue
         stake = float(row.get("stake") or 0)
         result = row.get("result")
+        if result == "pending":
+            continue
+        created_at = row.get("created_at")
+        if created_at:
+            try:
+                created_dt = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+                if created_dt < created_after:
+                    continue
+            except Exception:
+                pass
         win_payout = float(row.get("payout_override") or row.get("win_payout") or 0)
         total_stake += stake
         if result == "win":

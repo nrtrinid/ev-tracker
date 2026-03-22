@@ -18,7 +18,7 @@ from services.scan_markets import (
 router = APIRouter()
 
 
-SUPPORTED_SURFACES = {"straight_bets"}
+SUPPORTED_SURFACES = {"straight_bets", "player_props"}
 
 
 async def scan_impl(

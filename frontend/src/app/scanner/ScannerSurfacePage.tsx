@@ -22,6 +22,7 @@ import { useKellySettings } from "@/lib/kelly-context";
 import {
   classifyScannerNullState,
   describeActiveResultFilters,
+  isPlayerPropScanDiagnostics,
 } from "@/lib/scanner-contract";
 
 import { ScannerHeader } from "./components/ScannerHeader";
@@ -31,6 +32,7 @@ import { ScannerResultsPane } from "./components/ScannerResultsPane";
 import { ScannerScopeBar } from "./components/ScannerScopeBar";
 import { ScannerStatusBar } from "./components/ScannerStatusBar";
 import { ScannerPreScanEmptyState } from "./components/ScannerPreScanEmptyState";
+import { PlayerPropDiagnosticsPanel } from "./components/PlayerPropDiagnosticsPanel";
 import { getScannerSurface } from "./scanner-surfaces";
 import { rankScannerSidesByLens } from "./scanner-lenses";
 import type { ScannerLens } from "./scanner-ui-model";
@@ -46,13 +48,17 @@ const SPORT_KEY_TO_DISPLAY: Record<string, string> = {
   basketball_ncaab: "NCAAB",
 };
 
-const AVAILABLE_BOOKS = ["DraftKings", "FanDuel", "BetMGM", "Caesars", "ESPN Bet"];
-const DEFAULT_SELECTED_BOOKS = ["DraftKings", "FanDuel"];
+const STRAIGHT_BET_BOOKS = ["DraftKings", "FanDuel", "BetMGM", "Caesars", "ESPN Bet"];
+const PLAYER_PROP_BOOKS = ["Bovada", "BetOnline.ag", "DraftKings", "FanDuel", "BetMGM", "Caesars"];
+const DEFAULT_STRAIGHT_BET_BOOKS = ["DraftKings", "FanDuel"];
+const DEFAULT_PLAYER_PROP_BOOKS = ["DraftKings", "FanDuel", "BetMGM", "Caesars", "Bovada", "BetOnline.ag"];
 const LONGSHOT_MAX_AMERICAN = 500;
 const BOOST_PRESETS = [25, 30, 50];
 const DEFAULT_RESULT_FILTERS = defaultScannerResultFilters();
 
 const bookColors: Record<string, string> = {
+  Bovada: "bg-[#B85C38]",
+  "BetOnline.ag": "bg-[#4A7C59]",
   DraftKings: "bg-draftkings",
   FanDuel: "bg-fanduel",
   BetMGM: "bg-betmgm",
@@ -68,6 +74,8 @@ function minutesAgo(isoString: string): number {
 
 export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
   const surfaceConfig = getScannerSurface(surface);
+  const availableBooks = surface === "player_props" ? PLAYER_PROP_BOOKS : STRAIGHT_BET_BOOKS;
+  const defaultSelectedBooks = surface === "player_props" ? DEFAULT_PLAYER_PROP_BOOKS : DEFAULT_STRAIGHT_BET_BOOKS;
   const queryClient = useQueryClient();
   const { data: balances } = useBalances();
   const { data: readiness } = useBackendReadiness();
@@ -116,7 +124,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
   );
   const [boostPercent, setBoostPercent] = useState(persistedFilters?.boostPercent ?? 30);
   const [customBoostInput, setCustomBoostInput] = useState(persistedFilters?.customBoostInput ?? "");
-  const [selectedBooks, setSelectedBooks] = useState<string[]>(persistedFilters?.selectedBooks ?? DEFAULT_SELECTED_BOOKS);
+  const [selectedBooks, setSelectedBooks] = useState<string[]>(persistedFilters?.selectedBooks ?? defaultSelectedBooks);
   const [visibleCount, setVisibleCount] = useState(10);
   const [searchQuery, setSearchQuery] = useState(persistedFilters?.searchQuery ?? DEFAULT_RESULT_FILTERS.searchQuery);
   const [timePreset, setTimePreset] = useState<ScannerTimePreset>(persistedFilters?.timePreset ?? DEFAULT_RESULT_FILTERS.timePreset);
@@ -264,6 +272,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
     return describeScannerResultFilters({
       activeLens: effectiveLens,
       longshotMaxAmerican: LONGSHOT_MAX_AMERICAN,
+      showDefaultStandardEdge: surface === "player_props",
       filters: {
         searchQuery,
         timePreset,
@@ -302,6 +311,10 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
     );
     return Array.from(markets).sort((left, right) => left.localeCompare(right));
   }, [scanData, surface]);
+  const playerPropDiagnostics =
+    surface === "player_props" && isPlayerPropScanDiagnostics(scanData?.diagnostics)
+      ? scanData.diagnostics
+      : null;
 
   const resetSecondaryFilters = () => {
     setTimePreset(DEFAULT_RESULT_FILTERS.timePreset);
@@ -352,7 +365,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
 
         <ScannerHeader tagline={surfaceConfig.tagline} />
 
-        <ScannerScopeBar books={AVAILABLE_BOOKS} selectedBooks={selectedBooks} onToggleBook={toggleBook} bookColors={bookColors} />
+        <ScannerScopeBar books={availableBooks} selectedBooks={selectedBooks} onToggleBook={toggleBook} bookColors={bookColors} />
 
         <ScannerStatusBar
           hasScanData={Boolean(scanData)}
@@ -365,6 +378,10 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
           showBackendHint={showBackendHint}
           backendHint={backendHint}
         />
+
+        {playerPropDiagnostics && (
+          <PlayerPropDiagnosticsPanel diagnostics={playerPropDiagnostics} />
+        )}
 
         {scanData && surfaceConfig.supportsLensSelector && (
           <ScannerLensSelector activeLens={activeLens} onLensChange={setActiveLens} />
@@ -420,6 +437,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
             surface={surface}
             activeLens={effectiveLens}
             results={results}
+            sourceCount={fullResults.length}
             filteredCount={filteredResults.length}
             nullState={nullState}
             activeResultFilterSummary={describeActiveResultFilters(activeResultFilterChips)}

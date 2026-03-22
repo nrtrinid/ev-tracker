@@ -9,6 +9,7 @@ interface ScannerResultsPaneProps {
   surface: ScannerSurface;
   activeLens: "standard" | "profit_boost" | "bonus_bet" | "qualifier";
   results: Array<MarketSide & { _retention?: number; _boostedEV?: number }>;
+  sourceCount: number;
   filteredCount: number;
   nullState: ScannerNullState;
   activeResultFilterSummary: string;
@@ -27,6 +28,7 @@ export function ScannerResultsPane({
   surface,
   activeLens,
   results,
+  sourceCount,
   filteredCount,
   nullState,
   activeResultFilterSummary,
@@ -46,16 +48,17 @@ export function ScannerResultsPane({
   return (
     <div className="space-y-2">
       <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-        Showing {results.length} of {filteredCount}{" "}
         {isPropsSurface
-          ? surfaceConfig.resultLabel
-          : activeLens === "standard"
-          ? "+EV Lines"
-          : activeLens === "bonus_bet"
-            ? "Bonus Bet Targets"
-            : activeLens === "profit_boost"
-              ? "Boost Opportunities"
-              : "Qualifier Candidates"}
+          ? `Showing ${results.length} of ${sourceCount} raw props`
+          : `Showing ${results.length} of ${filteredCount} ${
+              activeLens === "standard"
+                ? "+EV Lines"
+                : activeLens === "bonus_bet"
+                  ? "Bonus Bet Targets"
+                  : activeLens === "profit_boost"
+                    ? "Boost Opportunities"
+                    : "Qualifier Candidates"
+            }`}
       </h2>
 
       {results.length === 0 ? (
@@ -72,7 +75,9 @@ export function ScannerResultsPane({
                       : activeLens === "qualifier"
                         ? "No qualifier candidates in the target odds range right now."
                         : "No profitable boost opportunities at this percentage."
-                : "No results match your current filters."}
+                : isPropsSurface
+                  ? `${sourceCount} props scanned, 0 passed your current visibility filters.`
+                  : "No results match your current filters."}
             </p>
             {nullState === "filter_empty" && (
               <p className="mt-2 text-xs text-muted-foreground">{activeResultFilterSummary}</p>

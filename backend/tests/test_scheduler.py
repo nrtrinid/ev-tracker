@@ -127,6 +127,26 @@ async def test_scheduled_scan_job_calls_get_cached_or_scan_for_all_supported_spo
     assert called == sports
 
 
+@pytest.mark.asyncio
+async def test_scheduled_scan_job_never_calls_player_props_scanner(monkeypatch):
+    main = import_main_for_tests(monkeypatch)
+
+    async def fake_get_cached_or_scan(_sport, source="unknown"):
+        return {"sides": [], "events_fetched": 0, "events_with_both_books": 0}
+
+    async def _boom_player_props(*_args, **_kwargs):
+        raise AssertionError("player props should never run in scheduled scans")
+
+    import services.odds_api as odds_api
+    import services.player_props as player_props
+
+    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)
+    monkeypatch.setattr(odds_api, "get_cached_or_scan", fake_get_cached_or_scan, raising=True)
+    monkeypatch.setattr(player_props, "get_cached_or_scan_player_props", _boom_player_props, raising=True)
+
+    await main._run_scheduled_scan_job()
+
+
 def test_scheduler_freshness_uses_startup_grace_when_no_success(monkeypatch):
     main = import_main_for_tests(monkeypatch)
     main._init_scheduler_heartbeats()

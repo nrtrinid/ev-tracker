@@ -47,7 +47,9 @@ const BASE_PROP_SIDE: MarketSide = {
   selection_side: "over",
   line_value: 24.5,
   display_name: "Nikola Jokic Over 24.5",
-  pinnacle_odds: -110,
+  reference_odds: -110,
+  reference_source: "market_median",
+  reference_bookmakers: ["bovada", "betmgm"],
   book_odds: 105,
   true_prob: 0.52,
   base_kelly_fraction: 0.022,
@@ -308,6 +310,27 @@ test.describe("scanner filters", () => {
     });
 
     expect(labels).toContain("Edge: All +EV");
+  });
+
+  test("can expose the default 1.0% edge chip for player props", async () => {
+    const labels = describeScannerResultFilters({
+      activeLens: "standard",
+      filters: {
+        searchQuery: "",
+        timePreset: "all",
+        edgeMinStandard: 1,
+        hideLongshots: true,
+        hideAlreadyLogged: false,
+        riskPreset: "any",
+        propMarket: "all",
+        propSide: "all",
+      },
+      longshotMaxAmerican: 500,
+      showDefaultStandardEdge: true,
+    });
+
+    expect(labels).toContain("Edge: 1.0%+");
+    expect(labels).toContain("Odds: <= +500");
   });
 
   test("filters player props by market and side", async () => {

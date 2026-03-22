@@ -138,8 +138,9 @@ export function describeScannerResultFilters(params: {
   activeLens: "standard" | "profit_boost" | "bonus_bet" | "qualifier";
   filters: ScannerResultFilters;
   longshotMaxAmerican: number;
+  showDefaultStandardEdge?: boolean;
 }): string[] {
-  const { activeLens, filters, longshotMaxAmerican } = params;
+  const { activeLens, filters, longshotMaxAmerican, showDefaultStandardEdge = false } = params;
   const chips: string[] = [];
 
   const normalizedQuery = normalizeSearchQuery(filters.searchQuery);
@@ -149,10 +150,10 @@ export function describeScannerResultFilters(params: {
   if (filters.timePreset === "today") chips.push("Time: Today");
   if (filters.timePreset === "tomorrow") chips.push("Time: Tomorrow");
 
-  if (activeLens === "standard" && filters.edgeMinStandard !== DEFAULT_STANDARD_EDGE_MIN) {
+  if (activeLens === "standard") {
     if (filters.edgeMinStandard === 0) {
       chips.push("Edge: All +EV");
-    } else if (filters.edgeMinStandard !== DEFAULT_STANDARD_EDGE_MIN) {
+    } else if (filters.edgeMinStandard !== DEFAULT_STANDARD_EDGE_MIN || showDefaultStandardEdge) {
       chips.push(`Edge: ${filters.edgeMinStandard.toFixed(1)}%+`);
     }
   }

@@ -305,7 +305,11 @@ class PlayerPropSide(BaseModel):
     selection_side: str
     line_value: float | None = None
     display_name: str
-    pinnacle_odds: float
+    reference_odds: float
+    reference_source: str
+    reference_bookmakers: list[str]
+    reference_bookmaker_count: int | None = None
+    confidence_label: str | None = None
     book_odds: float
     true_prob: float
     base_kelly_fraction: float
@@ -315,6 +319,38 @@ class PlayerPropSide(BaseModel):
     best_logged_odds_american: float | None = None
     current_odds_american: float | None = None
     matched_pending_bet_id: str | None = None
+
+
+class PlayerPropDiagnosticGame(BaseModel):
+    """A shortlisted scoreboard game and its mapping status."""
+
+    event_id: str | None = None
+    away_team: str
+    home_team: str
+    selection_reason: str
+    broadcasts: list[str]
+    odds_event_id: str | None = None
+    commence_time: str | None = None
+    matched: bool = False
+
+
+class PlayerPropScanDiagnostics(BaseModel):
+    """High-level diagnostics for the manual player-prop sniper flow."""
+
+    scan_mode: str
+    scoreboard_event_count: int
+    odds_event_count: int
+    curated_games: list[PlayerPropDiagnosticGame]
+    matched_event_count: int
+    unmatched_game_count: int
+    events_fetched: int
+    events_skipped_pregame: int
+    events_with_results: int
+    candidate_sides_count: int = 0
+    quality_gate_filtered_count: int = 0
+    quality_gate_min_reference_bookmakers: int = 0
+    sides_count: int
+    markets_requested: list[str]
 
 
 ScannerSide = Annotated[StraightBetSide | PlayerPropSide, Field(discriminator="surface")]
@@ -331,3 +367,4 @@ class FullScanResponse(BaseModel):
     events_with_both_books: int
     api_requests_remaining: str | None = None
     scanned_at: str | None = None
+    diagnostics: PlayerPropScanDiagnostics | None = None
