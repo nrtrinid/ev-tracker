@@ -11,6 +11,7 @@ export interface ScannerSurfaceConfig {
   emptyLabel: string;
   supportsLensSelector: boolean;
   supportsProfitBoost: boolean;
+  isPublic: boolean;
 }
 
 export const STRAIGHT_BETS_SURFACE: ScannerSurfaceConfig = {
@@ -24,6 +25,7 @@ export const STRAIGHT_BETS_SURFACE: ScannerSurfaceConfig = {
   emptyLabel: "No +EV lines right now. Check back when lines move.",
   supportsLensSelector: true,
   supportsProfitBoost: true,
+  isPublic: true,
 };
 
 export const PLAYER_PROPS_SURFACE: ScannerSurfaceConfig = {
@@ -37,12 +39,15 @@ export const PLAYER_PROPS_SURFACE: ScannerSurfaceConfig = {
   emptyLabel: "No player props match your current books and filters yet.",
   supportsLensSelector: false,
   supportsProfitBoost: false,
+  isPublic: false,
 };
 
 export const SCANNER_SURFACES: ScannerSurfaceConfig[] = [
   STRAIGHT_BETS_SURFACE,
   PLAYER_PROPS_SURFACE,
 ];
+
+export const PUBLIC_SCANNER_SURFACES = SCANNER_SURFACES.filter((surface) => surface.isPublic);
 
 export function getScannerSurface(surface: string): ScannerSurfaceConfig {
   return SCANNER_SURFACES.find((entry) => entry.id === surface) ?? STRAIGHT_BETS_SURFACE;

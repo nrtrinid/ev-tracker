@@ -18,7 +18,7 @@ from services.scan_markets import (
 router = APIRouter()
 
 
-SUPPORTED_SURFACES = {"straight_bets", "player_props"}
+SUPPORTED_SURFACES = {"straight_bets"}
 
 
 async def scan_impl(
@@ -119,6 +119,9 @@ def scan_latest_impl(
     retry_supabase,
     annotate_sides,
 ):
+    if surface not in SUPPORTED_SURFACES:
+        raise HTTPException(status_code=400, detail=f"Unsupported surface '{surface}'")
+
     db = get_db()
     try:
         payload = resolve_scan_latest_response(
