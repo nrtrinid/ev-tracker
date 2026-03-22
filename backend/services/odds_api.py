@@ -555,7 +555,7 @@ def update_clv_snapshots(sides: list[dict], db) -> int:
     try:
         result = (
             db.table("bets")
-            .select("id,clv_team,commence_time,clv_event_id")
+            .select("id,clv_team,commence_time,clv_event_id,pinnacle_odds_at_close")
             .eq("result", "pending")
             .not_.is_("clv_team", "null")
             .execute()
@@ -565,7 +565,7 @@ def update_clv_snapshots(sides: list[dict], db) -> int:
             raise
         result = (
             db.table("bets")
-            .select("id,clv_team,commence_time")
+            .select("id,clv_team,commence_time,pinnacle_odds_at_close")
             .eq("result", "pending")
             .not_.is_("clv_team", "null")
             .execute()
@@ -578,6 +578,9 @@ def update_clv_snapshots(sides: list[dict], db) -> int:
     updated = 0
 
     for bet in result.data:
+        if bet.get("pinnacle_odds_at_close") is not None:
+            continue
+
         team = bet.get("clv_team")
         ct = bet.get("commence_time")
         event_id = str(bet.get("clv_event_id") or "").strip()
