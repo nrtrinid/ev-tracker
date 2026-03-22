@@ -63,10 +63,10 @@ async def scan_markets_impl(
     build_full_scan_response,
     get_environment,
 ):
-    db = get_db()
-
     if surface not in SUPPORTED_SURFACES:
         raise HTTPException(status_code=400, detail=f"Unsupported surface '{surface}'")
+
+    db = get_db()
 
     if sport is not None and sport not in supported_sports:
         raise HTTPException(
