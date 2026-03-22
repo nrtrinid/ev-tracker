@@ -14,6 +14,21 @@ ALERT_DEDUPE_TTL_SECONDS = int(os.getenv("ALERT_DEDUPE_TTL_SECONDS", "21600"))
 FRONTEND_BASE_URL = "https://ev-tracker-gamma.vercel.app"
 
 
+class DiscordDeliveryError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        message: str,
+        message_type: str,
+        status_code: int | None = None,
+        response_text: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message_type = message_type
+        self.status_code = status_code
+        self.response_text = response_text
+
+
 def _get_webhook_and_role(message_type: str = "alert") -> tuple[str | None, str | None]:
     """
     Route to appropriate webhook and role mention based on message type.
@@ -145,8 +160,29 @@ async def send_discord_webhook(payload: dict[str, Any], message_type: str = "ale
             resp = await client.post(webhook_url, json=payload)
             print(f"[Discord] Webhook response: {resp.status_code} {resp.text}")
             resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        response_text = (exc.response.text or "").strip()
+        message = (
+            f"Discord webhook rejected {message_type} message with status "
+            f"{exc.response.status_code}"
+        )
+        if response_text:
+            message = f"{message}: {response_text}"
+        print(f"[Discord] Webhook error: {message}")
+        raise DiscordDeliveryError(
+            message=message,
+            message_type=message_type,
+            status_code=exc.response.status_code,
+            response_text=response_text or None,
+        ) from exc
+    except httpx.HTTPError as exc:
+        message = f"Discord webhook request failed for {message_type}: {exc}"
+        print(f"[Discord] Webhook error: {message}")
+        raise DiscordDeliveryError(
+            message=message,
+            message_type=message_type,
+        ) from exc
     except Exception as e:
-        # Never crash caller; Discord being down should not affect scans.
         print(f"[Discord] Webhook error: {e}")
         raise
 
@@ -154,6 +190,14 @@ async def send_discord_webhook(payload: dict[str, Any], message_type: str = "ale
 async def alert_for_side(side: dict[str, Any]) -> None:
     payload = build_discord_payload(side)
     await send_discord_webhook(payload)
+
+
+async def _alert_for_side_with_logging(side: dict[str, Any]) -> None:
+    try:
+        await alert_for_side(side)
+    except Exception as exc:
+        key = make_alert_key(side)
+        print(f"[Discord] Background alert delivery failed for {key}: {exc}")
 
 
 def schedule_alerts(sides: list[dict[str, Any]]) -> int:
@@ -173,6 +217,6 @@ def schedule_alerts(sides: list[dict[str, Any]]) -> int:
         # Mark as alerted immediately to prevent duplicates within the same scan batch.
         ALERTED_KEYS.add(key)
         scheduled += 1
-        asyncio.create_task(alert_for_side(side))
+        asyncio.create_task(_alert_for_side_with_logging(side))
     return scheduled
 

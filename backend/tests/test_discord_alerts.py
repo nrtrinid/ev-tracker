@@ -1,6 +1,8 @@
+import asyncio
 import importlib
 
 import pytest
+import httpx
 from .test_utils import reload_service_module
 
 
@@ -147,6 +149,39 @@ async def test_send_discord_webhook_noop_without_env(monkeypatch, capsys):
     assert "DISCORD_WEBHOOK_URL not set" in out
 
 
+@pytest.mark.asyncio
+async def test_send_discord_webhook_wraps_http_errors(monkeypatch):
+    mod = _reload_discord_alerts()
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://primary-webhook")
+
+    class FakeResponse:
+        status_code = 429
+        text = "rate limited"
+
+        def raise_for_status(self):
+            request = httpx.Request("POST", "https://primary-webhook")
+            response = httpx.Response(429, request=request, text=self.text)
+            raise httpx.HTTPStatusError("boom", request=request, response=response)
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, _url, json):
+            return FakeResponse()
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", lambda timeout: FakeClient(), raising=True)
+
+    with pytest.raises(mod.DiscordDeliveryError) as exc_info:
+        await mod.send_discord_webhook({"content": "hi"})
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.response_text == "rate limited"
+
+
 def test_get_webhook_and_role_alert_routing(monkeypatch):
     """Test that alert messages route to dedicated alert webhook when set."""
     mod = _reload_discord_alerts()
@@ -274,4 +309,43 @@ def test_with_role_mention_no_role_set(monkeypatch):
     payload = {"content": "Hello"}
     result = mod._with_role_mention(payload, role_id=None)
     assert result["content"] == "Hello"
+
+
+def test_schedule_alerts_logs_background_failures(monkeypatch, capsys):
+    mod = _reload_discord_alerts()
+    mod.ALERTED_KEYS.clear()
+
+    async def fake_alert_for_side(_side):
+        raise RuntimeError("boom")
+
+    def fake_create_task(coro):
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+        class DummyTask:
+            pass
+
+        return DummyTask()
+
+    monkeypatch.setattr(mod, "alert_for_side", fake_alert_for_side, raising=True)
+    monkeypatch.setattr(mod.asyncio, "create_task", fake_create_task, raising=True)
+    monkeypatch.setattr(mod, "should_alert", lambda _side: True, raising=True)
+    monkeypatch.setattr(mod, "mark_alert_if_new", lambda *_args, **_kwargs: True, raising=True)
+
+    side = {
+        "sport": "basketball_nba",
+        "commence_time": "t",
+        "event": "A @ B",
+        "sportsbook": "DraftKings",
+        "team": "A",
+        "ev_percentage": 3.0,
+        "book_odds": 200,
+    }
+
+    scheduled = mod.schedule_alerts([side])
+    assert scheduled == 1
+    assert "Background alert delivery failed" in capsys.readouterr().out
 

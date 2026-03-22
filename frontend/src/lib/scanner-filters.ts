@@ -11,6 +11,8 @@ export interface ScannerResultFilters {
   hideLongshots: boolean;
   hideAlreadyLogged: boolean;
   riskPreset: ScannerRiskPreset;
+  propMarket: string;
+  propSide: "all" | "over" | "under";
 }
 
 export function defaultScannerResultFilters(): ScannerResultFilters {
@@ -21,6 +23,8 @@ export function defaultScannerResultFilters(): ScannerResultFilters {
     hideLongshots: true,
     hideAlreadyLogged: false,
     riskPreset: "any",
+    propMarket: "all",
+    propSide: "all",
   };
 }
 
@@ -91,6 +95,16 @@ function matchesRiskPreset(side: MarketSide, preset: ScannerRiskPreset): boolean
   return side.book_odds <= 300;
 }
 
+function matchesPropFilters(
+  side: MarketSide,
+  filters: Pick<ScannerResultFilters, "propMarket" | "propSide">
+): boolean {
+  if (side.surface !== "player_props") return true;
+  if (filters.propMarket !== "all" && side.market_key !== filters.propMarket) return false;
+  if (filters.propSide !== "all" && side.selection_side !== filters.propSide) return false;
+  return true;
+}
+
 export function applyScannerResultFilters(params: {
   sides: MarketSide[];
   activeLens: "standard" | "profit_boost" | "bonus_bet" | "qualifier";
@@ -110,6 +124,7 @@ export function applyScannerResultFilters(params: {
       return false;
     }
     if (!matchesRiskPreset(side, filters.riskPreset)) return false;
+    if (!matchesPropFilters(side, filters)) return false;
 
     if (activeLens === "standard" && filters.edgeMinStandard > 0) {
       return side.ev_percentage >= filters.edgeMinStandard;
@@ -146,6 +161,8 @@ export function describeScannerResultFilters(params: {
   if (filters.hideAlreadyLogged) chips.push("Hide Already Logged");
   if (filters.riskPreset === "safer") chips.push("Risk: Safer");
   if (filters.riskPreset === "balanced") chips.push("Risk: Balanced");
+  if (filters.propMarket !== "all") chips.push(`Market: ${filters.propMarket.replaceAll("_", " ")}`);
+  if (filters.propSide !== "all") chips.push(`Side: ${filters.propSide}`);
 
   return chips;
 }
@@ -161,6 +178,8 @@ export function hasActiveScannerResultFilters(params: {
     (activeLens === "standard" && filters.edgeMinStandard !== DEFAULT_STANDARD_EDGE_MIN) ||
     filters.hideLongshots ||
     filters.hideAlreadyLogged ||
-    filters.riskPreset !== "any"
+    filters.riskPreset !== "any" ||
+    filters.propMarket !== "all" ||
+    filters.propSide !== "all"
   );
 }

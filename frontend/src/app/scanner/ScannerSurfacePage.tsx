@@ -90,6 +90,8 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
     hideLongshots: boolean;
     hideAlreadyLogged: boolean;
     riskPreset: ScannerRiskPreset;
+    propMarket: string;
+    propSide: "all" | "over" | "under";
   }> | undefined;
 
   const {
@@ -122,6 +124,8 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
   const [hideLongshots, setHideLongshots] = useState(persistedFilters?.hideLongshots ?? DEFAULT_RESULT_FILTERS.hideLongshots);
   const [hideAlreadyLogged, setHideAlreadyLogged] = useState(persistedFilters?.hideAlreadyLogged ?? DEFAULT_RESULT_FILTERS.hideAlreadyLogged);
   const [riskPreset, setRiskPreset] = useState<ScannerRiskPreset>(persistedFilters?.riskPreset ?? DEFAULT_RESULT_FILTERS.riskPreset);
+  const [propMarket, setPropMarket] = useState(persistedFilters?.propMarket ?? DEFAULT_RESULT_FILTERS.propMarket);
+  const [propSide, setPropSide] = useState<"all" | "over" | "under">(persistedFilters?.propSide ?? DEFAULT_RESULT_FILTERS.propSide);
   const [, setAgeTick] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerKey, setDrawerKey] = useState(0);
@@ -144,6 +148,8 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
       hideLongshots,
       hideAlreadyLogged,
       riskPreset,
+      propMarket,
+      propSide,
     });
   }, [
     activeLens,
@@ -152,6 +158,8 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
     edgeMinStandard,
     hideAlreadyLogged,
     hideLongshots,
+    propMarket,
+    propSide,
     riskPreset,
     searchQuery,
     selectedBooks,
@@ -246,9 +254,11 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
         hideLongshots,
         hideAlreadyLogged,
         riskPreset,
+        propMarket,
+        propSide,
       },
     });
-  }, [edgeMinStandard, effectiveLens, fullResults, hideAlreadyLogged, hideLongshots, riskPreset, searchQuery, timePreset]);
+  }, [edgeMinStandard, effectiveLens, fullResults, hideAlreadyLogged, hideLongshots, propMarket, propSide, riskPreset, searchQuery, timePreset]);
 
   const activeResultFilterChips = useMemo(() => {
     return describeScannerResultFilters({
@@ -261,9 +271,11 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
         hideLongshots,
         hideAlreadyLogged,
         riskPreset,
+        propMarket,
+        propSide,
       },
     });
-  }, [edgeMinStandard, effectiveLens, hideAlreadyLogged, hideLongshots, riskPreset, searchQuery, timePreset]);
+  }, [edgeMinStandard, effectiveLens, hideAlreadyLogged, hideLongshots, propMarket, propSide, riskPreset, searchQuery, timePreset]);
 
   const nullState = useMemo(() => {
     return classifyScannerNullState({
@@ -274,13 +286,22 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
 
   useEffect(() => {
     setVisibleCount(10);
-  }, [scanData, effectiveLens, boostPercent, selectedBooks, hideLongshots, hideAlreadyLogged, riskPreset, edgeMinStandard, timePreset, searchQuery]);
+  }, [scanData, effectiveLens, boostPercent, selectedBooks, hideLongshots, hideAlreadyLogged, riskPreset, edgeMinStandard, timePreset, searchQuery, propMarket, propSide]);
 
   const results = useMemo(() => filteredResults.slice(0, visibleCount), [filteredResults, visibleCount]);
   const scanAgeMinutes = useMemo(() => (scanData?.scanned_at ? minutesAgo(scanData.scanned_at) : null), [scanData?.scanned_at]);
 
   const secondaryActiveFilterChips = activeResultFilterChips;
   const hasActiveSecondaryFilters = secondaryActiveFilterChips.length > 0;
+  const availablePropMarkets = useMemo(() => {
+    if (surface !== "player_props" || !scanData) return [];
+    const markets = new Set(
+      scanData.sides
+        .filter((side): side is Extract<MarketSide, { surface: "player_props" }> => side.surface === "player_props")
+        .map((side) => side.market_key)
+    );
+    return Array.from(markets).sort((left, right) => left.localeCompare(right));
+  }, [scanData, surface]);
 
   const resetSecondaryFilters = () => {
     setTimePreset(DEFAULT_RESULT_FILTERS.timePreset);
@@ -288,6 +309,8 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
     setHideLongshots(DEFAULT_RESULT_FILTERS.hideLongshots);
     setHideAlreadyLogged(DEFAULT_RESULT_FILTERS.hideAlreadyLogged);
     setRiskPreset(DEFAULT_RESULT_FILTERS.riskPreset);
+    setPropMarket(DEFAULT_RESULT_FILTERS.propMarket);
+    setPropSide(DEFAULT_RESULT_FILTERS.propSide);
     setBoostPercent(30);
     setCustomBoostInput("");
   };
@@ -321,10 +344,10 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
       <div className="container mx-auto max-w-2xl space-y-2 px-4 py-6 pb-20 sm:pb-24">
         <OnboardingBanner
           step={`scanner_${surface}`}
-          title={`New ${surfaceConfig.label} surface`}
+          title={surface === "player_props" ? "Find your first playable prop" : "Scan and bank your first edge"}
           body={surface === "player_props"
-            ? "Use player search and line-aware cards to log or cart props without leaving the scanner."
-            : "Straight Bets remains the default scanner experience while the new surface architecture rolls out underneath it."}
+            ? "Use player search, market filters, and line-aware cards to find one prop, add it to the cart, or log it straight from the scanner."
+            : "Run a scan, pick one clean +EV spot, and either log it or add it to the parlay cart to start your V2 workflow."}
         />
 
         <ScannerHeader tagline={surfaceConfig.tagline} />
@@ -356,7 +379,10 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
               hideLongshots,
               hideAlreadyLogged,
               riskPreset,
+              propMarket,
+              propSide,
             }}
+            surface={surface}
             showEdgeControl={effectiveLens === "standard"}
             activeLens={effectiveLens}
             boostPercent={boostPercent}
@@ -365,12 +391,15 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
             activeFilterChips={secondaryActiveFilterChips}
             hasActiveFilters={hasActiveSecondaryFilters}
             searchPlaceholder={surfaceConfig.searchPlaceholder}
+            availablePropMarkets={availablePropMarkets}
             onSearchChange={setSearchQuery}
             onTimePresetChange={setTimePreset}
             onEdgeMinChange={setEdgeMinStandard}
             onHideLongshotsChange={setHideLongshots}
             onHideAlreadyLoggedChange={setHideAlreadyLogged}
             onRiskPresetChange={setRiskPreset}
+            onPropMarketChange={setPropMarket}
+            onPropSideChange={setPropSide}
             onPresetSelect={(preset) => {
               setBoostPercent(preset);
               setCustomBoostInput("");

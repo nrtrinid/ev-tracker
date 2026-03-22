@@ -298,6 +298,32 @@ async def cron_test_discord_impl(
         if "message_type" not in str(exc):
             raise
         await send_discord_webhook(payload)
+    except Exception as exc:
+        from services.discord_alerts import DiscordDeliveryError
+
+        if isinstance(exc, DiscordDeliveryError):
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "ok": False,
+                    "error": "discord_delivery_failed",
+                    "message_type": exc.message_type,
+                    "status_code": exc.status_code,
+                    "message": str(exc),
+                    "response_text": exc.response_text,
+                    "run_id": run_id,
+                },
+            ) from exc
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "ok": False,
+                "error": "discord_delivery_failed",
+                "message_type": "test",
+                "message": str(exc),
+                "run_id": run_id,
+            },
+        ) from exc
     log_event(
         f"{log_prefix}.completed",
         run_id=run_id,
@@ -336,7 +362,34 @@ async def cron_test_discord_alert_impl(
         ]
     }
 
-    await send_discord_webhook(payload, message_type="alert")
+    try:
+        await send_discord_webhook(payload, message_type="alert")
+    except Exception as exc:
+        from services.discord_alerts import DiscordDeliveryError
+
+        if isinstance(exc, DiscordDeliveryError):
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "ok": False,
+                    "error": "discord_delivery_failed",
+                    "message_type": exc.message_type,
+                    "status_code": exc.status_code,
+                    "message": str(exc),
+                    "response_text": exc.response_text,
+                    "run_id": run_id,
+                },
+            ) from exc
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "ok": False,
+                "error": "discord_delivery_failed",
+                "message_type": "alert",
+                "message": str(exc),
+                "run_id": run_id,
+            },
+        ) from exc
     log_event(
         f"{log_prefix}.completed",
         run_id=run_id,

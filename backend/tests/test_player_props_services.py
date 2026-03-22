@@ -1,4 +1,19 @@
-from services.player_props import _normalize_prop_outcomes, _parse_prop_sides
+from services.player_props import _normalize_prop_outcomes, _parse_prop_sides, get_player_prop_markets
+
+
+def test_get_player_prop_markets_defaults_to_all_when_env_missing(monkeypatch):
+    monkeypatch.delenv("PLAYER_PROP_MARKETS", raising=False)
+    assert get_player_prop_markets() == [
+        "player_points",
+        "player_rebounds",
+        "player_assists",
+        "player_threes",
+    ]
+
+
+def test_get_player_prop_markets_filters_to_supported_env_values(monkeypatch):
+    monkeypatch.setenv("PLAYER_PROP_MARKETS", "player_points,player_assists,unknown_market")
+    assert get_player_prop_markets() == ["player_points", "player_assists"]
 
 
 def test_normalize_prop_outcomes_keeps_complete_over_under_pairs():

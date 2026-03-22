@@ -30,6 +30,35 @@ const BASE_SIDE: MarketSide = {
   matched_pending_bet_id: null,
 };
 
+const BASE_PROP_SIDE: MarketSide = {
+  surface: "player_props",
+  event_id: "evt-prop-1",
+  market_key: "player_points",
+  selection_key: "evt-prop-1|player_points|jokic|over|24.5",
+  sportsbook: "FanDuel",
+  sport: "basketball_nba",
+  event: "Nuggets @ Suns",
+  commence_time: "2026-03-21T03:00:00Z",
+  market: "player_points",
+  player_name: "Nikola Jokic",
+  participant_id: null,
+  team: "Nuggets",
+  opponent: "Suns",
+  selection_side: "over",
+  line_value: 24.5,
+  display_name: "Nikola Jokic Over 24.5",
+  pinnacle_odds: -110,
+  book_odds: 105,
+  true_prob: 0.52,
+  base_kelly_fraction: 0.022,
+  book_decimal: 2.05,
+  ev_percentage: 6.6,
+  scanner_duplicate_state: "new",
+  best_logged_odds_american: null,
+  current_odds_american: 105,
+  matched_pending_bet_id: null,
+};
+
 test.describe("scanner filters", () => {
   test("default scanner filters are baseline", async () => {
     const defaults = defaultScannerResultFilters();
@@ -38,6 +67,8 @@ test.describe("scanner filters", () => {
     expect(defaults.hideLongshots).toBeTruthy();
     expect(defaults.hideAlreadyLogged).toBeFalsy();
     expect(defaults.riskPreset).toBe("any");
+    expect(defaults.propMarket).toBe("all");
+    expect(defaults.propSide).toBe("all");
 
     expect(
       hasActiveScannerResultFilters({
@@ -73,6 +104,8 @@ test.describe("scanner filters", () => {
         hideLongshots: false,
         hideAlreadyLogged: false,
         riskPreset: "any",
+        propMarket: "all",
+        propSide: "all",
       },
       now: new Date("2026-03-20T12:00:00Z"),
     });
@@ -88,6 +121,8 @@ test.describe("scanner filters", () => {
         hideLongshots: false,
         hideAlreadyLogged: false,
         riskPreset: "any",
+        propMarket: "all",
+        propSide: "all",
       },
       now: new Date("2026-03-20T12:00:00Z"),
     });
@@ -117,6 +152,8 @@ test.describe("scanner filters", () => {
         hideLongshots: false,
         hideAlreadyLogged: false,
         riskPreset: "any",
+        propMarket: "all",
+        propSide: "all",
       },
       now,
     });
@@ -132,6 +169,8 @@ test.describe("scanner filters", () => {
         hideLongshots: false,
         hideAlreadyLogged: false,
         riskPreset: "any",
+        propMarket: "all",
+        propSide: "all",
       },
       now,
     });
@@ -147,6 +186,8 @@ test.describe("scanner filters", () => {
         hideLongshots: false,
         hideAlreadyLogged: false,
         riskPreset: "any",
+        propMarket: "all",
+        propSide: "all",
       },
       now,
     });
@@ -164,6 +205,8 @@ test.describe("scanner filters", () => {
       hideLongshots: true,
       hideAlreadyLogged: true,
       riskPreset: "safer" as const,
+      propMarket: "all",
+      propSide: "all" as const,
     };
 
     expect(
@@ -196,6 +239,8 @@ test.describe("scanner filters", () => {
           hideLongshots: false,
           hideAlreadyLogged: false,
           riskPreset: "any",
+          propMarket: "all",
+          propSide: "all",
         },
       })
     ).toBeFalsy();
@@ -211,6 +256,8 @@ test.describe("scanner filters", () => {
         hideLongshots: false,
         hideAlreadyLogged: false,
         riskPreset: "any",
+        propMarket: "all",
+        propSide: "all",
       },
       longshotMaxAmerican: 500,
     });
@@ -235,6 +282,8 @@ test.describe("scanner filters", () => {
         hideLongshots: false,
         hideAlreadyLogged: false,
         riskPreset: "any",
+        propMarket: "all",
+        propSide: "all",
       },
       now: new Date("2026-03-20T12:00:00Z"),
     });
@@ -252,10 +301,58 @@ test.describe("scanner filters", () => {
         hideLongshots: false,
         hideAlreadyLogged: false,
         riskPreset: "any",
+        propMarket: "all",
+        propSide: "all",
       },
       longshotMaxAmerican: 500,
     });
 
     expect(labels).toContain("Edge: All +EV");
+  });
+
+  test("filters player props by market and side", async () => {
+    const filtered = applyScannerResultFilters({
+      sides: [
+        BASE_PROP_SIDE,
+        { ...BASE_PROP_SIDE, selection_side: "under", selection_key: "under", display_name: "Nikola Jokic Under 24.5" },
+        { ...BASE_PROP_SIDE, market_key: "player_assists", market: "player_assists", selection_key: "assists", line_value: 8.5 },
+      ],
+      activeLens: "standard",
+      longshotMaxAmerican: 500,
+      filters: {
+        searchQuery: "",
+        timePreset: "all",
+        edgeMinStandard: 0,
+        hideLongshots: false,
+        hideAlreadyLogged: false,
+        riskPreset: "any",
+        propMarket: "player_points",
+        propSide: "over",
+      },
+      now: new Date("2026-03-20T12:00:00Z"),
+    });
+
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0]).toEqual(BASE_PROP_SIDE);
+  });
+
+  test("reports active props chips", async () => {
+    const labels = describeScannerResultFilters({
+      activeLens: "standard",
+      filters: {
+        searchQuery: "",
+        timePreset: "all",
+        edgeMinStandard: 0,
+        hideLongshots: false,
+        hideAlreadyLogged: false,
+        riskPreset: "any",
+        propMarket: "player_points",
+        propSide: "under",
+      },
+      longshotMaxAmerican: 500,
+    });
+
+    expect(labels).toContain("Market: player points");
+    expect(labels).toContain("Side: under");
   });
 });

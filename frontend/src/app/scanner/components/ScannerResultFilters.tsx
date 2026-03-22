@@ -46,6 +46,7 @@ const RISK_OPTIONS: Array<{ value: ScannerRiskPreset; label: string; hint: strin
 
 interface ScannerResultFiltersProps {
   filters: ScannerResultFilters;
+  surface: "straight_bets" | "player_props";
   showEdgeControl: boolean;
   activeLens: ScannerLens;
   boostPercent: number;
@@ -54,19 +55,27 @@ interface ScannerResultFiltersProps {
   activeFilterChips: string[];
   hasActiveFilters: boolean;
   searchPlaceholder?: string;
+  availablePropMarkets?: string[];
   onSearchChange: (value: string) => void;
   onTimePresetChange: (value: ScannerTimePreset) => void;
   onEdgeMinChange: (value: number) => void;
   onHideLongshotsChange: (checked: boolean) => void;
   onHideAlreadyLoggedChange: (checked: boolean) => void;
   onRiskPresetChange: (value: ScannerRiskPreset) => void;
+  onPropMarketChange: (value: string) => void;
+  onPropSideChange: (value: "all" | "over" | "under") => void;
   onPresetSelect: (value: number) => void;
   onCustomBoostInputChange: (value: string) => void;
   onResetFilters: () => void;
 }
 
+function formatPropMarketLabel(value: string) {
+  return value.replaceAll("_", " ");
+}
+
 export function ScannerResultFilters({
   filters,
+  surface,
   showEdgeControl,
   activeLens,
   boostPercent,
@@ -75,12 +84,15 @@ export function ScannerResultFilters({
   activeFilterChips,
   hasActiveFilters,
   searchPlaceholder = "Search team",
+  availablePropMarkets = [],
   onSearchChange,
   onTimePresetChange,
   onEdgeMinChange,
   onHideLongshotsChange,
   onHideAlreadyLoggedChange,
   onRiskPresetChange,
+  onPropMarketChange,
+  onPropSideChange,
   onPresetSelect,
   onCustomBoostInputChange,
   onResetFilters,
@@ -147,6 +159,32 @@ export function ScannerResultFilters({
           </DropdownMenuRadioItem>
         ))}
       </DropdownMenuRadioGroup>
+
+      {surface === "player_props" && (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel>Prop Market</DropdownMenuLabel>
+          <DropdownMenuRadioGroup value={filters.propMarket} onValueChange={onPropMarketChange}>
+            <DropdownMenuRadioItem value="all">All markets</DropdownMenuRadioItem>
+            {availablePropMarkets.map((market) => (
+              <DropdownMenuRadioItem key={market} value={market}>
+                {formatPropMarketLabel(market)}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel>Prop Side</DropdownMenuLabel>
+          <DropdownMenuRadioGroup
+            value={filters.propSide}
+            onValueChange={(value) => onPropSideChange(value as "all" | "over" | "under")}
+          >
+            <DropdownMenuRadioItem value="all">All sides</DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="over">Over</DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="under">Under</DropdownMenuRadioItem>
+          </DropdownMenuRadioGroup>
+        </>
+      )}
     </>
   );
 
@@ -293,6 +331,64 @@ export function ScannerResultFilters({
                   ))}
                 </div>
               </div>
+
+              {surface === "player_props" && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">Prop market</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onPropMarketChange("all")}
+                      className={cn(
+                        "rounded-md border px-2 py-1.5 text-xs font-medium transition-colors",
+                        filters.propMarket === "all"
+                          ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
+                          : "border-border bg-background text-foreground"
+                      )}
+                    >
+                      All markets
+                    </button>
+                    {availablePropMarkets.map((market) => (
+                      <button
+                        key={market}
+                        type="button"
+                        onClick={() => onPropMarketChange(market)}
+                        className={cn(
+                          "rounded-md border px-2 py-1.5 text-xs font-medium capitalize transition-colors",
+                          filters.propMarket === market
+                            ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
+                            : "border-border bg-background text-foreground"
+                        )}
+                      >
+                        {formatPropMarketLabel(market)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {surface === "player_props" && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">Prop side</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(["all", "over", "under"] as const).map((side) => (
+                      <button
+                        key={side}
+                        type="button"
+                        onClick={() => onPropSideChange(side)}
+                        className={cn(
+                          "rounded-md border px-2 py-1.5 text-xs font-medium capitalize transition-colors",
+                          filters.propSide === side
+                            ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
+                            : "border-border bg-background text-foreground"
+                        )}
+                      >
+                        {side}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </SheetContent>
         </Sheet>

@@ -16,8 +16,8 @@ export default function Home() {
       <div className="container mx-auto px-4 py-6 space-y-6 max-w-2xl pb-24">
         <OnboardingBanner
           step="home_overview"
-          title="Welcome to the V2 betting workspace"
-          body="Home is still your history and bankroll view. The new scanner surfaces and parlay builder live in the top navigation."
+          title="Start with one scan, one cart add, and one logged bet"
+          body="Use Home as your scoreboard, then jump into Scanner to find a line, add it to the cart, or log it directly. That is the core Phase 3 loop."
         />
         {/* Dashboard Stats */}
         <Dashboard />

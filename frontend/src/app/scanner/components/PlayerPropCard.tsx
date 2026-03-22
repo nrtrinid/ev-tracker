@@ -28,6 +28,10 @@ function decimalToAmerican(decimal: number): number {
   return Math.round(-100 / (decimal - 1));
 }
 
+function formatMarketLabel(value: string): string {
+  return value.replaceAll("_", " ");
+}
+
 export function PlayerPropCard({
   side,
   onLogBet,
@@ -61,7 +65,10 @@ export function PlayerPropCard({
                 {sportDisplayMap[side.sport] || side.sport}
               </span>
               <span className="rounded bg-[#EDE4D0] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[#6D5431]">
-                {side.market.replaceAll("_", " ")}
+                {formatMarketLabel(side.market)}
+              </span>
+              <span className="rounded border border-[#3B6C8E]/20 bg-[#3B6C8E]/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#2D5673]">
+                {side.selection_side}
               </span>
               {duplicateState !== "new" && (
                 <span className="rounded border border-[#B85C38]/35 bg-[#B85C38]/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#8B3D20]">
@@ -74,7 +81,7 @@ export function PlayerPropCard({
               <p className="text-sm font-semibold">{side.display_name}</p>
               <p className="text-xs text-muted-foreground">
                 {side.player_name}
-                {side.team ? ` • ${side.team}` : ""}
+                {side.team ? ` | ${side.team}` : ""}
                 {side.opponent ? ` vs ${side.opponent}` : ""}
               </p>
               <p className="text-xs text-muted-foreground">{side.event}</p>

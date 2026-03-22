@@ -383,3 +383,49 @@ def test_ops_trigger_test_discord_contract_shape(auth_client, monkeypatch):
     assert body.get("ok") is True
     assert body.get("scheduled") is True
     assert isinstance(body.get("run_id"), str)
+
+
+@pytest.mark.integration
+def test_ops_trigger_test_discord_returns_diagnostics_on_failure(auth_client, monkeypatch):
+    import services.discord_alerts as discord_alerts
+
+    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
+
+    async def _fake_send_discord_webhook(_payload, message_type="alert"):
+        raise discord_alerts.DiscordDeliveryError(
+            message="Discord webhook rejected test message with status 429: rate limited",
+            message_type=message_type,
+            status_code=429,
+            response_text="rate limited",
+        )
+
+    monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
+
+    resp = auth_client.post("/api/ops/trigger/test-discord", headers={"X-Ops-Token": "ops-secret"})
+    assert resp.status_code == 502
+
+    body = resp.json()
+    assert body["detail"]["error"] == "discord_delivery_failed"
+    assert body["detail"]["message_type"] == "test"
+    assert body["detail"]["status_code"] == 429
+    assert body["detail"]["response_text"] == "rate limited"
+
+
+@pytest.mark.integration
+def test_ops_trigger_test_discord_alert_contract_shape(auth_client, monkeypatch):
+    import services.discord_alerts as discord_alerts
+
+    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
+
+    async def _fake_send_discord_webhook(_payload, message_type="alert"):
+        return None
+
+    monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
+
+    resp = auth_client.post("/api/ops/trigger/test-discord-alert", headers={"X-Ops-Token": "ops-secret"})
+    assert resp.status_code == 200
+
+    body = resp.json()
+    assert body.get("ok") is True
+    assert body.get("scheduled") is True
+    assert isinstance(body.get("run_id"), str)

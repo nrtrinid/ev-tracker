@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -26,6 +27,17 @@ PLAYER_PROP_MARKETS = [
 
 _props_cache: dict[str, dict] = {}
 _props_locks: dict[str, asyncio.Lock] = {}
+
+
+def get_player_prop_markets() -> list[str]:
+    raw = os.getenv("PLAYER_PROP_MARKETS", "").strip()
+    if not raw:
+        return PLAYER_PROP_MARKETS
+
+    requested = [item.strip() for item in raw.split(",") if item.strip()]
+    allowed = {market: market for market in PLAYER_PROP_MARKETS}
+    selected = [allowed[item] for item in requested if item in allowed]
+    return selected or PLAYER_PROP_MARKETS
 
 
 def _prop_cache_slot(sport: str) -> str:
@@ -245,6 +257,7 @@ def _parse_prop_sides(*, sport: str, event_payload: dict, target_markets: list[s
 async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
     from services.odds_api import fetch_odds
 
+    target_markets = get_player_prop_markets()
     schedule_payload, _ = await fetch_odds(sport, source=f"{source}_props_schedule")
     events = schedule_payload if isinstance(schedule_payload, list) else []
     pregame_cutoff = datetime.now(timezone.utc) + timedelta(minutes=1)
@@ -268,14 +281,14 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
             event_payload, resp = await _fetch_prop_market_for_event(
                 sport=sport,
                 event_id=event_id,
-                markets=PLAYER_PROP_MARKETS,
+                markets=target_markets,
                 source=source,
             )
         except httpx.HTTPStatusError as e:
             if e.response is not None and e.response.status_code == 404:
                 continue
             raise
-        event_sides = _parse_prop_sides(sport=sport, event_payload=event_payload, target_markets=PLAYER_PROP_MARKETS)
+        event_sides = _parse_prop_sides(sport=sport, event_payload=event_payload, target_markets=target_markets)
         if event_sides:
             events_with_any_book += 1
             all_sides.extend(event_sides)
