@@ -238,7 +238,20 @@ A small but meaningful test suite protects EV math, settlement/profit logic, sch
 | [docs/scanner.md](./docs/scanner.md) | End-to-end scanner pipeline |
 | [docs/promos.md](./docs/promos.md) | Math behind each promo lens |
 | [docs/testing.md](./docs/testing.md) | Unit/integration/e2e strategy and hardening coverage |
+| [docs/workflow.md](./docs/workflow.md) | Lightweight stable-vs-dev workflow for solo shipping and beta testers |
 | [PROJECT.md](./PROJECT.md) | Architecture, conventions, key decisions |
+
+---
+
+## Branching Workflow
+
+For beta testing, keep `main` stable and do active work on `dev`.
+
+- `main` should be the branch you are comfortable sharing with testers
+- `dev` should be your day-to-day branch for active iteration
+- merge `dev -> main` only after local sanity checks pass
+
+See [docs/workflow.md](./docs/workflow.md) for the lightweight workflow and pre-merge checklist.
 
 ---
 
