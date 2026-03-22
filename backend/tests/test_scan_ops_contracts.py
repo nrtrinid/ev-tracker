@@ -232,6 +232,28 @@ def test_scan_latest_duplicate_state_contract_shape(auth_client, auth_headers, m
 
 
 @pytest.mark.integration
+def test_scan_markets_rejects_hidden_surface(auth_client, auth_headers):
+    resp = auth_client.get(
+        "/api/scan-markets",
+        params={"surface": "player_props"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+    assert "Unsupported surface" in str(resp.json().get("detail"))
+
+
+@pytest.mark.integration
+def test_scan_latest_rejects_hidden_surface(auth_client, auth_headers):
+    resp = auth_client.get(
+        "/api/scan-latest",
+        params={"surface": "player_props"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+    assert "Unsupported surface" in str(resp.json().get("detail"))
+
+
+@pytest.mark.integration
 def test_ops_status_contract_shape_normal(auth_client, monkeypatch):
     import main
 

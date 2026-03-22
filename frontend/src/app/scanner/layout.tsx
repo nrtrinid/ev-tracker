@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { cn } from "@/lib/utils";
-import { SCANNER_SURFACES } from "./scanner-surfaces";
+import { PUBLIC_SCANNER_SURFACES } from "./scanner-surfaces";
 
 export default function ScannerLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -13,7 +13,7 @@ export default function ScannerLayout({ children }: { children: React.ReactNode 
     <>
       <div className="sticky top-[56px] z-10 border-b border-border bg-background/90 backdrop-blur-sm">
         <div className="container mx-auto flex max-w-2xl gap-2 px-4 py-3">
-          {SCANNER_SURFACES.map((surface) => {
+          {PUBLIC_SCANNER_SURFACES.map((surface) => {
             const isActive = pathname === surface.path;
             return (
               <Link
