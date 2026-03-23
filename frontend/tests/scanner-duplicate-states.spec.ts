@@ -104,7 +104,7 @@ test.describe("scanner duplicate states", () => {
 
     const card = page.locator(".card-hover").filter({ hasText: "Boston Celtics" }).first();
     await expect(card).toBeVisible({ timeout: 10000 });
-    await card.getByRole("button", { name: /Log Bet/i }).click();
+    await card.getByRole("button", { name: /Review & Log/i }).click();
 
     await expect(page.getByRole("heading", { name: "Log Bet" })).toBeVisible({ timeout: 5000 });
     await expect(page.getByText("You already logged this side.")).toBeVisible();

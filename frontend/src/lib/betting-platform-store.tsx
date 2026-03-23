@@ -1,33 +1,60 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/lib/auth-context";
 
-import type { ParlayCartLeg, ScannerSurface } from "@/lib/types";
+import type {
+  ParlayCartLeg,
+  ScannedBetData,
+  ScannerSurface,
+  TutorialPracticeBet,
+  TutorialSession,
+} from "@/lib/types";
 
 type SurfaceFilters = Record<string, unknown>;
+
+export interface ScannerReviewCandidate {
+  surface: ScannerSurface;
+  bet: ScannedBetData;
+  createdAt: string;
+}
 
 interface BettingPlatformState {
   cart: ParlayCartLeg[];
   surfaceFilters: Partial<Record<ScannerSurface, SurfaceFilters>>;
+  scannerReviewCandidate: ScannerReviewCandidate | null;
+  tutorialSession: TutorialSession | null;
   onboardingCompleted: string[];
   onboardingDismissed: string[];
 }
 
 interface BettingPlatformContextValue extends BettingPlatformState {
+  isHydrated: boolean;
   addCartLeg: (leg: ParlayCartLeg) => { added: boolean; reason?: string };
   removeCartLeg: (legId: string) => void;
   clearCart: () => void;
   setSurfaceFilters: (surface: ScannerSurface, filters: SurfaceFilters) => void;
+  setScannerReviewCandidate: (candidate: ScannerReviewCandidate | null) => void;
+  clearScannerReviewCandidate: () => void;
+  startTutorialSession: (surface?: ScannerSurface) => void;
+  markTutorialScanSeeded: () => void;
+  saveTutorialPracticeBet: (bet: TutorialPracticeBet) => void;
+  clearTutorialSession: () => void;
   markOnboardingCompleted: (step: string) => void;
   dismissOnboardingStep: (step: string) => void;
-  hydrateOnboarding: (payload: { completed?: string[]; dismissed?: string[] } | null | undefined) => void;
+  hydrateOnboarding: (
+    payload: { completed?: string[]; dismissed?: string[] } | null | undefined,
+    source?: "local" | "remote"
+  ) => void;
 }
 
-const STORAGE_KEY = "ev-tracker-betting-platform";
+const STORAGE_KEY_PREFIX = "ev-tracker-betting-platform";
 
 const defaultState: BettingPlatformState = {
   cart: [],
   surfaceFilters: {},
+  scannerReviewCandidate: null,
+  tutorialSession: null,
   onboardingCompleted: [],
   onboardingDismissed: [],
 };
@@ -40,29 +67,52 @@ function arraysEqual(left: string[], right: string[]) {
 const BettingPlatformContext = createContext<BettingPlatformContextValue | null>(null);
 
 export function BettingPlatformProvider({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+  const storageKey = `${STORAGE_KEY_PREFIX}:${user?.id ?? "guest"}`;
   const [state, setState] = useState<BettingPlatformState>(defaultState);
+  const [isHydrated, setIsHydrated] = useState(false);
+
+  const persistBettingPlatformState = useCallback((nextState: BettingPlatformState) => {
+    if (typeof window === "undefined" || loading || !isHydrated) return;
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify(nextState));
+    } catch {
+      // Ignore storage write failures and fall back to the effect-based persistence path.
+    }
+  }, [isHydrated, loading, storageKey]);
 
   useEffect(() => {
+    if (loading) return;
     if (typeof window === "undefined") return;
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
+    setIsHydrated(false);
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) {
+      setState(defaultState);
+      setIsHydrated(true);
+      return;
+    }
     try {
       const parsed = JSON.parse(raw) as BettingPlatformState;
       setState({
         cart: Array.isArray(parsed.cart) ? parsed.cart : [],
         surfaceFilters: parsed.surfaceFilters ?? {},
+        scannerReviewCandidate: parsed.scannerReviewCandidate ?? null,
+        tutorialSession: parsed.tutorialSession ?? null,
         onboardingCompleted: Array.isArray(parsed.onboardingCompleted) ? parsed.onboardingCompleted : [],
         onboardingDismissed: Array.isArray(parsed.onboardingDismissed) ? parsed.onboardingDismissed : [],
       });
     } catch {
-      window.localStorage.removeItem(STORAGE_KEY);
+      window.localStorage.removeItem(storageKey);
+      setState(defaultState);
     }
-  }, []);
+    setIsHydrated(true);
+  }, [loading, storageKey]);
 
   useEffect(() => {
+    if (loading || !isHydrated) return;
     if (typeof window === "undefined") return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state]);
+    window.localStorage.setItem(storageKey, JSON.stringify(state));
+  }, [isHydrated, loading, state, storageKey]);
 
   const addCartLeg = useCallback((leg: ParlayCartLeg) => {
     let result: { added: boolean; reason?: string } = { added: true };
@@ -110,34 +160,141 @@ export function BettingPlatformProvider({ children }: { children: React.ReactNod
     });
   }, []);
 
+  const setScannerReviewCandidate = useCallback((candidate: ScannerReviewCandidate | null) => {
+    setState((current) => {
+      if (current.scannerReviewCandidate === candidate) {
+        return current;
+      }
+      return {
+        ...current,
+        scannerReviewCandidate: candidate,
+      };
+    });
+  }, []);
+
+  const clearScannerReviewCandidate = useCallback(() => {
+    setState((current) => {
+      if (current.scannerReviewCandidate === null) {
+        return current;
+      }
+      const nextState = { ...current, scannerReviewCandidate: null };
+      persistBettingPlatformState(nextState);
+      return nextState;
+    });
+  }, [persistBettingPlatformState]);
+
+  const startTutorialSession = useCallback((surface: ScannerSurface = "straight_bets") => {
+    setState((current) => {
+      const nextState: BettingPlatformState = {
+        ...current,
+        scannerReviewCandidate: null,
+        tutorialSession: {
+          surface,
+          step: "scanner_empty",
+          has_seeded_scan: false,
+          practice_bet: null,
+          started_at: current.tutorialSession?.started_at ?? new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      };
+      persistBettingPlatformState(nextState);
+      return nextState;
+    });
+  }, [persistBettingPlatformState]);
+
+  const markTutorialScanSeeded = useCallback(() => {
+    setState((current) => {
+      const existing = current.tutorialSession;
+      const baseStartedAt = existing?.started_at ?? new Date().toISOString();
+      const nextState: BettingPlatformState = {
+        ...current,
+        tutorialSession: {
+          surface: existing?.surface ?? "straight_bets",
+          step: "scanner_ready",
+          has_seeded_scan: true,
+          practice_bet: existing?.practice_bet ?? null,
+          started_at: baseStartedAt,
+          updated_at: new Date().toISOString(),
+        },
+      };
+      persistBettingPlatformState(nextState);
+      return nextState;
+    });
+  }, [persistBettingPlatformState]);
+
+  const saveTutorialPracticeBet = useCallback((bet: TutorialPracticeBet) => {
+    setState((current) => {
+      const nextState: BettingPlatformState = {
+        ...current,
+        scannerReviewCandidate: null,
+        tutorialSession: {
+          surface: "straight_bets",
+          step: "home_review",
+          has_seeded_scan: true,
+          practice_bet: bet,
+          started_at: current.tutorialSession?.started_at ?? new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      };
+      persistBettingPlatformState(nextState);
+      return nextState;
+    });
+  }, [persistBettingPlatformState]);
+
+  const clearTutorialSession = useCallback(() => {
+    setState((current) => {
+      if (current.tutorialSession === null) {
+        return current;
+      }
+      const nextState = { ...current, tutorialSession: null };
+      persistBettingPlatformState(nextState);
+      return nextState;
+    });
+  }, [persistBettingPlatformState]);
+
   const markOnboardingCompleted = useCallback((step: string) => {
     setState((current) => {
       if (current.onboardingCompleted.includes(step)) {
         return current;
       }
-      return {
+      const nextState = {
         ...current,
         onboardingCompleted: [...current.onboardingCompleted, step],
       };
+      persistBettingPlatformState(nextState);
+      return nextState;
     });
-  }, []);
+  }, [persistBettingPlatformState]);
 
   const dismissOnboardingStep = useCallback((step: string) => {
     setState((current) => {
       if (current.onboardingDismissed.includes(step)) {
         return current;
       }
-      return {
+      const nextState = {
         ...current,
         onboardingDismissed: [...current.onboardingDismissed, step],
       };
+      persistBettingPlatformState(nextState);
+      return nextState;
     });
-  }, []);
+  }, [persistBettingPlatformState]);
 
-  const hydrateOnboarding = useCallback((payload: { completed?: string[]; dismissed?: string[] } | null | undefined) => {
+  const hydrateOnboarding = useCallback((
+    payload: { completed?: string[]; dismissed?: string[] } | null | undefined,
+    source: "local" | "remote" = "local"
+  ) => {
     setState((current) => {
-      const nextCompleted = Array.isArray(payload?.completed) ? payload.completed : current.onboardingCompleted;
-      const nextDismissed = Array.isArray(payload?.dismissed) ? payload.dismissed : current.onboardingDismissed;
+      const payloadCompleted = Array.isArray(payload?.completed) ? payload.completed : current.onboardingCompleted;
+      const payloadDismissed = Array.isArray(payload?.dismissed) ? payload.dismissed : current.onboardingDismissed;
+      const nextCompleted =
+        source === "remote" && current.onboardingCompleted.length > 0 && payloadCompleted.length === 0
+          ? current.onboardingCompleted
+          : payloadCompleted;
+      const nextDismissed =
+        source === "remote" && current.onboardingDismissed.length > 0 && payloadDismissed.length === 0
+          ? current.onboardingDismissed
+          : payloadDismissed;
 
       if (
         arraysEqual(current.onboardingCompleted, nextCompleted) &&
@@ -146,21 +303,30 @@ export function BettingPlatformProvider({ children }: { children: React.ReactNod
         return current;
       }
 
-      return {
+      const nextState = {
         ...current,
         onboardingCompleted: nextCompleted,
         onboardingDismissed: nextDismissed,
       };
+      persistBettingPlatformState(nextState);
+      return nextState;
     });
-  }, []);
+  }, [persistBettingPlatformState]);
 
   const value = useMemo<BettingPlatformContextValue>(
     () => ({
       ...state,
+      isHydrated,
       addCartLeg,
       removeCartLeg,
       clearCart,
       setSurfaceFilters,
+      setScannerReviewCandidate,
+      clearScannerReviewCandidate,
+      startTutorialSession,
+      markTutorialScanSeeded,
+      saveTutorialPracticeBet,
+      clearTutorialSession,
       markOnboardingCompleted,
       dismissOnboardingStep,
       hydrateOnboarding,
@@ -168,12 +334,19 @@ export function BettingPlatformProvider({ children }: { children: React.ReactNod
     [
       addCartLeg,
       clearCart,
+      clearScannerReviewCandidate,
+      clearTutorialSession,
       dismissOnboardingStep,
       hydrateOnboarding,
       markOnboardingCompleted,
+      markTutorialScanSeeded,
       removeCartLeg,
+      saveTutorialPracticeBet,
+      setScannerReviewCandidate,
       setSurfaceFilters,
+      startTutorialSession,
       state,
+      isHydrated,
     ]
   );
 

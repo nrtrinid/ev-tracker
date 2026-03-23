@@ -37,11 +37,40 @@ test.describe("scanner interaction guards", () => {
 
     await page.goto("/scanner");
 
-    const fullScanButton = page.getByRole("button", { name: /full scan/i });
-    await expect(fullScanButton).toBeVisible({ timeout: 10000 });
-    await fullScanButton.click();
+    const searchInput = page.getByPlaceholder(/search/i);
+    const tutorialScanButton = page.getByRole("button", { name: /reload tutorial lines|run tutorial scan/i });
+    const tutorialModeVisible = await tutorialScanButton.isVisible().catch(() => false);
 
-    const searchInput = page.getByPlaceholder("Search team, game, sport, or book");
+    if (tutorialModeVisible) {
+      const scanButton = tutorialScanButton;
+      await expect(scanButton).toBeVisible({ timeout: 10000 });
+      await scanButton.click();
+      const practiceButton = page.getByRole("button", { name: /practice log bet/i }).first();
+      await expect(practiceButton).toBeVisible({ timeout: 20000 });
+
+      await page.waitForTimeout(350);
+      const tutorialBaselineLatest = scanLatestCalls;
+      const tutorialBaselineScan = scanMarketsCalls;
+
+      await practiceButton.click();
+      await expect(page.getByRole("heading", { name: "Log Bet" })).toBeVisible({ timeout: 5000 });
+      await page.getByRole("button", { name: "Close" }).click();
+      await expect(page.getByRole("heading", { name: "Log Bet" })).not.toBeVisible({ timeout: 5000 });
+
+      await page.waitForTimeout(500);
+
+      expect(scanLatestCalls).toBe(tutorialBaselineLatest);
+      expect(scanMarketsCalls).toBe(tutorialBaselineScan);
+      return;
+    }
+
+    const liveScanButton = page.getByRole("button", { name: /find plays|refresh plays/i });
+    const searchVisible = await searchInput.isVisible().catch(() => false);
+    if (!searchVisible) {
+      await expect(liveScanButton).toBeVisible({ timeout: 10000 });
+      await liveScanButton.click();
+    }
+
     await expect(searchInput).toBeVisible({ timeout: 20000 });
 
     await page.waitForTimeout(350);
@@ -49,8 +78,8 @@ test.describe("scanner interaction guards", () => {
     const baselineScan = scanMarketsCalls;
 
     await searchInput.fill("lakers");
-    await page.getByRole("button", { name: "Today" }).click();
-    await page.getByRole("button", { name: /^more$/i }).first().click();
+    await page.getByRole("button", { name: "Starting Soon" }).click();
+    await page.getByRole("button", { name: /^more$/i }).click();
     await page.getByRole("menuitemradio", { name: "1.5%+" }).click();
 
     await page.waitForTimeout(500);

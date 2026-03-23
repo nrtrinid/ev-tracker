@@ -394,6 +394,45 @@ export function ScannerResultFilters({
         </Sheet>
       </div>
 
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        <button
+          type="button"
+          onClick={() => onTimePresetChange(filters.timePreset === "starting_soon" ? "all" : "starting_soon")}
+          className={cn(
+            "whitespace-nowrap rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors",
+            filters.timePreset === "starting_soon"
+              ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
+              : "border-border bg-background text-muted-foreground hover:text-foreground"
+          )}
+        >
+          Starting Soon
+        </button>
+        <button
+          type="button"
+          onClick={() => onRiskPresetChange(filters.riskPreset === "safer" ? "any" : "safer")}
+          className={cn(
+            "whitespace-nowrap rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors",
+            filters.riskPreset === "safer"
+              ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
+              : "border-border bg-background text-muted-foreground hover:text-foreground"
+          )}
+        >
+          Safer Odds
+        </button>
+        <button
+          type="button"
+          onClick={() => onHideAlreadyLoggedChange(!filters.hideAlreadyLogged)}
+          className={cn(
+            "whitespace-nowrap rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors",
+            filters.hideAlreadyLogged
+              ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
+              : "border-border bg-background text-muted-foreground hover:text-foreground"
+          )}
+        >
+          Hide Logged
+        </button>
+      </div>
+
       {shouldShowProfitBoostContextControls(activeLens) && (
         <div className="flex items-center gap-2">
           <Button

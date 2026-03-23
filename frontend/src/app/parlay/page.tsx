@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 
-import { OnboardingBanner } from "@/components/OnboardingBanner";
+import { JourneyCoach } from "@/components/JourneyCoach";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -22,11 +22,7 @@ export default function ParlayPage() {
   return (
     <main className="min-h-screen bg-background">
       <div className="container mx-auto max-w-2xl space-y-4 px-4 py-6 pb-24">
-        <OnboardingBanner
-          step="parlay_builder"
-          title="Build your first multi-leg ticket"
-          body="Add one straight bet and one prop, then use this page to sanity-check the combined payout before you place anything at the book."
-        />
+        <JourneyCoach route="parlay" />
 
         <div>
           <h1 className="text-2xl font-semibold">Parlay Builder</h1>

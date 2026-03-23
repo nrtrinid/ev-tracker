@@ -13,6 +13,7 @@ interface PlayerPropListProps {
   onLoadMore: () => void;
   onLogBet: (side: PlayerPropMarketSide) => void;
   onAddToCart: (side: PlayerPropMarketSide) => void;
+  onStartPlaceFlow: (side: PlayerPropMarketSide) => void;
   bookColors: Record<string, string>;
   sportDisplayMap: Record<string, string>;
 }
@@ -23,6 +24,7 @@ export function PlayerPropList({
   onLoadMore,
   onLogBet,
   onAddToCart,
+  onStartPlaceFlow,
   bookColors,
   sportDisplayMap,
 }: PlayerPropListProps) {
@@ -51,6 +53,7 @@ export function PlayerPropList({
               side={side}
               onLogBet={onLogBet}
               onAddToCart={onAddToCart}
+              onStartPlaceFlow={onStartPlaceFlow}
               bookColors={bookColors}
               sportDisplayMap={sportDisplayMap}
             />

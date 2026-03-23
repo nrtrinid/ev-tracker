@@ -5,6 +5,7 @@ import { StraightBetCard } from "./StraightBetCard";
 
 interface StraightBetListProps {
   activeLens: "standard" | "profit_boost" | "bonus_bet" | "qualifier";
+  tutorialMode?: boolean;
   results: Array<MarketSide & { _retention?: number; _boostedEV?: number }>;
   kellyMultiplier: number;
   bankroll: number;
@@ -13,12 +14,14 @@ interface StraightBetListProps {
   onLoadMore: () => void;
   onLogBet: (side: MarketSide) => void;
   onAddToCart: (side: MarketSide) => void;
+  onStartPlaceFlow: (side: MarketSide) => void;
   bookColors: Record<string, string>;
   sportDisplayMap: Record<string, string>;
 }
 
 export function StraightBetList({
   activeLens,
+  tutorialMode = false,
   results,
   kellyMultiplier,
   bankroll,
@@ -27,6 +30,7 @@ export function StraightBetList({
   onLoadMore,
   onLogBet,
   onAddToCart,
+  onStartPlaceFlow,
   bookColors,
   sportDisplayMap,
 }: StraightBetListProps) {
@@ -37,11 +41,13 @@ export function StraightBetList({
           key={`${side.sportsbook}-${side.team}-${side.event}-${idx}`}
           side={side}
           activeLens={activeLens}
+          tutorialMode={tutorialMode}
           kellyMultiplier={kellyMultiplier}
           bankroll={bankroll}
           boostPercent={boostPercent}
           onLogBet={onLogBet}
           onAddToCart={onAddToCart}
+          onStartPlaceFlow={onStartPlaceFlow}
           bookColors={bookColors}
           sportDisplayMap={sportDisplayMap}
         />

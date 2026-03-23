@@ -448,6 +448,34 @@ export interface ScannedBetData {
   matched_pending_bet_id?: string | null;
 }
 
+export interface TutorialPracticeBet {
+  id: string;
+  created_at: string;
+  event_date: string;
+  sport: string;
+  event: string;
+  market: string;
+  sportsbook: string;
+  surface: ScannerSurface;
+  promo_type: PromoType;
+  odds_american: number;
+  stake: number;
+  win_payout: number;
+  ev_total: number;
+  ev_per_dollar: number;
+}
+
+export type TutorialSessionStep = "scanner_empty" | "scanner_ready" | "home_review";
+
+export interface TutorialSession {
+  surface: ScannerSurface;
+  step: TutorialSessionStep;
+  has_seeded_scan: boolean;
+  practice_bet: TutorialPracticeBet | null;
+  started_at: string;
+  updated_at: string;
+}
+
 export interface ParlayCartLeg {
   id: string;
   surface: ScannerSurface;

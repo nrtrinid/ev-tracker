@@ -1,5 +1,6 @@
 import { ChevronRight, ExternalLink } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import type { PlayerPropMarketSide } from "@/lib/types";
 import { cn, formatOdds } from "@/lib/utils";
@@ -9,6 +10,7 @@ interface PlayerPropCardProps {
   side: PlayerPropMarketSide & { _retention?: number; _boostedEV?: number };
   onLogBet: (side: PlayerPropMarketSide) => void;
   onAddToCart: (side: PlayerPropMarketSide) => void;
+  onStartPlaceFlow: (side: PlayerPropMarketSide) => void;
   bookColors: Record<string, string>;
   sportDisplayMap: Record<string, string>;
 }
@@ -44,10 +46,28 @@ function bookAbbrev(name: string): string {
   return map[name] || name;
 }
 
+function getWorkflowHint(params: {
+  duplicateState: "new" | "already_logged" | "better_now";
+  referenceBookCount: number;
+}): string {
+  const { duplicateState, referenceBookCount } = params;
+  if (duplicateState === "better_now") {
+    return "This prop is showing a better number than the one you already logged.";
+  }
+  if (duplicateState === "already_logged") {
+    return "You already have exposure on this prop, so double-check before adding more.";
+  }
+  if (referenceBookCount >= 2) {
+    return `${referenceBookCount} books support this number, which makes the price easier to trust.`;
+  }
+  return "This book is offering a better price than the current fair estimate.";
+}
+
 export function PlayerPropCard({
   side,
   onLogBet,
   onAddToCart,
+  onStartPlaceFlow,
   bookColors,
   sportDisplayMap,
 }: PlayerPropCardProps) {
@@ -55,12 +75,15 @@ export function PlayerPropCard({
     sportsbook: side.sportsbook,
     sportsbookDeeplinkUrl: side.sportsbook_deeplink_url,
   });
-  const fairPct = (side.true_prob * 100).toFixed(1);
   const duplicateState = side.scanner_duplicate_state ?? "new";
   const referenceBookCount = side.reference_bookmaker_count ?? side.reference_bookmakers.length;
   const confidenceLabel = side.confidence_label ?? (referenceBookCount >= 2 ? "solid" : "thin");
   const confidenceDisplay = formatConfidenceLabel(confidenceLabel);
-  const evColorClass =
+  const workflowHint = getWorkflowHint({
+    duplicateState,
+    referenceBookCount,
+  });
+  const edgeColorClass =
     side.ev_percentage > 0
       ? "text-green-600"
       : side.ev_percentage < 0
@@ -70,7 +93,7 @@ export function PlayerPropCard({
   return (
     <Card className="card-hover">
       <CardContent className="space-y-2.5 p-4">
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1">
             <div className="mb-1.5 flex flex-wrap items-center gap-2">
               <span
@@ -106,18 +129,18 @@ export function PlayerPropCard({
             </div>
 
             <p className="line-clamp-1 mt-0.5 text-xs text-muted-foreground">{side.event}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">{workflowHint}</p>
 
             <div className="mt-2 flex flex-col gap-1 text-xs">
               <div className="flex flex-wrap items-center gap-3">
-                <span className="font-mono font-medium">
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono font-medium">
+                  <span className="text-[11px] text-muted-foreground">Book</span>
                   <span className="text-foreground">{formatOdds(side.book_odds)}</span>
-                  <span className="mx-1 text-muted-foreground">|</span>
-                  <span className="text-muted-foreground">
-                    Fair: {formatOdds(side.reference_odds)} ({fairPct}%)
+                  <span className="text-[11px] text-muted-foreground">
+                    Fair {formatOdds(side.reference_odds)}
                   </span>
-                  <span className="mx-1 text-muted-foreground">|</span>
-                  <span className="text-muted-foreground">
-                    Consensus: {confidenceDisplay} ({referenceBookCount})
+                  <span className="text-[11px] text-muted-foreground">
+                    Backed by {referenceBookCount} books
                   </span>
                 </span>
 
@@ -134,66 +157,76 @@ export function PlayerPropCard({
             </div>
           </div>
 
-          <div className="shrink-0">
-            <div className="text-right">
-              <p className={cn("text-lg font-mono font-bold leading-tight", evColorClass)}>
+          <div className="shrink-0 sm:min-w-[92px]">
+            <div className="flex items-start justify-between rounded-lg border border-border/60 bg-muted/30 px-3 py-2 sm:block sm:rounded-none sm:border-0 sm:bg-transparent sm:px-0 sm:py-0 sm:text-right">
+              <div>
+              <p className={cn("text-lg font-mono font-bold leading-tight", edgeColorClass)}>
                 {side.ev_percentage >= 0 ? "+" : ""}
                 {side.ev_percentage.toFixed(1)}%
               </p>
-              <p className="text-[10px] text-muted-foreground">EV</p>
+              <p className="text-[10px] text-muted-foreground">Edge</p>
+              </div>
+              <p className="text-[10px] text-muted-foreground sm:mt-0.5">
+                Confidence: {confidenceDisplay}
+              </p>
             </div>
           </div>
         </div>
 
         {actionModel.primary.kind === "open" && actionModel.primary.href ? (
-          <div className="space-y-1.5 border-t border-border/60 pt-2">
-            <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="space-y-2 border-t border-border/60 pt-2">
+            {actionModel.trustHint && (
+              <p className="text-[11px] text-muted-foreground">{actionModel.trustHint}</p>
+            )}
+            <Button asChild className="h-10 w-full text-xs font-semibold">
               <a
                 href={actionModel.primary.href}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-lg bg-foreground px-3 text-xs font-semibold text-background transition-opacity hover:opacity-90"
+                onClick={() => onStartPlaceFlow(side)}
               >
                 {actionModel.primary.label}
-                <ExternalLink className="h-3 w-3" />
+                <ExternalLink className="ml-1 h-3.5 w-3.5" />
               </a>
-              <button
+            </Button>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button
                 type="button"
-                onClick={() => onAddToCart(side)}
-                className="inline-flex h-9 items-center justify-center gap-1 rounded-lg border border-[#C4A35A]/35 bg-[#C4A35A]/10 px-3 text-xs font-medium text-[#5C4D2E] transition-colors hover:bg-[#C4A35A]/20"
-              >
-                Add to Cart
-              </button>
-              <button
-                type="button"
+                variant="outline"
+                className="h-10 flex-1 text-xs font-medium"
                 onClick={() => onLogBet(side)}
-                className="inline-flex h-9 items-center justify-center gap-1 rounded-lg border border-border bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted"
               >
-                {actionModel.secondary?.label ?? "Log Bet"}
-                <ChevronRight className="h-3 w-3" />
-              </button>
+                {actionModel.secondary?.label ?? "Review & Log"}
+                <ChevronRight className="ml-1 h-3.5 w-3.5" />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-10 flex-1 text-xs font-medium text-muted-foreground"
+                onClick={() => onAddToCart(side)}
+              >
+                Save to Cart
+              </Button>
             </div>
-            {actionModel.trustHint && (
-              <p className="text-[10px] text-muted-foreground">{actionModel.trustHint}</p>
-            )}
           </div>
         ) : (
-          <div className="border-t border-border/60 pt-2">
-            <button
+          <div className="space-y-2 border-t border-border/60 pt-2">
+            <Button
               type="button"
-              onClick={() => onAddToCart(side)}
-              className="inline-flex h-9 w-full items-center justify-center gap-1 rounded-lg border border-[#C4A35A]/35 bg-[#C4A35A]/10 px-3 text-xs font-semibold text-[#5C4D2E] transition-colors hover:bg-[#C4A35A]/20"
-            >
-              Add to Cart
-            </button>
-            <button
-              type="button"
+              className="h-10 w-full text-xs font-semibold"
               onClick={() => onLogBet(side)}
-              className="mt-2 inline-flex h-9 w-full items-center justify-center gap-1 rounded-lg bg-foreground px-3 text-xs font-semibold text-background transition-opacity hover:opacity-90"
             >
-              Log Bet
-              <ChevronRight className="h-3 w-3" />
-            </button>
+              {actionModel.primary.label}
+              <ChevronRight className="ml-1 h-3.5 w-3.5" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-10 w-full text-xs font-medium text-muted-foreground"
+              onClick={() => onAddToCart(side)}
+            >
+              Save to Cart
+            </Button>
           </div>
         )}
       </CardContent>

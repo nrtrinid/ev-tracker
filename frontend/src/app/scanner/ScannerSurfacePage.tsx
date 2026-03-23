@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import { JourneyCoach } from "@/components/JourneyCoach";
 import { LogBetDrawer } from "@/components/LogBetDrawer";
-import { OnboardingBanner } from "@/components/OnboardingBanner";
 import { getLatestScan, scanMarkets } from "@/lib/api";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
 import { useBalances, useBackendReadiness, useSettings, queryKeys } from "@/lib/hooks";
@@ -17,7 +17,7 @@ import {
   type ScannerTimePreset,
 } from "@/lib/scanner-filters";
 import { createClient } from "@/lib/supabase";
-import type { MarketSide, ScannedBetData, ScannerSurface } from "@/lib/types";
+import type { MarketSide, ScannedBetData, ScannerSurface, TutorialPracticeBet } from "@/lib/types";
 import { useKellySettings } from "@/lib/kelly-context";
 import {
   classifyScannerNullState,
@@ -35,6 +35,10 @@ import { ScannerPreScanEmptyState } from "./components/ScannerPreScanEmptyState"
 import { PlayerPropDiagnosticsPanel } from "./components/PlayerPropDiagnosticsPanel";
 import { getScannerSurface } from "./scanner-surfaces";
 import { rankScannerSidesByLens } from "./scanner-lenses";
+import {
+  isStraightBetsTutorialActive,
+  STRAIGHT_BETS_TUTORIAL_SCAN,
+} from "./scanner-tutorial";
 import type { ScannerLens } from "./scanner-ui-model";
 import {
   buildParlayCartLeg,
@@ -55,6 +59,9 @@ const DEFAULT_PLAYER_PROP_BOOKS = ["DraftKings", "FanDuel", "BetMGM", "Caesars",
 const LONGSHOT_MAX_AMERICAN = 500;
 const BOOST_PRESETS = [25, 30, 50];
 const DEFAULT_RESULT_FILTERS = defaultScannerResultFilters();
+const TUTORIAL_SELECTED_BOOKS = Array.from(
+  new Set(STRAIGHT_BETS_TUTORIAL_SCAN.sides.map((side) => side.sportsbook))
+);
 
 const bookColors: Record<string, string> = {
   Bovada: "bg-[#B85C38]",
@@ -80,7 +87,31 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
   const { data: balances } = useBalances();
   const { data: readiness } = useBackendReadiness();
   const { data: settings } = useSettings();
-  const { cart, addCartLeg, surfaceFilters, setSurfaceFilters } = useBettingPlatformStore();
+  const {
+    isHydrated,
+    cart,
+    addCartLeg,
+    surfaceFilters,
+    setSurfaceFilters,
+    scannerReviewCandidate,
+    setScannerReviewCandidate,
+    clearScannerReviewCandidate,
+    tutorialSession,
+    startTutorialSession,
+    markTutorialScanSeeded,
+    saveTutorialPracticeBet,
+    onboardingCompleted,
+    onboardingDismissed,
+  } = useBettingPlatformStore();
+  const tutorialMode = isHydrated && isStraightBetsTutorialActive({
+    surface,
+    completed: onboardingCompleted,
+    dismissed: onboardingDismissed,
+  });
+  const tutorialStep = tutorialSession?.step ?? "scanner_empty";
+  const tutorialScannerActive = tutorialMode && surface === "straight_bets";
+  const hasTutorialScan = tutorialScannerActive && (tutorialSession?.has_seeded_scan ?? false);
+  const showScannerCoach = !tutorialScannerActive || tutorialStep === "home_review";
   const { useComputedBankroll, bankrollOverride, kellyMultiplier } = useKellySettings();
   const computedBankroll = useMemo(() => {
     if (!balances || balances.length === 0) return 0;
@@ -109,6 +140,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
   } = useQuery({
     queryKey: queryKeys.scanMarkets(surface),
     queryFn: () => getLatestScan(surface),
+    enabled: !tutorialScannerActive,
     staleTime: Infinity,
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -138,11 +170,32 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerKey, setDrawerKey] = useState(0);
   const [drawerInitialValues, setDrawerInitialValues] = useState<ScannedBetData | undefined>();
+  const [drawerMode, setDrawerMode] = useState<"standard" | "tutorial_practice">("standard");
+  const effectiveScanData = tutorialScannerActive
+    ? hasTutorialScan
+      ? STRAIGHT_BETS_TUTORIAL_SCAN
+      : null
+    : scanData;
   const showBackendHint = !!readiness && (readiness.status !== "ready" || !readiness.checks.scheduler_freshness);
   const backendHint =
     readiness?.status === "unreachable"
       ? "Scanner is reconnecting. Odds may be slightly delayed."
       : "Scanner data is refreshing. Prices may be a little behind.";
+
+  const applyTutorialScannerDefaults = useCallback(() => {
+    setSelectedBooks(TUTORIAL_SELECTED_BOOKS.filter((book) => availableBooks.includes(book)));
+    setActiveLens("standard");
+    setSearchQuery("");
+    setTimePreset("all");
+    setEdgeMinStandard(0);
+    setHideLongshots(false);
+    setHideAlreadyLogged(false);
+    setRiskPreset("any");
+    setBoostPercent(30);
+    setCustomBoostInput("");
+    setPropMarket("all");
+    setPropSide("all");
+  }, [availableBooks]);
 
   useEffect(() => {
     setSurfaceFilters(surface, {
@@ -177,12 +230,23 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
   ]);
 
   useEffect(() => {
-    if (!scanData?.scanned_at) return;
-    const timer = setInterval(() => setAgeTick((tick) => tick + 1), 60_000);
-    return () => clearInterval(timer);
-  }, [scanData?.scanned_at]);
+    if (!isHydrated || !tutorialScannerActive || tutorialSession) return;
+    startTutorialSession(surface);
+  }, [isHydrated, surface, startTutorialSession, tutorialScannerActive, tutorialSession]);
 
   useEffect(() => {
+    if (!tutorialScannerActive) return;
+    applyTutorialScannerDefaults();
+  }, [applyTutorialScannerDefaults, tutorialScannerActive, tutorialSession?.started_at]);
+
+  useEffect(() => {
+    if (!effectiveScanData?.scanned_at) return;
+    const timer = setInterval(() => setAgeTick((tick) => tick + 1), 60_000);
+    return () => clearInterval(timer);
+  }, [effectiveScanData?.scanned_at]);
+
+  useEffect(() => {
+    if (tutorialScannerActive) return;
     const supabase = createClient();
     const channel = supabase
       .channel(`scan-latest-updates-${surface}`)
@@ -203,7 +267,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [queryClient, surface]);
+  }, [queryClient, surface, tutorialScannerActive]);
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -215,6 +279,21 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
 
   const handleScan = async () => {
     if (cooldown > 0 || isRunningScan) return;
+    if (tutorialScannerActive) {
+      if (tutorialSession?.step === "home_review") {
+        toast("Practice ticket ready on Home", {
+          description: "Use the Home prompt when you are ready to review and finish the tutorial.",
+        });
+        return;
+      }
+      applyTutorialScannerDefaults();
+      startTutorialSession(surface);
+      markTutorialScanSeeded();
+      toast("Tutorial scan loaded", {
+        description: "Sample straight bets are ready. Pick one practice line and we will walk it back to Home.",
+      });
+      return;
+    }
     setIsRunningScan(true);
     try {
       const res = await scanMarkets(surface);
@@ -233,22 +312,25 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
   const kUser = settings?.k_factor_mode === "auto" ? (settings.k_factor_observed ?? undefined) : undefined;
   const kWeight = settings?.k_factor_mode === "auto" ? (settings.k_factor_weight ?? 0) : 0;
 
+  const rankingLens: ScannerLens = activeLens;
+
   const fullResults = useMemo(() => {
-    if (!scanData) return [];
+    if (!effectiveScanData) return [];
     if (surface === "player_props") {
-      return scanData.sides.filter((side) => selectedBooks.includes(side.sportsbook));
+      return effectiveScanData.sides.filter((side) => selectedBooks.includes(side.sportsbook));
     }
     return rankScannerSidesByLens({
-      sides: scanData.sides,
+      sides: effectiveScanData.sides,
       selectedBooks,
-      activeLens,
+      activeLens: rankingLens,
       boostPercent,
       kUser,
       kWeight,
     });
-  }, [activeLens, boostPercent, kUser, kWeight, scanData, selectedBooks, surface]);
+  }, [boostPercent, effectiveScanData, kUser, kWeight, rankingLens, selectedBooks, surface]);
 
-  const effectiveLens: ScannerLens = surface === "player_props" ? "standard" : activeLens;
+  const effectiveLens: ScannerLens =
+    surface === "player_props" ? "standard" : activeLens;
 
   const filteredResults = useMemo(() => {
     return applyScannerResultFilters({
@@ -284,7 +366,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
         propSide,
       },
     });
-  }, [edgeMinStandard, effectiveLens, hideAlreadyLogged, hideLongshots, propMarket, propSide, riskPreset, searchQuery, timePreset]);
+  }, [edgeMinStandard, effectiveLens, hideAlreadyLogged, hideLongshots, propMarket, propSide, riskPreset, searchQuery, surface, timePreset]);
 
   const nullState = useMemo(() => {
     return classifyScannerNullState({
@@ -295,26 +377,27 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
 
   useEffect(() => {
     setVisibleCount(10);
-  }, [scanData, effectiveLens, boostPercent, selectedBooks, hideLongshots, hideAlreadyLogged, riskPreset, edgeMinStandard, timePreset, searchQuery, propMarket, propSide]);
+  }, [effectiveScanData, effectiveLens, boostPercent, selectedBooks, hideLongshots, hideAlreadyLogged, riskPreset, edgeMinStandard, timePreset, searchQuery, propMarket, propSide]);
 
   const results = useMemo(() => filteredResults.slice(0, visibleCount), [filteredResults, visibleCount]);
-  const scanAgeMinutes = useMemo(() => (scanData?.scanned_at ? minutesAgo(scanData.scanned_at) : null), [scanData?.scanned_at]);
+  const scanAgeMinutes = useMemo(() => (effectiveScanData?.scanned_at ? minutesAgo(effectiveScanData.scanned_at) : null), [effectiveScanData?.scanned_at]);
 
   const secondaryActiveFilterChips = activeResultFilterChips;
   const hasActiveSecondaryFilters = secondaryActiveFilterChips.length > 0;
   const availablePropMarkets = useMemo(() => {
-    if (surface !== "player_props" || !scanData) return [];
+    if (surface !== "player_props" || !effectiveScanData) return [];
     const markets = new Set(
-      scanData.sides
+      effectiveScanData.sides
         .filter((side): side is Extract<MarketSide, { surface: "player_props" }> => side.surface === "player_props")
         .map((side) => side.market_key)
     );
     return Array.from(markets).sort((left, right) => left.localeCompare(right));
-  }, [scanData, surface]);
+  }, [effectiveScanData, surface]);
   const playerPropDiagnostics =
-    surface === "player_props" && isPlayerPropScanDiagnostics(scanData?.diagnostics)
-      ? scanData.diagnostics
+    surface === "player_props" && isPlayerPropScanDiagnostics(effectiveScanData?.diagnostics)
+      ? effectiveScanData.diagnostics
       : null;
+  const activeReviewCandidate = scannerReviewCandidate?.surface === surface ? scannerReviewCandidate : null;
 
   const resetSecondaryFilters = () => {
     setTimePreset(DEFAULT_RESULT_FILTERS.timePreset);
@@ -328,19 +411,64 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
     setCustomBoostInput("");
   };
 
-  const handleLogBet = (side: MarketSide) => {
-    setDrawerInitialValues(
-      buildScannerLogBetInitialValues({
-        side,
-        activeLens: effectiveLens,
-        boostPercent,
-        sportDisplayMap: SPORT_KEY_TO_DISPLAY,
-        kellyMultiplier,
-        bankroll,
-      })
-    );
+  const buildReviewCandidate = (side: MarketSide) =>
+    buildScannerLogBetInitialValues({
+      side,
+      activeLens: effectiveLens,
+      boostPercent,
+      sportDisplayMap: SPORT_KEY_TO_DISPLAY,
+      kellyMultiplier,
+      bankroll,
+    });
+
+  const openLogDrawer = (betData: ScannedBetData, mode: "standard" | "tutorial_practice" = "standard") => {
+    setDrawerInitialValues(betData);
+    setDrawerMode(mode);
     setDrawerKey(Date.now());
     setDrawerOpen(true);
+  };
+
+  const handleLogBet = (side: MarketSide) => {
+    const betData = buildReviewCandidate(side);
+    if (tutorialScannerActive) {
+      openLogDrawer(betData, "tutorial_practice");
+      return;
+    }
+    setScannerReviewCandidate({
+      surface,
+      bet: betData,
+      createdAt: new Date().toISOString(),
+    });
+    openLogDrawer(betData);
+  };
+
+  const handleStartPlaceFlow = (side: MarketSide) => {
+    const betData = buildReviewCandidate(side);
+    setScannerReviewCandidate({
+      surface,
+      bet: betData,
+      createdAt: new Date().toISOString(),
+    });
+    toast("Step 2 of 3 saved", {
+      description: `Place it at ${side.sportsbook}, then come back here to review and log it.`,
+    });
+  };
+
+  const handleReviewSavedCandidate = () => {
+    if (!activeReviewCandidate) return;
+    openLogDrawer(activeReviewCandidate.bet);
+  };
+
+  const handlePracticeLogged = (bet: TutorialPracticeBet) => {
+    saveTutorialPracticeBet(bet);
+    clearScannerReviewCandidate();
+  };
+
+  const handleDrawerOpenChange = (open: boolean) => {
+    setDrawerOpen(open);
+    if (!open) {
+      setDrawerMode("standard");
+    }
   };
 
   const handleAddToCart = (side: MarketSide) => {
@@ -355,27 +483,30 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
   return (
     <main className="min-h-screen bg-background">
       <div className="container mx-auto max-w-2xl space-y-2 px-4 py-6 pb-20 sm:pb-24">
-        <OnboardingBanner
-          step={`scanner_${surface}`}
-          title={surface === "player_props" ? "Find your first playable prop" : "Scan and bank your first edge"}
-          body={surface === "player_props"
-            ? "Use player search, market filters, and line-aware cards to find one prop, add it to the cart, or log it straight from the scanner."
-            : "Run a scan, pick one clean +EV spot, and either log it or add it to the parlay cart to start your V2 workflow."}
-        />
+        {showScannerCoach && (
+          <JourneyCoach
+            route="scanner"
+            scannerSurface={surface}
+            scannerDrawerOpen={drawerOpen}
+            tutorialMode={tutorialMode}
+            onReviewScannerPick={handleReviewSavedCandidate}
+          />
+        )}
 
         <ScannerHeader tagline={surfaceConfig.tagline} />
 
         <ScannerScopeBar books={availableBooks} selectedBooks={selectedBooks} onToggleBook={toggleBook} bookColors={bookColors} />
 
         <ScannerStatusBar
-          hasScanData={Boolean(scanData)}
+          hasScanData={Boolean(effectiveScanData)}
           isRunningScan={isRunningScan}
           cooldown={cooldown}
           onScan={handleScan}
           scanError={scanError}
           scanAgeMinutes={scanAgeMinutes}
-          eventsFetched={scanData?.events_fetched ?? 0}
-          showBackendHint={showBackendHint}
+          eventsFetched={effectiveScanData?.events_fetched ?? 0}
+          tutorialMode={tutorialScannerActive}
+          showBackendHint={!tutorialScannerActive && showBackendHint}
           backendHint={backendHint}
         />
 
@@ -383,11 +514,15 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
           <PlayerPropDiagnosticsPanel diagnostics={playerPropDiagnostics} />
         )}
 
-        {scanData && surfaceConfig.supportsLensSelector && (
-          <ScannerLensSelector activeLens={activeLens} onLensChange={setActiveLens} />
+        {surfaceConfig.supportsLensSelector && (effectiveScanData || tutorialScannerActive) && (
+          <ScannerLensSelector
+            activeLens={activeLens}
+            onLensChange={setActiveLens}
+            tutorialMode={tutorialScannerActive}
+          />
         )}
 
-        {scanData && (
+        {(effectiveScanData || tutorialScannerActive) && (
           <ScannerResultFilters
             filters={{
               searchQuery,
@@ -432,10 +567,11 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
           />
         )}
 
-        {scanData && (
+        {effectiveScanData && (
           <ScannerResultsPane
             surface={surface}
             activeLens={effectiveLens}
+            tutorialMode={tutorialScannerActive}
             results={results}
             sourceCount={fullResults.length}
             filteredCount={filteredResults.length}
@@ -448,15 +584,26 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
             onLoadMore={() => setVisibleCount((count) => count + 10)}
             onLogBet={handleLogBet}
             onAddToCart={handleAddToCart}
+            onStartPlaceFlow={handleStartPlaceFlow}
             bookColors={bookColors}
             sportDisplayMap={SPORT_KEY_TO_DISPLAY}
           />
         )}
 
-        {!scanData && !isFetchingLatest && !scanError && <ScannerPreScanEmptyState />}
+        {!effectiveScanData && !isFetchingLatest && !scanError && (
+          <ScannerPreScanEmptyState tutorialMode={tutorialScannerActive} />
+        )}
       </div>
 
-      <LogBetDrawer key={drawerKey} open={drawerOpen} onOpenChange={setDrawerOpen} initialValues={drawerInitialValues} />
+      <LogBetDrawer
+        key={drawerKey}
+        open={drawerOpen}
+        onOpenChange={handleDrawerOpenChange}
+        initialValues={drawerInitialValues}
+        practiceMode={drawerMode === "tutorial_practice"}
+        onPracticeLogged={handlePracticeLogged}
+        onLogged={clearScannerReviewCandidate}
+      />
     </main>
   );
 }

@@ -37,7 +37,7 @@ export function buildScannerActionModel(params: {
     return {
       primary: {
         kind: "log",
-        label: "Log Bet",
+        label: "Review & Log",
       },
     };
   }
@@ -45,15 +45,15 @@ export function buildScannerActionModel(params: {
   return {
     primary: {
       kind: "open",
-      label: `Open in ${params.sportsbook}`,
+      label: `Place at ${params.sportsbook}`,
       href: normalizedLink,
       external: true,
     },
     secondary: {
       kind: "log",
-      label: "Log Bet",
+      label: "Review & Log",
     },
-    trustHint: "Check line before placing",
+    trustHint: "Place the ticket at the book, then come back here to log it.",
   };
 }
 

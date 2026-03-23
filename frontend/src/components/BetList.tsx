@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -23,7 +24,7 @@ import {
 import { useBets, useUpdateBetResult, useDeleteBet, useCreateBet, useBalances } from "@/lib/hooks";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EditBetModal } from "@/components/EditBetModal";
-import type { Bet, BetResult } from "@/lib/types";
+import type { Bet, BetResult, TutorialPracticeBet } from "@/lib/types";
 import { PROMO_TYPE_CONFIG } from "@/lib/types";
 import { formatCurrency, formatOdds, cn, formatRelativeTime, formatShortDate, formatFullDateTime, americanToDecimal, decimalToAmerican, calculateImpliedProb } from "@/lib/utils";
 import {
@@ -43,7 +44,7 @@ import {
   RotateCcw,
   History,
   Target,
-
+  ArrowRight,
   SlidersHorizontal,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -258,7 +259,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
           </div>
           {/* To Win/Profit - Col 2 on mobile row 2, Col 4 on desktop */}
           <div className="order-4 md:order-4">
-            <p className="text-muted-foreground text-xs">{mode === "settled" ? "Profit" : "To Win"}</p>
+            <p className="text-muted-foreground text-xs">{mode === "settled" ? "Profit" : "Return if Win"}</p>
             <p className={cn(
               "font-mono font-semibold",
               mode === "settled"
@@ -383,6 +384,53 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
   );
 }
 
+function TutorialPracticeCard({ bet }: { bet: TutorialPracticeBet }) {
+  return (
+    <div className="rounded-xl border border-primary/20 bg-primary/8 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
+            Tutorial Practice Ticket
+          </p>
+          <p className="mt-1 text-sm font-semibold text-foreground">{bet.event}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {bet.sportsbook} / {bet.sport} / {bet.market}
+          </p>
+        </div>
+        <div className="rounded-full border border-primary/20 bg-background/80 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">
+          Local Only
+        </div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+        <div>
+          <p className="text-xs text-muted-foreground">Odds</p>
+          <p className="font-mono font-semibold">{formatOdds(bet.odds_american)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Stake</p>
+          <p className="font-mono font-semibold">{formatCurrency(bet.stake)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Practice EV</p>
+          <p className={cn("font-mono font-semibold", bet.ev_total >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+            {bet.ev_total >= 0 ? "+" : ""}
+            {formatCurrency(bet.ev_total)}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Return if Win</p>
+          <p className="font-mono font-semibold">{formatCurrency(bet.win_payout)}</p>
+        </div>
+      </div>
+
+      <p className="mt-3 text-xs text-muted-foreground">
+        This practice ticket is part of the tutorial only. It will disappear when you finish the walkthrough and never touches your real bankroll, stats, or history.
+      </p>
+    </div>
+  );
+}
+
 // ============ PENDING CARD ============
 // Action-focused with big Win/Loss buttons
 interface PendingCardProps {
@@ -411,7 +459,7 @@ function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps
         <DropdownMenuSub>
           <DropdownMenuSubTrigger>
             <RotateCcw className="h-4 w-4 mr-2" />
-            Change Status
+            Other Result
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent>
             <DropdownMenuItem 
@@ -420,7 +468,7 @@ function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps
               className={cn(bet.result === "pending" && "opacity-50")}
             >
               {bet.result === "pending" ? <Check className="h-4 w-4 mr-2" /> : <Clock className="h-4 w-4 mr-2" />}
-              Pending {bet.result === "pending" && "✓"}
+              Keep Open {bet.result === "pending" && "✓"}
             </DropdownMenuItem>
             <DropdownMenuItem 
               onClick={() => onResultChange(bet, "win", "pending")}
@@ -428,7 +476,7 @@ function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps
               className={cn(bet.result === "win" && "opacity-50")}
             >
               {bet.result === "win" ? <Check className="h-4 w-4 mr-2" /> : <Check className="h-4 w-4 mr-2 text-green-600" />}
-              Win {bet.result === "win" && "✓"}
+              Mark Win {bet.result === "win" && "✓"}
             </DropdownMenuItem>
             <DropdownMenuItem 
               onClick={() => onResultChange(bet, "loss", "pending")}
@@ -436,7 +484,7 @@ function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps
               className={cn(bet.result === "loss" && "opacity-50")}
             >
               {bet.result === "loss" ? <Check className="h-4 w-4 mr-2" /> : <X className="h-4 w-4 mr-2 text-red-600" />}
-              Loss {bet.result === "loss" && "✓"}
+              Mark Loss {bet.result === "loss" && "✓"}
             </DropdownMenuItem>
             <DropdownMenuItem 
               onClick={() => onResultChange(bet, "push", "pending")}
@@ -444,7 +492,7 @@ function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps
               className={cn(bet.result === "push" && "opacity-50")}
             >
               {bet.result === "push" ? <Check className="h-4 w-4 mr-2" /> : <Minus className="h-4 w-4 mr-2" />}
-              Push {bet.result === "push" && "✓"}
+              Mark Push {bet.result === "push" && "✓"}
             </DropdownMenuItem>
             <DropdownMenuItem 
               onClick={() => onResultChange(bet, "void", "pending")}
@@ -452,7 +500,7 @@ function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps
               className={cn(bet.result === "void" && "opacity-50")}
             >
               {bet.result === "void" ? <Check className="h-4 w-4 mr-2" /> : <X className="h-4 w-4 mr-2" />}
-              Void {bet.result === "void" && "✓"}
+              Mark Void {bet.result === "void" && "✓"}
             </DropdownMenuItem>
           </DropdownMenuSubContent>
         </DropdownMenuSub>
@@ -488,14 +536,14 @@ function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps
         onClick={handleWin}
       >
         <Check className="h-4 w-4" />
-        Won
+        Mark Win
       </button>
       <button
         className="flex-1 h-8 min-h-[44px] flex items-center justify-center gap-1.5 text-sm font-medium rounded-md text-[#B85C38] border border-[#B85C38]/30 bg-[#B85C38]/10 hover:bg-[#B85C38]/20 active:bg-[#B85C38]/25 transition-colors"
         onClick={handleLoss}
       >
         <X className="h-4 w-4" />
-        Lost
+        Mark Loss
       </button>
     </div>
   );
@@ -549,7 +597,7 @@ function HistoryCard({ bet, onEdit, onResultChange, onDelete }: HistoryCardProps
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
               <RotateCcw className="h-4 w-4 mr-2" />
-              Change Status
+              Fix Result
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent>
               <DropdownMenuItem 
@@ -558,7 +606,7 @@ function HistoryCard({ bet, onEdit, onResultChange, onDelete }: HistoryCardProps
                 className={cn(bet.result === "pending" && "opacity-50")}
               >
                 {bet.result === "pending" ? <Check className="h-4 w-4 mr-2" /> : <Clock className="h-4 w-4 mr-2" />}
-                Pending {bet.result === "pending" && "✓"}
+                Move to Open Bets {bet.result === "pending" && "✓"}
               </DropdownMenuItem>
               <DropdownMenuItem 
                 onClick={() => onResultChange(bet, "win", bet.result)}
@@ -566,7 +614,7 @@ function HistoryCard({ bet, onEdit, onResultChange, onDelete }: HistoryCardProps
                 className={cn(bet.result === "win" && "opacity-50")}
               >
                 {bet.result === "win" ? <Check className="h-4 w-4 mr-2" /> : <Check className="h-4 w-4 mr-2 text-green-600" />}
-                Win {bet.result === "win" && "✓"}
+                Change to Win {bet.result === "win" && "✓"}
               </DropdownMenuItem>
               <DropdownMenuItem 
                 onClick={() => onResultChange(bet, "loss", bet.result)}
@@ -574,7 +622,7 @@ function HistoryCard({ bet, onEdit, onResultChange, onDelete }: HistoryCardProps
                 className={cn(bet.result === "loss" && "opacity-50")}
               >
                 {bet.result === "loss" ? <Check className="h-4 w-4 mr-2" /> : <X className="h-4 w-4 mr-2 text-red-600" />}
-                Loss {bet.result === "loss" && "✓"}
+                Change to Loss {bet.result === "loss" && "✓"}
               </DropdownMenuItem>
               <DropdownMenuItem 
                 onClick={() => onResultChange(bet, "push", bet.result)}
@@ -582,7 +630,7 @@ function HistoryCard({ bet, onEdit, onResultChange, onDelete }: HistoryCardProps
                 className={cn(bet.result === "push" && "opacity-50")}
               >
                 {bet.result === "push" ? <Check className="h-4 w-4 mr-2" /> : <Minus className="h-4 w-4 mr-2" />}
-                Push {bet.result === "push" && "✓"}
+                Change to Push {bet.result === "push" && "✓"}
               </DropdownMenuItem>
               <DropdownMenuItem 
                 onClick={() => onResultChange(bet, "void", bet.result)}
@@ -590,7 +638,7 @@ function HistoryCard({ bet, onEdit, onResultChange, onDelete }: HistoryCardProps
                 className={cn(bet.result === "void" && "opacity-50")}
               >
                 {bet.result === "void" ? <Check className="h-4 w-4 mr-2" /> : <X className="h-4 w-4 mr-2" />}
-                Void {bet.result === "void" && "✓"}
+                Change to Void {bet.result === "void" && "✓"}
               </DropdownMenuItem>
             </DropdownMenuSubContent>
           </DropdownMenuSub>
@@ -614,7 +662,13 @@ function HistoryCard({ bet, onEdit, onResultChange, onDelete }: HistoryCardProps
 type BetTypeFilter = "all" | "cash" | "bonus";
 
 // ============ MAIN BET LIST ============
-export function BetList() {
+export function BetList({
+  showWorkflowCoach = true,
+  tutorialPracticeBet = null,
+}: {
+  showWorkflowCoach?: boolean;
+  tutorialPracticeBet?: TutorialPracticeBet | null;
+} = {}) {
   const { data: bets, isLoading, error } = useBets();
   const { data: balances } = useBalances();
   const updateResult = useUpdateBetResult();
@@ -627,6 +681,11 @@ export function BetList() {
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [selectedBook, setSelectedBook] = useState<string>("all");
   const [betTypeFilter, setBetTypeFilter] = useState<BetTypeFilter>("all");
+
+  useEffect(() => {
+    if (!tutorialPracticeBet) return;
+    setActiveTab("pending");
+  }, [tutorialPracticeBet]);
   
   // Count active filters for badge
   const activeFilterCount = [
@@ -659,6 +718,7 @@ export function BetList() {
       { id: bet.id, result: newResult },
       {
         onSuccess: () => {
+          const winProfit = bet.promo_type === "bonus_bet" ? bet.win_payout : bet.win_payout - bet.stake;
           const toastMessage =
             newResult === "win"
               ? "Marked as Win"
@@ -668,17 +728,34 @@ export function BetList() {
               ? "Marked as Push"
               : newResult === "void"
               ? "Marked as Void"
-              : "Marked as Pending";
+              : "Moved to Open Bets";
 
-          const toastDescription =
-            newResult === "win"
-              ? `+${formatCurrency(bet.win_payout - bet.stake)} profit`
-              : newResult === "loss"
-              ? `-${formatCurrency(bet.stake)}`
+          const moveDescription =
+            previousResult === "pending" && newResult !== "pending"
+              ? "Moved to Past Bets."
+              : previousResult !== "pending" && newResult === "pending"
+              ? "Moved back to Open Bets."
+              : previousResult !== "pending" && newResult !== "pending"
+              ? "Past Bets updated."
               : undefined;
 
+          const outcomeDescription =
+            newResult === "win"
+              ? `+${formatCurrency(winProfit)} profit.`
+              : newResult === "loss"
+              ? bet.promo_type === "bonus_bet"
+                ? "Bonus bet settled as a loss."
+                : `${formatCurrency(bet.stake)} stake lost.`
+              : newResult === "push"
+              ? "Stake returned."
+              : newResult === "void"
+              ? "Bet voided."
+              : undefined;
+
+          const toastDescription = [outcomeDescription, moveDescription].filter(Boolean).join(" ");
+
           toast(toastMessage, {
-            description: toastDescription,
+            description: toastDescription || undefined,
             duration: 5000,
             action: {
               label: "Undo",
@@ -737,7 +814,7 @@ export function BetList() {
               createBet.mutate(betData, {
                 onSuccess: (restoredBet) => {
                   if (bet.result === "pending") {
-                    toast.success("Bet restored as pending");
+                    toast.success("Bet restored to Open Bets");
                     return;
                   }
 
@@ -843,15 +920,22 @@ export function BetList() {
   const filteredBets = bets?.filter(bet => matchesSportsbook(bet) && matchesBetType(bet)) || [];
   const pendingBets = filteredBets.filter((bet) => bet.result === "pending");
   const settledBets = filteredBets.filter((bet) => bet.result !== "pending");
+  const allPendingBets = bets?.filter((bet) => bet.result === "pending") || [];
+  const allSettledBets = bets?.filter((bet) => bet.result !== "pending") || [];
+  const hasPendingFilterEmpty = activeFilterCount > 0 && pendingBets.length === 0 && allPendingBets.length > 0;
+  const hasHistoryFilterEmpty = activeFilterCount > 0 && settledBets.length === 0 && allSettledBets.length > 0;
 
   // Cash-at-risk exposure should exclude bonus bet stake (not real cash).
   const pendingCashBets = pendingBets.filter((b) => b.promo_type !== "bonus_bet");
+  const pendingPotentialReturn = pendingBets.reduce((sum, bet) => sum + bet.win_payout, 0);
+  const pendingEvTotal = pendingBets.reduce((sum, bet) => sum + bet.ev_total, 0);
   
   // Counts for the current sportsbook selection (before type filter, for accurate numbers)
   const booksWithBetType = bets?.filter(matchesSportsbook) || [];
   const pendingForBook = booksWithBetType.filter(b => b.result === "pending");
 
   const pendingCashForBook = pendingForBook.filter((b) => b.promo_type !== "bonus_bet");
+  const visiblePendingCount = pendingBets.length + (tutorialPracticeBet ? 1 : 0);
 
   return (
     <>
@@ -891,15 +975,15 @@ export function BetList() {
               onClick={() => setActiveTab("pending")}
             >
               <Clock className="h-4 w-4" />
-              Pending
-              {pendingBets.length > 0 && (
+              Open Bets
+              {visiblePendingCount > 0 && (
                 <span className={cn(
                   "text-xs font-mono font-semibold px-1.5 rounded",
                   activeTab === "pending" 
                     ? "bg-[#C4A35A]/20 text-[#8B7355]" 
                     : "bg-[#C4A35A]/10 text-[#8B7355]/70"
                 )}>
-                  {pendingBets.length}
+                  {visiblePendingCount}
                 </span>
               )}
             </button>
@@ -911,7 +995,7 @@ export function BetList() {
               onClick={() => setActiveTab("history")}
             >
               <History className="h-4 w-4" />
-              History
+              Past Bets
               <span className={cn(
                 "text-xs font-mono",
                 activeTab === "history" ? "text-muted-foreground" : "text-muted-foreground/50"
@@ -942,7 +1026,7 @@ export function BetList() {
                   <span className="ml-auto text-xs text-muted-foreground">
                     Balance: <span className="font-mono font-semibold text-foreground">{formatCurrency(selectedBalance.balance)}</span>
                     {pendingCashForBook.length > 0 && (
-                      <> · Pending: <span className="font-mono font-semibold text-[#C4A35A]">{formatCurrency(pendingCashForBook.reduce((s, b) => s + b.stake, 0))}</span></>
+                      <> · Open: <span className="font-mono font-semibold text-[#C4A35A]">{formatCurrency(pendingCashForBook.reduce((s, b) => s + b.stake, 0))}</span></>
                     )}
                   </span>
                 )}
@@ -956,37 +1040,144 @@ export function BetList() {
             </div>
           )}
 
+          {showWorkflowCoach && (
+            <div className="rounded-xl border border-primary/15 bg-primary/5 px-4 py-3">
+              {activeTab === "pending" ? (
+                <>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
+                    {hasPendingFilterEmpty ? "Filtered View" : pendingBets.length > 0 ? "Step 3: Check Results" : "Open Bets"}
+                  </p>
+                  <h3 className="mt-1 text-sm font-semibold text-foreground">
+                    {hasPendingFilterEmpty
+                      ? "Your filters are hiding your open bets"
+                      : pendingBets.length > 0
+                      ? "Mark finished tickets here"
+                      : allSettledBets.length > 0
+                      ? "You're caught up for now"
+                      : "Your logged bets will land here"}
+                  </h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {hasPendingFilterEmpty
+                      ? "Clear the current filters or switch books if you want to check every open ticket."
+                      : pendingBets.length > 0
+                      ? "When a game settles at the sportsbook, tap Mark Win or Mark Loss. Use the menu if you need Push or Void."
+                      : allSettledBets.length > 0
+                      ? "You do not have any open bets right now. Review Past Bets or scan for another play when you're ready."
+                      : "After you log a play, it stays in Open Bets until the result is in."}
+                  </p>
+                  {(hasPendingFilterEmpty || pendingBets.length === 0) && (
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                      {hasPendingFilterEmpty ? (
+                        <>
+                          <Button className="h-10 sm:flex-1" onClick={clearFilters}>
+                            Clear Filters
+                          </Button>
+                          <Button variant="outline" className="h-10 sm:flex-1" onClick={() => setFilterDrawerOpen(true)}>
+                            Adjust Filters
+                          </Button>
+                        </>
+                      ) : allSettledBets.length > 0 ? (
+                        <>
+                          <Button className="h-10 sm:flex-1" onClick={() => setActiveTab("history")}>
+                            View Past Bets
+                          </Button>
+                          <Button asChild variant="outline" className="h-10 sm:flex-1">
+                            <Link href="/scanner/straight_bets">
+                              Find a Play
+                              <ArrowRight className="ml-2 h-4 w-4" />
+                            </Link>
+                          </Button>
+                        </>
+                      ) : (
+                        <Button asChild className="h-10 sm:w-auto">
+                          <Link href="/scanner/straight_bets">
+                            Find a Play
+                            <ArrowRight className="ml-2 h-4 w-4" />
+                          </Link>
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
+                    {hasHistoryFilterEmpty ? "Filtered View" : "Past Bets"}
+                  </p>
+                  <h3 className="mt-1 text-sm font-semibold text-foreground">
+                    {hasHistoryFilterEmpty
+                      ? "Your filters are hiding your past bets"
+                      : settledBets.length > 0
+                      ? "Review your results here"
+                      : allPendingBets.length > 0
+                      ? "Nothing has settled yet"
+                      : "Past Bets will build over time"}
+                  </h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {hasHistoryFilterEmpty
+                      ? "Try a different book or ticket type if you want to see your full record."
+                      : settledBets.length > 0
+                      ? "Use Past Bets to review outcomes and spot patterns after your tickets are graded."
+                      : allPendingBets.length > 0
+                      ? "Your open bets are still waiting on results. Come back here once those games finish."
+                      : "Once you settle a logged ticket, it moves here so you can keep a running record."}
+                  </p>
+                  {(hasHistoryFilterEmpty || settledBets.length === 0 || allPendingBets.length > 0) && (
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                      {hasHistoryFilterEmpty ? (
+                        <>
+                          <Button className="h-10 sm:flex-1" onClick={clearFilters}>
+                            Clear Filters
+                          </Button>
+                          <Button variant="outline" className="h-10 sm:flex-1" onClick={() => setFilterDrawerOpen(true)}>
+                            Adjust Filters
+                          </Button>
+                        </>
+                      ) : allPendingBets.length > 0 ? (
+                        <Button className="h-10 sm:w-auto" onClick={() => setActiveTab("pending")}>
+                          Back to Open Bets
+                        </Button>
+                      ) : settledBets.length === 0 ? (
+                        <Button asChild className="h-10 sm:w-auto">
+                          <Link href="/scanner/straight_bets">
+                            Find a Play
+                            <ArrowRight className="ml-2 h-4 w-4" />
+                          </Link>
+                        </Button>
+                      ) : null}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
 
           {/* Summary stats for pending tab */}
           {activeTab === "pending" && pendingBets.length > 0 && (
             <div className="grid grid-cols-3 gap-3 pt-3">
               <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-center">
-                <p className="text-xs text-muted-foreground">At Risk</p>
+                <p className="text-xs text-muted-foreground">Cash in Play</p>
                 <p className="font-mono font-semibold text-foreground">
                   {formatCurrency(pendingCashBets.reduce((s, b) => s + b.stake, 0))}
                 </p>
               </div>
               <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-center">
-                <p className="text-xs text-muted-foreground">Pending EV</p>
-                {(() => {
-                  const pendingEvTotal = pendingBets.reduce((s, b) => s + b.ev_total, 0);
-                  return (
-                    <p
-                      className={cn(
-                        "font-mono font-semibold",
-                        pendingEvTotal >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]",
-                      )}
-                    >
-                      {pendingEvTotal >= 0 ? "+" : ""}
-                      {formatCurrency(pendingEvTotal)}
-                    </p>
-                  );
-                })()}
+                <p className="text-xs text-muted-foreground">Expected Edge</p>
+                <p
+                  className={cn(
+                    "font-mono font-semibold",
+                    pendingEvTotal >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]",
+                  )}
+                >
+                  {pendingEvTotal >= 0 ? "+" : ""}
+                  {formatCurrency(pendingEvTotal)}
+                </p>
               </div>
               <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-center">
-                <p className="text-xs text-muted-foreground">To Win</p>
+                <p className="text-xs text-muted-foreground">Return if Win</p>
                 <p className="font-mono font-semibold text-foreground">
-                  {formatCurrency(pendingBets.reduce((s, b) => s + b.win_payout, 0))}
+                  {formatCurrency(pendingPotentialReturn)}
                 </p>
               </div>
             </div>
@@ -996,11 +1187,23 @@ export function BetList() {
         <CardContent className="space-y-3">
           {activeTab === "pending" && (
             <>
-              {pendingBets.length === 0 ? (
+              {pendingBets.length > 0 && !hasPendingFilterEmpty && (
+                <div className="rounded-lg border border-border bg-muted/35 px-3 py-2 text-xs text-muted-foreground">
+                  Settled one? Open the ticket card and use <span className="font-medium text-foreground">Mark Win</span> or <span className="font-medium text-foreground">Mark Loss</span> to keep your record current.
+                </div>
+              )}
+              {tutorialPracticeBet && <TutorialPracticeCard bet={tutorialPracticeBet} />}
+              {hasPendingFilterEmpty ? (
+                <div className="text-center py-10">
+                  <Target className="h-8 w-8 mx-auto mb-3 text-muted-foreground/40" />
+                  <p className="text-muted-foreground font-medium">No open bets match this filter</p>
+                  <p className="text-sm text-muted-foreground/60 mt-1">Clear filters or switch books to see the rest of your tickets</p>
+                </div>
+              ) : pendingBets.length === 0 && !tutorialPracticeBet ? (
                 <div className="text-center py-10">
                   <Clock className="h-8 w-8 mx-auto mb-3 text-muted-foreground/40" />
-                  <p className="text-muted-foreground font-medium">No pending bets</p>
-                  <p className="text-sm text-muted-foreground/60 mt-1">Find some +EV lines and get started</p>
+                  <p className="text-muted-foreground font-medium">No open bets right now</p>
+                  <p className="text-sm text-muted-foreground/60 mt-1">Log a play and it will stay here until the result is in</p>
                 </div>
               ) : (
                 pendingBets.map((bet) => (
@@ -1018,17 +1221,17 @@ export function BetList() {
 
           {activeTab === "history" && (
             <>
-              {settledBets.length === 0 ? (
+              {hasHistoryFilterEmpty ? (
                 <div className="text-center py-10">
-                  <History className="h-8 w-8 mx-auto mb-3 text-muted-foreground/40" />
-                  <p className="text-muted-foreground font-medium">No history yet</p>
-                  <p className="text-sm text-muted-foreground/60 mt-1">Settled bets will appear here</p>
+                  <Target className="h-8 w-8 mx-auto mb-3 text-muted-foreground/40" />
+                  <p className="text-muted-foreground font-medium">No past bets match this filter</p>
+                  <p className="text-sm text-muted-foreground/60 mt-1">Clear filters or adjust them to see more of your record</p>
                 </div>
               ) : settledBets.length === 0 ? (
                 <div className="text-center py-10">
-                  <Target className="h-8 w-8 mx-auto mb-3 text-muted-foreground/40" />
-                  <p className="text-muted-foreground font-medium">No bets match this filter</p>
-                  <p className="text-sm text-muted-foreground/60 mt-1">Try a different filter</p>
+                  <History className="h-8 w-8 mx-auto mb-3 text-muted-foreground/40" />
+                  <p className="text-muted-foreground font-medium">No past bets yet</p>
+                  <p className="text-sm text-muted-foreground/60 mt-1">Settled tickets will appear here after you mark a result</p>
                 </div>
               ) : (
                 settledBets.map((bet) => (
@@ -1051,7 +1254,7 @@ export function BetList() {
         <SheetContent side="bottom" className="px-6 pb-8">
           <SheetHeader className="pb-4">
             <div className="flex items-center justify-between">
-              <SheetTitle>Filter Bets</SheetTitle>
+              <SheetTitle>Refine Tracker</SheetTitle>
               {activeFilterCount > 0 && (
                 <button
                   onClick={clearFilters}
@@ -1061,6 +1264,9 @@ export function BetList() {
                 </button>
               )}
             </div>
+            <p className="text-sm text-muted-foreground">
+              Focus on one sportsbook or ticket type if you are checking a specific set of bets.
+            </p>
           </SheetHeader>
           
           <div className="space-y-4">

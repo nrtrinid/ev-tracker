@@ -21,11 +21,11 @@ test.describe("scanner ui model", () => {
     });
 
     expect(model.primary.kind).toBe("open");
-    expect(model.primary.label).toBe("Open in FanDuel");
-    expect(model.primary.label).not.toMatch(/place bet|bet now|auto bet/i);
+    expect(model.primary.label).toBe("Place at FanDuel");
+    expect(model.primary.label).not.toMatch(/bet now|auto bet/i);
     expect(model.secondary?.kind).toBe("log");
-    expect(model.secondary?.label).toBe("Log Bet");
-    expect(model.trustHint).toBe("Check line before placing");
+    expect(model.secondary?.label).toBe("Review & Log");
+    expect(model.trustHint).toBe("Place the ticket at the book, then come back here to log it.");
   });
 
   test("falls back to log-only hierarchy when deeplink missing", async () => {
@@ -35,7 +35,7 @@ test.describe("scanner ui model", () => {
     });
 
     expect(model.primary.kind).toBe("log");
-    expect(model.primary.label).toBe("Log Bet");
+    expect(model.primary.label).toBe("Review & Log");
     expect(model.secondary).toBeUndefined();
   });
 
