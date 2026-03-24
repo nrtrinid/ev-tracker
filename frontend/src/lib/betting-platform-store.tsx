@@ -21,6 +21,8 @@ export interface ScannerReviewCandidate {
 
 interface BettingPlatformState {
   cart: ParlayCartLeg[];
+  cartStakeInput: string;
+  activeParlaySlipId: string | null;
   surfaceFilters: Partial<Record<ScannerSurface, SurfaceFilters>>;
   scannerReviewCandidate: ScannerReviewCandidate | null;
   tutorialSession: TutorialSession | null;
@@ -33,6 +35,9 @@ interface BettingPlatformContextValue extends BettingPlatformState {
   addCartLeg: (leg: ParlayCartLeg) => { added: boolean; reason?: string };
   removeCartLeg: (legId: string) => void;
   clearCart: () => void;
+  replaceCart: (cart: ParlayCartLeg[], options?: { stakeInput?: string; activeParlaySlipId?: string | null }) => void;
+  setCartStakeInput: (stakeInput: string) => void;
+  setActiveParlaySlipId: (slipId: string | null) => void;
   setSurfaceFilters: (surface: ScannerSurface, filters: SurfaceFilters) => void;
   setScannerReviewCandidate: (candidate: ScannerReviewCandidate | null) => void;
   clearScannerReviewCandidate: () => void;
@@ -52,6 +57,8 @@ const STORAGE_KEY_PREFIX = "ev-tracker-betting-platform";
 
 const defaultState: BettingPlatformState = {
   cart: [],
+  cartStakeInput: "10.00",
+  activeParlaySlipId: null,
   surfaceFilters: {},
   scannerReviewCandidate: null,
   tutorialSession: null,
@@ -95,6 +102,8 @@ export function BettingPlatformProvider({ children }: { children: React.ReactNod
       const parsed = JSON.parse(raw) as BettingPlatformState;
       setState({
         cart: Array.isArray(parsed.cart) ? parsed.cart : [],
+        cartStakeInput: typeof parsed.cartStakeInput === "string" ? parsed.cartStakeInput : "10.00",
+        activeParlaySlipId: typeof parsed.activeParlaySlipId === "string" ? parsed.activeParlaySlipId : null,
         surfaceFilters: parsed.surfaceFilters ?? {},
         scannerReviewCandidate: parsed.scannerReviewCandidate ?? null,
         tutorialSession: parsed.tutorialSession ?? null,
@@ -121,15 +130,9 @@ export function BettingPlatformProvider({ children }: { children: React.ReactNod
         result = { added: false, reason: "duplicate" };
         return current;
       }
-      const sameEventConflict = current.cart.some(
-        (item) =>
-          item.eventId &&
-          leg.eventId &&
-          item.eventId === leg.eventId &&
-          item.selectionKey !== leg.selectionKey
-      );
-      if (sameEventConflict) {
-        result = { added: false, reason: "same_event_conflict" };
+      const lockedSportsbook = current.cart[0]?.sportsbook;
+      if (lockedSportsbook && lockedSportsbook !== leg.sportsbook) {
+        result = { added: false, reason: "sportsbook_mismatch" };
         return current;
       }
       return { ...current, cart: [...current.cart, leg] };
@@ -138,11 +141,51 @@ export function BettingPlatformProvider({ children }: { children: React.ReactNod
   }, []);
 
   const removeCartLeg = useCallback((legId: string) => {
-    setState((current) => ({ ...current, cart: current.cart.filter((item) => item.id !== legId) }));
+    setState((current) => {
+      const nextCart = current.cart.filter((item) => item.id !== legId);
+      return {
+        ...current,
+        cart: nextCart,
+        activeParlaySlipId: nextCart.length === 0 ? null : current.activeParlaySlipId,
+      };
+    });
   }, []);
 
   const clearCart = useCallback(() => {
-    setState((current) => (current.cart.length === 0 ? current : { ...current, cart: [] }));
+    setState((current) => (
+      current.cart.length === 0 && current.activeParlaySlipId === null
+        ? current
+        : { ...current, cart: [], activeParlaySlipId: null }
+    ));
+  }, []);
+
+  const replaceCart = useCallback((
+    cart: ParlayCartLeg[],
+    options?: { stakeInput?: string; activeParlaySlipId?: string | null }
+  ) => {
+    setState((current) => ({
+      ...current,
+      cart,
+      cartStakeInput: options?.stakeInput ?? current.cartStakeInput,
+      activeParlaySlipId:
+        options?.activeParlaySlipId !== undefined ? options.activeParlaySlipId : current.activeParlaySlipId,
+    }));
+  }, []);
+
+  const setCartStakeInput = useCallback((stakeInput: string) => {
+    setState((current) => (
+      current.cartStakeInput === stakeInput
+        ? current
+        : { ...current, cartStakeInput: stakeInput }
+    ));
+  }, []);
+
+  const setActiveParlaySlipId = useCallback((slipId: string | null) => {
+    setState((current) => (
+      current.activeParlaySlipId === slipId
+        ? current
+        : { ...current, activeParlaySlipId: slipId }
+    ));
   }, []);
 
   const setSurfaceFilters = useCallback((surface: ScannerSurface, filters: SurfaceFilters) => {
@@ -320,6 +363,9 @@ export function BettingPlatformProvider({ children }: { children: React.ReactNod
       addCartLeg,
       removeCartLeg,
       clearCart,
+      replaceCart,
+      setCartStakeInput,
+      setActiveParlaySlipId,
       setSurfaceFilters,
       setScannerReviewCandidate,
       clearScannerReviewCandidate,
@@ -340,8 +386,11 @@ export function BettingPlatformProvider({ children }: { children: React.ReactNod
       hydrateOnboarding,
       markOnboardingCompleted,
       markTutorialScanSeeded,
+      replaceCart,
       removeCartLeg,
       saveTutorialPracticeBet,
+      setActiveParlaySlipId,
+      setCartStakeInput,
       setScannerReviewCandidate,
       setSurfaceFilters,
       startTutorialSession,

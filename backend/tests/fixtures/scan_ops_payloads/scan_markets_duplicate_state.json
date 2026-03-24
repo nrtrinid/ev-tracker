@@ -5,6 +5,7 @@
       "event_id": "evt-dup-1",
       "sportsbook": "DraftKings",
       "sportsbook_deeplink_url": null,
+      "sportsbook_deeplink_level": null,
       "sport": "basketball_nba",
       "event": "Celtics @ Knicks",
       "commence_time": "2026-03-21T01:00:00Z",

@@ -26,7 +26,15 @@ interface PlayerPropDiagnosticsPanelProps {
 }
 
 export function PlayerPropDiagnosticsPanel({ diagnostics }: PlayerPropDiagnosticsPanelProps) {
-  const scanSummary = `${diagnostics.curated_games.length} shortlisted -> ${diagnostics.matched_event_count} matched -> ${diagnostics.events_fetched} fetched -> ${diagnostics.sides_count} props`;
+  const usedOddsFallback =
+    diagnostics.scan_scope === "odds_fallback" && (diagnostics.fallback_event_count ?? 0) > 0;
+  const curatedJoinMissed =
+    diagnostics.curated_games.length > 0 &&
+    diagnostics.matched_event_count === 0 &&
+    diagnostics.odds_event_count > 0;
+  const scanSummary = usedOddsFallback
+    ? `${diagnostics.curated_games.length} shortlisted -> ${diagnostics.matched_event_count} curated matches -> fallback ${diagnostics.fallback_event_count ?? 0} events -> ${diagnostics.events_fetched} prop requests -> ${diagnostics.sides_count} props`
+    : `${diagnostics.curated_games.length} shortlisted -> ${diagnostics.matched_event_count} curated matches -> ${diagnostics.events_fetched} prop requests -> ${diagnostics.sides_count} props`;
 
   return (
     <Card className="border-[#4A7C59]/20 bg-[#4A7C59]/[0.04]">
@@ -40,6 +48,19 @@ export function PlayerPropDiagnosticsPanel({ diagnostics }: PlayerPropDiagnostic
         <div className="rounded-md border border-[#3B6C8E]/20 bg-[#3B6C8E]/10 px-3 py-2 text-sm font-medium text-[#2D5673]">
           {scanSummary}
         </div>
+
+        {usedOddsFallback && diagnostics.fallback_reason && (
+          <div className="rounded-md border border-[#C4A35A]/35 bg-[#C4A35A]/10 px-3 py-2 text-xs text-[#5C4D2E]">
+            {diagnostics.fallback_reason}
+          </div>
+        )}
+
+        {curatedJoinMissed && !usedOddsFallback && (
+          <div className="rounded-md border border-[#C4A35A]/35 bg-[#C4A35A]/10 px-3 py-2 text-xs text-[#5C4D2E]">
+            The sportsbook event list loaded, but none of the curated games matched it, so no
+            per-game prop requests were sent.
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
           <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
@@ -72,6 +93,14 @@ export function PlayerPropDiagnosticsPanel({ diagnostics }: PlayerPropDiagnostic
           </span>
           <span className="rounded-full border border-border/70 px-2 py-0.5">
             Odds events: {diagnostics.odds_event_count}
+          </span>
+          {usedOddsFallback && (
+            <span className="rounded-full border border-border/70 px-2 py-0.5">
+              Fallback events: {diagnostics.fallback_event_count ?? 0}
+            </span>
+          )}
+          <span className="rounded-full border border-border/70 px-2 py-0.5">
+            Prop requests: {diagnostics.events_fetched}
           </span>
           <span className="rounded-full border border-border/70 px-2 py-0.5">
             Result games: {diagnostics.events_with_results}

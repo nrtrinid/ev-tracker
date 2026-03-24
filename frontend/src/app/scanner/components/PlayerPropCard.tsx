@@ -74,6 +74,7 @@ export function PlayerPropCard({
   const actionModel = buildScannerActionModel({
     sportsbook: side.sportsbook,
     sportsbookDeeplinkUrl: side.sportsbook_deeplink_url,
+    sportsbookDeeplinkLevel: side.sportsbook_deeplink_level,
   });
   const duplicateState = side.scanner_duplicate_state ?? "new";
   const referenceBookCount = side.reference_bookmaker_count ?? side.reference_bookmakers.length;

@@ -33,6 +33,7 @@ interface JourneyCoachStep {
 interface JourneyCoachCandidate {
   key: string;
   persistStep?: string;
+  dismissStep?: string;
   eyebrow: string;
   title: string;
   body: string;
@@ -171,6 +172,7 @@ export function JourneyCoach({
       if (scannerReviewCandidate) {
         return {
           key: `home-review-${scannerReviewCandidate.createdAt}`,
+          dismissStep: "home_scanner_review",
           eyebrow: "Step 3 of 3",
           title: "Finish the ticket you already placed",
           body: "Your last scanner pick is saved here. Review it now so it lands in Open Bets and stays easy to track.",
@@ -251,6 +253,7 @@ export function JourneyCoach({
       if (activeScannerReviewCandidate && !scannerDrawerOpen) {
         return {
           key: `scanner-review-${activeScannerReviewCandidate.createdAt}`,
+          dismissStep: "scanner_review_prompt",
           eyebrow: "Step 3 of 3",
           title: `Placed it at ${activeScannerReviewCandidate.bet.sportsbook}? Review and log it.`,
           body: "We saved your last scanner pick so you can come back and confirm the bet in a few taps.",
@@ -325,6 +328,7 @@ export function JourneyCoach({
       if (cart.length === 1) {
         return {
           key: "parlay-one-leg",
+          dismissStep: "parlay_one_leg_prompt",
           eyebrow: "Optional Step",
           title: "Add one more leg to complete the preview",
           body: "You have one leg saved so far. Grab one more in Scanner, then come back here to compare the combined payout.",
@@ -410,6 +414,10 @@ export function JourneyCoach({
     }
   }
 
+  if (candidate.dismissStep && onboardingDismissed.includes(candidate.dismissStep)) {
+    return null;
+  }
+
   if (temporarilyHiddenKey === candidate.key) {
     return null;
   }
@@ -484,7 +492,11 @@ export function JourneyCoach({
               const handleClick = () => {
                 action.onClick?.();
                 if (action.hideOnClick) {
-                  setTemporarilyHiddenKey(candidate.key);
+                  if (candidate.dismissStep) {
+                    handleDismiss(candidate.dismissStep);
+                  } else {
+                    setTemporarilyHiddenKey(candidate.key);
+                  }
                 }
                 if (action.completeStepOnClick && candidate.persistStep) {
                   handleComplete(candidate.persistStep);

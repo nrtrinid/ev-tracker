@@ -17,7 +17,12 @@ import {
   type ScannerTimePreset,
 } from "@/lib/scanner-filters";
 import { createClient } from "@/lib/supabase";
-import type { MarketSide, ScannedBetData, ScannerSurface, TutorialPracticeBet } from "@/lib/types";
+import type {
+  MarketSide,
+  ScannedBetData,
+  ScannerSurface,
+  TutorialPracticeBet,
+} from "@/lib/types";
 import { useKellySettings } from "@/lib/kelly-context";
 import {
   classifyScannerNullState,
@@ -33,6 +38,8 @@ import { ScannerScopeBar } from "./components/ScannerScopeBar";
 import { ScannerStatusBar } from "./components/ScannerStatusBar";
 import { ScannerPreScanEmptyState } from "./components/ScannerPreScanEmptyState";
 import { PlayerPropDiagnosticsPanel } from "./components/PlayerPropDiagnosticsPanel";
+import { buildPickEmBoardCards } from "./pickem-board";
+import type { PickEmBoardCard } from "./pickem-board";
 import { getScannerSurface } from "./scanner-surfaces";
 import { rankScannerSidesByLens } from "./scanner-lenses";
 import {
@@ -77,6 +84,87 @@ function minutesAgo(isoString: string): number {
   if (!isoString) return 0;
   const then = new Date(isoString).getTime();
   return Math.max(0, Math.floor((Date.now() - then) / 60_000));
+}
+
+function normalizeScannerSearch(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function isSameCalendarDay(left: Date, right: Date): boolean {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
+}
+
+function matchesScannerComparisonTimePreset(
+  commenceTime: string,
+  preset: ScannerTimePreset,
+  now: Date
+): boolean {
+  const start = new Date(commenceTime);
+  if (Number.isNaN(start.getTime())) return false;
+
+  const deltaMs = start.getTime() - now.getTime();
+  if (deltaMs < 0) return false;
+  if (preset === "all") return true;
+  if (preset === "starting_soon") return deltaMs < 2 * 60 * 60 * 1000;
+  if (preset === "today") return isSameCalendarDay(start, now);
+
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  return isSameCalendarDay(start, tomorrow);
+}
+
+function filterPickEmBoardCards(params: {
+  cards: PickEmBoardCard[];
+  searchQuery: string;
+  timePreset: ScannerTimePreset;
+  propMarket: string;
+  now?: Date;
+}): PickEmBoardCard[] {
+  const { cards, searchQuery, timePreset, propMarket } = params;
+  const now = params.now ?? new Date();
+  const normalizedQuery = normalizeScannerSearch(searchQuery);
+
+  return cards.filter((card) => {
+    if (propMarket !== "all" && card.market_key !== propMarket) return false;
+    if (!matchesScannerComparisonTimePreset(card.commence_time, timePreset, now)) return false;
+    if (normalizedQuery) {
+      const haystack = normalizeScannerSearch(
+        `${card.player_name} ${card.market} ${card.event} ${card.team ?? ""} ${card.opponent ?? ""} ${
+          card.best_over_sportsbook ?? ""
+        } ${card.best_under_sportsbook ?? ""} ${card.exact_line_bookmakers.join(" ")}`
+      );
+      if (!haystack.includes(normalizedQuery)) return false;
+    }
+    return true;
+  });
+}
+
+function sortPickEmBoardCards(cards: PickEmBoardCard[]): PickEmBoardCard[] {
+  const confidenceRank: Record<string, number> = {
+    elite: 4,
+    high: 3,
+    solid: 2,
+    thin: 1,
+  };
+  return [...cards].sort((left, right) => {
+    const confidenceDiff =
+      (confidenceRank[right.confidence_label?.toLowerCase() ?? "thin"] ?? 0) -
+      (confidenceRank[left.confidence_label?.toLowerCase() ?? "thin"] ?? 0);
+    if (confidenceDiff !== 0) return confidenceDiff;
+
+    const supportDiff = right.exact_line_bookmaker_count - left.exact_line_bookmaker_count;
+    if (supportDiff !== 0) return supportDiff;
+
+    const leftLean = Math.abs(left.consensus_over_prob - 0.5);
+    const rightLean = Math.abs(right.consensus_over_prob - 0.5);
+    if (rightLean !== leftLean) return rightLean - leftLean;
+
+    return left.player_name.localeCompare(right.player_name);
+  });
 }
 
 export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
@@ -151,6 +239,8 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
   const scanError = scanErrorRaw instanceof Error ? scanErrorRaw.message : null;
   const [isRunningScan, setIsRunningScan] = useState(false);
   const [cooldown, setCooldown] = useState(0);
+  const [playerPropsView, setPlayerPropsView] = useState<"sportsbooks" | "pickem">("sportsbooks");
+  const isPickEmSubview = surface === "player_props" && playerPropsView === "pickem";
   const [activeLens, setActiveLens] = useState<ScannerLens>(
     surface === "player_props" ? "standard" : persistedFilters?.activeLens ?? "standard"
   );
@@ -332,6 +422,15 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
   const effectiveLens: ScannerLens =
     surface === "player_props" ? "standard" : activeLens;
 
+  const pickEmSourceCards = useMemo(() => {
+    if (surface !== "player_props" || !effectiveScanData) return [];
+    return buildPickEmBoardCards(
+      effectiveScanData.sides.filter(
+        (side): side is Extract<MarketSide, { surface: "player_props" }> => side.surface === "player_props"
+      )
+    );
+  }, [effectiveScanData, surface]);
+
   const filteredResults = useMemo(() => {
     return applyScannerResultFilters({
       sides: fullResults,
@@ -350,52 +449,74 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
     });
   }, [edgeMinStandard, effectiveLens, fullResults, hideAlreadyLogged, hideLongshots, propMarket, propSide, riskPreset, searchQuery, timePreset]);
 
+  const filteredPickEmCards = useMemo(() => {
+    return sortPickEmBoardCards(
+      filterPickEmBoardCards({
+        cards: pickEmSourceCards,
+        searchQuery,
+        timePreset,
+        propMarket,
+      })
+    );
+  }, [pickEmSourceCards, propMarket, searchQuery, timePreset]);
+
   const activeResultFilterChips = useMemo(() => {
     return describeScannerResultFilters({
       activeLens: effectiveLens,
       longshotMaxAmerican: LONGSHOT_MAX_AMERICAN,
-      showDefaultStandardEdge: surface === "player_props",
+      showDefaultStandardEdge: surface === "player_props" && !isPickEmSubview,
       filters: {
         searchQuery,
         timePreset,
-        edgeMinStandard,
-        hideLongshots,
-        hideAlreadyLogged,
-        riskPreset,
+        edgeMinStandard: isPickEmSubview ? DEFAULT_RESULT_FILTERS.edgeMinStandard : edgeMinStandard,
+        hideLongshots: isPickEmSubview ? false : hideLongshots,
+        hideAlreadyLogged: isPickEmSubview ? false : hideAlreadyLogged,
+        riskPreset: isPickEmSubview ? "any" : riskPreset,
         propMarket,
-        propSide,
+        propSide: isPickEmSubview ? "all" : propSide,
       },
     });
-  }, [edgeMinStandard, effectiveLens, hideAlreadyLogged, hideLongshots, propMarket, propSide, riskPreset, searchQuery, surface, timePreset]);
+  }, [edgeMinStandard, effectiveLens, hideAlreadyLogged, hideLongshots, isPickEmSubview, propMarket, propSide, riskPreset, searchQuery, surface, timePreset]);
 
   const nullState = useMemo(() => {
     return classifyScannerNullState({
-      sourceCount: fullResults.length,
-      filteredCount: filteredResults.length,
+      sourceCount: isPickEmSubview ? pickEmSourceCards.length : fullResults.length,
+      filteredCount: isPickEmSubview ? filteredPickEmCards.length : filteredResults.length,
     });
-  }, [filteredResults.length, fullResults.length]);
+  }, [filteredPickEmCards.length, filteredResults.length, fullResults.length, isPickEmSubview, pickEmSourceCards.length]);
 
   useEffect(() => {
     setVisibleCount(10);
-  }, [effectiveScanData, effectiveLens, boostPercent, selectedBooks, hideLongshots, hideAlreadyLogged, riskPreset, edgeMinStandard, timePreset, searchQuery, propMarket, propSide]);
+  }, [effectiveScanData, effectiveLens, boostPercent, selectedBooks, hideLongshots, hideAlreadyLogged, riskPreset, edgeMinStandard, timePreset, searchQuery, propMarket, propSide, playerPropsView]);
 
   const results = useMemo(() => filteredResults.slice(0, visibleCount), [filteredResults, visibleCount]);
+  const visiblePickEmCards = useMemo(
+    () => filteredPickEmCards.slice(0, visibleCount),
+    [filteredPickEmCards, visibleCount]
+  );
   const scanAgeMinutes = useMemo(() => (effectiveScanData?.scanned_at ? minutesAgo(effectiveScanData.scanned_at) : null), [effectiveScanData?.scanned_at]);
 
   const secondaryActiveFilterChips = activeResultFilterChips;
   const hasActiveSecondaryFilters = secondaryActiveFilterChips.length > 0;
   const availablePropMarkets = useMemo(() => {
     if (surface !== "player_props" || !effectiveScanData) return [];
-    const markets = new Set(
-      effectiveScanData.sides
-        .filter((side): side is Extract<MarketSide, { surface: "player_props" }> => side.surface === "player_props")
-        .map((side) => side.market_key)
-    );
+    const markets = new Set<string>();
+    effectiveScanData.sides
+      .filter((side): side is Extract<MarketSide, { surface: "player_props" }> => side.surface === "player_props")
+      .forEach((side) => markets.add(side.market_key));
     return Array.from(markets).sort((left, right) => left.localeCompare(right));
   }, [effectiveScanData, surface]);
   const playerPropDiagnostics =
     surface === "player_props" && isPlayerPropScanDiagnostics(effectiveScanData?.diagnostics)
       ? effectiveScanData.diagnostics
+      : null;
+  const pickEmEmptyMessage =
+    isPickEmSubview && pickEmSourceCards.length === 0
+      ? "No pick'em board lines were available from the current sportsbook scan."
+      : null;
+  const pickEmEmptySubMessage =
+    pickEmEmptyMessage
+      ? "This board only shows supported NBA points, rebounds, assists, and threes lines when at least one sportsbook has both sides posted on the same number."
       : null;
   const activeReviewCandidate = scannerReviewCandidate?.surface === surface ? scannerReviewCandidate : null;
 
@@ -474,7 +595,11 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
   const handleAddToCart = (side: MarketSide) => {
     const result = addCartLeg(buildParlayCartLeg(side));
     if (!result.added) {
-      toast.error(result.reason === "same_event_conflict" ? "Same-event legs are blocked for now." : "That leg is already in your cart.");
+      toast.error(
+        result.reason === "sportsbook_mismatch"
+          ? "Parlay Builder only supports one sportsbook per slip."
+          : "That leg is already in your cart."
+      );
       return;
     }
     toast.success(`Added to parlay cart (${cart.length + 1})`);
@@ -494,6 +619,33 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
         )}
 
         <ScannerHeader tagline={surfaceConfig.tagline} />
+
+        {surface === "player_props" && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPlayerPropsView("sportsbooks")}
+              className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
+                playerPropsView === "sportsbooks"
+                  ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
+                  : "border-border bg-background text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Sportsbooks
+            </button>
+            <button
+              type="button"
+              onClick={() => setPlayerPropsView("pickem")}
+              className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
+                playerPropsView === "pickem"
+                  ? "border-[#C4A35A]/40 bg-[#C4A35A]/15 text-[#5C4D2E]"
+                  : "border-border bg-background text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Pick&apos;em
+            </button>
+          </div>
+        )}
 
         <ScannerScopeBar books={availableBooks} selectedBooks={selectedBooks} onToggleBook={toggleBook} bookColors={bookColors} />
 
@@ -542,6 +694,8 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
             boostPresets={BOOST_PRESETS}
             activeFilterChips={secondaryActiveFilterChips}
             hasActiveFilters={hasActiveSecondaryFilters}
+            hidePropSideControl={isPickEmSubview}
+            sharedPropsOnly={isPickEmSubview}
             searchPlaceholder={surfaceConfig.searchPlaceholder}
             availablePropMarkets={availablePropMarkets}
             onSearchChange={setSearchQuery}
@@ -570,17 +724,21 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
         {effectiveScanData && (
           <ScannerResultsPane
             surface={surface}
+            playerPropsView={playerPropsView}
             activeLens={effectiveLens}
             tutorialMode={tutorialScannerActive}
             results={results}
-            sourceCount={fullResults.length}
-            filteredCount={filteredResults.length}
+            pickemCards={visiblePickEmCards}
+            sourceCount={isPickEmSubview ? pickEmSourceCards.length : fullResults.length}
+            filteredCount={isPickEmSubview ? filteredPickEmCards.length : filteredResults.length}
             nullState={nullState}
             activeResultFilterSummary={describeActiveResultFilters(activeResultFilterChips)}
+            pickemEmptyMessage={pickEmEmptyMessage}
+            pickemEmptySubMessage={pickEmEmptySubMessage}
             kellyMultiplier={kellyMultiplier}
             bankroll={bankroll}
             boostPercent={boostPercent}
-            canLoadMore={filteredResults.length > results.length}
+            canLoadMore={isPickEmSubview ? filteredPickEmCards.length > visiblePickEmCards.length : filteredResults.length > results.length}
             onLoadMore={() => setVisibleCount((count) => count + 10)}
             onLogBet={handleLogBet}
             onAddToCart={handleAddToCart}

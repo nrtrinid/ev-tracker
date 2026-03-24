@@ -206,7 +206,9 @@ def test_persist_latest_full_scan_builds_expected_payload():
     assert upsert_payload["payload"]["events_with_both_books"] == 2
     assert upsert_payload["payload"]["api_requests_remaining"] == "88"
     assert upsert_payload["payload"]["scanned_at"] == "2026-03-19T00:00:00Z"
-    assert upsert_payload["payload"]["diagnostics"] == VALID_PROP_DIAGNOSTICS
+    diagnostics = upsert_payload["payload"]["diagnostics"]
+    for key, value in VALID_PROP_DIAGNOSTICS.items():
+        assert diagnostics[key] == value
     assert events == []
 
 

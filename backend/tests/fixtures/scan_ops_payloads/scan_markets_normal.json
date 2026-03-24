@@ -5,6 +5,7 @@
       "event_id": "evt-123",
       "sportsbook": "DraftKings",
       "sportsbook_deeplink_url": "https://sportsbook.example/dk/event/evt-123",
+      "sportsbook_deeplink_level": "event",
       "sport": "basketball_nba",
       "event": "Lakers @ Warriors",
       "commence_time": "2026-03-20T18:00:00Z",

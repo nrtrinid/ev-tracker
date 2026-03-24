@@ -33,6 +33,7 @@ def build_single_sport_manual_scan_outputs(
     annotate_sides: Callable[[list[dict[str, Any]]], list[dict[str, Any]]],
 ) -> dict[str, Any]:
     base_sides = _with_surface(surface, result["sides"])
+    fresh_sides = base_sides if not result.get("cache_hit") else []
     response_sides = _with_surface(surface, annotate_sides(base_sides))
     response_payload = {
         "surface": surface,
@@ -43,6 +44,7 @@ def build_single_sport_manual_scan_outputs(
         "api_requests_remaining": result.get("api_requests_remaining"),
         "scanned_at": scanned_at,
         "diagnostics": result.get("diagnostics"),
+        "prizepicks_cards": result.get("prizepicks_cards"),
     }
     persist_payload = {
         "surface": surface,
@@ -53,6 +55,7 @@ def build_single_sport_manual_scan_outputs(
         "api_requests_remaining": result.get("api_requests_remaining"),
         "scanned_at": scanned_at,
         "diagnostics": result.get("diagnostics"),
+        "prizepicks_cards": result.get("prizepicks_cards"),
     }
     ops_status_payload = {
         "surface": surface,
@@ -64,6 +67,7 @@ def build_single_sport_manual_scan_outputs(
     }
     return {
         "base_sides": base_sides,
+        "fresh_sides": fresh_sides,
         "response_payload": response_payload,
         "persist_payload": persist_payload,
         "ops_status_payload": ops_status_payload,
@@ -74,11 +78,13 @@ def build_all_sports_manual_scan_outputs(
     *,
     surface: str = "straight_bets",
     all_sides: list[dict[str, Any]],
+    fresh_sides: list[dict[str, Any]],
     total_events: int,
     total_with_both: int,
     min_remaining: str | None,
     scanned_at: str | None,
     diagnostics: dict[str, Any] | None,
+    prizepicks_cards: list[dict[str, Any]] | None,
     annotate_sides: Callable[[list[dict[str, Any]]], list[dict[str, Any]]],
 ) -> dict[str, Any]:
     normalized_sides = _with_surface(surface, all_sides)
@@ -92,6 +98,7 @@ def build_all_sports_manual_scan_outputs(
         "api_requests_remaining": min_remaining,
         "scanned_at": scanned_at,
         "diagnostics": diagnostics,
+        "prizepicks_cards": prizepicks_cards,
     }
     persist_payload = {
         "surface": surface,
@@ -102,6 +109,7 @@ def build_all_sports_manual_scan_outputs(
         "api_requests_remaining": min_remaining,
         "scanned_at": scanned_at,
         "diagnostics": diagnostics,
+        "prizepicks_cards": prizepicks_cards,
     }
     ops_status_payload = {
         "surface": surface,
@@ -112,6 +120,7 @@ def build_all_sports_manual_scan_outputs(
         "api_requests_remaining": min_remaining,
     }
     return {
+        "fresh_sides": _with_surface(surface, fresh_sides),
         "response_payload": response_payload,
         "persist_payload": persist_payload,
         "ops_status_payload": ops_status_payload,
@@ -124,6 +133,7 @@ def apply_manual_scan_bundle(
     captured_at: str,
     set_last_manual_scan_status: Callable[[dict[str, Any]], None],
     schedule_piggyback: Callable[[list[dict[str, Any]]], Any],
+    schedule_research_capture: Callable[[list[dict[str, Any]]], Any],
     persist_latest_scan: Callable[[dict[str, Any]], None],
 ) -> dict[str, Any]:
     set_last_manual_scan_status(
@@ -133,7 +143,11 @@ def apply_manual_scan_bundle(
         }
     )
     persist_payload = bundle["persist_payload"]
-    piggyback_result = schedule_piggyback(persist_payload["sides"])
+    fresh_sides = bundle.get("fresh_sides") or []
+    research_result = schedule_research_capture(fresh_sides)
+    if inspect.isawaitable(research_result):
+        asyncio.create_task(research_result)
+    piggyback_result = schedule_piggyback(fresh_sides)
     if inspect.isawaitable(piggyback_result):
         asyncio.create_task(piggyback_result)
     persist_latest_scan(persist_payload)
@@ -154,11 +168,13 @@ async def aggregate_manual_scan_all_sports(
     get_cached_or_scan: Callable[[str], Awaitable[dict[str, Any]]],
 ) -> dict[str, Any]:
     all_sides: list[dict[str, Any]] = []
+    fresh_sides: list[dict[str, Any]] = []
     total_events = 0
     total_with_both = 0
     min_remaining: str | None = None
     oldest_fetched: float | None = None
     diagnostics: dict[str, Any] | None = None
+    prizepicks_cards: list[dict[str, Any]] = []
 
     for sport in sports_to_scan:
         try:
@@ -169,6 +185,8 @@ async def aggregate_manual_scan_all_sports(
             raise
 
         all_sides.extend(result["sides"])
+        if not result.get("cache_hit"):
+            fresh_sides.extend(result["sides"])
         total_events += int(result["events_fetched"])
         total_with_both += int(result["events_with_both_books"])
 
@@ -186,14 +204,19 @@ async def aggregate_manual_scan_all_sports(
 
         if diagnostics is None and isinstance(result.get("diagnostics"), dict):
             diagnostics = result["diagnostics"]
+        cards = result.get("prizepicks_cards")
+        if isinstance(cards, list):
+            prizepicks_cards.extend(card for card in cards if isinstance(card, dict))
 
     return {
         "all_sides": all_sides,
+        "fresh_sides": fresh_sides,
         "total_events": total_events,
         "total_with_both": total_with_both,
         "min_remaining": min_remaining,
         "oldest_fetched": oldest_fetched,
         "diagnostics": diagnostics,
+        "prizepicks_cards": prizepicks_cards or None,
     }
 
 
@@ -232,10 +255,12 @@ async def run_all_sports_manual_scan(
     return build_all_sports_manual_scan_outputs(
         surface=surface,
         all_sides=aggregate["all_sides"],
+        fresh_sides=aggregate["fresh_sides"],
         total_events=aggregate["total_events"],
         total_with_both=aggregate["total_with_both"],
         min_remaining=aggregate["min_remaining"],
         scanned_at=scanned_at,
         diagnostics=aggregate.get("diagnostics"),
+        prizepicks_cards=aggregate.get("prizepicks_cards"),
         annotate_sides=annotate_sides,
     )

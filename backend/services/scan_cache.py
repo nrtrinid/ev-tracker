@@ -22,6 +22,7 @@ def empty_scan_response(*, surface: str = DEFAULT_SURFACE) -> FullScanResponse:
         api_requests_remaining=None,
         scanned_at=None,
         diagnostics=None,
+        prizepicks_cards=None,
     )
 
 
@@ -121,6 +122,7 @@ def persist_latest_full_scan(
     api_requests_remaining: str | None,
     scanned_at: str | None,
     diagnostics: dict[str, Any] | None = None,
+    prizepicks_cards: list[dict[str, Any]] | None = None,
     retry_supabase: Callable,
     log_event: Callable[..., None],
 ) -> None:
@@ -137,6 +139,7 @@ def persist_latest_full_scan(
         api_requests_remaining=api_requests_remaining,
         scanned_at=scanned_at,
         diagnostics=diagnostics,
+        prizepicks_cards=prizepicks_cards,
     ).model_dump()
     persist_latest_scan_payload(
         db=db,

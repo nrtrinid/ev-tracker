@@ -20,6 +20,7 @@ from services.odds_api import (
     _append_odds_api_activity,
     fetch_events,
 )
+from services.sportsbook_deeplinks import resolve_sportsbook_deeplink
 from services.shared_state import get_scan_cache, set_scan_cache
 
 
@@ -41,6 +42,7 @@ PLAYER_PROP_BOOKS = {
 PLAYER_PROP_REFERENCE_SOURCE = "market_median"
 PLAYER_PROP_MIN_SOLID_REFERENCE_BOOKMAKERS = 2
 PLAYER_PROP_MIN_REFERENCE_BOOKMAKERS_ENV = "PLAYER_PROP_MIN_REFERENCE_BOOKMAKERS"
+PLAYER_PROP_FALLBACK_MAX_EVENTS = 3
 
 _props_cache: dict[str, dict] = {}
 _props_locks: dict[str, asyncio.Lock] = {}
@@ -157,6 +159,8 @@ async def _fetch_prop_market_for_event(*, sport: str, event_id: str, markets: li
         "markets": ",".join(markets),
         "oddsFormat": "american",
         "bookmakers": all_books,
+        "includeLinks": "true",
+        "includeSids": "true",
     }
 
     started = time.monotonic()
@@ -201,15 +205,61 @@ async def _fetch_prop_market_for_event(*, sport: str, event_id: str, markets: li
         raise
 
 
-def _extract_market(bookmakers: list[dict], book_key: str, market_key: str) -> tuple[list[dict] | None, str | None]:
+def _extract_market_meta(bookmakers: list[dict], book_key: str, market_key: str) -> dict | None:
     for bookmaker in bookmakers:
         if bookmaker.get("key") != book_key:
             continue
-        deep_link = bookmaker.get("link") or bookmaker.get("url")
+        event_link = bookmaker.get("link") or bookmaker.get("url")
         for market in bookmaker.get("markets", []):
             if market.get("key") == market_key:
-                return market.get("outcomes") or [], deep_link
-    return None, None
+                return {
+                    "outcomes": market.get("outcomes") or [],
+                    "market_link": market.get("link") or market.get("url"),
+                    "event_link": event_link,
+                }
+    return None
+
+
+def _build_prop_market_book_pairs(
+    *,
+    bookmakers: list[dict],
+    target_markets: list[str],
+) -> tuple[dict[str, dict[str, dict[tuple[str, float | None], dict[str, dict]]]], dict[str, dict[str, dict[str, str | None]]]]:
+    selection_pairs_by_market_book: dict[str, dict[str, dict[tuple[str, float | None], dict[str, dict]]]] = {}
+    deeplink_context_by_market_book: dict[str, dict[str, dict[str, str | None]]] = {}
+
+    for market_key in target_markets:
+        for book_key in PLAYER_PROP_BOOKS.keys():
+            book_market = _extract_market_meta(bookmakers, book_key, market_key)
+            if not book_market:
+                continue
+            normalized_book = _normalize_prop_outcomes(book_market["outcomes"])
+            if not normalized_book:
+                continue
+
+            selections: dict[tuple[str, float | None], dict[str, dict]] = {}
+            for outcome in normalized_book:
+                player_name = _extract_player_name(outcome.get("description"))
+                if not player_name:
+                    continue
+                line_value = _to_line_numeric(outcome.get("point"))
+                side = str(outcome.get("name") or "").strip().lower()
+                selections.setdefault((player_name, line_value), {})[side] = outcome
+
+            valid_selections = {
+                key: pair for key, pair in selections.items()
+                if "over" in pair and "under" in pair
+            }
+            if not valid_selections:
+                continue
+
+            selection_pairs_by_market_book.setdefault(market_key, {})[book_key] = valid_selections
+            deeplink_context_by_market_book.setdefault(market_key, {})[book_key] = {
+                "market_link": book_market["market_link"],
+                "event_link": book_market["event_link"],
+            }
+
+    return selection_pairs_by_market_book, deeplink_context_by_market_book
 
 
 def _devig_pair_probabilities(over_outcome: dict, under_outcome: dict) -> dict[str, float] | None:
@@ -285,6 +335,41 @@ def _confidence_label_for_reference_count(reference_count: int) -> str:
     return "thin"
 
 
+def _american_price_quality(american: float | int | None) -> float | None:
+    if american is None:
+        return None
+    try:
+        return american_to_decimal(float(american))
+    except Exception:
+        return None
+
+
+def _canonical_matchup_key(away_team: str | None, home_team: str | None) -> str:
+    return f"{_canonical_team_name(away_team)}|{_canonical_team_name(home_team)}"
+
+
+def _parse_commence_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _pick_best_outcome_offer(offers: list[dict], price_key: str) -> dict | None:
+    best_offer: dict | None = None
+    best_quality: float | None = None
+    for offer in offers:
+        quality = _american_price_quality(offer.get(price_key))
+        if quality is None:
+            continue
+        if best_quality is None or quality > best_quality:
+            best_quality = quality
+            best_offer = offer
+    return best_offer
+
+
 def _match_curated_events(national_tv_games: list[dict], odds_events: list[dict]) -> list[dict]:
     return [
         detail["odds_event"]
@@ -324,6 +409,66 @@ def _build_curated_event_match_details(curated_games: list[dict], odds_events: l
     return details
 
 
+def _selection_reason_rank(value: str | None) -> int:
+    selection_reason = str(value or "").strip().lower()
+    if selection_reason == "national_tv":
+        return 0
+    if selection_reason == "nba_tv":
+        return 1
+    if selection_reason == "scoreboard_fallback":
+        return 2
+    return 3
+
+
+def _prioritize_curated_match_details(
+    match_details: list[dict],
+    *,
+    pregame_cutoff: datetime,
+    max_games: int = 3,
+) -> list[dict]:
+    ranked: list[tuple[tuple[int, int, int], dict]] = []
+    for index, detail in enumerate(match_details):
+        event = detail.get("odds_event")
+        commence_dt = _parse_commence_time(detail.get("commence_time"))
+        is_fetchable = bool(event) and (commence_dt is None or commence_dt > pregame_cutoff)
+        if is_fetchable:
+            bucket = 0
+        elif event:
+            bucket = 1
+        else:
+            bucket = 2
+        rank = (
+            bucket,
+            _selection_reason_rank(detail.get("selection_reason")),
+            index,
+        )
+        ranked.append((rank, detail))
+
+    ranked.sort(key=lambda item: item[0])
+    return [detail for _rank, detail in ranked[:max_games]]
+
+
+def _select_fallback_odds_events(
+    odds_events: list[dict],
+    *,
+    pregame_cutoff: datetime,
+    max_events: int = PLAYER_PROP_FALLBACK_MAX_EVENTS,
+) -> list[dict]:
+    fetchable: list[dict] = []
+    unknown_start: list[dict] = []
+    for event in odds_events:
+        event_id = str(event.get("id") or "").strip()
+        if not event_id:
+            continue
+        commence_dt = _parse_commence_time(event.get("commence_time"))
+        if commence_dt is None:
+            unknown_start.append(event)
+            continue
+        if commence_dt > pregame_cutoff:
+            fetchable.append(event)
+    return (fetchable + unknown_start)[:max_events]
+
+
 def _build_prop_side_candidates(
     *,
     sport: str,
@@ -338,43 +483,20 @@ def _build_prop_side_candidates(
     commence_time = str(event_payload.get("commence_time") or "")
     event_name = f"{away} @ {home}".strip()
     candidates: list[dict] = []
+    selection_pairs_by_market_book, deeplink_context_by_market_book = _build_prop_market_book_pairs(
+        bookmakers=bookmakers,
+        target_markets=target_markets,
+    )
 
     for market_key in target_markets:
-        selection_pairs_by_book: dict[str, dict[tuple[str, float | None], dict[str, dict]]] = {}
-        deeplink_by_book: dict[str, str | None] = {}
-
-        for book_key in PLAYER_PROP_BOOKS.keys():
-            book_outcomes, deeplink = _extract_market(bookmakers, book_key, market_key)
-            if not book_outcomes:
-                continue
-            normalized_book = _normalize_prop_outcomes(book_outcomes)
-            if not normalized_book:
-                continue
-
-            selections: dict[tuple[str, float | None], dict[str, dict]] = {}
-            for outcome in normalized_book:
-                player_name = _extract_player_name(outcome.get("description"))
-                if not player_name:
-                    continue
-                line_value = _to_line_numeric(outcome.get("point"))
-                side = str(outcome.get("name") or "").strip().lower()
-                selections.setdefault((player_name, line_value), {})[side] = outcome
-
-            valid_selections = {
-                key: pair for key, pair in selections.items()
-                if "over" in pair and "under" in pair
-            }
-            if not valid_selections:
-                continue
-
-            selection_pairs_by_book[book_key] = valid_selections
-            deeplink_by_book[book_key] = deeplink
+        selection_pairs_by_book = selection_pairs_by_market_book.get(market_key, {})
+        deeplink_context_by_book = deeplink_context_by_market_book.get(market_key, {})
 
         for book_key, book_display in PLAYER_PROP_BOOKS.items():
             book_pairs = selection_pairs_by_book.get(book_key)
             if not book_pairs:
                 continue
-            deeplink = deeplink_by_book.get(book_key)
+            deeplink_context = deeplink_context_by_book.get(book_key) or {}
 
             for (player_name, line_value), book_pair in book_pairs.items():
                 for side in ("over", "under"):
@@ -436,6 +558,12 @@ def _build_prop_side_candidates(
                         opponent = away
                     elif player_team == away:
                         opponent = home
+                    deeplink, deeplink_level = resolve_sportsbook_deeplink(
+                        sportsbook=book_display,
+                        selection_link=outcome.get("link") or outcome.get("url"),
+                        market_link=deeplink_context.get("market_link"),
+                        event_link=deeplink_context.get("event_link"),
+                    )
                     candidates.append(
                         {
                             "surface": PLAYER_PROPS_SURFACE,
@@ -444,6 +572,7 @@ def _build_prop_side_candidates(
                             "selection_key": selection_key,
                             "sportsbook": book_display,
                             "sportsbook_deeplink_url": deeplink,
+                            "sportsbook_deeplink_level": deeplink_level,
                             "sport": sport,
                             "event": event_name,
                             "commence_time": commence_time,
@@ -511,23 +640,249 @@ def _parse_prop_sides(
     )
 
 
+def _build_exact_line_reference_index(
+    *,
+    event_payload: dict,
+    target_markets: list[str],
+    player_context_lookup: dict[str, dict[str, str | None]] | None = None,
+) -> tuple[dict[tuple[str, str, str, float | None], dict], dict[tuple[str, str, float | None], dict]]:
+    bookmakers = event_payload.get("bookmakers") or []
+    home = str(event_payload.get("home_team") or "")
+    away = str(event_payload.get("away_team") or "")
+    event_id = str(event_payload.get("id") or "").strip() or None
+    commence_time = str(event_payload.get("commence_time") or "")
+    event_name = f"{away} @ {home}".strip()
+    selection_pairs_by_market_book, deeplink_context_by_market_book = _build_prop_market_book_pairs(
+        bookmakers=bookmakers,
+        target_markets=target_markets,
+    )
+
+    raw_index: dict[tuple[str, str, str, float | None], dict] = {}
+    fallback_index: dict[tuple[str, str, float | None], dict] = {}
+
+    for market_key in target_markets:
+        selection_pairs_by_book = selection_pairs_by_market_book.get(market_key, {})
+        deeplink_context_by_book = deeplink_context_by_market_book.get(market_key, {})
+
+        for book_key, selection_pairs in selection_pairs_by_book.items():
+            book_display = PLAYER_PROP_BOOKS.get(book_key, book_key)
+            deeplink_context = deeplink_context_by_book.get(book_key) or {}
+
+            for (player_name, line_value), pair in selection_pairs.items():
+                player_team, participant_id = _resolve_player_context(
+                    player_name=player_name,
+                    description=pair["over"].get("description"),
+                    player_context_lookup=player_context_lookup,
+                    home_team=home,
+                    away_team=away,
+                )
+                opponent = None
+                if player_team == home:
+                    opponent = away
+                elif player_team == away:
+                    opponent = home
+
+                player_key = _canonical_player_name(player_name)
+                team_key = _canonical_team_name(player_team)
+                reference_key = (player_key, team_key, market_key, line_value)
+                entry = raw_index.setdefault(
+                    reference_key,
+                    {
+                        "event_id": event_id,
+                        "sport": "basketball_nba",
+                        "event": event_name,
+                        "commence_time": commence_time,
+                        "player_name": player_name,
+                        "participant_id": participant_id,
+                        "team": player_team,
+                        "opponent": opponent,
+                        "player_key": player_key,
+                        "team_key": team_key,
+                        "market_key": market_key,
+                        "market": market_key,
+                        "line_value": line_value,
+                        "over_probs": [],
+                        "under_probs": [],
+                        "offers": [],
+                    },
+                )
+
+                true_probs = _devig_pair_probabilities(pair["over"], pair["under"])
+                if true_probs:
+                    entry["over_probs"].append(true_probs["over"])
+                    entry["under_probs"].append(true_probs["under"])
+
+                over_deeplink, _ = resolve_sportsbook_deeplink(
+                    sportsbook=book_display,
+                    selection_link=pair["over"].get("link") or pair["over"].get("url"),
+                    market_link=deeplink_context.get("market_link"),
+                    event_link=deeplink_context.get("event_link"),
+                )
+                under_deeplink, _ = resolve_sportsbook_deeplink(
+                    sportsbook=book_display,
+                    selection_link=pair["under"].get("link") or pair["under"].get("url"),
+                    market_link=deeplink_context.get("market_link"),
+                    event_link=deeplink_context.get("event_link"),
+                )
+
+                entry["offers"].append(
+                    {
+                        "sportsbook": book_display,
+                        "over_odds": pair["over"].get("price"),
+                        "over_deeplink_url": over_deeplink,
+                        "under_odds": pair["under"].get("price"),
+                        "under_deeplink_url": under_deeplink,
+                    }
+                )
+
+    reference_index: dict[tuple[str, str, str, float | None], dict] = {}
+    for reference_key, entry in raw_index.items():
+        offers = entry.get("offers") or []
+        if not offers:
+            continue
+        over_probs = entry.get("over_probs") or []
+        under_probs = entry.get("under_probs") or []
+        if not over_probs or not under_probs:
+            continue
+
+        exact_line_bookmakers = [str(offer["sportsbook"]) for offer in offers if offer.get("sportsbook")]
+        exact_line_bookmaker_count = len(exact_line_bookmakers)
+        best_over_offer = _pick_best_outcome_offer(offers, "over_odds")
+        best_under_offer = _pick_best_outcome_offer(offers, "under_odds")
+
+        finalized = {
+            **entry,
+            "exact_line_bookmakers": exact_line_bookmakers,
+            "exact_line_bookmaker_count": exact_line_bookmaker_count,
+            "consensus_over_prob": round(float(median(over_probs)), 4),
+            "consensus_under_prob": round(float(median(under_probs)), 4),
+            "confidence_label": _confidence_label_for_reference_count(exact_line_bookmaker_count),
+            "best_over_sportsbook": best_over_offer.get("sportsbook") if best_over_offer else None,
+            "best_over_odds": float(best_over_offer["over_odds"]) if best_over_offer and best_over_offer.get("over_odds") is not None else None,
+            "best_over_deeplink_url": best_over_offer.get("over_deeplink_url") if best_over_offer else None,
+            "best_under_sportsbook": best_under_offer.get("sportsbook") if best_under_offer else None,
+            "best_under_odds": float(best_under_offer["under_odds"]) if best_under_offer and best_under_offer.get("under_odds") is not None else None,
+            "best_under_deeplink_url": best_under_offer.get("under_deeplink_url") if best_under_offer else None,
+        }
+        reference_index[reference_key] = finalized
+        fallback_index.setdefault(
+            (entry["player_key"], entry["market_key"], entry["line_value"]),
+            finalized,
+        )
+
+    return reference_index, fallback_index
+
+
+def _build_prizepicks_comparison_cards(
+    *,
+    event_payload: dict,
+    target_markets: list[str],
+    player_context_lookup: dict[str, dict[str, str | None]] | None = None,
+    prizepicks_projections: list[dict] | None = None,
+    min_reference_bookmakers: int,
+) -> tuple[list[dict], dict[str, int]]:
+    if not prizepicks_projections:
+        return [], {"matched": 0, "unmatched": 0, "filtered": 0}
+
+    reference_index, fallback_index = _build_exact_line_reference_index(
+        event_payload=event_payload,
+        target_markets=target_markets,
+        player_context_lookup=player_context_lookup,
+    )
+
+    cards: list[dict] = []
+    matched = 0
+    unmatched = 0
+    filtered = 0
+    seen_keys: set[str] = set()
+
+    for projection in prizepicks_projections:
+        market_key = str(projection.get("market_key") or "").strip()
+        if market_key not in target_markets:
+            continue
+        player_key = _canonical_player_name(projection.get("player_name"))
+        team_key = _canonical_team_name(projection.get("team"))
+        line_value = projection.get("line_value")
+
+        reference = reference_index.get((player_key, team_key, market_key, line_value))
+        if not reference:
+            reference = fallback_index.get((player_key, market_key, line_value))
+
+        if not reference:
+            unmatched += 1
+            continue
+
+        if int(reference.get("exact_line_bookmaker_count") or 0) < min_reference_bookmakers:
+            filtered += 1
+            continue
+
+        consensus_over_prob = float(reference["consensus_over_prob"])
+        consensus_under_prob = float(reference["consensus_under_prob"])
+        comparison_key = "|".join(
+            [
+                str(reference.get("event_id") or projection.get("event_id") or "").strip(),
+                market_key,
+                player_key,
+                "" if line_value is None else str(line_value),
+            ]
+        )
+        if comparison_key in seen_keys:
+            continue
+        seen_keys.add(comparison_key)
+
+        cards.append(
+            {
+                "comparison_key": comparison_key,
+                "event_id": reference.get("event_id") or projection.get("event_id"),
+                "sport": str(reference.get("sport") or "basketball_nba"),
+                "event": str(reference.get("event") or projection.get("event") or ""),
+                "commence_time": str(reference.get("commence_time") or projection.get("commence_time") or ""),
+                "player_name": str(reference.get("player_name") or projection.get("player_name") or ""),
+                "participant_id": reference.get("participant_id") or projection.get("participant_id"),
+                "team": reference.get("team") or projection.get("team"),
+                "opponent": reference.get("opponent") or projection.get("opponent"),
+                "market_key": market_key,
+                "market": str(reference.get("market") or market_key),
+                "prizepicks_line": float(line_value),
+                "exact_line_bookmakers": list(reference.get("exact_line_bookmakers") or []),
+                "exact_line_bookmaker_count": int(reference.get("exact_line_bookmaker_count") or 0),
+                "consensus_over_prob": consensus_over_prob,
+                "consensus_under_prob": consensus_under_prob,
+                "consensus_side": "over" if consensus_over_prob >= consensus_under_prob else "under",
+                "confidence_label": str(reference.get("confidence_label") or "thin"),
+                "best_over_sportsbook": reference.get("best_over_sportsbook"),
+                "best_over_odds": reference.get("best_over_odds"),
+                "best_over_deeplink_url": reference.get("best_over_deeplink_url"),
+                "best_under_sportsbook": reference.get("best_under_sportsbook"),
+                "best_under_odds": reference.get("best_under_odds"),
+                "best_under_deeplink_url": reference.get("best_under_deeplink_url"),
+            }
+        )
+        matched += 1
+
+    return cards, {"matched": matched, "unmatched": unmatched, "filtered": filtered}
+
+
 async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
     target_markets = get_player_prop_markets()
     min_reference_bookmakers = get_player_prop_min_reference_bookmakers()
     scoreboard_payload = await fetch_nba_scoreboard_window()
     scoreboard_events = scoreboard_payload.get("events") if isinstance(scoreboard_payload, dict) else []
     scoreboard_count = len(scoreboard_events) if isinstance(scoreboard_events, list) else 0
-    curated_games = extract_national_tv_matchups(scoreboard_payload, max_games=3)
+    curated_candidates = extract_national_tv_matchups(scoreboard_payload, max_games=max(3, scoreboard_count or 0))
+    curated_games = curated_candidates[:3]
     selection_reasons = [str(game.get("selection_reason") or "unknown") for game in curated_games]
+    pregame_cutoff = datetime.now(timezone.utc) + timedelta(minutes=1)
     logger.info(
-        "player_props.scan.scoreboard sport=%s source=%s scoreboard_events=%s curated_games=%s selection_reasons=%s",
+        "player_props.scan.scoreboard sport=%s source=%s scoreboard_events=%s curated_candidates=%s curated_games=%s selection_reasons=%s",
         sport,
         source,
         scoreboard_count,
+        len(curated_candidates),
         len(curated_games),
         ",".join(selection_reasons) if selection_reasons else "none",
     )
-    if not curated_games:
+    if not curated_candidates:
         logger.info(
             "player_props.scan.no_curated_games sport=%s source=%s reason=no_scoreboard_matchups",
             sport,
@@ -536,16 +891,20 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
         return {
             "surface": PLAYER_PROPS_SURFACE,
             "sides": [],
+            "prizepicks_cards": [],
             "events_fetched": 0,
             "events_with_both_books": 0,
             "api_requests_remaining": None,
             "diagnostics": {
                 "scan_mode": "curated_sniper",
+                "scan_scope": "curated",
                 "scoreboard_event_count": scoreboard_count,
                 "odds_event_count": 0,
                 "curated_games": [],
                 "matched_event_count": 0,
                 "unmatched_game_count": 0,
+                "fallback_reason": None,
+                "fallback_event_count": 0,
                 "events_fetched": 0,
                 "events_skipped_pregame": 0,
                 "events_with_results": 0,
@@ -554,17 +913,51 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
                 "quality_gate_min_reference_bookmakers": min_reference_bookmakers,
                 "sides_count": 0,
                 "markets_requested": target_markets,
+                "prizepicks_status": "disabled",
+                "prizepicks_message": None,
+                "prizepicks_board_items_count": 0,
+                "prizepicks_exact_line_matches_count": 0,
+                "prizepicks_unmatched_count": 0,
+                "prizepicks_filtered_count": 0,
             },
         }
 
     events_payload, events_resp = await fetch_events(sport, source=f"{source}_props_events")
     events = events_payload if isinstance(events_payload, list) else []
-    match_details = _build_curated_event_match_details(curated_games, events)
+    match_details = _build_curated_event_match_details(curated_candidates, events)
+    match_details = _prioritize_curated_match_details(
+        match_details,
+        pregame_cutoff=pregame_cutoff,
+        max_games=3,
+    )
     matched_events = [
         detail["odds_event"]
         for detail in match_details
         if isinstance(detail.get("odds_event"), dict)
     ]
+    scan_scope = "curated"
+    fallback_reason: str | None = None
+    fallback_event_count = 0
+    events_to_scan = matched_events
+    if not events_to_scan and events:
+        scan_scope = "odds_fallback"
+        fallback_reason = (
+            "No curated scoreboard games matched the sportsbook event feed, "
+            "so the scan widened to upcoming sportsbook events."
+        )
+        events_to_scan = _select_fallback_odds_events(
+            events,
+            pregame_cutoff=pregame_cutoff,
+            max_events=PLAYER_PROP_FALLBACK_MAX_EVENTS,
+        )
+        fallback_event_count = len(events_to_scan)
+        logger.info(
+            "player_props.scan.curated_fallback sport=%s source=%s odds_events=%s fallback_events=%s",
+            sport,
+            source,
+            len(events),
+            fallback_event_count,
+        )
     match_details_by_event_id = {
         str(detail.get("odds_event_id") or ""): detail
         for detail in match_details
@@ -577,7 +970,13 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
         len(events),
         len(matched_events),
     )
-    pregame_cutoff = datetime.now(timezone.utc) + timedelta(minutes=1)
+    prizepicks_status = "disabled"
+    prizepicks_message: str | None = None
+    prizepicks_board_items_count = 0
+    prizepicks_cards: list[dict] = []
+    prizepicks_exact_line_matches_count = 0
+    prizepicks_unmatched_count = 0
+    prizepicks_filtered_count = 0
 
     all_sides: list[dict] = []
     events_with_any_book = 0
@@ -586,16 +985,13 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
     skipped_pregame = 0
     candidate_sides_count = 0
     quality_gate_filtered_count = 0
-    for event in matched_events:
+    for event in events_to_scan:
         commence = str(event.get("commence_time") or "")
         if commence:
-            try:
-                commence_dt = datetime.fromisoformat(commence.replace("Z", "+00:00"))
-                if commence_dt <= pregame_cutoff:
-                    skipped_pregame += 1
-                    continue
-            except Exception:
-                pass
+            commence_dt = _parse_commence_time(commence)
+            if commence_dt is not None and commence_dt <= pregame_cutoff:
+                skipped_pregame += 1
+                continue
         event_id = str(event.get("id") or "").strip()
         if not event_id:
             continue
@@ -656,6 +1052,7 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
 
     diagnostics = {
         "scan_mode": "curated_sniper",
+        "scan_scope": scan_scope,
         "scoreboard_event_count": scoreboard_count,
         "odds_event_count": len(events),
         "curated_games": [
@@ -673,6 +1070,8 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
         ],
         "matched_event_count": len(matched_events),
         "unmatched_game_count": sum(1 for detail in match_details if not detail.get("matched")),
+        "fallback_reason": fallback_reason,
+        "fallback_event_count": fallback_event_count,
         "events_fetched": events_fetched,
         "events_skipped_pregame": skipped_pregame,
         "events_with_results": events_with_any_book,
@@ -681,11 +1080,18 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
         "quality_gate_min_reference_bookmakers": min_reference_bookmakers,
         "sides_count": len(all_sides),
         "markets_requested": target_markets,
+        "prizepicks_status": prizepicks_status,
+        "prizepicks_message": prizepicks_message,
+        "prizepicks_board_items_count": prizepicks_board_items_count,
+        "prizepicks_exact_line_matches_count": prizepicks_exact_line_matches_count,
+        "prizepicks_unmatched_count": prizepicks_unmatched_count,
+        "prizepicks_filtered_count": prizepicks_filtered_count,
     }
 
     return {
         "surface": PLAYER_PROPS_SURFACE,
         "sides": all_sides,
+        "prizepicks_cards": prizepicks_cards,
         "events_fetched": events_fetched,
         "events_with_both_books": events_with_any_book,
         "api_requests_remaining": remaining,
@@ -704,15 +1110,15 @@ async def get_cached_or_scan_player_props(sport: str, source: str = "unknown") -
             fetched_at = shared_entry.get("fetched_at")
             if isinstance(fetched_at, (int, float)) and (now - fetched_at) < CACHE_TTL_SECONDS:
                 _props_cache[slot] = shared_entry
-                return shared_entry
+                return {**shared_entry, "cache_hit": True}
 
         if slot in _props_cache:
             entry = _props_cache[slot]
             if (now - entry["fetched_at"]) < CACHE_TTL_SECONDS:
-                return entry
+                return {**entry, "cache_hit": True}
 
         result = await scan_player_props(sport, source=source)
         result["fetched_at"] = now
         _props_cache[slot] = result
         set_scan_cache(slot, result, CACHE_TTL_SECONDS)
-        return result
+        return {**result, "cache_hit": False}

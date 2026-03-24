@@ -134,5 +134,19 @@ test.describe("scanner state utils", () => {
     expect(out.marketKey).toBe("player_points");
     expect(out.selectionKey).toBe("evt-2|player_points|jokic|over|24.5");
     expect(out.display).toBe("Nikola Jokic Over 24.5");
+    expect(out.referenceOddsAmerican).toBe(-110);
+    expect(out.referenceSource).toBe("market_median");
+    expect(out.participantName).toBe("Nikola Jokic");
+    expect(out.marketDisplay).toBe("player_points");
+  });
+
+  test("buildParlayCartLeg carries reference pricing for straight bets", async () => {
+    const out = buildParlayCartLeg(BASE_SIDE);
+
+    expect(out.surface).toBe("straight_bets");
+    expect(out.referenceOddsAmerican).toBe(108);
+    expect(out.referenceSource).toBe("pinnacle");
+    expect(out.team).toBe("Lakers");
+    expect(out.marketDisplay).toBe("Moneyline");
   });
 });

@@ -2,18 +2,24 @@ import { Card, CardContent } from "@/components/ui/card";
 import type { ScannerNullState } from "@/lib/scanner-contract";
 import type { MarketSide, ScannerSurface } from "@/lib/types";
 import { getScannerSurface } from "../scanner-surfaces";
+import type { PickEmBoardCard } from "../pickem-board";
 import { PlayerPropList } from "./PlayerPropList";
+import { PickEmBoardList } from "./PickEmBoardList";
 import { StraightBetList } from "./StraightBetList";
 
 interface ScannerResultsPaneProps {
   surface: ScannerSurface;
+  playerPropsView?: "sportsbooks" | "pickem";
   activeLens: "standard" | "profit_boost" | "bonus_bet" | "qualifier";
   tutorialMode?: boolean;
   results: Array<MarketSide & { _retention?: number; _boostedEV?: number }>;
+  pickemCards?: PickEmBoardCard[];
   sourceCount: number;
   filteredCount: number;
   nullState: ScannerNullState;
   activeResultFilterSummary: string;
+  pickemEmptyMessage?: string | null;
+  pickemEmptySubMessage?: string | null;
   kellyMultiplier: number;
   bankroll: number;
   boostPercent: number;
@@ -28,13 +34,17 @@ interface ScannerResultsPaneProps {
 
 export function ScannerResultsPane({
   surface,
+  playerPropsView = "sportsbooks",
   activeLens,
   tutorialMode = false,
   results,
+  pickemCards = [],
   sourceCount,
   filteredCount,
   nullState,
   activeResultFilterSummary,
+  pickemEmptyMessage = null,
+  pickemEmptySubMessage = null,
   kellyMultiplier,
   bankroll,
   boostPercent,
@@ -48,6 +58,7 @@ export function ScannerResultsPane({
 }: ScannerResultsPaneProps) {
   const surfaceConfig = getScannerSurface(surface);
   const isPropsSurface = surface === "player_props";
+  const isPickEmView = isPropsSurface && playerPropsView === "pickem";
 
   return (
     <div className="space-y-2">
@@ -56,9 +67,16 @@ export function ScannerResultsPane({
           Tutorial mode: the lines below are sample straight bets. Practice tickets stay local to this walkthrough and disappear when you finish it.
         </p>
       )}
+      {isPickEmView && (
+        <p className="px-0.5 text-xs text-muted-foreground">
+          Pick&apos;em support uses all scanned books for exact-line consensus. My Books only affects the sportsbook card view.
+        </p>
+      )}
       <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
         {isPropsSurface
-          ? `Showing ${results.length} of ${sourceCount} raw props`
+          ? isPickEmView
+            ? `Showing ${pickemCards.length} of ${filteredCount} pick'em board lines`
+            : `Showing ${results.length} of ${sourceCount} raw props`
           : tutorialMode
             ? `Showing ${results.length} of ${filteredCount} Tutorial Lines`
             : `Showing ${results.length} of ${filteredCount} ${
@@ -72,11 +90,14 @@ export function ScannerResultsPane({
             }`}
       </h2>
 
-      {results.length === 0 ? (
+      {(isPickEmView ? pickemCards.length === 0 : results.length === 0) ? (
         <Card className="border-dashed">
           <CardContent className="py-8 text-center">
             <p className="text-sm text-muted-foreground">
-              {nullState === "backend_empty"
+              {isPickEmView && nullState === "backend_empty"
+                ? pickemEmptyMessage ||
+                  "No supported pick'em board lines are available for this scan yet."
+                : nullState === "backend_empty"
                 ? isPropsSurface
                   ? surfaceConfig.emptyLabel
                   : activeLens === "standard"
@@ -86,12 +107,17 @@ export function ScannerResultsPane({
                       : activeLens === "qualifier"
                         ? "No clean qualifier candidates are in range right now."
                         : "No strong boost opportunities are standing out at this percentage."
-                : isPropsSurface
+                : isPickEmView
+                  ? `${sourceCount} pick'em board lines were available, but your current filters hid all of them.`
+                  : isPropsSurface
                   ? `${sourceCount} props were scanned, but your current filters hid all of them.`
                   : "Your current filters are hiding all of the available plays."}
             </p>
             <p className="mt-2 text-xs text-muted-foreground">
-              {nullState === "backend_empty"
+              {isPickEmView && nullState === "backend_empty"
+                ? pickemEmptySubMessage ||
+                  "Adjust your market filters or try a new scan later."
+                : nullState === "backend_empty"
                 ? "Try a refresh later, or switch books if you want a different slate."
                 : "Try Reset, loosen Safer Odds, or turn off Hide Logged to see more options."}
             </p>
@@ -101,7 +127,15 @@ export function ScannerResultsPane({
           </CardContent>
         </Card>
       ) : (
-        isPropsSurface ? (
+        isPickEmView ? (
+          <PickEmBoardList
+            cards={pickemCards}
+            canLoadMore={canLoadMore}
+            onLoadMore={onLoadMore}
+            bookColors={bookColors}
+            sportDisplayMap={sportDisplayMap}
+          />
+        ) : isPropsSurface ? (
           <PlayerPropList
             results={results as Array<Extract<MarketSide, { surface: "player_props" }> & { _retention?: number; _boostedEV?: number }>}
             canLoadMore={canLoadMore}

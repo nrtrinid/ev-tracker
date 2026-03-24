@@ -36,8 +36,55 @@
         "last_success_at": "2026-03-20T17:54:00Z",
         "last_error_at": "2026-03-20T17:56:00Z"
       },
+      "recent_scans": [
+        {
+          "activity_kind": "scan_session",
+          "scan_session_id": "manual-1",
+          "timestamp": "2026-03-20T17:55:00Z",
+          "source": "manual_scan",
+          "surface": "straight_bets",
+          "scan_scope": "single_sport",
+          "requested_sport": "basketball_ncaab",
+          "actor_label": "ops@example.com",
+          "run_id": null,
+          "detail_count": 1,
+          "live_call_count": 1,
+          "cache_hit_count": 0,
+          "other_count": 0,
+          "total_events_fetched": 3,
+          "total_events_with_both_books": 2,
+          "total_sides": 6,
+          "min_api_requests_remaining": "490",
+          "error_count": 1,
+          "has_errors": true,
+          "details": [
+            {
+              "activity_kind": "scan_detail",
+              "timestamp": "2026-03-20T17:55:00Z",
+              "source": "manual_scan",
+              "surface": "straight_bets",
+              "scan_scope": "single_sport",
+              "requested_sport": "basketball_ncaab",
+              "sport": "basketball_ncaab",
+              "actor_label": "ops@example.com",
+              "run_id": null,
+              "cache_hit": false,
+              "outbound_call_made": true,
+              "duration_ms": 384,
+              "events_fetched": 3,
+              "events_with_both_books": 2,
+              "sides_count": 6,
+              "api_requests_remaining": "490",
+              "status_code": 502,
+              "error_type": "HTTPStatusError",
+              "error_message": "bad gateway"
+            }
+          ]
+        }
+      ],
       "recent_calls": [
         {
+          "activity_kind": "raw_call",
           "timestamp": "2026-03-20T17:56:00Z",
           "source": "manual_scan",
           "endpoint": "odds",

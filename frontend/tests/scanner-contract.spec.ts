@@ -62,6 +62,7 @@ test.describe("scanner contract helpers", () => {
   test("accepts valid player prop diagnostics payload shape", async () => {
     const diagnostics = {
       scan_mode: "curated_sniper",
+      scan_scope: "odds_fallback",
       scoreboard_event_count: 25,
       odds_event_count: 5,
       curated_games: [
@@ -78,6 +79,8 @@ test.describe("scanner contract helpers", () => {
       ],
       matched_event_count: 1,
       unmatched_game_count: 0,
+      fallback_reason: "Curated games missed the sportsbook event feed, so the scan widened.",
+      fallback_event_count: 2,
       events_fetched: 1,
       events_skipped_pregame: 0,
       events_with_results: 1,
@@ -86,8 +89,60 @@ test.describe("scanner contract helpers", () => {
       quality_gate_min_reference_bookmakers: 2,
       sides_count: 112,
       markets_requested: ["player_points", "player_rebounds"],
+      prizepicks_status: "ready",
+      prizepicks_message: null,
+      prizepicks_board_items_count: 18,
+      prizepicks_exact_line_matches_count: 6,
+      prizepicks_unmatched_count: 4,
+      prizepicks_filtered_count: 2,
     };
 
     expect(isPlayerPropScanDiagnostics(diagnostics)).toBeTruthy();
+  });
+
+  test("accepts player props payloads with optional PrizePicks comparison cards", async () => {
+    const payload = {
+      sport: "basketball_nba",
+      sides: [
+        {
+          surface: "player_props",
+          sportsbook: "DraftKings",
+          sport: "basketball_nba",
+          event: "Nuggets @ Suns",
+          commence_time: "2026-03-20T18:00:00Z",
+          team: "Nuggets",
+          reference_odds: -108,
+          book_odds: 105,
+          true_prob: 0.52,
+          base_kelly_fraction: 0.03,
+          book_decimal: 2.05,
+          ev_percentage: 6.6,
+        },
+      ],
+      prizepicks_cards: [
+        {
+          comparison_key: "evt-123|player_points|nikolajokic|24.5",
+          event_id: "evt-123",
+          sport: "basketball_nba",
+          event: "Nuggets @ Suns",
+          commence_time: "2026-03-20T18:00:00Z",
+          player_name: "Nikola Jokic",
+          market_key: "player_points",
+          market: "player_points",
+          prizepicks_line: 24.5,
+          exact_line_bookmakers: ["DraftKings", "FanDuel"],
+          exact_line_bookmaker_count: 2,
+          consensus_over_prob: 0.56,
+          consensus_under_prob: 0.44,
+          consensus_side: "over",
+          confidence_label: "solid",
+        },
+      ],
+      events_fetched: 1,
+      events_with_both_books: 1,
+      api_requests_remaining: "498",
+    };
+
+    expect(isScanResultContractShape(payload)).toBeTruthy();
   });
 });

@@ -1,4 +1,9 @@
-from routes.admin_routes import backfill_ev_locks_impl
+from .test_utils import ensure_supabase_stub
+
+ensure_supabase_stub()
+
+from models import ResearchOpportunitySummaryResponse
+from routes.admin_routes import backfill_ev_locks_impl, research_opportunities_summary_impl
 
 
 class _Result:
@@ -65,3 +70,27 @@ def test_backfill_ev_locks_impl_counts_successes_and_logs_failures():
     assert len(warnings) == 1
     assert warnings[0][0] == "backfill_ev_lock.failed bet_id=%s err=%s"
     assert warnings[0][1] == "b"
+
+
+def test_research_opportunities_summary_impl_delegates_to_summary_builder():
+    db = object()
+    expected = ResearchOpportunitySummaryResponse(
+        captured_count=4,
+        open_count=2,
+        close_captured_count=2,
+        clv_ready_count=2,
+        beat_close_pct=50.0,
+        avg_clv_percent=0.8,
+        by_source=[],
+        by_sportsbook=[],
+        by_edge_bucket=[],
+        by_odds_bucket=[],
+        recent_opportunities=[],
+    )
+
+    out = research_opportunities_summary_impl(
+        get_db=lambda: db,
+        get_summary=lambda provided_db: expected if provided_db is db else None,
+    )
+
+    assert out == expected

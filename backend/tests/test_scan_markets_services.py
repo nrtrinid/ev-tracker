@@ -108,6 +108,7 @@ def test_build_single_sport_manual_scan_outputs_builds_response_and_persist_payl
     )
 
     assert out["base_sides"] == [{"surface": "straight_bets", "id": "a"}]
+    assert out["fresh_sides"] == [{"surface": "straight_bets", "id": "a"}]
     assert out["response_payload"]["sport"] == "basketball_nba"
     assert out["response_payload"]["sides"] == [
         {"surface": "straight_bets", "id": "a"},
@@ -122,15 +123,18 @@ def test_build_single_sport_manual_scan_outputs_builds_response_and_persist_payl
 def test_build_all_sports_manual_scan_outputs_builds_response_and_persist_payloads():
     out = build_all_sports_manual_scan_outputs(
         all_sides=[{"id": "a"}],
+        fresh_sides=[{"id": "a"}],
         total_events=5,
         total_with_both=4,
         min_remaining="77",
         scanned_at="2026-03-19T00:00:00Z",
         diagnostics=VALID_PROP_DIAGNOSTICS,
+        prizepicks_cards=None,
         annotate_sides=lambda sides: sides + [{"id": "annotated"}],
     )
 
     assert out["response_payload"]["sport"] == "all"
+    assert out["fresh_sides"] == [{"surface": "straight_bets", "id": "a"}]
     assert out["response_payload"]["sides"] == [
         {"surface": "straight_bets", "id": "a"},
         {"surface": "straight_bets", "id": "annotated"},
@@ -186,6 +190,7 @@ async def test_run_all_sports_manual_scan_development_uses_only_nba():
             "events_with_both_books": 1,
             "api_requests_remaining": "80",
             "fetched_at": 10.0,
+            "cache_hit": False,
             "diagnostics": VALID_PROP_DIAGNOSTICS,
         }
 
@@ -199,14 +204,16 @@ async def test_run_all_sports_manual_scan_development_uses_only_nba():
     assert called == ["basketball_nba"]
     assert out["ops_status_payload"]["events_fetched"] == 1
     assert out["persist_payload"]["sport"] == "all"
+    assert out["fresh_sides"] == [{"surface": "straight_bets", "id": "basketball_nba"}]
     assert out["response_payload"]["diagnostics"] == VALID_PROP_DIAGNOSTICS
 
 
 def test_apply_manual_scan_bundle_runs_status_piggyback_and_persist():
-    calls = {"status": [], "piggyback": [], "persist": []}
+    calls = {"status": [], "piggyback": [], "research": [], "persist": []}
     bundle = {
         "ops_status_payload": {"sport": "all", "total_sides": 1},
         "persist_payload": {"sides": [{"id": "a"}], "sport": "all"},
+        "fresh_sides": [{"id": "fresh"}],
         "response_payload": {"sport": "all", "sides": [{"id": "annotated"}]},
     }
 
@@ -215,12 +222,14 @@ def test_apply_manual_scan_bundle_runs_status_piggyback_and_persist():
         captured_at="2026-03-19T00:00:00Z",
         set_last_manual_scan_status=lambda status: calls["status"].append(status),
         schedule_piggyback=lambda sides: calls["piggyback"].append(sides),
+        schedule_research_capture=lambda sides: calls["research"].append(sides),
         persist_latest_scan=lambda payload: calls["persist"].append(payload),
     )
 
     assert out == bundle["response_payload"]
     assert calls["status"][0]["captured_at"] == "2026-03-19T00:00:00Z"
-    assert calls["piggyback"][0] == [{"id": "a"}]
+    assert calls["piggyback"][0] == [{"id": "fresh"}]
+    assert calls["research"][0] == [{"id": "fresh"}]
     assert calls["persist"][0] == bundle["persist_payload"]
 
 

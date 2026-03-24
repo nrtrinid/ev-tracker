@@ -18,6 +18,27 @@ async def require_current_user(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
+def _normalize_email(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def _admin_allowlist() -> list[str]:
+    raw = os.getenv("OPS_ADMIN_EMAILS", "")
+    return [email for email in (_normalize_email(item) for item in raw.split(",")) if email]
+
+
+async def require_admin_user(user: dict = Depends(get_current_user)) -> dict:
+    allowlist = _admin_allowlist()
+    if not allowlist:
+        raise HTTPException(status_code=503, detail="OPS_ADMIN_EMAILS not configured")
+
+    email = _normalize_email(user.get("email"))
+    if not email or email not in allowlist:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    return user
+
+
 async def require_scan_rate_limit(user: dict = Depends(get_current_user)) -> dict:
     """Allow at most SCAN_RATE_MAX_REQUESTS scan requests per user per SCAN_RATE_WINDOW_SECONDS."""
     uid = user["id"]

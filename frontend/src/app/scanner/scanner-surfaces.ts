@@ -36,7 +36,7 @@ export const PLAYER_PROPS_SURFACE: ScannerSurfaceConfig = {
   path: "/scanner/player_props",
   searchPlaceholder: "Search player or market",
   resultLabel: "Player Props",
-  emptyLabel: "No player props match your current books and filters yet.",
+  emptyLabel: "No player props are available for this scan yet.",
   supportsLensSelector: false,
   supportsProfitBoost: false,
   isPublic: true,

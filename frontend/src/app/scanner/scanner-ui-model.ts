@@ -1,3 +1,5 @@
+import type { SportsbookDeeplinkLevel } from "@/lib/types";
+
 export type ScannerLens = "standard" | "profit_boost" | "bonus_bet" | "qualifier";
 
 export interface ScannerActionModel {
@@ -16,6 +18,9 @@ export interface ScannerActionModel {
 
 export function normalizeSportsbookDeeplink(value: string | null | undefined): string | null {
   if (!value) return null;
+  if (value.includes("{") || value.includes("}")) {
+    return null;
+  }
   try {
     const parsed = new URL(value);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
@@ -27,13 +32,30 @@ export function normalizeSportsbookDeeplink(value: string | null | undefined): s
   }
 }
 
+function normalizeSportsbookDeeplinkLevel(
+  value: SportsbookDeeplinkLevel | null | undefined,
+  hasLink: boolean
+): SportsbookDeeplinkLevel | null {
+  if (!hasLink) return null;
+  if (value === "selection" || value === "market" || value === "event" || value === "homepage") {
+    return value;
+  }
+  // Backward compatibility for older cached payloads that only stored a bookmaker/event URL.
+  return "event";
+}
+
 export function buildScannerActionModel(params: {
   sportsbook: string;
   sportsbookDeeplinkUrl?: string | null;
+  sportsbookDeeplinkLevel?: SportsbookDeeplinkLevel | null;
 }): ScannerActionModel {
   const normalizedLink = normalizeSportsbookDeeplink(params.sportsbookDeeplinkUrl);
+  const normalizedLevel = normalizeSportsbookDeeplinkLevel(
+    params.sportsbookDeeplinkLevel,
+    Boolean(normalizedLink)
+  );
 
-  if (!normalizedLink) {
+  if (!normalizedLink || !normalizedLevel) {
     return {
       primary: {
         kind: "log",
@@ -42,10 +64,29 @@ export function buildScannerActionModel(params: {
     };
   }
 
+  const actionCopyByLevel: Record<SportsbookDeeplinkLevel, { label: string; trustHint: string }> = {
+    selection: {
+      label: `Place at ${params.sportsbook}`,
+      trustHint: "Place the ticket at the book, then come back here to log it.",
+    },
+    market: {
+      label: `Open Market at ${params.sportsbook}`,
+      trustHint: "This opens the market at the book, so double-check the bet slip before you log it.",
+    },
+    event: {
+      label: `Open Event at ${params.sportsbook}`,
+      trustHint: "This opens the event at the book, so find the line there before you log it.",
+    },
+    homepage: {
+      label: `Open ${params.sportsbook}`,
+      trustHint: "This opens the sportsbook home page, so navigate to the game before you log it.",
+    },
+  };
+
   return {
     primary: {
       kind: "open",
-      label: `Place at ${params.sportsbook}`,
+      label: actionCopyByLevel[normalizedLevel].label,
       href: normalizedLink,
       external: true,
     },
@@ -53,7 +94,7 @@ export function buildScannerActionModel(params: {
       kind: "log",
       label: "Review & Log",
     },
-    trustHint: "Place the ticket at the book, then come back here to log it.",
+    trustHint: actionCopyByLevel[normalizedLevel].trustHint,
   };
 }
 

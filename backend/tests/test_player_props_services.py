@@ -1,8 +1,11 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
 import httpx
 
 from services.player_props import (
     PLAYER_PROP_REFERENCE_SOURCE,
+    _build_prizepicks_comparison_cards,
     _build_prop_side_candidates,
     _match_curated_events,
     _normalize_prop_outcomes,
@@ -10,6 +13,7 @@ from services.player_props import (
     get_player_prop_markets,
     scan_player_props,
 )
+from services.prizepicks import _normalize_prizepicks_projection
 
 
 def test_get_player_prop_markets_defaults_to_all_when_env_missing(monkeypatch):
@@ -105,8 +109,20 @@ def test_parse_prop_sides_builds_consensus_reference_payload():
                     {
                         "key": "player_points",
                         "outcomes": [
-                            {"name": "Over", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": 105},
-                            {"name": "Under", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": -125},
+                            {
+                                "name": "Over",
+                                "description": "Nikola Jokic (Nuggets)",
+                                "point": 24.5,
+                                "price": 105,
+                                "link": "https://example.test/jokic/over",
+                            },
+                            {
+                                "name": "Under",
+                                "description": "Nikola Jokic (Nuggets)",
+                                "point": 24.5,
+                                "price": -125,
+                                "link": "https://example.test/jokic/under",
+                            },
                         ],
                     }
                 ],
@@ -131,6 +147,72 @@ def test_parse_prop_sides_builds_consensus_reference_payload():
     assert first_draftkings["reference_bookmaker_count"] == 2
     assert first_draftkings["confidence_label"] == "solid"
     assert first_draftkings["reference_odds"] == -104
+    assert first_draftkings["sportsbook_deeplink_url"] == "https://example.test/jokic/over"
+    assert first_draftkings["sportsbook_deeplink_level"] == "selection"
+
+
+def test_parse_prop_sides_falls_back_to_homepage_when_provider_links_are_unusable():
+    event_payload = {
+        "id": "evt-homepage",
+        "home_team": "Suns",
+        "away_team": "Nuggets",
+        "commence_time": "2026-03-21T03:00:00Z",
+        "bookmakers": [
+            {
+                "key": "bovada",
+                "markets": [
+                    {
+                        "key": "player_points",
+                        "outcomes": [
+                            {"name": "Over", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": -110},
+                            {"name": "Under", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": -110},
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "betonlineag",
+                "markets": [
+                    {
+                        "key": "player_points",
+                        "outcomes": [
+                            {"name": "Over", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": -120},
+                            {"name": "Under", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": 100},
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "betmgm",
+                "link": "https://sports.{state}.betmgm.com/en/sports/events/evt-homepage",
+                "markets": [
+                    {
+                        "key": "player_points",
+                        "outcomes": [
+                            {
+                                "name": "Over",
+                                "description": "Nikola Jokic (Nuggets)",
+                                "point": 24.5,
+                                "price": 105,
+                                "link": "https://sports.{state}.betmgm.com/en/sports?options=bad",
+                            },
+                            {"name": "Under", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": -125},
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+
+    sides = _parse_prop_sides(
+        sport="basketball_nba",
+        event_payload=event_payload,
+        target_markets=["player_points"],
+    )
+
+    betmgm_over = next(side for side in sides if side["sportsbook"] == "BetMGM" and side["selection_side"] == "over")
+    assert betmgm_over["sportsbook_deeplink_url"] == "https://sports.betmgm.com/"
+    assert betmgm_over["sportsbook_deeplink_level"] == "homepage"
 
 
 def test_parse_prop_sides_uses_lookup_for_team_and_participant_context():
@@ -249,6 +331,294 @@ def test_parse_prop_sides_filters_thin_consensus_candidates_by_default():
     assert {side["reference_bookmaker_count"] for side in candidates} == {1}
     assert surfaced == []
     assert len(thin_ok) == 4
+
+
+def test_normalize_prizepicks_projection_maps_supported_nba_market():
+    included_index = {
+        "new_player:173819": {
+            "type": "new_player",
+            "id": "173819",
+            "attributes": {
+                "combo": False,
+                "display_name": "Victor Wembanyama",
+                "name": "Victor Wembanyama",
+                "ppid": "pp-victor",
+                "team": "SAS",
+                "team_name": "Spurs",
+            },
+            "relationships": {
+                "team_data": {"data": {"type": "team", "id": "870"}},
+            },
+        },
+        "game:138259": {
+            "type": "game",
+            "id": "138259",
+            "attributes": {
+                "external_game_id": "NBA_game_123",
+                "start_time": "2026-03-23T19:00:00.000-04:00",
+                "status": "scheduled",
+            },
+            "relationships": {
+                "away_team_data": {"data": {"type": "team", "id": "870"}},
+                "home_team_data": {"data": {"type": "team", "id": "212"}},
+            },
+        },
+        "team:870": {
+            "type": "team",
+            "id": "870",
+            "attributes": {"abbreviation": "SAS", "market": "San Antonio", "name": "Spurs"},
+        },
+        "team:212": {
+            "type": "team",
+            "id": "212",
+            "attributes": {"abbreviation": "MIA", "market": "Miami", "name": "Heat"},
+        },
+        "stat_type:11": {
+            "type": "stat_type",
+            "id": "11",
+            "attributes": {"name": "Points"},
+        },
+    }
+    projection = {
+        "type": "projection",
+        "id": "10806661",
+        "attributes": {
+            "odds_type": "standard",
+            "projection_type": "Single Stat",
+            "line_score": 24.5,
+            "status": "pre_game",
+            "start_time": "2026-03-23T19:10:00.000-04:00",
+        },
+        "relationships": {
+            "new_player": {"data": {"type": "new_player", "id": "173819"}},
+            "game": {"data": {"type": "game", "id": "138259"}},
+            "stat_type": {"data": {"type": "stat_type", "id": "11"}},
+        },
+    }
+
+    normalized = _normalize_prizepicks_projection(projection, included_index)
+
+    assert normalized is not None
+    assert normalized["market_key"] == "player_points"
+    assert normalized["event"] == "San Antonio Spurs @ Miami Heat"
+    assert normalized["team"] == "San Antonio Spurs"
+    assert normalized["opponent"] == "Miami Heat"
+    assert normalized["participant_id"] == "pp-victor"
+
+
+@pytest.mark.asyncio
+async def test_fetch_prizepicks_board_uses_recent_cache_when_retry_exhausts(monkeypatch):
+    import services.prizepicks as prizepicks_module
+
+    prizepicks_module._prizepicks_board_cache["fetched_at"] = 0.0
+    prizepicks_module._prizepicks_board_cache["board"] = []
+
+    sample_payload = {
+        "data": [
+            {
+                "type": "projection",
+                "id": "10806661",
+                "attributes": {
+                    "odds_type": "standard",
+                    "projection_type": "Single Stat",
+                    "line_score": 24.5,
+                    "status": "pre_game",
+                    "start_time": "2026-03-23T19:10:00.000-04:00",
+                },
+                "relationships": {
+                    "new_player": {"data": {"type": "new_player", "id": "173819"}},
+                    "game": {"data": {"type": "game", "id": "138259"}},
+                    "stat_type": {"data": {"type": "stat_type", "id": "11"}},
+                },
+            }
+        ],
+        "included": [
+            {
+                "type": "new_player",
+                "id": "173819",
+                "attributes": {
+                    "combo": False,
+                    "display_name": "Victor Wembanyama",
+                    "name": "Victor Wembanyama",
+                    "ppid": "pp-victor",
+                    "team": "SAS",
+                    "team_name": "Spurs",
+                },
+                "relationships": {
+                    "team_data": {"data": {"type": "team", "id": "870"}},
+                },
+            },
+            {
+                "type": "game",
+                "id": "138259",
+                "attributes": {
+                    "external_game_id": "NBA_game_123",
+                    "start_time": "2026-03-23T19:00:00.000-04:00",
+                    "status": "scheduled",
+                },
+                "relationships": {
+                    "away_team_data": {"data": {"type": "team", "id": "870"}},
+                    "home_team_data": {"data": {"type": "team", "id": "212"}},
+                },
+            },
+            {
+                "type": "team",
+                "id": "870",
+                "attributes": {"abbreviation": "SAS", "market": "San Antonio", "name": "Spurs"},
+            },
+            {
+                "type": "team",
+                "id": "212",
+                "attributes": {"abbreviation": "MIA", "market": "Miami", "name": "Heat"},
+            },
+            {
+                "type": "stat_type",
+                "id": "11",
+                "attributes": {"name": "Points"},
+            },
+        ],
+    }
+
+    class _SuccessClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, *args, **kwargs):
+            request = httpx.Request("GET", "https://api.prizepicks.com/projections")
+            return httpx.Response(200, request=request, json=sample_payload)
+
+    monkeypatch.setattr(prizepicks_module.httpx, "AsyncClient", _SuccessClient)
+    first_board = await prizepicks_module.fetch_prizepicks_nba_board()
+
+    assert len(first_board) == 1
+
+    class _FailingClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, *args, **kwargs):
+            raise httpx.ConnectError("temporary failure")
+
+    monkeypatch.setattr(prizepicks_module.httpx, "AsyncClient", _FailingClient)
+    second_board = await prizepicks_module.fetch_prizepicks_nba_board()
+
+    assert second_board == first_board
+
+
+def test_build_prizepicks_comparison_cards_requires_exact_line_match():
+    event_payload = {
+        "id": "evt-1",
+        "home_team": "Suns",
+        "away_team": "Nuggets",
+        "commence_time": "2026-03-21T03:00:00Z",
+        "bookmakers": [
+            {
+                "key": "bovada",
+                "markets": [
+                    {
+                        "key": "player_points",
+                        "outcomes": [
+                            {"name": "Over", "description": "Nikola Jokic (Nuggets)", "point": 23.5, "price": -110},
+                            {"name": "Under", "description": "Nikola Jokic (Nuggets)", "point": 23.5, "price": -110},
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "betmgm",
+                "markets": [
+                    {
+                        "key": "player_points",
+                        "outcomes": [
+                            {"name": "Over", "description": "Nikola Jokic (Nuggets)", "point": 23.5, "price": -115},
+                            {"name": "Under", "description": "Nikola Jokic (Nuggets)", "point": 23.5, "price": -105},
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+
+    cards, counts = _build_prizepicks_comparison_cards(
+        event_payload=event_payload,
+        target_markets=["player_points"],
+        prizepicks_projections=[
+            {
+                "event_id": "NBA_game_123",
+                "event": "Nuggets @ Suns",
+                "commence_time": "2026-03-21T03:00:00Z",
+                "player_name": "Nikola Jokic",
+                "participant_id": "pp-jokic",
+                "team": "Nuggets",
+                "opponent": "Suns",
+                "market_key": "player_points",
+                "line_value": 24.5,
+            }
+        ],
+        min_reference_bookmakers=2,
+    )
+
+    assert cards == []
+    assert counts == {"matched": 0, "unmatched": 1, "filtered": 0}
+
+
+def test_build_prizepicks_comparison_cards_allows_thin_exact_line_support_for_prizepicks_view():
+    event_payload = {
+        "id": "evt-1",
+        "home_team": "Suns",
+        "away_team": "Nuggets",
+        "commence_time": "2026-03-21T03:00:00Z",
+        "bookmakers": [
+            {
+                "key": "draftkings",
+                "markets": [
+                    {
+                        "key": "player_points",
+                        "outcomes": [
+                            {"name": "Over", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": 105},
+                            {"name": "Under", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": -125},
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+
+    cards, counts = _build_prizepicks_comparison_cards(
+        event_payload=event_payload,
+        target_markets=["player_points"],
+        prizepicks_projections=[
+            {
+                "event_id": "NBA_game_123",
+                "event": "Nuggets @ Suns",
+                "commence_time": "2026-03-21T03:00:00Z",
+                "player_name": "Nikola Jokic",
+                "participant_id": "pp-jokic",
+                "team": "Nuggets",
+                "opponent": "Suns",
+                "market_key": "player_points",
+                "line_value": 24.5,
+            }
+        ],
+        min_reference_bookmakers=1,
+    )
+
+    assert len(cards) == 1
+    assert cards[0]["exact_line_bookmaker_count"] == 1
+    assert cards[0]["confidence_label"] == "thin"
+    assert counts == {"matched": 1, "unmatched": 0, "filtered": 0}
 
 
 @pytest.mark.asyncio
@@ -426,6 +796,323 @@ async def test_scan_player_props_returns_empty_when_scoreboard_has_no_matchups(m
 
 
 @pytest.mark.asyncio
+async def test_scan_player_props_falls_back_to_odds_events_when_curated_games_do_not_match(monkeypatch):
+    scoreboard_payload = {
+        "events": [
+            {
+                "id": "espn-1",
+                "competitions": [
+                    {
+                        "broadcasts": [{"names": ["ESPN"]}],
+                        "competitors": [
+                            {"homeAway": "home", "team": {"displayName": "Los Angeles Lakers", "id": "13"}},
+                            {"homeAway": "away", "team": {"displayName": "Boston Celtics", "id": "2"}},
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+    odds_events = [
+        {
+            "id": "odds-1",
+            "home_team": "Phoenix Suns",
+            "away_team": "Denver Nuggets",
+            "commence_time": "2099-03-21T03:00:00Z",
+        }
+    ]
+
+    async def _fake_scoreboard():
+        return scoreboard_payload
+
+    async def _fake_fetch_events(_sport: str, source: str = "unknown"):
+        request = httpx.Request("GET", "https://example.test/events")
+        response = httpx.Response(200, request=request, headers={"x-requests-remaining": "99"})
+        return odds_events, response
+
+    async def _fake_fetch_prop_event(*, sport: str, event_id: str, markets: list[str], source: str):
+        request = httpx.Request("GET", f"https://example.test/{event_id}")
+        response = httpx.Response(200, request=request, headers={"x-requests-remaining": "98"})
+        return {
+            "id": event_id,
+            "home_team": "Phoenix Suns",
+            "away_team": "Denver Nuggets",
+            "commence_time": "2099-03-21T03:00:00Z",
+            "bookmakers": [
+                {
+                    "key": "bovada",
+                    "markets": [
+                        {
+                            "key": "player_points",
+                            "outcomes": [
+                                {"name": "Over", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": -110},
+                                {"name": "Under", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": -110},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "betonlineag",
+                    "markets": [
+                        {
+                            "key": "player_points",
+                            "outcomes": [
+                                {"name": "Over", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": -108},
+                                {"name": "Under", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": -112},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "draftkings",
+                    "markets": [
+                        {
+                            "key": "player_points",
+                            "outcomes": [
+                                {"name": "Over", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": 105},
+                                {"name": "Under", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": -125},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }, response
+
+    async def _fake_lookup(**_kwargs):
+        return {}
+
+    monkeypatch.setattr("services.player_props.fetch_nba_scoreboard_window", _fake_scoreboard)
+    monkeypatch.setattr("services.player_props.fetch_events", _fake_fetch_events)
+    monkeypatch.setattr("services.player_props._fetch_prop_market_for_event", _fake_fetch_prop_event)
+    monkeypatch.setattr("services.player_props.build_matchup_player_lookup", _fake_lookup)
+    monkeypatch.setattr("services.player_props.get_player_prop_markets", lambda: ["player_points"])
+    monkeypatch.setattr("services.player_props.get_player_prop_min_reference_bookmakers", lambda: 2)
+
+    result = await scan_player_props("basketball_nba")
+
+    assert result["events_fetched"] == 1
+    assert len(result["sides"]) == 6
+    assert result["diagnostics"]["matched_event_count"] == 0
+    assert result["diagnostics"]["scan_scope"] == "odds_fallback"
+    assert result["diagnostics"]["fallback_event_count"] == 1
+    assert "widened" in (result["diagnostics"]["fallback_reason"] or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_scan_player_props_prioritizes_fetchable_curated_matches(monkeypatch):
+    now = datetime.now(timezone.utc)
+    soon = (now + timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
+    later_one = (now + timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+    later_two = (now + timedelta(minutes=20)).isoformat().replace("+00:00", "Z")
+    scoreboard_payload = {
+        "events": [
+            {
+                "id": "espn-1",
+                "competitions": [
+                    {
+                        "broadcasts": [{"names": ["ESPN"]}],
+                        "competitors": [
+                            {"homeAway": "home", "team": {"displayName": "Detroit Pistons", "id": "8"}},
+                            {"homeAway": "away", "team": {"displayName": "Atlanta Hawks", "id": "1"}},
+                        ],
+                    }
+                ],
+            },
+            {
+                "id": "espn-2",
+                "competitions": [
+                    {
+                        "broadcasts": [{"names": ["ESPN"]}],
+                        "competitors": [
+                            {"homeAway": "home", "team": {"displayName": "Minnesota Timberwolves", "id": "16"}},
+                            {"homeAway": "away", "team": {"displayName": "Houston Rockets", "id": "10"}},
+                        ],
+                    }
+                ],
+            },
+            {
+                "id": "espn-3",
+                "competitions": [
+                    {
+                        "broadcasts": [{"names": ["NBA League Pass"]}],
+                        "competitors": [
+                            {"homeAway": "home", "team": {"displayName": "Detroit Pistons", "id": "8"}},
+                            {"homeAway": "away", "team": {"displayName": "Los Angeles Lakers", "id": "13"}},
+                        ],
+                    }
+                ],
+            },
+            {
+                "id": "espn-4",
+                "competitions": [
+                    {
+                        "broadcasts": [{"names": ["NBA League Pass"]}],
+                        "competitors": [
+                            {"homeAway": "home", "team": {"displayName": "Atlanta Hawks", "id": "1"}},
+                            {"homeAway": "away", "team": {"displayName": "Memphis Grizzlies", "id": "29"}},
+                        ],
+                    }
+                ],
+            },
+            {
+                "id": "espn-5",
+                "competitions": [
+                    {
+                        "broadcasts": [{"names": ["NBA League Pass"]}],
+                        "competitors": [
+                            {"homeAway": "home", "team": {"displayName": "Chicago Bulls", "id": "4"}},
+                            {"homeAway": "away", "team": {"displayName": "Houston Rockets", "id": "10"}},
+                        ],
+                    }
+                ],
+            },
+        ]
+    }
+    odds_events = [
+        {
+            "id": "odds-soon",
+            "home_team": "Detroit Pistons",
+            "away_team": "Los Angeles Lakers",
+            "commence_time": soon,
+        },
+        {
+            "id": "odds-later-1",
+            "home_team": "Atlanta Hawks",
+            "away_team": "Memphis Grizzlies",
+            "commence_time": later_one,
+        },
+        {
+            "id": "odds-later-2",
+            "home_team": "Chicago Bulls",
+            "away_team": "Houston Rockets",
+            "commence_time": later_two,
+        },
+    ]
+
+    called_event_ids = []
+
+    async def _fake_scoreboard():
+        return scoreboard_payload
+
+    async def _fake_fetch_events(_sport: str, source: str = "unknown"):
+        request = httpx.Request("GET", "https://example.test/events")
+        response = httpx.Response(200, request=request, headers={"x-requests-remaining": "99"})
+        return odds_events, response
+
+    async def _fake_fetch_prop_event(*, sport: str, event_id: str, markets: list[str], source: str):
+        called_event_ids.append(event_id)
+        request = httpx.Request("GET", f"https://example.test/{event_id}")
+        response = httpx.Response(200, request=request, headers={"x-requests-remaining": "98"})
+        return {
+            "id": event_id,
+            "home_team": "Atlanta Hawks",
+            "away_team": "Memphis Grizzlies",
+            "commence_time": later_one,
+            "bookmakers": [],
+        }, response
+
+    monkeypatch.setattr("services.player_props.fetch_nba_scoreboard_window", _fake_scoreboard)
+    monkeypatch.setattr("services.player_props.fetch_events", _fake_fetch_events)
+    monkeypatch.setattr("services.player_props._fetch_prop_market_for_event", _fake_fetch_prop_event)
+    monkeypatch.setattr("services.player_props.get_player_prop_markets", lambda: ["player_points"])
+
+    result = await scan_player_props("basketball_nba")
+
+    assert called_event_ids == ["odds-later-1", "odds-later-2"]
+    assert result["events_fetched"] == 2
+    assert result["diagnostics"]["events_skipped_pregame"] == 1
+    assert [game["odds_event_id"] for game in result["diagnostics"]["curated_games"]] == [
+        "odds-later-1",
+        "odds-later-2",
+        "odds-soon",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scan_player_props_fallback_ignores_soon_events_before_truncating(monkeypatch):
+    now = datetime.now(timezone.utc)
+    soon = (now + timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
+    later = (now + timedelta(minutes=20)).isoformat().replace("+00:00", "Z")
+    scoreboard_payload = {
+        "events": [
+            {
+                "id": "espn-1",
+                "competitions": [
+                    {
+                        "broadcasts": [{"names": ["ESPN"]}],
+                        "competitors": [
+                            {"homeAway": "home", "team": {"displayName": "Los Angeles Lakers", "id": "13"}},
+                            {"homeAway": "away", "team": {"displayName": "Boston Celtics", "id": "2"}},
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+    odds_events = [
+        {
+            "id": "odds-1",
+            "home_team": "Detroit Pistons",
+            "away_team": "Los Angeles Lakers",
+            "commence_time": soon,
+        },
+        {
+            "id": "odds-2",
+            "home_team": "Orlando Magic",
+            "away_team": "Indiana Pacers",
+            "commence_time": soon,
+        },
+        {
+            "id": "odds-3",
+            "home_team": "Philadelphia 76ers",
+            "away_team": "Oklahoma City Thunder",
+            "commence_time": soon,
+        },
+        {
+            "id": "odds-4",
+            "home_team": "Chicago Bulls",
+            "away_team": "Houston Rockets",
+            "commence_time": later,
+        },
+    ]
+
+    called_event_ids = []
+
+    async def _fake_scoreboard():
+        return scoreboard_payload
+
+    async def _fake_fetch_events(_sport: str, source: str = "unknown"):
+        request = httpx.Request("GET", "https://example.test/events")
+        response = httpx.Response(200, request=request, headers={"x-requests-remaining": "99"})
+        return odds_events, response
+
+    async def _fake_fetch_prop_event(*, sport: str, event_id: str, markets: list[str], source: str):
+        called_event_ids.append(event_id)
+        request = httpx.Request("GET", f"https://example.test/{event_id}")
+        response = httpx.Response(200, request=request, headers={"x-requests-remaining": "98"})
+        return {
+            "id": event_id,
+            "home_team": "Chicago Bulls",
+            "away_team": "Houston Rockets",
+            "commence_time": later,
+            "bookmakers": [],
+        }, response
+
+    monkeypatch.setattr("services.player_props.fetch_nba_scoreboard_window", _fake_scoreboard)
+    monkeypatch.setattr("services.player_props.fetch_events", _fake_fetch_events)
+    monkeypatch.setattr("services.player_props._fetch_prop_market_for_event", _fake_fetch_prop_event)
+    monkeypatch.setattr("services.player_props.get_player_prop_markets", lambda: ["player_points"])
+
+    result = await scan_player_props("basketball_nba")
+
+    assert called_event_ids == ["odds-4"]
+    assert result["events_fetched"] == 1
+    assert result["diagnostics"]["scan_scope"] == "odds_fallback"
+    assert result["diagnostics"]["fallback_event_count"] == 1
+    assert result["diagnostics"]["events_skipped_pregame"] == 0
+
+
+@pytest.mark.asyncio
 async def test_scan_player_props_reports_quality_gate_filtering(monkeypatch):
     scoreboard_payload = {
         "events": [
@@ -509,3 +1196,104 @@ async def test_scan_player_props_reports_quality_gate_filtering(monkeypatch):
     assert result["diagnostics"]["candidate_sides_count"] == 4
     assert result["diagnostics"]["quality_gate_filtered_count"] == 4
     assert result["diagnostics"]["quality_gate_min_reference_bookmakers"] == 2
+
+
+@pytest.mark.asyncio
+async def test_scan_player_props_disables_external_prizepicks_provider(monkeypatch):
+    scoreboard_payload = {
+        "events": [
+            {
+                "id": "espn-1",
+                "competitions": [
+                    {
+                        "broadcasts": [{"names": ["NBA TV"]}],
+                        "competitors": [
+                            {"homeAway": "home", "team": {"displayName": "Phoenix Suns", "id": "21"}},
+                            {"homeAway": "away", "team": {"displayName": "Denver Nuggets", "id": "7"}},
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+    odds_events = [
+        {
+            "id": "odds-1",
+            "home_team": "Phoenix Suns",
+            "away_team": "Denver Nuggets",
+            "commence_time": "2099-03-21T03:00:00Z",
+        }
+    ]
+
+    async def _fake_scoreboard():
+        return scoreboard_payload
+
+    async def _fake_fetch_events(_sport: str, source: str = "unknown"):
+        request = httpx.Request("GET", "https://example.test/events")
+        response = httpx.Response(200, request=request, headers={"x-requests-remaining": "99"})
+        return odds_events, response
+
+    async def _fake_fetch_prop_event(*, sport: str, event_id: str, markets: list[str], source: str):
+        request = httpx.Request("GET", f"https://example.test/{event_id}")
+        response = httpx.Response(200, request=request, headers={"x-requests-remaining": "98"})
+        return {
+            "id": event_id,
+            "home_team": "Phoenix Suns",
+            "away_team": "Denver Nuggets",
+            "commence_time": "2099-03-21T03:00:00Z",
+            "bookmakers": [
+                {
+                    "key": "bovada",
+                    "markets": [
+                        {
+                            "key": "player_points",
+                            "outcomes": [
+                                {"name": "Over", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": -110},
+                                {"name": "Under", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": -110},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "betonlineag",
+                    "markets": [
+                        {
+                            "key": "player_points",
+                            "outcomes": [
+                                {"name": "Over", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": -108},
+                                {"name": "Under", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": -112},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "draftkings",
+                    "markets": [
+                        {
+                            "key": "player_points",
+                            "outcomes": [
+                                {"name": "Over", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": 105},
+                                {"name": "Under", "description": "Nikola Jokic (Nuggets)", "point": 24.5, "price": -125},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }, response
+
+    async def _fake_lookup(**_kwargs):
+        return {"nikolajokic": {"team": "Denver Nuggets", "participant_id": "203999"}}
+
+    monkeypatch.setattr("services.player_props.fetch_nba_scoreboard_window", _fake_scoreboard)
+    monkeypatch.setattr("services.player_props.fetch_events", _fake_fetch_events)
+    monkeypatch.setattr("services.player_props._fetch_prop_market_for_event", _fake_fetch_prop_event)
+    monkeypatch.setattr("services.player_props.build_matchup_player_lookup", _fake_lookup)
+    monkeypatch.setattr("services.player_props.get_player_prop_markets", lambda: ["player_points"])
+    monkeypatch.setattr("services.player_props.get_player_prop_min_reference_bookmakers", lambda: 2)
+
+    result = await scan_player_props("basketball_nba")
+
+    assert len(result["sides"]) == 6
+    assert result["prizepicks_cards"] == []
+    assert result["diagnostics"]["prizepicks_status"] == "disabled"
+    assert result["diagnostics"]["prizepicks_message"] is None

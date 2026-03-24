@@ -3,7 +3,7 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_scan_all_sides_includes_sportsbook_deeplink_when_available(monkeypatch):
+async def test_scan_all_sides_includes_selection_level_sportsbook_deeplink_when_available(monkeypatch):
     from services import odds_api
 
     event = {
@@ -32,8 +32,16 @@ async def test_scan_all_sides_includes_sportsbook_deeplink_when_available(monkey
                     {
                         "key": "h2h",
                         "outcomes": [
-                            {"name": "Warriors", "price": -105},
-                            {"name": "Lakers", "price": 115},
+                            {
+                                "name": "Warriors",
+                                "price": -105,
+                                "link": "https://sportsbook.example/dk/betslip/warriors",
+                            },
+                            {
+                                "name": "Lakers",
+                                "price": 115,
+                                "link": "https://sportsbook.example/dk/betslip/lakers",
+                            },
                         ],
                     }
                 ],
@@ -57,7 +65,9 @@ async def test_scan_all_sides_includes_sportsbook_deeplink_when_available(monkey
     assert out["api_requests_remaining"] == "499"
     assert len(out["sides"]) == 2
     assert all(side["sportsbook"] == "DraftKings" for side in out["sides"])
-    assert all(
-        side.get("sportsbook_deeplink_url") == "https://sportsbook.example/dk/event/evt_123"
-        for side in out["sides"]
-    )
+    lakers_side = next(side for side in out["sides"] if side["team"] == "Lakers")
+    warriors_side = next(side for side in out["sides"] if side["team"] == "Warriors")
+    assert lakers_side["sportsbook_deeplink_url"] == "https://sportsbook.example/dk/betslip/lakers"
+    assert lakers_side["sportsbook_deeplink_level"] == "selection"
+    assert warriors_side["sportsbook_deeplink_url"] == "https://sportsbook.example/dk/betslip/warriors"
+    assert warriors_side["sportsbook_deeplink_level"] == "selection"

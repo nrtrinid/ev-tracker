@@ -1,6 +1,16 @@
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api";
-import type { BetCreate, BetUpdate, BetResult, PromoType, ScannerSurface, TransactionCreate } from "@/lib/types";
+import type {
+  BetCreate,
+  BetUpdate,
+  BetResult,
+  ParlaySlipCreate,
+  ParlaySlipLogRequest,
+  ParlaySlipUpdate,
+  PromoType,
+  ScannerSurface,
+  TransactionCreate,
+} from "@/lib/types";
 
 // Query keys
 export const queryKeys = {
@@ -9,6 +19,8 @@ export const queryKeys = {
   summary: ["summary"] as const,
   backendReadiness: ["backend-readiness"] as const,
   operatorStatus: ["operator-status"] as const,
+  researchOpportunitySummary: ["research-opportunity-summary"] as const,
+  parlaySlips: ["parlay-slips"] as const,
   settings: ["settings"] as const,
   transactions: ["transactions"] as const,
   balances: ["balances"] as const,
@@ -144,6 +156,68 @@ export function useOperatorStatus() {
     refetchInterval: 60_000,
     staleTime: 30_000,
     retry: 1,
+  });
+}
+
+export function useResearchOpportunitySummary() {
+  return useQuery({
+    queryKey: queryKeys.researchOpportunitySummary,
+    queryFn: api.getResearchOpportunitySummary,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    retry: 1,
+  });
+}
+
+export function useParlaySlips() {
+  return useQuery({
+    queryKey: queryKeys.parlaySlips,
+    queryFn: api.getParlaySlips,
+  });
+}
+
+export function useCreateParlaySlip() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: ParlaySlipCreate) => api.createParlaySlip(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.parlaySlips });
+    },
+  });
+}
+
+export function useUpdateParlaySlip() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: ParlaySlipUpdate }) => api.updateParlaySlip(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.parlaySlips });
+    },
+  });
+}
+
+export function useDeleteParlaySlip() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => api.deleteParlaySlip(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.parlaySlips });
+    },
+  });
+}
+
+export function useLogParlaySlip() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: ParlaySlipLogRequest }) => api.logParlaySlip(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.parlaySlips });
+      invalidateBetDerivedQueries(queryClient);
+    },
   });
 }
 

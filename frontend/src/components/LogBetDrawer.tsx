@@ -17,6 +17,7 @@ import {
   MARKETS,
   PROMO_TYPES,
   PROMO_TYPE_CONFIG,
+  type BetCreate,
   type PromoType,
   type ScannedBetData,
   type TutorialPracticeBet,
@@ -61,6 +62,7 @@ interface LogBetDrawerProps {
   practiceMode?: boolean;
   onPracticeLogged?: (bet: TutorialPracticeBet) => void;
   onLogged?: () => void;
+  onSubmitOverride?: (payload: BetCreate) => Promise<void>;
 }
 
 // CLV metadata is read-only scanner passthrough — never user-editable
@@ -79,7 +81,7 @@ interface ClvMeta {
   selection_side?: string;
   line_value?: number;
   selection_meta?: Record<string, unknown>;
-  surface?: "straight_bets" | "player_props";
+  surface?: ScannedBetData["surface"];
 }
 
 interface FormState {
@@ -131,6 +133,59 @@ function isBoostRowValue(value: unknown): value is BoostRowValue {
     (typeof candidate.fairPct === "string" || candidate.fairPct === null);
 }
 
+function buildScannerInitialStake(initialValues: ScannedBetData): string {
+  const isPromo = initialValues.promo_type !== "standard";
+  if (isPromo) {
+    return "10.00";
+  }
+  const stealth =
+    initialValues.stealth_kelly_stake ??
+    (initialValues.raw_kelly_stake != null
+      ? calculateStealthStake(initialValues.raw_kelly_stake)
+      : undefined);
+  const stake = stealth ?? initialValues.kelly_suggestion;
+  return stake != null && stake > 0 ? stake.toFixed(2) : "";
+}
+
+function buildInitialFormState(initialValues?: ScannedBetData): FormState {
+  if (initialValues) {
+    const initialEventDate =
+      initialValues.commence_time
+        ? new Date(initialValues.commence_time).toISOString().slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
+
+    return {
+      sportsbook: initialValues.sportsbook,
+      sport: initialValues.sport,
+      market: initialValues.market,
+      promo_type: initialValues.promo_type,
+      odds: String(initialValues.odds_american),
+      stake: buildScannerInitialStake(initialValues),
+      event: initialValues.event,
+      event_date: initialEventDate,
+      opposing_odds: initialValues.opposing_odds != null ? String(initialValues.opposing_odds) : "",
+      boost_percent: initialValues.boost_percent != null ? String(initialValues.boost_percent) : "",
+      payout_override: "",
+      notes: "",
+    };
+  }
+
+  return {
+    sportsbook: getStickySportsbook(),
+    sport: "",
+    market: "ML",
+    promo_type: getStickyPromoType(),
+    odds: "",
+    stake: "",
+    event: "",
+    event_date: new Date().toISOString().slice(0, 10),
+    opposing_odds: "",
+    boost_percent: "",
+    payout_override: "",
+    notes: "",
+  };
+}
+
 export function LogBetDrawer({
   open,
   onOpenChange,
@@ -138,61 +193,11 @@ export function LogBetDrawer({
   practiceMode = false,
   onPracticeLogged,
   onLogged,
+  onSubmitOverride,
 }: LogBetDrawerProps) {
   const isScannerFlow = !!initialValues;
   const isTutorialPracticeFlow = isScannerFlow && practiceMode;
-  const [formState, setFormState] = useState<FormState>(() => {
-    if (initialValues) {
-      // Derive event_date from commence_time when logging from scanner
-      const initialEventDate =
-        initialValues.commence_time
-          ? new Date(initialValues.commence_time).toISOString().slice(0, 10)
-          : new Date().toISOString().slice(0, 10);
-      // Set stake in initial state so EV card and submit are valid on first paint (no useEffect delay).
-      const isPromo = initialValues.promo_type !== "standard";
-      const initialStake = isPromo
-        ? "10.00"
-        : (() => {
-            const stealth =
-              initialValues.stealth_kelly_stake ??
-              (initialValues.raw_kelly_stake != null
-                ? calculateStealthStake(initialValues.raw_kelly_stake)
-                : undefined);
-            const stake = stealth ?? initialValues.kelly_suggestion;
-            return stake != null && stake > 0 ? stake.toFixed(2) : "";
-          })();
-      return {
-        sportsbook: initialValues.sportsbook,
-        sport: initialValues.sport,
-        market: initialValues.market,
-        promo_type: initialValues.promo_type,
-        odds: String(initialValues.odds_american),
-        stake: initialStake,
-        event: initialValues.event,
-        event_date: initialEventDate,
-        // Opposing odds are only meaningful for manual bets without a sharp line;
-        // scanner-originated bets rely on Pinnacle fair odds instead.
-        opposing_odds: initialValues.opposing_odds != null ? String(initialValues.opposing_odds) : "",
-        boost_percent: initialValues.boost_percent != null ? String(initialValues.boost_percent) : "",
-        payout_override: "",
-        notes: "",
-      };
-    }
-    return {
-      sportsbook: "",
-      sport: "",
-      market: "ML",
-      promo_type: "standard",
-      odds: "",
-      stake: "",
-      event: "",
-      event_date: new Date().toISOString().slice(0, 10),
-      opposing_odds: "",
-      boost_percent: "",
-      payout_override: "",
-      notes: "",
-    };
-  });
+  const [formState, setFormState] = useState<FormState>(() => buildInitialFormState(initialValues));
   const [showManualSetup, setShowManualSetup] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -221,43 +226,17 @@ export function LogBetDrawer({
   const oddsInputRef = useRef<SmartOddsInputRef>(null);
   const opposingOddsInputRef = useRef<SmartOddsInputRef>(null);
   const createBet = useCreateBet();
+  const [customSubmitPending, setCustomSubmitPending] = useState(false);
 
   // Initialize sticky values on mount (skip when pre-filled from scanner)
   useEffect(() => {
     if (open) {
-      if (!initialValues) {
-        setFormState(prev => ({
-          ...prev,
-          sportsbook: prev.sportsbook || getStickySportsbook(),
-          promo_type: getStickyPromoType(),
-        }));
-        setShowManualSetup(getStickyPromoType() !== "standard");
-      }
+      setFormState(buildInitialFormState(initialValues));
+      setShowManualSetup((initialValues?.promo_type ?? getStickyPromoType()) !== "standard");
       setTimeout(() => {
         const input = document.querySelector('[data-odds-input]') as HTMLInputElement;
         input?.focus();
       }, 300);
-    }
-  }, [open, initialValues]);
-
-  // Smart Stake: auto-fill stake when drawer opens with scanner data.
-  // Promos always get $25; standard +EV bets get the stealth-rounded Kelly amount.
-  useEffect(() => {
-    if (open && initialValues) {
-      const isPromo = initialValues.promo_type !== "standard";
-      if (isPromo) {
-        updateField("stake", "10.00");
-      } else {
-        const stealth =
-          initialValues.stealth_kelly_stake ??
-          (initialValues.raw_kelly_stake != null
-            ? calculateStealthStake(initialValues.raw_kelly_stake)
-            : undefined);
-        const stake = stealth ?? initialValues.kelly_suggestion;
-        if (stake != null && stake > 0) {
-          updateField("stake", stake.toFixed(2));
-        }
-      }
     }
   }, [open, initialValues]);
 
@@ -304,6 +283,7 @@ export function LogBetDrawer({
   const invalidBoost = formState.promo_type === "boost_custom" && (isNaN(boostPercentRaw) || boostPercentNum < 0 || boostPercentNum > 300);
   const duplicateState = initialValues?.scanner_duplicate_state ?? "new";
   const hasDuplicateExposure = duplicateState === "already_logged" || duplicateState === "better_now";
+  const isSubmitting = createBet.isPending || customSubmitPending;
   const selectedPromoLabel =
     PROMO_TYPES.find((promo) => promo.value === formState.promo_type)?.label ?? "Standard";
 
@@ -358,7 +338,7 @@ export function LogBetDrawer({
     const toastId = toast.loading("Logging bet...");
 
     try {
-      await createBet.mutateAsync({
+      const payload: BetCreate = {
         sportsbook: formState.sportsbook,
         sport: formState.sport,
         event: formState.event || `${formState.sport} Game`,
@@ -373,7 +353,18 @@ export function LogBetDrawer({
         event_date: formState.event_date || undefined,
         // CLV passthrough — silently stored for closing-line tracking
         ...clvMeta.current,
-      });
+      };
+
+      if (onSubmitOverride) {
+        setCustomSubmitPending(true);
+        try {
+          await onSubmitOverride(payload);
+        } finally {
+          setCustomSubmitPending(false);
+        }
+      } else {
+        await createBet.mutateAsync(payload);
+      }
 
       toast.success("Bet logged!", {
         id: toastId,
@@ -1024,16 +1015,16 @@ export function LogBetDrawer({
                 variant="outline"
                 className="flex-1 h-12"
                 onClick={() => setShowAdvanced((current) => !current)}
-                disabled={createBet.isPending}
+                disabled={isSubmitting}
               >
                 {showAdvanced ? "Hide Details" : "More Details"}
               </Button>
               <Button
                 className="flex-1 h-12"
                 onClick={() => handleLogBet(false)}
-                disabled={!isValid || invalidBoost || createBet.isPending}
+                disabled={!isValid || invalidBoost || isSubmitting}
               >
-                {createBet.isPending ? (
+                {isSubmitting ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : isTutorialPracticeFlow ? (
                   "Save Practice Ticket"
@@ -1050,9 +1041,9 @@ export function LogBetDrawer({
                 variant="outline"
                 className="flex-1 h-12"
                 onClick={() => handleLogBet(true)}
-                disabled={!isValid || invalidBoost || createBet.isPending}
+                disabled={!isValid || invalidBoost || isSubmitting}
               >
-                {createBet.isPending ? (
+                {isSubmitting ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <>
@@ -1064,9 +1055,9 @@ export function LogBetDrawer({
               <Button
                 className="flex-1 h-12"
                 onClick={() => handleLogBet(false)}
-                disabled={!isValid || invalidBoost || createBet.isPending}
+                disabled={!isValid || invalidBoost || isSubmitting}
               >
-                {createBet.isPending ? (
+                {isSubmitting ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   hasDuplicateExposure ? "Log Another Ticket" : "Log Bet"

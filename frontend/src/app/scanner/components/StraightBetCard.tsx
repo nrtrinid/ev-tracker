@@ -116,6 +116,7 @@ export function StraightBetCard({
   const actionModel = buildScannerActionModel({
     sportsbook: side.sportsbook,
     sportsbookDeeplinkUrl: side.sportsbook_deeplink_url,
+    sportsbookDeeplinkLevel: side.sportsbook_deeplink_level,
   });
 
   const duplicateState = side.scanner_duplicate_state ?? "new";
