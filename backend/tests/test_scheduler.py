@@ -55,6 +55,7 @@ async def test_uses_america_phoenix_timezone_when_available(monkeypatch):
     scan_jobs = [j for j in scheduler.jobs if j["func"] == main._run_scheduled_scan_job]
     assert len(scan_jobs) == 2
     assert all(getattr(j["trigger"], "timezone", None) == main.PHOENIX_TZ for j in scan_jobs)
+    assert [(j["trigger"].hour, j["trigger"].minute) for j in scan_jobs] == [(5, 30), (14, 30)]
 
     auto_settle_jobs = [j for j in scheduler.jobs if j["func"] == main._run_auto_settler_job]
     assert len(auto_settle_jobs) == 1

@@ -1359,7 +1359,7 @@ async def start_scheduler():
         coalesce=True,
     )
     if PHOENIX_TZ is not None:
-        scheduled_scan_times: list[tuple[int, int]] = [(16, 30), (18, 30)]
+        scheduled_scan_times: list[tuple[int, int]] = [(5, 30), (14, 30)]
         temp_scan_time = _parse_hhmm(os.getenv(SCHEDULED_SCAN_TEMP_TIME_ENV))
         if temp_scan_time is not None and temp_scan_time not in scheduled_scan_times:
             scheduled_scan_times.append(temp_scan_time)
