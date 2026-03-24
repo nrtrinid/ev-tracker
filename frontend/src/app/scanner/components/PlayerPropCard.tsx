@@ -1,13 +1,15 @@
-import { ChevronRight, ExternalLink } from "lucide-react";
+import { ChevronRight, ExternalLink, Info } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import type { PlayerPropMarketSide } from "@/lib/types";
-import { cn, formatOdds } from "@/lib/utils";
+import { calculateStealthStake, cn, formatCurrency, formatOdds } from "@/lib/utils";
 import { buildScannerActionModel } from "../scanner-ui-model";
 
 interface PlayerPropCardProps {
   side: PlayerPropMarketSide & { _retention?: number; _boostedEV?: number };
+  kellyMultiplier: number;
+  bankroll: number;
   onLogBet: (side: PlayerPropMarketSide) => void;
   onAddToCart: (side: PlayerPropMarketSide) => void;
   onStartPlaceFlow: (side: PlayerPropMarketSide) => void;
@@ -65,6 +67,8 @@ function getWorkflowHint(params: {
 
 export function PlayerPropCard({
   side,
+  kellyMultiplier,
+  bankroll,
   onLogBet,
   onAddToCart,
   onStartPlaceFlow,
@@ -84,6 +88,8 @@ export function PlayerPropCard({
     duplicateState,
     referenceBookCount,
   });
+  const rawKellyStake = Math.max(0, side.base_kelly_fraction * kellyMultiplier * bankroll);
+  const stealthKellyStake = calculateStealthStake(rawKellyStake);
   const edgeColorClass =
     side.ev_percentage > 0
       ? "text-green-600"
@@ -167,9 +173,23 @@ export function PlayerPropCard({
               </p>
               <p className="text-[10px] text-muted-foreground">Edge</p>
               </div>
-              <p className="text-[10px] text-muted-foreground sm:mt-0.5">
-                Confidence: {confidenceDisplay}
-              </p>
+              <div className="sm:mt-0.5">
+                <p className="text-[10px] text-muted-foreground">
+                  Confidence: {confidenceDisplay}
+                </p>
+                <p className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground sm:justify-end">
+                  Suggested stake:
+                  <span className="font-mono font-semibold text-foreground">
+                    {formatCurrency(stealthKellyStake)}
+                  </span>
+                  <span title={`Raw Kelly: ${formatCurrency(rawKellyStake)}`} className="inline-flex">
+                    <Info
+                      className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70"
+                      aria-label="Raw Kelly amount"
+                    />
+                  </span>
+                </p>
+              </div>
             </div>
           </div>
         </div>

@@ -1,5 +1,9 @@
 from types import SimpleNamespace
 
+from .test_utils import ensure_supabase_stub
+
+ensure_supabase_stub()
+
 from routes.settings_routes import (
     build_settings_update_payload,
     get_settings_impl,
@@ -12,6 +16,9 @@ def test_build_settings_update_payload_includes_only_present_fields():
         k_factor=0.65,
         default_stake=None,
         preferred_sportsbooks=["DraftKings"],
+        kelly_multiplier=0.25,
+        bankroll_override=1500.0,
+        use_computed_bankroll=False,
         k_factor_mode="baseline",
         k_factor_min_stake=None,
         k_factor_smoothing=700.0,
@@ -24,6 +31,9 @@ def test_build_settings_update_payload_includes_only_present_fields():
     assert payload == {
         "k_factor": 0.65,
         "preferred_sportsbooks": ["DraftKings"],
+        "kelly_multiplier": 0.25,
+        "bankroll_override": 1500.0,
+        "use_computed_bankroll": False,
         "k_factor_mode": "baseline",
         "k_factor_smoothing": 700.0,
         "k_factor_clamp_max": 0.9,

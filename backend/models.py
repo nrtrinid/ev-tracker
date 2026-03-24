@@ -154,6 +154,9 @@ class SettingsUpdate(BaseModel):
     k_factor: float | None = Field(default=None, ge=0, le=1)
     default_stake: float | None = None
     preferred_sportsbooks: list[str] | None = None
+    kelly_multiplier: float | None = Field(default=None, gt=0)
+    bankroll_override: float | None = Field(default=None, ge=0)
+    use_computed_bankroll: bool | None = None
     k_factor_mode: str | None = None
     k_factor_min_stake: float | None = None
     k_factor_smoothing: float | None = None
@@ -168,6 +171,9 @@ class SettingsResponse(BaseModel):
     k_factor: float
     default_stake: float | None
     preferred_sportsbooks: list[str]
+    kelly_multiplier: float
+    bankroll_override: float
+    use_computed_bankroll: bool
     k_factor_mode: str
     k_factor_min_stake: float
     k_factor_smoothing: float

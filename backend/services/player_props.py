@@ -43,6 +43,7 @@ PLAYER_PROP_REFERENCE_SOURCE = "market_median"
 PLAYER_PROP_MIN_SOLID_REFERENCE_BOOKMAKERS = 2
 PLAYER_PROP_MIN_REFERENCE_BOOKMAKERS_ENV = "PLAYER_PROP_MIN_REFERENCE_BOOKMAKERS"
 PLAYER_PROP_FALLBACK_MAX_EVENTS = 3
+PLAYER_PROP_CACHE_VERSION = "v2"
 
 _props_cache: dict[str, dict] = {}
 _props_locks: dict[str, asyncio.Lock] = {}
@@ -75,7 +76,12 @@ def get_player_prop_min_reference_bookmakers() -> int:
 
 
 def _prop_cache_slot(sport: str) -> str:
-    return f"{PLAYER_PROPS_SURFACE}:{sport}"
+    return f"{PLAYER_PROPS_SURFACE}:{PLAYER_PROP_CACHE_VERSION}:{sport}"
+
+
+def _should_bypass_prop_cache(source: str | None) -> bool:
+    normalized = str(source or "").strip().lower()
+    return normalized == "manual_scan"
 
 
 def _build_selection_key(*, event_id: str | None, market_key: str, player_name: str, side: str, line_value: float | None) -> str:
@@ -1101,21 +1107,23 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
 
 async def get_cached_or_scan_player_props(sport: str, source: str = "unknown") -> dict:
     slot = _prop_cache_slot(sport)
+    bypass_cache = _should_bypass_prop_cache(source)
     if sport not in _props_locks:
         _props_locks[sport] = asyncio.Lock()
     async with _props_locks[sport]:
         now = time.time()
-        shared_entry = get_scan_cache(slot)
-        if isinstance(shared_entry, dict):
-            fetched_at = shared_entry.get("fetched_at")
-            if isinstance(fetched_at, (int, float)) and (now - fetched_at) < CACHE_TTL_SECONDS:
-                _props_cache[slot] = shared_entry
-                return {**shared_entry, "cache_hit": True}
+        if not bypass_cache:
+            shared_entry = get_scan_cache(slot)
+            if isinstance(shared_entry, dict):
+                fetched_at = shared_entry.get("fetched_at")
+                if isinstance(fetched_at, (int, float)) and (now - fetched_at) < CACHE_TTL_SECONDS:
+                    _props_cache[slot] = shared_entry
+                    return {**shared_entry, "cache_hit": True}
 
-        if slot in _props_cache:
-            entry = _props_cache[slot]
-            if (now - entry["fetched_at"]) < CACHE_TTL_SECONDS:
-                return {**entry, "cache_hit": True}
+            if slot in _props_cache:
+                entry = _props_cache[slot]
+                if (now - entry["fetched_at"]) < CACHE_TTL_SECONDS:
+                    return {**entry, "cache_hit": True}
 
         result = await scan_player_props(sport, source=source)
         result["fetched_at"] = now

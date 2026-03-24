@@ -263,7 +263,7 @@ export default function SettingsPage() {
                   Kelly Sizing
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  Used to compute the “Rec Bet” amount shown in the Scanner.
+                  Used to compute suggested stake sizing in the Scanner and Parlay Builder. These values now follow your account across devices.
                 </p>
               </CardHeader>
               <CardContent className="space-y-4">

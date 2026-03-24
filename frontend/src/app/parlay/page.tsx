@@ -15,8 +15,10 @@ import {
   useLogParlaySlip,
   useParlaySlips,
   useUpdateParlaySlip,
+  useBalances,
 } from "@/lib/hooks";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
+import { useKellySettings } from "@/lib/kelly-context";
 import {
   buildParlayEventSummary,
   buildParlayPreview,
@@ -50,6 +52,16 @@ function formatPercent(value: number | null | undefined) {
   }
   const rounded = value >= 0 ? `+${value.toFixed(1)}` : value.toFixed(1);
   return `${rounded}%`;
+}
+
+function formatKellyMultiplier(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) {
+    return "Kelly";
+  }
+  if (Math.abs(value - 0.25) < 0.001) return "Quarter Kelly";
+  if (Math.abs(value - 0.5) < 0.001) return "Half Kelly";
+  if (Math.abs(value - 1) < 0.001) return "Full Kelly";
+  return `${value.toFixed(2)}x Kelly`;
 }
 
 function buildParlayLogInitialValues(cart: ParlayCartLeg[], stake: number | null): ScannedBetData | undefined {
@@ -90,6 +102,8 @@ export default function ParlayPage() {
     setActiveParlaySlipId,
   } = useBettingPlatformStore();
   const { data: savedSlips = [], isLoading: savedSlipsLoading } = useParlaySlips();
+  const { data: balances } = useBalances();
+  const { useComputedBankroll, bankrollOverride, kellyMultiplier } = useKellySettings();
   const createParlaySlip = useCreateParlaySlip();
   const updateParlaySlip = useUpdateParlaySlip();
   const deleteParlaySlip = useDeleteParlaySlip();
@@ -98,7 +112,15 @@ export default function ParlayPage() {
   const [loggingInitialValues, setLoggingInitialValues] = useState<ScannedBetData | undefined>(undefined);
 
   const parsedStake = Number.parseFloat(cartStakeInput);
-  const preview = useMemo(() => buildParlayPreview(cart, parsedStake), [cart, parsedStake]);
+  const computedBankroll = useMemo(() => {
+    if (!balances || balances.length === 0) return 0;
+    return balances.reduce((sum, balance) => sum + (balance.balance || 0), 0);
+  }, [balances]);
+  const bankroll = useComputedBankroll ? computedBankroll : bankrollOverride;
+  const preview = useMemo(
+    () => buildParlayPreview(cart, parsedStake, { bankroll, kellyMultiplier }),
+    [bankroll, cart, kellyMultiplier, parsedStake],
+  );
   const lockedSportsbook = cart[0]?.sportsbook ?? null;
   const activeSlip = savedSlips.find((slip) => slip.id === activeParlaySlipId) ?? null;
   const saveActionLabel = activeSlip
@@ -112,7 +134,7 @@ export default function ParlayPage() {
 
   async function saveCurrentSlip(options?: { silent?: boolean; overrideStake?: number }) {
     const stakeForSave = options?.overrideStake ?? parsedStake;
-    const previewForSave = buildParlayPreview(cart, stakeForSave);
+    const previewForSave = buildParlayPreview(cart, stakeForSave, { bankroll, kellyMultiplier });
 
     if (!previewForSave || !lockedSportsbook) {
       if (!options?.silent) {
@@ -163,6 +185,14 @@ export default function ParlayPage() {
 
     setLoggingInitialValues(buildParlayLogInitialValues(cart, preview.stake));
     setDrawerOpen(true);
+  }
+
+  function handleUseKellySuggestion() {
+    if (preview?.stealthKellyStake == null || preview.stealthKellyStake <= 0) {
+      return;
+    }
+    setCartStakeInput(preview.stealthKellyStake.toFixed(2));
+    toast.success(`${formatKellyMultiplier(preview.kellyMultiplierUsed)} stake applied.`);
   }
 
   async function handleSubmitLoggedParlay(payload: BetCreate) {
@@ -335,6 +365,32 @@ export default function ParlayPage() {
                     ? `Based on ${preview.legCount} uncorrelated reference prices.`
                     : "The book payout still shows above; only the fair-odds estimate is hidden."}
                 </p>
+              </div>
+
+              <div className="rounded-xl border border-border bg-background px-4 py-3 md:col-span-2">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Kelly suggestion</p>
+                    <p className="mt-1 text-lg font-semibold">
+                      {preview?.stealthKellyStake != null ? formatCurrency(preview.stealthKellyStake) : "Unavailable"}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {preview?.stealthKellyStake != null && preview.rawKellyStake != null
+                        ? `${formatKellyMultiplier(preview.kellyMultiplierUsed)} on ${formatCurrency(preview.bankrollUsed ?? 0)} bankroll. Raw Kelly ${formatCurrency(preview.rawKellyStake)} before stake rounding.`
+                        : preview?.estimateAvailable
+                        ? "Kelly sizing only appears for positive-EV slips with a trustworthy fair-odds estimate."
+                        : "Kelly sizing is hidden whenever the fair-odds estimate is unavailable."}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleUseKellySuggestion}
+                    disabled={preview?.stealthKellyStake == null || preview.stealthKellyStake <= 0 || isSaving || isLogging}
+                  >
+                    Use Suggestion
+                  </Button>
+                </div>
               </div>
             </div>
 

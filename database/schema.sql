@@ -60,6 +60,9 @@ CREATE TABLE public.settings (
     k_factor NUMERIC DEFAULT 0.78,
     default_stake NUMERIC,
     preferred_sportsbooks TEXT[] DEFAULT ARRAY['DraftKings', 'FanDuel', 'BetMGM', 'Caesars', 'ESPN Bet', 'Fanatics', 'Hard Rock', 'bet365'],
+    kelly_multiplier NUMERIC DEFAULT 0.25,
+    bankroll_override NUMERIC DEFAULT 1000,
+    use_computed_bankroll BOOLEAN DEFAULT TRUE,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
 );
 

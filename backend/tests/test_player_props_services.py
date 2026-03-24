@@ -7,9 +7,11 @@ from services.player_props import (
     PLAYER_PROP_REFERENCE_SOURCE,
     _build_prizepicks_comparison_cards,
     _build_prop_side_candidates,
+    _prop_cache_slot,
     _match_curated_events,
     _normalize_prop_outcomes,
     _parse_prop_sides,
+    get_cached_or_scan_player_props,
     get_player_prop_markets,
     scan_player_props,
 )
@@ -1110,6 +1112,80 @@ async def test_scan_player_props_fallback_ignores_soon_events_before_truncating(
     assert result["diagnostics"]["scan_scope"] == "odds_fallback"
     assert result["diagnostics"]["fallback_event_count"] == 1
     assert result["diagnostics"]["events_skipped_pregame"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_cached_or_scan_player_props_bypasses_cache_for_manual_scan(monkeypatch):
+    import services.player_props as player_props
+
+    slot = _prop_cache_slot("basketball_nba")
+    now = datetime.now(timezone.utc).timestamp()
+    cached_payload = {
+        "surface": "player_props",
+        "sides": [],
+        "events_fetched": 0,
+        "events_with_both_books": 0,
+        "api_requests_remaining": "99",
+        "fetched_at": now,
+    }
+    fresh_payload = {
+        "surface": "player_props",
+        "sides": [{"event_id": "fresh-evt"}],
+        "events_fetched": 1,
+        "events_with_both_books": 1,
+        "api_requests_remaining": "98",
+    }
+
+    player_props._props_cache.clear()
+    player_props._props_locks.clear()
+    player_props._props_cache[slot] = dict(cached_payload)
+
+    stored_payloads = []
+
+    monkeypatch.setattr(player_props, "get_scan_cache", lambda _slot: dict(cached_payload), raising=True)
+    monkeypatch.setattr(player_props, "set_scan_cache", lambda *_args: stored_payloads.append(_args), raising=True)
+
+    async def _fake_scan(_sport: str, source: str = "unknown"):
+        assert source == "manual_scan"
+        return dict(fresh_payload)
+
+    monkeypatch.setattr(player_props, "scan_player_props", _fake_scan, raising=True)
+
+    result = await get_cached_or_scan_player_props("basketball_nba", source="manual_scan")
+
+    assert result["cache_hit"] is False
+    assert result["sides"] == [{"event_id": "fresh-evt"}]
+    assert stored_payloads
+
+
+@pytest.mark.asyncio
+async def test_get_cached_or_scan_player_props_uses_cache_for_non_manual_sources(monkeypatch):
+    import services.player_props as player_props
+
+    slot = _prop_cache_slot("basketball_nba")
+    now = datetime.now(timezone.utc).timestamp()
+    cached_payload = {
+        "surface": "player_props",
+        "sides": [{"event_id": "cached-evt"}],
+        "events_fetched": 1,
+        "events_with_both_books": 1,
+        "api_requests_remaining": "99",
+        "fetched_at": now,
+    }
+
+    player_props._props_cache.clear()
+    player_props._props_locks.clear()
+    player_props._props_cache[slot] = dict(cached_payload)
+
+    async def _boom_scan(*_args, **_kwargs):
+        raise AssertionError("scan should not run when non-manual cache is warm")
+
+    monkeypatch.setattr(player_props, "scan_player_props", _boom_scan, raising=True)
+
+    result = await get_cached_or_scan_player_props("basketball_nba", source="ops_snapshot")
+
+    assert result["cache_hit"] is True
+    assert result["sides"] == [{"event_id": "cached-evt"}]
 
 
 @pytest.mark.asyncio

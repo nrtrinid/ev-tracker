@@ -138,6 +138,8 @@ export function ScannerResultsPane({
         ) : isPropsSurface ? (
           <PlayerPropList
             results={results as Array<Extract<MarketSide, { surface: "player_props" }> & { _retention?: number; _boostedEV?: number }>}
+            kellyMultiplier={kellyMultiplier}
+            bankroll={bankroll}
             canLoadMore={canLoadMore}
             onLoadMore={onLoadMore}
             onLogBet={(side) => onLogBet(side)}

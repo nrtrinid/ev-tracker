@@ -120,6 +120,9 @@ export interface Settings {
   k_factor: number;
   default_stake: number | null;
   preferred_sportsbooks: string[];
+  kelly_multiplier: number;
+  bankroll_override: number;
+  use_computed_bankroll: boolean;
   // Personalized k-factor auto mode
   k_factor_mode: string;             // 'baseline' | 'auto'
   k_factor_min_stake: number;
@@ -570,6 +573,11 @@ export interface ParlayPricingPreview {
   estimatedFairAmericanOdds: number | null;
   estimatedTrueProbability: number | null;
   estimatedEvPercent: number | null;
+  baseKellyFraction: number | null;
+  rawKellyStake: number | null;
+  stealthKellyStake: number | null;
+  bankrollUsed: number | null;
+  kellyMultiplierUsed: number | null;
   estimateAvailable: boolean;
   estimateUnavailableReason: string | null;
   hasBlockingCorrelation: boolean;

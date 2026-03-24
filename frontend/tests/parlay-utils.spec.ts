@@ -59,7 +59,10 @@ const PROP_LEG: ParlayCartLeg = {
 
 test.describe("parlay utils", () => {
   test("builds combined pricing and independence estimate for clean slips", async () => {
-    const preview = buildParlayPreview([STRAIGHT_LEG, PROP_LEG], 10);
+    const preview = buildParlayPreview([STRAIGHT_LEG, PROP_LEG], 10, {
+      bankroll: 1000,
+      kellyMultiplier: 0.25,
+    });
 
     expect(preview).not.toBeNull();
     expect(preview?.legCount).toBe(2);
@@ -69,6 +72,11 @@ test.describe("parlay utils", () => {
     expect(preview?.estimateAvailable).toBe(true);
     expect(preview?.estimatedFairAmericanOdds).not.toBeNull();
     expect(preview?.estimatedEvPercent).not.toBeNull();
+    expect(preview?.baseKellyFraction).not.toBeNull();
+    expect(preview?.rawKellyStake).toBeGreaterThan(0);
+    expect(preview?.stealthKellyStake).toBeGreaterThan(0);
+    expect(preview?.bankrollUsed).toBe(1000);
+    expect(preview?.kellyMultiplierUsed).toBe(0.25);
     expect(preview?.warnings).toHaveLength(0);
   });
 
@@ -89,6 +97,7 @@ test.describe("parlay utils", () => {
 
     expect(preview?.estimateAvailable).toBe(false);
     expect(preview?.estimateUnavailableReason).toBe("Correlation warning");
+    expect(preview?.stealthKellyStake).toBeNull();
     expect(preview?.warnings.some((warning) => warning.code === "same_event_correlation")).toBe(true);
   });
 
@@ -127,5 +136,27 @@ test.describe("parlay utils", () => {
     expect(preview?.estimateAvailable).toBe(false);
     expect(preview?.estimateUnavailableReason).toBe("Missing reference price");
     expect(preview?.estimatedFairAmericanOdds).toBeNull();
+    expect(preview?.stealthKellyStake).toBeNull();
+  });
+
+  test("does not suggest Kelly for non-positive EV slips", async () => {
+    const negativeEdgeLeg: ParlayCartLeg = {
+      ...STRAIGHT_LEG,
+      id: "straight:negative",
+      oddsAmerican: -110,
+      referenceOddsAmerican: -150,
+    };
+
+    const preview = buildParlayPreview([negativeEdgeLeg], 10, {
+      bankroll: 1000,
+      kellyMultiplier: 0.25,
+    });
+
+    expect(preview?.estimateAvailable).toBe(true);
+    expect(preview?.estimatedEvPercent).not.toBeNull();
+    expect((preview?.estimatedEvPercent ?? 0) <= 0).toBe(true);
+    expect(preview?.baseKellyFraction).toBe(0);
+    expect(preview?.rawKellyStake).toBeNull();
+    expect(preview?.stealthKellyStake).toBeNull();
   });
 });

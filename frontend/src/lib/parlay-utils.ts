@@ -1,5 +1,5 @@
 import type { ParlayCartLeg, ParlayPricingPreview, ParlayWarning } from "@/lib/types";
-import { americanToDecimal, decimalToAmerican } from "@/lib/utils";
+import { americanToDecimal, calculateStealthStake, decimalToAmerican } from "@/lib/utils";
 
 const SPORT_DISPLAY_MAP: Record<string, string> = {
   americanfootball_nfl: "NFL",
@@ -129,7 +129,30 @@ export function buildParlayWarnings(cart: ParlayCartLeg[]): ParlayWarning[] {
   return warnings;
 }
 
-export function buildParlayPreview(cart: ParlayCartLeg[], stakeInput: number): ParlayPricingPreview | null {
+type BuildParlayPreviewOptions = {
+  bankroll?: number | null;
+  kellyMultiplier?: number | null;
+};
+
+function calculateKellyFraction(trueProbability: number, decimalOdds: number): number {
+  if (!Number.isFinite(trueProbability) || !Number.isFinite(decimalOdds)) {
+    return 0;
+  }
+  if (trueProbability <= 0 || trueProbability >= 1 || decimalOdds <= 1) {
+    return 0;
+  }
+  const edge = (trueProbability * decimalOdds - 1) / (decimalOdds - 1);
+  if (!Number.isFinite(edge) || edge <= 0) {
+    return 0;
+  }
+  return edge;
+}
+
+export function buildParlayPreview(
+  cart: ParlayCartLeg[],
+  stakeInput: number,
+  options?: BuildParlayPreviewOptions,
+): ParlayPricingPreview | null {
   if (cart.length === 0) {
     return null;
   }
@@ -150,8 +173,19 @@ export function buildParlayPreview(cart: ParlayCartLeg[], stakeInput: number): P
   let estimatedFairAmericanOdds: number | null = null;
   let estimatedTrueProbability: number | null = null;
   let estimatedEvPercent: number | null = null;
+  let baseKellyFraction: number | null = null;
+  let rawKellyStake: number | null = null;
+  let stealthKellyStake: number | null = null;
   let estimateAvailable = false;
   let estimateUnavailableReason: string | null = null;
+  const bankroll =
+    typeof options?.bankroll === "number" && Number.isFinite(options.bankroll) && options.bankroll > 0
+      ? options.bankroll
+      : null;
+  const kellyMultiplier =
+    typeof options?.kellyMultiplier === "number" && Number.isFinite(options.kellyMultiplier) && options.kellyMultiplier > 0
+      ? options.kellyMultiplier
+      : null;
 
   if (hasBlockingCorrelation) {
     estimateUnavailableReason = "Correlation warning";
@@ -168,6 +202,19 @@ export function buildParlayPreview(cart: ParlayCartLeg[], stakeInput: number): P
       estimatedTrueProbability != null
         ? (estimatedTrueProbability * combinedDecimalOdds - 1) * 100
         : null;
+    baseKellyFraction =
+      estimatedTrueProbability != null
+        ? calculateKellyFraction(estimatedTrueProbability, combinedDecimalOdds)
+        : null;
+    if (
+      baseKellyFraction != null &&
+      baseKellyFraction > 0 &&
+      bankroll != null &&
+      kellyMultiplier != null
+    ) {
+      rawKellyStake = baseKellyFraction * kellyMultiplier * bankroll;
+      stealthKellyStake = calculateStealthStake(rawKellyStake);
+    }
     estimateAvailable = estimatedTrueProbability != null;
   }
 
@@ -183,6 +230,11 @@ export function buildParlayPreview(cart: ParlayCartLeg[], stakeInput: number): P
     estimatedFairAmericanOdds,
     estimatedTrueProbability,
     estimatedEvPercent,
+    baseKellyFraction,
+    rawKellyStake,
+    stealthKellyStake,
+    bankrollUsed: bankroll,
+    kellyMultiplierUsed: kellyMultiplier,
     estimateAvailable,
     estimateUnavailableReason,
     hasBlockingCorrelation,

@@ -17,6 +17,11 @@ def build_settings_response(
         k_factor=settings["k_factor"],
         default_stake=settings.get("default_stake"),
         preferred_sportsbooks=settings.get("preferred_sportsbooks") or default_sportsbooks,
+        kelly_multiplier=float(settings.get("kelly_multiplier") or 0.25),
+        bankroll_override=float(settings.get("bankroll_override") or 1000.0),
+        use_computed_bankroll=bool(
+            True if settings.get("use_computed_bankroll") is None else settings.get("use_computed_bankroll")
+        ),
         k_factor_mode=settings.get("k_factor_mode") or "baseline",
         k_factor_min_stake=float(settings.get("k_factor_min_stake") or 300.0),
         k_factor_smoothing=float(settings.get("k_factor_smoothing") or 700.0),
