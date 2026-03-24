@@ -91,7 +91,10 @@ def _maybe_prune_ops_history(
 
     now = time.monotonic()
     with _PRUNE_LOCK:
-        if now - _LAST_PRUNE_ATTEMPT_MONOTONIC < OPS_HISTORY_PRUNE_INTERVAL_SECONDS:
+        if (
+            _LAST_PRUNE_ATTEMPT_MONOTONIC > 0
+            and now - _LAST_PRUNE_ATTEMPT_MONOTONIC < OPS_HISTORY_PRUNE_INTERVAL_SECONDS
+        ):
             return
         _LAST_PRUNE_ATTEMPT_MONOTONIC = now
 
