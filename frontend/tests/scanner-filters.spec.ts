@@ -5,6 +5,7 @@ import {
   defaultScannerResultFilters,
   describeScannerResultFilters,
   hasActiveScannerResultFilters,
+  isPregameCommenceTime,
   normalizeSearchQuery,
 } from "@/lib/scanner-filters";
 import type { MarketSide } from "@/lib/types";
@@ -47,7 +48,9 @@ const BASE_PROP_SIDE: MarketSide = {
   selection_side: "over",
   line_value: 24.5,
   display_name: "Nikola Jokic Over 24.5",
-  pinnacle_odds: -110,
+  reference_odds: -110,
+  reference_source: "market_median",
+  reference_bookmakers: ["bovada", "betmgm"],
   book_odds: 105,
   true_prob: 0.52,
   base_kelly_fraction: 0.022,
@@ -80,6 +83,14 @@ test.describe("scanner filters", () => {
 
   test("normalizes whitespace and casing for search", async () => {
     expect(normalizeSearchQuery("  Lakers    Warriors  ")).toBe("lakers warriors");
+  });
+
+  test("treats All as pregame-only, not literally every scanned event", async () => {
+    const now = new Date("2026-03-20T12:00:00Z");
+
+    expect(isPregameCommenceTime("2026-03-20T12:00:00Z", now)).toBeTruthy();
+    expect(isPregameCommenceTime("2026-03-20T12:01:00Z", now)).toBeTruthy();
+    expect(isPregameCommenceTime("2026-03-20T11:59:59Z", now)).toBeFalsy();
   });
 
   test("applies standard edge filter only in standard lens", async () => {
@@ -308,6 +319,27 @@ test.describe("scanner filters", () => {
     });
 
     expect(labels).toContain("Edge: All +EV");
+  });
+
+  test("can expose the default 1.0% edge chip for player props", async () => {
+    const labels = describeScannerResultFilters({
+      activeLens: "standard",
+      filters: {
+        searchQuery: "",
+        timePreset: "all",
+        edgeMinStandard: 1,
+        hideLongshots: true,
+        hideAlreadyLogged: false,
+        riskPreset: "any",
+        propMarket: "all",
+        propSide: "all",
+      },
+      longshotMaxAmerican: 500,
+      showDefaultStandardEdge: true,
+    });
+
+    expect(labels).toContain("Edge: 1.0%+");
+    expect(labels).toContain("Odds: <= +500");
   });
 
   test("filters player props by market and side", async () => {

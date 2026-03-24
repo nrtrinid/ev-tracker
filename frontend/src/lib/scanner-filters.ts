@@ -32,6 +32,12 @@ export function normalizeSearchQuery(value: string): string {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+export function isPregameCommenceTime(commenceTime: string, now: Date = new Date()): boolean {
+  const start = new Date(commenceTime);
+  if (Number.isNaN(start.getTime())) return false;
+  return start.getTime() >= now.getTime();
+}
+
 function matchesSearch(side: MarketSide, normalizedQuery: string): boolean {
   if (!normalizedQuery) return true;
   const searchableLabel =
@@ -70,9 +76,9 @@ function matchesTimePreset(
   const start = new Date(commenceTime);
   if (Number.isNaN(start.getTime())) return false;
 
+  if (!isPregameCommenceTime(commenceTime, now)) return false;
+
   const deltaMs = start.getTime() - now.getTime();
-  // Past-started events are excluded from all filtered views.
-  if (deltaMs < 0) return false;
 
   if (preset === "all") return true;
 
@@ -138,8 +144,9 @@ export function describeScannerResultFilters(params: {
   activeLens: "standard" | "profit_boost" | "bonus_bet" | "qualifier";
   filters: ScannerResultFilters;
   longshotMaxAmerican: number;
+  showDefaultStandardEdge?: boolean;
 }): string[] {
-  const { activeLens, filters, longshotMaxAmerican } = params;
+  const { activeLens, filters, longshotMaxAmerican, showDefaultStandardEdge = false } = params;
   const chips: string[] = [];
 
   const normalizedQuery = normalizeSearchQuery(filters.searchQuery);
@@ -149,10 +156,10 @@ export function describeScannerResultFilters(params: {
   if (filters.timePreset === "today") chips.push("Time: Today");
   if (filters.timePreset === "tomorrow") chips.push("Time: Tomorrow");
 
-  if (activeLens === "standard" && filters.edgeMinStandard !== DEFAULT_STANDARD_EDGE_MIN) {
+  if (activeLens === "standard") {
     if (filters.edgeMinStandard === 0) {
       chips.push("Edge: All +EV");
-    } else if (filters.edgeMinStandard !== DEFAULT_STANDARD_EDGE_MIN) {
+    } else if (filters.edgeMinStandard !== DEFAULT_STANDARD_EDGE_MIN || showDefaultStandardEdge) {
       chips.push(`Edge: ${filters.edgeMinStandard.toFixed(1)}%+`);
     }
   }

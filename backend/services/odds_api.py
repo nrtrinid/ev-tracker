@@ -14,8 +14,10 @@ import httpx
 from collections import deque
 import threading
 from datetime import datetime, timezone, timedelta
+from typing import Any
 from dotenv import load_dotenv
 from calculations import american_to_decimal, kelly_fraction
+from services.sportsbook_deeplinks import resolve_sportsbook_deeplink
 from services.shared_state import get_scan_cache, set_scan_cache
 
 load_dotenv()
@@ -34,6 +36,9 @@ _ODDS_ACTIVITY_LOCK = threading.Lock()
 _ODDS_ACTIVITY_MAX_ENTRIES = 500
 _ODDS_ACTIVITY_MAX_RECENT = 50
 _ODDS_ACTIVITY_EVENTS = deque(maxlen=_ODDS_ACTIVITY_MAX_ENTRIES)
+_SCAN_ACTIVITY_MAX_ENTRIES = 300
+_SCAN_ACTIVITY_MAX_RECENT = 18
+_SCAN_ACTIVITY_EVENTS = deque(maxlen=_SCAN_ACTIVITY_MAX_ENTRIES)
 
 
 def _utc_now_iso() -> str:
@@ -77,10 +82,106 @@ def _append_odds_api_activity(
     }
     with _ODDS_ACTIVITY_LOCK:
         _ODDS_ACTIVITY_EVENTS.append(event)
+    try:
+        from services.ops_history import persist_odds_api_activity_event
+
+        persist_odds_api_activity_event(
+            activity_kind="raw_call",
+            source=source,
+            captured_at=event["timestamp"],
+            endpoint=endpoint,
+            sport=sport,
+            cache_hit=cache_hit,
+            outbound_call_made=outbound_call_made,
+            status_code=status_code,
+            duration_ms=event["duration_ms"],
+            api_requests_remaining=api_requests_remaining,
+            error_type=error_type,
+            error_message=event["error_message"],
+        )
+    except Exception:
+        pass
+
+
+def append_scan_activity(
+    *,
+    scan_session_id: str,
+    source: str,
+    surface: str,
+    scan_scope: str,
+    requested_sport: str | None,
+    sport: str | None,
+    actor_label: str | None,
+    run_id: str | None,
+    cache_hit: bool,
+    outbound_call_made: bool,
+    duration_ms: float | None,
+    events_fetched: int | None,
+    events_with_both_books: int | None,
+    sides_count: int | None,
+    api_requests_remaining: str | int | None,
+    status_code: int | None,
+    error_type: str | None,
+    error_message: str | None,
+) -> None:
+    now = datetime.now(timezone.utc)
+    event = {
+        "timestamp": now.isoformat().replace("+00:00", "Z"),
+        "activity_kind": "scan_detail",
+        "scan_session_id": scan_session_id,
+        "source": source,
+        "surface": surface,
+        "scan_scope": scan_scope,
+        "requested_sport": requested_sport,
+        "sport": sport,
+        "actor_label": actor_label,
+        "run_id": run_id,
+        "cache_hit": cache_hit,
+        "outbound_call_made": outbound_call_made,
+        "duration_ms": round(duration_ms, 2) if isinstance(duration_ms, (int, float)) else None,
+        "events_fetched": events_fetched,
+        "events_with_both_books": events_with_both_books,
+        "sides_count": sides_count,
+        "api_requests_remaining": api_requests_remaining,
+        "status_code": status_code,
+        "error_type": error_type,
+        "error_message": _short_error_message(error_message),
+        "_ts_epoch": now.timestamp(),
+    }
+    with _ODDS_ACTIVITY_LOCK:
+        _SCAN_ACTIVITY_EVENTS.append(event)
+    try:
+        from services.ops_history import persist_odds_api_activity_event
+
+        persist_odds_api_activity_event(
+            activity_kind="scan_detail",
+            source=source,
+            captured_at=event["timestamp"],
+            scan_session_id=scan_session_id,
+            surface=surface,
+            scan_scope=scan_scope,
+            requested_sport=requested_sport,
+            sport=sport,
+            actor_label=actor_label,
+            run_id=run_id,
+            cache_hit=cache_hit,
+            outbound_call_made=outbound_call_made,
+            duration_ms=event["duration_ms"],
+            events_fetched=events_fetched,
+            events_with_both_books=events_with_both_books,
+            sides_count=sides_count,
+            api_requests_remaining=api_requests_remaining,
+            status_code=status_code,
+            error_type=error_type,
+            error_message=event["error_message"],
+        )
+    except Exception:
+        pass
 
 
 def _sanitize_activity_event(event: dict) -> dict:
     return {
+        "activity_kind": "raw_call",
         "timestamp": event.get("timestamp"),
         "source": event.get("source"),
         "endpoint": event.get("endpoint"),
@@ -95,12 +196,135 @@ def _sanitize_activity_event(event: dict) -> dict:
     }
 
 
+def _sanitize_scan_activity_detail(event: dict) -> dict:
+    return {
+        "activity_kind": "scan_detail",
+        "timestamp": event.get("timestamp"),
+        "source": event.get("source"),
+        "surface": event.get("surface"),
+        "scan_scope": event.get("scan_scope"),
+        "requested_sport": event.get("requested_sport"),
+        "sport": event.get("sport"),
+        "actor_label": event.get("actor_label"),
+        "run_id": event.get("run_id"),
+        "cache_hit": bool(event.get("cache_hit")),
+        "outbound_call_made": bool(event.get("outbound_call_made")),
+        "duration_ms": event.get("duration_ms"),
+        "events_fetched": event.get("events_fetched"),
+        "events_with_both_books": event.get("events_with_both_books"),
+        "sides_count": event.get("sides_count"),
+        "api_requests_remaining": event.get("api_requests_remaining"),
+        "status_code": event.get("status_code"),
+        "error_type": event.get("error_type"),
+        "error_message": event.get("error_message"),
+    }
+
+
+def _is_activity_error(event: dict) -> bool:
+    status_code = event.get("status_code")
+    return bool(event.get("error_type")) or (isinstance(status_code, int) and status_code >= 400)
+
+
+def _try_parse_remaining(value: str | int | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_grouped_scan_raw_call(event: dict) -> bool:
+    source = str(event.get("source") or "").strip()
+    endpoint = str(event.get("endpoint") or "").strip()
+    sport = str(event.get("sport") or "").strip()
+    if source not in {"manual_scan", "scheduled_scan", "ops_trigger_scan"}:
+        return False
+    if not endpoint or not sport:
+        return False
+    return endpoint == f"/sports/{sport}/odds"
+
+
+def _build_recent_scan_sessions(events: list[dict]) -> list[dict]:
+    grouped: dict[str, dict] = {}
+
+    for event in sorted(events, key=lambda item: item.get("_ts_epoch") or 0):
+        session_id = str(event.get("scan_session_id") or "").strip()
+        if not session_id:
+            continue
+
+        row = grouped.get(session_id)
+        if row is None:
+            row = {
+                "activity_kind": "scan_session",
+                "scan_session_id": session_id,
+                "timestamp": event.get("timestamp"),
+                "source": event.get("source"),
+                "surface": event.get("surface"),
+                "scan_scope": event.get("scan_scope"),
+                "requested_sport": event.get("requested_sport"),
+                "actor_label": event.get("actor_label"),
+                "run_id": event.get("run_id"),
+                "detail_count": 0,
+                "live_call_count": 0,
+                "cache_hit_count": 0,
+                "other_count": 0,
+                "total_events_fetched": 0,
+                "total_events_with_both_books": 0,
+                "total_sides": 0,
+                "min_api_requests_remaining": None,
+                "error_count": 0,
+                "has_errors": False,
+                "details": [],
+                "_latest_ts_epoch": event.get("_ts_epoch") or 0,
+                "_min_remaining_numeric": None,
+            }
+            grouped[session_id] = row
+
+        row["timestamp"] = event.get("timestamp") or row.get("timestamp")
+        row["_latest_ts_epoch"] = max(row.get("_latest_ts_epoch") or 0, event.get("_ts_epoch") or 0)
+        row["detail_count"] += 1
+        if event.get("cache_hit"):
+            row["cache_hit_count"] += 1
+        elif event.get("outbound_call_made"):
+            row["live_call_count"] += 1
+        else:
+            row["other_count"] += 1
+
+        row["total_events_fetched"] += int(event.get("events_fetched") or 0)
+        row["total_events_with_both_books"] += int(event.get("events_with_both_books") or 0)
+        row["total_sides"] += int(event.get("sides_count") or 0)
+
+        remaining_numeric = _try_parse_remaining(event.get("api_requests_remaining"))
+        if remaining_numeric is not None:
+            current_min = row.get("_min_remaining_numeric")
+            if current_min is None or remaining_numeric < current_min:
+                row["_min_remaining_numeric"] = remaining_numeric
+                row["min_api_requests_remaining"] = remaining_numeric
+        elif row.get("min_api_requests_remaining") is None and event.get("api_requests_remaining") is not None:
+            row["min_api_requests_remaining"] = event.get("api_requests_remaining")
+
+        if _is_activity_error(event):
+            row["error_count"] += 1
+            row["has_errors"] = True
+
+        row["details"].append(_sanitize_scan_activity_detail(event))
+
+    ordered = sorted(grouped.values(), key=lambda item: item.get("_latest_ts_epoch") or 0, reverse=True)
+    recent = ordered[:_SCAN_ACTIVITY_MAX_RECENT]
+    for row in recent:
+        row.pop("_latest_ts_epoch", None)
+        row.pop("_min_remaining_numeric", None)
+    return recent
+
+
 def get_odds_api_activity_snapshot() -> dict:
     now_epoch = datetime.now(timezone.utc).timestamp()
     last_hour_cutoff = now_epoch - 3600
 
     with _ODDS_ACTIVITY_LOCK:
         events = list(_ODDS_ACTIVITY_EVENTS)
+        scan_events = list(_SCAN_ACTIVITY_EVENTS)
 
     last_hour_events = [e for e in events if isinstance(e.get("_ts_epoch"), (int, float)) and e["_ts_epoch"] >= last_hour_cutoff]
     errors_last_hour = [e for e in last_hour_events if e.get("error_type") or (isinstance(e.get("status_code"), int) and e["status_code"] >= 400)]
@@ -117,7 +341,13 @@ def get_odds_api_activity_snapshot() -> dict:
         if last_success and last_error:
             break
 
-    recent_calls = [_sanitize_activity_event(e) for e in list(reversed(events[-_ODDS_ACTIVITY_MAX_RECENT:]))]
+    recent_calls: list[dict] = []
+    for event in reversed(events):
+        if _is_grouped_scan_raw_call(event):
+            continue
+        recent_calls.append(_sanitize_activity_event(event))
+        if len(recent_calls) >= _ODDS_ACTIVITY_MAX_RECENT:
+            break
 
     return {
         "summary": {
@@ -126,6 +356,7 @@ def get_odds_api_activity_snapshot() -> dict:
             "last_success_at": last_success,
             "last_error_at": last_error,
         },
+        "recent_scans": _build_recent_scan_sessions(scan_events),
         "recent_calls": recent_calls,
     }
 
@@ -157,7 +388,7 @@ async def get_cached_or_scan(sport: str, source: str = "unknown") -> dict:
                     error_type=None,
                     error_message=None,
                 )
-                return shared_entry
+                return {**shared_entry, "cache_hit": True}
 
         if sport in _cache:
             entry = _cache[sport]
@@ -174,13 +405,13 @@ async def get_cached_or_scan(sport: str, source: str = "unknown") -> dict:
                     error_type=None,
                     error_message=None,
                 )
-                return entry
+                return {**entry, "cache_hit": True}
 
         result = await scan_all_sides(sport, source=source)
         result["fetched_at"] = now
         _cache[sport] = result
         set_scan_cache(sport, result, CACHE_TTL_SECONDS)
-        return result
+        return {**result, "cache_hit": False}
 
 
 SUPPORTED_SPORTS = [
@@ -318,6 +549,8 @@ async def fetch_odds(
         "markets": "h2h",
         "oddsFormat": "american",
         "bookmakers": all_books,
+        "includeLinks": "true",
+        "includeSids": "true",
     }
 
     started = time.monotonic()
@@ -378,14 +611,104 @@ async def fetch_odds(
         raise
 
 
-def _extract_bookmaker_meta(bookmakers: list[dict], book_key: str) -> tuple[dict | None, str | None]:
-    """Pull h2h outcomes + optional bookmaker deep link for a bookmaker key."""
+async def fetch_events(
+    sport: str = "basketball_nba",
+    *,
+    source: str = "unknown",
+) -> tuple[list[dict], httpx.Response]:
+    """
+    Fetch the upcoming events list for a sport.
+
+    This endpoint returns event ids without market odds and is the cheapest
+    source of truth for mapping ESPN schedule entries to Odds API event ids.
+    """
+    if not ODDS_API_KEY:
+        raise ValueError("ODDS_API_KEY not set in environment")
+
+    url = f"{ODDS_API_BASE}/sports/{sport}/events"
+    started = time.monotonic()
+    endpoint_value = f"/sports/{sport}/events"
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url, params={"apiKey": ODDS_API_KEY})
+            resp.raise_for_status()
+            duration_ms = (time.monotonic() - started) * 1000
+            remaining = resp.headers.get("x-requests-remaining") or resp.headers.get("x-request-remaining")
+            _append_odds_api_activity(
+                source=source,
+                endpoint=endpoint_value,
+                sport=sport,
+                cache_hit=False,
+                outbound_call_made=True,
+                status_code=resp.status_code,
+                duration_ms=duration_ms,
+                api_requests_remaining=remaining,
+                error_type=None,
+                error_message=None,
+            )
+            data = resp.json()
+            return (data if isinstance(data, list) else []), resp
+    except httpx.HTTPStatusError as e:
+        duration_ms = (time.monotonic() - started) * 1000
+        status_code = e.response.status_code if e.response is not None else None
+        remaining = None
+        if e.response is not None:
+            remaining = e.response.headers.get("x-requests-remaining") or e.response.headers.get("x-request-remaining")
+        _append_odds_api_activity(
+            source=source,
+            endpoint=endpoint_value,
+            sport=sport,
+            cache_hit=False,
+            outbound_call_made=True,
+            status_code=status_code,
+            duration_ms=duration_ms,
+            api_requests_remaining=remaining,
+            error_type=type(e).__name__,
+            error_message=str(e),
+        )
+        raise
+    except Exception as e:
+        duration_ms = (time.monotonic() - started) * 1000
+        _append_odds_api_activity(
+            source=source,
+            endpoint=endpoint_value,
+            sport=sport,
+            cache_hit=False,
+            outbound_call_made=True,
+            status_code=None,
+            duration_ms=duration_ms,
+            api_requests_remaining=None,
+            error_type=type(e).__name__,
+            error_message=str(e),
+        )
+        raise
+
+
+def _extract_h2h_bookmaker_market(bookmakers: list[dict], book_key: str) -> dict | None:
     for bm in bookmakers:
         if bm["key"] == book_key:
-            deep_link = bm.get("link") or bm.get("url")
+            event_link = bm.get("link") or bm.get("url")
             for market in bm.get("markets", []):
                 if market["key"] == "h2h":
-                    return {o["name"]: o["price"] for o in market["outcomes"]}, deep_link
+                    outcomes = market.get("outcomes") or []
+                    return {
+                        "outcomes": {o["name"]: o["price"] for o in outcomes},
+                        "selection_links": {
+                            o["name"]: o.get("link") or o.get("url")
+                            for o in outcomes
+                        },
+                        "market_link": market.get("link") or market.get("url"),
+                        "event_link": event_link,
+                    }
+    return None
+
+
+def _extract_bookmaker_meta(bookmakers: list[dict], book_key: str) -> tuple[dict | None, str | None]:
+    """Pull h2h outcomes + optional bookmaker deep link for a bookmaker key."""
+    market = _extract_h2h_bookmaker_market(bookmakers, book_key)
+    if market:
+        return market["outcomes"], market["event_link"]
     return None, None
 
 
@@ -430,12 +753,10 @@ async def scan_for_ev(sport: str = "basketball_nba") -> dict:
         had_any_book = False
 
         for book_key, book_display in TARGET_BOOKS.items():
-            book_outcomes, sportsbook_deeplink_url = _extract_bookmaker_meta(
-                event.get("bookmakers", []),
-                book_key,
-            )
-            if not book_outcomes:
+            book_market = _extract_h2h_bookmaker_market(event.get("bookmakers", []), book_key)
+            if not book_market:
                 continue
+            book_outcomes = book_market["outcomes"]
 
             book_home = book_outcomes.get(home)
             book_away = book_outcomes.get(away)
@@ -512,96 +833,16 @@ async def scan_for_ev(sport: str = "basketball_nba") -> dict:
 
 def update_clv_snapshots(sides: list[dict], db) -> int:
     """
-    Layer 2 — Piggyback CLV update. Zero extra API calls.
+    Piggyback reference update for pending bets.
 
-    After any scan returns, this is called synchronously before responding.
-    It builds lookups from the fresh scan data, then finds every pending bet
-    with CLV tracking enabled and writes the latest Pinnacle line to
-    pinnacle_odds_at_close.
-
-    Preferred match path:
-    - (clv_event_id, clv_team) -> pinnacle_odds
-    Fallback match path:
-    - (commence_time, clv_team) -> pinnacle_odds
-
-    Args:
-        sides: The `sides` list from scan_all_sides / get_cached_or_scan.
-        db:    Supabase client (service role).
-
-    Returns:
-        Number of bet rows updated.
+    Fresh scan snapshots update `latest_pinnacle_odds` for matching pending bets.
+    `pinnacle_odds_at_close` is only populated when the fresh snapshot is inside
+    the close window handled by the shared CLV-tracking helper.
     """
-    from datetime import datetime, timezone
+    from services.clv_tracking import update_bet_reference_snapshots
 
-    if not sides:
-        return 0
-
-    # Build fast lookups for id-first matching with legacy time/team fallback.
-    snapshot_by_event: dict[tuple[str, str], float] = {}
-    snapshot_by_time: dict[tuple[str, str], float] = {}
-    for side in sides:
-        event_id = str(side.get("event_id") or "").strip()
-        ct = side.get("commence_time", "")
-        team = side.get("team", "")
-        if ct and team:
-            snapshot_by_time[(ct, team)] = side["pinnacle_odds"]
-        if event_id and team:
-            snapshot_by_event[(event_id, team)] = side["pinnacle_odds"]
-
-    if not snapshot_by_event and not snapshot_by_time:
-        return 0
-
-    # Fetch all pending bets that have CLV tracking data
-    try:
-        result = (
-            db.table("bets")
-            .select("id,clv_team,commence_time,clv_event_id,pinnacle_odds_at_close")
-            .eq("result", "pending")
-            .not_.is_("clv_team", "null")
-            .execute()
-        )
-    except Exception as e:
-        if "clv_event_id" not in str(e):
-            raise
-        result = (
-            db.table("bets")
-            .select("id,clv_team,commence_time,pinnacle_odds_at_close")
-            .eq("result", "pending")
-            .not_.is_("clv_team", "null")
-            .execute()
-        )
-
-    if not result.data:
-        return 0
-
-    now = datetime.now(timezone.utc).isoformat()
-    updated = 0
-
-    for bet in result.data:
-        if bet.get("pinnacle_odds_at_close") is not None:
-            continue
-
-        team = bet.get("clv_team")
-        ct = bet.get("commence_time")
-        event_id = str(bet.get("clv_event_id") or "").strip()
-        if not team:
-            continue
-
-        pinnacle_close = None
-        if event_id:
-            pinnacle_close = snapshot_by_event.get((event_id, team))
-        if pinnacle_close is None and ct:
-            pinnacle_close = snapshot_by_time.get((ct, team))
-        if pinnacle_close is None:
-            continue
-
-        db.table("bets").update({
-            "pinnacle_odds_at_close": pinnacle_close,
-            "clv_updated_at": now,
-        }).eq("id", bet["id"]).execute()
-        updated += 1
-
-    return updated
+    counts = update_bet_reference_snapshots(db, sides=sides, allow_close=True)
+    return counts["latest_updated"]
 
 
 async def fetch_clv_for_pending_bets(db) -> int:
@@ -681,56 +922,66 @@ async def run_jit_clv_snatcher(db) -> int:
     Returns the number of bets updated.
     """
     from datetime import datetime, timezone, timedelta
+    from services.clv_tracking import (
+        CLOSE_WINDOW_MINUTES,
+        update_bet_reference_snapshots,
+        update_scan_opportunity_reference_snapshots,
+    )
+    from services.research_opportunities import is_missing_scan_opportunities_error
 
     now = datetime.now(timezone.utc)
-    window_end = now + timedelta(minutes=20)
+    window_end = now + timedelta(minutes=CLOSE_WINDOW_MINUTES)
     now_iso = now.isoformat()
     window_end_iso = window_end.isoformat()
 
+    bet_result = (
+        db.table("bets")
+        .select("id,clv_sport_key")
+        .eq("result", "pending")
+        .is_("pinnacle_odds_at_close", "null")
+        .not_.is_("clv_sport_key", "null")
+        .gt("commence_time", now_iso)
+        .lte("commence_time", window_end_iso)
+        .execute()
+    )
     try:
-        result = (
-            db.table("bets")
-            .select("id,clv_sport_key,clv_team,commence_time,clv_event_id")
-            .eq("result", "pending")
-            .is_("pinnacle_odds_at_close", "null")
-            .not_.is_("clv_sport_key", "null")
+        opportunity_result = (
+            db.table("scan_opportunities")
+            .select("id,sport")
+            .is_("reference_odds_at_close", "null")
             .gt("commence_time", now_iso)
             .lte("commence_time", window_end_iso)
             .execute()
         )
     except Exception as e:
-        if "clv_event_id" not in str(e):
+        if is_missing_scan_opportunities_error(e):
+            opportunity_result = type("EmptyResult", (), {"data": []})()
+        else:
             raise
-        result = (
-            db.table("bets")
-            .select("id,clv_sport_key,clv_team,commence_time")
-            .eq("result", "pending")
-            .is_("pinnacle_odds_at_close", "null")
-            .not_.is_("clv_sport_key", "null")
-            .gt("commence_time", now_iso)
-            .lte("commence_time", window_end_iso)
-            .execute()
-        )
 
-    if not result.data:
+    if not bet_result.data and not opportunity_result.data:
         return 0
 
-    sport_bets: dict[str, list[dict]] = {}
-    for bet in result.data:
-        sk = bet.get("clv_sport_key")
-        if sk:
-            sport_bets.setdefault(sk, []).append(bet)
+    sport_keys = {
+        str(row.get("clv_sport_key") or "").strip()
+        for row in (bet_result.data or [])
+        if row.get("clv_sport_key")
+    }
+    sport_keys.update(
+        {
+            str(row.get("sport") or "").strip()
+            for row in (opportunity_result.data or [])
+            if row.get("sport")
+        }
+    )
 
-    total_updated = 0
-    settled_at = datetime.now(timezone.utc).isoformat()
+    total_close_updated = 0
 
-    for sport_key, bets in sport_bets.items():
+    for sport_key in sorted(sport_keys):
         try:
             data, _ = await fetch_odds(sport_key, source="jit_clv")
             events = data if isinstance(data, list) else []
-
-            snapshot_by_event: dict[tuple[str, str], float] = {}
-            snapshot_by_time: dict[tuple[str, str], float] = {}
+            sides: list[dict[str, Any]] = []
             for event in events:
                 home = event["home_team"]
                 away = event["away_team"]
@@ -741,35 +992,30 @@ async def run_jit_clv_snatcher(db) -> int:
                     continue
                 pin_home = pin_outcomes.get(home)
                 pin_away = pin_outcomes.get(away)
-                if pin_home:
-                    snapshot_by_time[(ct, home)] = pin_home
+                if pin_home is not None:
+                    side = {"sport": sport_key, "commence_time": ct, "team": home, "pinnacle_odds": pin_home}
                     if event_id:
-                        snapshot_by_event[(event_id, home)] = pin_home
-                if pin_away:
-                    snapshot_by_time[(ct, away)] = pin_away
+                        side["event_id"] = event_id
+                    sides.append(side)
+                if pin_away is not None:
+                    side = {"sport": sport_key, "commence_time": ct, "team": away, "pinnacle_odds": pin_away}
                     if event_id:
-                        snapshot_by_event[(event_id, away)] = pin_away
+                        side["event_id"] = event_id
+                    sides.append(side)
 
-            for bet in bets:
-                close_odds = None
-                team = bet.get("clv_team", "")
-                event_id = str(bet.get("clv_event_id") or "").strip()
-                if event_id and team:
-                    close_odds = snapshot_by_event.get((event_id, team))
-                if close_odds is None:
-                    key = (bet.get("commence_time", ""), team)
-                    close_odds = snapshot_by_time.get(key)
-                if close_odds is not None:
-                    db.table("bets").update({
-                        "pinnacle_odds_at_close": close_odds,
-                        "clv_updated_at": settled_at,
-                    }).eq("id", bet["id"]).execute()
-                    total_updated += 1
+            bet_updates = update_bet_reference_snapshots(db, sides=sides, allow_close=True, now=now)
+            opportunity_updates = update_scan_opportunity_reference_snapshots(
+                db,
+                sides=sides,
+                allow_close=True,
+                now=now,
+            )
+            total_close_updated += bet_updates["close_updated"] + opportunity_updates["close_updated"]
 
         except Exception as e:
             print(f"[JIT CLV] Error processing sport '{sport_key}': {e}")
 
-    return total_updated
+    return total_close_updated
 
 
 async def fetch_scores(sport: str, source: str = "auto_settle") -> list[dict]:
@@ -1189,12 +1435,10 @@ async def scan_all_sides(sport: str = "basketball_nba", source: str = "unknown")
         had_any_book = False
 
         for book_key, book_display in TARGET_BOOKS.items():
-            book_outcomes, sportsbook_deeplink_url = _extract_bookmaker_meta(
-                event.get("bookmakers", []),
-                book_key,
-            )
-            if not book_outcomes:
+            book_market = _extract_h2h_bookmaker_market(event.get("bookmakers", []), book_key)
+            if not book_market:
                 continue
+            book_outcomes = book_market["outcomes"]
 
             book_home = book_outcomes.get(home)
             book_away = book_outcomes.get(away)
@@ -1205,11 +1449,24 @@ async def scan_all_sides(sport: str = "basketball_nba", source: str = "unknown")
 
             home_edge = calculate_edge(true_probs["team_a"], book_home)
             away_edge = calculate_edge(true_probs["team_b"], book_away)
+            home_link, home_link_level = resolve_sportsbook_deeplink(
+                sportsbook=book_display,
+                selection_link=book_market["selection_links"].get(home),
+                market_link=book_market["market_link"],
+                event_link=book_market["event_link"],
+            )
+            away_link, away_link_level = resolve_sportsbook_deeplink(
+                sportsbook=book_display,
+                selection_link=book_market["selection_links"].get(away),
+                market_link=book_market["market_link"],
+                event_link=book_market["event_link"],
+            )
 
             all_sides.append({
                 "event_id": event.get("id"),
                 "sportsbook": book_display,
-                "sportsbook_deeplink_url": sportsbook_deeplink_url,
+                "sportsbook_deeplink_url": home_link,
+                "sportsbook_deeplink_level": home_link_level,
                 "sport": event.get("sport_key", sport),
                 "event": f"{away} @ {home}",
                 "commence_time": commence,
@@ -1225,7 +1482,8 @@ async def scan_all_sides(sport: str = "basketball_nba", source: str = "unknown")
             all_sides.append({
                 "event_id": event.get("id"),
                 "sportsbook": book_display,
-                "sportsbook_deeplink_url": sportsbook_deeplink_url,
+                "sportsbook_deeplink_url": away_link,
+                "sportsbook_deeplink_level": away_link_level,
                 "sport": event.get("sport_key", sport),
                 "event": f"{away} @ {home}",
                 "commence_time": commence,
@@ -1242,10 +1500,17 @@ async def scan_all_sides(sport: str = "basketball_nba", source: str = "unknown")
                 book_draw_key = _find_draw_key(book_outcomes, home, away)
                 if book_draw_key and book_draw_key in book_outcomes:
                     draw_edge = calculate_edge(true_prob_draw, book_outcomes[book_draw_key])
+                    draw_link, draw_link_level = resolve_sportsbook_deeplink(
+                        sportsbook=book_display,
+                        selection_link=book_market["selection_links"].get(book_draw_key),
+                        market_link=book_market["market_link"],
+                        event_link=book_market["event_link"],
+                    )
                     all_sides.append({
                         "event_id": event.get("id"),
                         "sportsbook": book_display,
-                        "sportsbook_deeplink_url": sportsbook_deeplink_url,
+                        "sportsbook_deeplink_url": draw_link,
+                        "sportsbook_deeplink_level": draw_link_level,
                         "sport": event.get("sport_key", sport),
                         "event": f"{away} @ {home}",
                         "commence_time": commence,

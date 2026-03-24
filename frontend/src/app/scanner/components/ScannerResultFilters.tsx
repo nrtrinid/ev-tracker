@@ -54,6 +54,8 @@ interface ScannerResultFiltersProps {
   boostPresets: number[];
   activeFilterChips: string[];
   hasActiveFilters: boolean;
+  hidePropSideControl?: boolean;
+  sharedPropsOnly?: boolean;
   searchPlaceholder?: string;
   availablePropMarkets?: string[];
   onSearchChange: (value: string) => void;
@@ -83,6 +85,8 @@ export function ScannerResultFilters({
   boostPresets,
   activeFilterChips,
   hasActiveFilters,
+  hidePropSideControl = false,
+  sharedPropsOnly = false,
   searchPlaceholder = "Search team",
   availablePropMarkets = [],
   onSearchChange,
@@ -133,34 +137,38 @@ export function ScannerResultFilters({
         </>
       )}
 
-      <DropdownMenuCheckboxItem
-        checked={filters.hideLongshots}
-        onCheckedChange={(checked) => onHideLongshotsChange(Boolean(checked))}
-      >
-        Hide longshots (&gt; +500)
-      </DropdownMenuCheckboxItem>
-      <DropdownMenuCheckboxItem
-        checked={filters.hideAlreadyLogged}
-        onCheckedChange={(checked) => onHideAlreadyLoggedChange(Boolean(checked))}
-      >
-        Hide already logged
-      </DropdownMenuCheckboxItem>
+      {!sharedPropsOnly && (
+        <>
+          <DropdownMenuCheckboxItem
+            checked={filters.hideLongshots}
+            onCheckedChange={(checked) => onHideLongshotsChange(Boolean(checked))}
+          >
+            Hide longshots (&gt; +500)
+          </DropdownMenuCheckboxItem>
+          <DropdownMenuCheckboxItem
+            checked={filters.hideAlreadyLogged}
+            onCheckedChange={(checked) => onHideAlreadyLoggedChange(Boolean(checked))}
+          >
+            Hide already logged
+          </DropdownMenuCheckboxItem>
 
-      <DropdownMenuSeparator />
-      <DropdownMenuLabel>Risk Preset</DropdownMenuLabel>
-      <DropdownMenuRadioGroup
-        value={filters.riskPreset}
-        onValueChange={(value) => onRiskPresetChange(value as ScannerRiskPreset)}
-      >
-        {RISK_OPTIONS.map((option) => (
-          <DropdownMenuRadioItem key={option.value} value={option.value}>
-            {option.label}
-            <span className="ml-2 text-[10px] text-muted-foreground">{option.hint}</span>
-          </DropdownMenuRadioItem>
-        ))}
-      </DropdownMenuRadioGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel>Risk Preset</DropdownMenuLabel>
+          <DropdownMenuRadioGroup
+            value={filters.riskPreset}
+            onValueChange={(value) => onRiskPresetChange(value as ScannerRiskPreset)}
+          >
+            {RISK_OPTIONS.map((option) => (
+              <DropdownMenuRadioItem key={option.value} value={option.value}>
+                {option.label}
+                <span className="ml-2 text-[10px] text-muted-foreground">{option.hint}</span>
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </>
+      )}
 
-      {surface === "player_props" && (
+      {surface === "player_props" && !hidePropSideControl && (
         <>
           <DropdownMenuSeparator />
           <DropdownMenuLabel>Prop Market</DropdownMenuLabel>
@@ -282,55 +290,59 @@ export function ScannerResultFilters({
                 </div>
               )}
 
-              <div className="space-y-2">
-                <p className="text-xs font-medium text-muted-foreground">Visibility</p>
-                <button
-                  type="button"
-                  onClick={() => onHideLongshotsChange(!filters.hideLongshots)}
-                  className={cn(
-                    "w-full rounded-md border px-3 py-2 text-left text-sm transition-colors",
-                    filters.hideLongshots
-                      ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
-                      : "border-border bg-background text-foreground"
-                  )}
-                >
-                  Hide longshots (&gt; +500)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onHideAlreadyLoggedChange(!filters.hideAlreadyLogged)}
-                  className={cn(
-                    "w-full rounded-md border px-3 py-2 text-left text-sm transition-colors",
-                    filters.hideAlreadyLogged
-                      ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
-                      : "border-border bg-background text-foreground"
-                  )}
-                >
-                  Hide already logged
-                </button>
-              </div>
-
-              <div className="space-y-2">
-                <p className="text-xs font-medium text-muted-foreground">Risk preset</p>
-                <div className="grid grid-cols-1 gap-2">
-                  {RISK_OPTIONS.map((option) => (
+              {!sharedPropsOnly && (
+                <>
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground">Visibility</p>
                     <button
-                      key={option.value}
                       type="button"
-                      onClick={() => onRiskPresetChange(option.value)}
+                      onClick={() => onHideLongshotsChange(!filters.hideLongshots)}
                       className={cn(
-                        "w-full rounded-md border px-3 py-2 text-left transition-colors",
-                        filters.riskPreset === option.value
+                        "w-full rounded-md border px-3 py-2 text-left text-sm transition-colors",
+                        filters.hideLongshots
                           ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
                           : "border-border bg-background text-foreground"
                       )}
                     >
-                      <span className="block text-sm font-medium">{option.label}</span>
-                      <span className="block text-xs text-muted-foreground">{option.hint}</span>
+                      Hide longshots (&gt; +500)
                     </button>
-                  ))}
-                </div>
-              </div>
+                    <button
+                      type="button"
+                      onClick={() => onHideAlreadyLoggedChange(!filters.hideAlreadyLogged)}
+                      className={cn(
+                        "w-full rounded-md border px-3 py-2 text-left text-sm transition-colors",
+                        filters.hideAlreadyLogged
+                          ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
+                          : "border-border bg-background text-foreground"
+                      )}
+                    >
+                      Hide already logged
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground">Risk preset</p>
+                    <div className="grid grid-cols-1 gap-2">
+                      {RISK_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => onRiskPresetChange(option.value)}
+                          className={cn(
+                            "w-full rounded-md border px-3 py-2 text-left transition-colors",
+                            filters.riskPreset === option.value
+                              ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
+                              : "border-border bg-background text-foreground"
+                          )}
+                        >
+                          <span className="block text-sm font-medium">{option.label}</span>
+                          <span className="block text-xs text-muted-foreground">{option.hint}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
 
               {surface === "player_props" && (
                 <div className="space-y-2">
@@ -367,7 +379,7 @@ export function ScannerResultFilters({
                 </div>
               )}
 
-              {surface === "player_props" && (
+              {surface === "player_props" && !hidePropSideControl && (
                 <div className="space-y-2">
                   <p className="text-xs font-medium text-muted-foreground">Prop side</p>
                   <div className="grid grid-cols-3 gap-2">
@@ -392,6 +404,49 @@ export function ScannerResultFilters({
             </div>
           </SheetContent>
         </Sheet>
+      </div>
+
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        <button
+          type="button"
+          onClick={() => onTimePresetChange(filters.timePreset === "starting_soon" ? "all" : "starting_soon")}
+          className={cn(
+            "whitespace-nowrap rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors",
+            filters.timePreset === "starting_soon"
+              ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
+              : "border-border bg-background text-muted-foreground hover:text-foreground"
+          )}
+        >
+          Starting Soon
+        </button>
+        {!sharedPropsOnly && (
+          <>
+            <button
+              type="button"
+              onClick={() => onRiskPresetChange(filters.riskPreset === "safer" ? "any" : "safer")}
+              className={cn(
+                "whitespace-nowrap rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors",
+                filters.riskPreset === "safer"
+                  ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
+                  : "border-border bg-background text-muted-foreground hover:text-foreground"
+              )}
+            >
+              Safer Odds
+            </button>
+            <button
+              type="button"
+              onClick={() => onHideAlreadyLoggedChange(!filters.hideAlreadyLogged)}
+              className={cn(
+                "whitespace-nowrap rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors",
+                filters.hideAlreadyLogged
+                  ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
+                  : "border-border bg-background text-muted-foreground hover:text-foreground"
+              )}
+            >
+              Hide Logged
+            </button>
+          </>
+        )}
       </div>
 
       {shouldShowProfitBoostContextControls(activeLens) && (

@@ -4,7 +4,7 @@ const testEmail = process.env.PLAYWRIGHT_TEST_EMAIL;
 const testPassword = process.env.PLAYWRIGHT_TEST_PASSWORD;
 const hasAuth = !!testEmail && !!testPassword;
 
-type DuplicateState = "already_logged" | "better_now";
+type DuplicateState = "logged_elsewhere" | "already_logged" | "better_now";
 
 function buildScanPayload(params: {
   duplicateState: DuplicateState;
@@ -84,9 +84,32 @@ test.describe("scanner duplicate states", () => {
 
     const card = page.locator(".card-hover").filter({ hasText: "Los Angeles Lakers" }).first();
     await expect(card).toBeVisible({ timeout: 10000 });
-    await expect(card.getByText("Already Logged")).toBeVisible();
     await expect(card.getByText("Better Now")).toBeVisible();
+    await expect(card.getByText("Already Placed")).toHaveCount(0);
     await expect(card.getByText(/Logged at \+100 - now \+130/i)).toBeVisible();
+    await expect(card.getByText(/This line is better than the one you already logged\./i)).toHaveCount(0);
+  });
+
+  test("shows Logged Elsewhere badge for cross-book exposure", async ({ page }) => {
+    await mockScannerLatest(
+      page,
+      buildScanPayload({
+        duplicateState: "logged_elsewhere",
+        team: "Phoenix Suns",
+        event: "Suns @ Kings",
+        bookOdds: 118,
+        bestLoggedOdds: 112,
+      })
+    );
+
+    await page.goto("/scanner");
+
+    const card = page.locator(".card-hover").filter({ hasText: "Phoenix Suns" }).first();
+    await expect(card).toBeVisible({ timeout: 10000 });
+    await expect(card.getByText("Logged Elsewhere")).toBeVisible();
+    await expect(card.getByText("Already Placed")).toHaveCount(0);
+    await expect(card.getByText("Better Now")).toHaveCount(0);
+    await expect(card.getByText(/Logged at/i)).toHaveCount(0);
   });
 
   test("drawer warns on duplicate exposure and updates submit CTA", async ({ page }) => {
@@ -104,10 +127,10 @@ test.describe("scanner duplicate states", () => {
 
     const card = page.locator(".card-hover").filter({ hasText: "Boston Celtics" }).first();
     await expect(card).toBeVisible({ timeout: 10000 });
-    await card.getByRole("button", { name: /Log Bet/i }).click();
+    await card.getByRole("button", { name: /Review & Log/i }).click();
 
     await expect(page.getByRole("heading", { name: "Log Bet" })).toBeVisible({ timeout: 5000 });
-    await expect(page.getByText("You already logged this side.")).toBeVisible();
+    await expect(page.getByText("You already placed this side.")).toBeVisible();
     await expect(page.getByText(/increase exposure on the same outcome/i)).toBeVisible();
     await expect(page.getByRole("button", { name: "Log Another Ticket" })).toBeVisible();
   });

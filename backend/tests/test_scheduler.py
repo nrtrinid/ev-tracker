@@ -3,7 +3,7 @@ from datetime import datetime, UTC, timedelta
 
 import pytest
 from fastapi import HTTPException
-from .test_utils import import_main_for_tests, install_apscheduler_stubs
+from .test_utils import import_main_for_tests, install_apscheduler_stubs, reload_service_module
 
 
 class DummyScheduler:
@@ -127,6 +127,26 @@ async def test_scheduled_scan_job_calls_get_cached_or_scan_for_all_supported_spo
     assert called == sports
 
 
+@pytest.mark.asyncio
+async def test_scheduled_scan_job_never_calls_player_props_scanner(monkeypatch):
+    main = import_main_for_tests(monkeypatch)
+
+    async def fake_get_cached_or_scan(_sport, source="unknown"):
+        return {"sides": [], "events_fetched": 0, "events_with_both_books": 0}
+
+    async def _boom_player_props(*_args, **_kwargs):
+        raise AssertionError("player props should never run in scheduled scans")
+
+    import services.odds_api as odds_api
+    import services.player_props as player_props
+
+    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)
+    monkeypatch.setattr(odds_api, "get_cached_or_scan", fake_get_cached_or_scan, raising=True)
+    monkeypatch.setattr(player_props, "get_cached_or_scan_player_props", _boom_player_props, raising=True)
+
+    await main._run_scheduled_scan_job()
+
+
 def test_scheduler_freshness_uses_startup_grace_when_no_success(monkeypatch):
     main = import_main_for_tests(monkeypatch)
     main._init_scheduler_heartbeats()
@@ -177,6 +197,7 @@ def test_ops_status_returns_snapshot_when_token_valid(monkeypatch):
     assert payload["runtime"]["scheduler_expected"] is False
     assert "odds_api_activity" in payload["ops"]
     assert "summary" in payload["ops"]["odds_api_activity"]
+    assert "recent_scans" in payload["ops"]["odds_api_activity"]
     assert "recent_calls" in payload["ops"]["odds_api_activity"]
 
 
@@ -277,6 +298,13 @@ def test_annotate_sides_with_duplicate_state_uses_pending_best_price(monkeypatch
         },
         {
             "sport": "basketball_nba",
+            "commence_time": "2026-03-19T20:00:00Z",
+            "team": "Lakers",
+            "sportsbook": "FanDuel",
+            "book_odds": 140,
+        },
+        {
+            "sport": "basketball_nba",
             "commence_time": "2026-03-19T21:00:00Z",
             "team": "Celtics",
             "sportsbook": "DraftKings",
@@ -293,8 +321,12 @@ def test_annotate_sides_with_duplicate_state_uses_pending_best_price(monkeypatch
     assert annotated[1]["scanner_duplicate_state"] == "better_now"
     assert annotated[1]["best_logged_odds_american"] == 130
 
-    assert annotated[2]["scanner_duplicate_state"] == "new"
-    assert annotated[2]["matched_pending_bet_id"] is None
+    assert annotated[2]["scanner_duplicate_state"] == "logged_elsewhere"
+    assert annotated[2]["best_logged_odds_american"] == 130
+    assert annotated[2]["matched_pending_bet_id"] == "bet-best"
+
+    assert annotated[3]["scanner_duplicate_state"] == "new"
+    assert annotated[3]["matched_pending_bet_id"] is None
 
 
 @pytest.mark.asyncio
@@ -572,6 +604,75 @@ async def test_scan_markets_returns_backend_duplicate_state_enum(monkeypatch):
     assert response.sides[0].best_logged_odds_american == 120
     assert response.sides[0].matched_pending_bet_id == "pending-1"
     assert response.sides[1].scanner_duplicate_state == "new"
+
+
+@pytest.mark.asyncio
+async def test_scan_markets_records_grouped_manual_scan_activity(monkeypatch):
+    main = import_main_for_tests(monkeypatch)
+    odds_api = reload_service_module("odds_api")
+
+    class _FakeQuery:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args, **_kwargs):
+            return self
+
+        def upsert(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            return types.SimpleNamespace(data=[])
+
+    class _FakeDB:
+        def table(self, _name):
+            return _FakeQuery()
+
+    monkeypatch.setattr(main, "get_db", lambda: _FakeDB(), raising=True)
+    monkeypatch.setattr(main, "_retry_supabase", lambda f, retries=2: f(), raising=True)
+
+    async def _fake_cached_or_scan(_sport, source="unknown"):
+        assert source == "manual_scan"
+        return {
+            "sides": [
+                {
+                    "sportsbook": "DraftKings",
+                    "sport": "basketball_nba",
+                    "event": "Lakers @ Celtics",
+                    "commence_time": "2026-03-19T20:00:00Z",
+                    "team": "Lakers",
+                    "pinnacle_odds": 110,
+                    "book_odds": 130,
+                    "true_prob": 0.52,
+                    "base_kelly_fraction": 0.01,
+                    "book_decimal": 2.3,
+                    "ev_percentage": 2.0,
+                }
+            ],
+            "events_fetched": 2,
+            "events_with_both_books": 1,
+            "api_requests_remaining": "100",
+            "fetched_at": 1_700_000_000,
+            "cache_hit": False,
+        }
+
+    monkeypatch.setattr(odds_api, "get_cached_or_scan", _fake_cached_or_scan, raising=True)
+    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)
+
+    await main.scan_markets(sport="basketball_nba", user={"id": "user-1", "email": "operator@example.com"})
+
+    snapshot = odds_api.get_odds_api_activity_snapshot()
+    assert snapshot["recent_scans"]
+    newest = snapshot["recent_scans"][0]
+    assert newest["source"] == "manual_scan"
+    assert newest["surface"] == "straight_bets"
+    assert newest["scan_scope"] == "single_sport"
+    assert newest["requested_sport"] == "basketball_nba"
+    assert newest["actor_label"] == "operator@example.com"
+    assert newest["total_sides"] == 1
 
 
 @pytest.mark.asyncio

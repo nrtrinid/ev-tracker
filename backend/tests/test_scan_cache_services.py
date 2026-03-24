@@ -61,6 +61,35 @@ class _FakePersistDB:
         return self.query
 
 
+VALID_PROP_DIAGNOSTICS = {
+    "scan_mode": "curated_sniper",
+    "scoreboard_event_count": 10,
+    "odds_event_count": 5,
+    "curated_games": [
+        {
+            "event_id": "espn-1",
+            "away_team": "Boston Celtics",
+            "home_team": "Los Angeles Lakers",
+            "selection_reason": "national_tv",
+            "broadcasts": ["ESPN"],
+            "odds_event_id": "odds-1",
+            "commence_time": "2026-03-19T00:00:00Z",
+            "matched": True,
+        }
+    ],
+    "matched_event_count": 1,
+    "unmatched_game_count": 0,
+    "events_fetched": 1,
+    "events_skipped_pregame": 0,
+    "events_with_results": 1,
+    "candidate_sides_count": 14,
+    "quality_gate_filtered_count": 2,
+    "quality_gate_min_reference_bookmakers": 2,
+    "sides_count": 12,
+    "markets_requested": ["player_points"],
+}
+
+
 def test_empty_scan_response_shape():
     payload = empty_scan_response()
     assert payload.sport == "all"
@@ -162,6 +191,7 @@ def test_persist_latest_full_scan_builds_expected_payload():
         events_with_both_books=2,
         api_requests_remaining="88",
         scanned_at="2026-03-19T00:00:00Z",
+        diagnostics=VALID_PROP_DIAGNOSTICS,
         retry_supabase=lambda fn: fn(),
         log_event=lambda event, **fields: events.append((event, fields)),
     )
@@ -176,6 +206,9 @@ def test_persist_latest_full_scan_builds_expected_payload():
     assert upsert_payload["payload"]["events_with_both_books"] == 2
     assert upsert_payload["payload"]["api_requests_remaining"] == "88"
     assert upsert_payload["payload"]["scanned_at"] == "2026-03-19T00:00:00Z"
+    diagnostics = upsert_payload["payload"]["diagnostics"]
+    for key, value in VALID_PROP_DIAGNOSTICS.items():
+        assert diagnostics[key] == value
     assert events == []
 
 

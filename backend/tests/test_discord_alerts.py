@@ -142,6 +142,8 @@ def test_schedule_alerts_dedupes(monkeypatch):
 async def test_send_discord_webhook_noop_without_env(monkeypatch, capsys):
     mod = _reload_discord_alerts()
     monkeypatch.delenv("DISCORD_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("DISCORD_ALERT_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("DISCORD_DEBUG_WEBHOOK_URL", raising=False)
     mod._warned_missing_webhook = False
 
     await mod.send_discord_webhook({"content": "hi"})

@@ -9,20 +9,26 @@ function formatMarketLabel(value: string) {
 
 interface PlayerPropListProps {
   results: Array<PlayerPropMarketSide & { _retention?: number; _boostedEV?: number }>;
+  kellyMultiplier: number;
+  bankroll: number;
   canLoadMore: boolean;
   onLoadMore: () => void;
   onLogBet: (side: PlayerPropMarketSide) => void;
   onAddToCart: (side: PlayerPropMarketSide) => void;
+  onStartPlaceFlow: (side: PlayerPropMarketSide) => void;
   bookColors: Record<string, string>;
   sportDisplayMap: Record<string, string>;
 }
 
 export function PlayerPropList({
   results,
+  kellyMultiplier,
+  bankroll,
   canLoadMore,
   onLoadMore,
   onLogBet,
   onAddToCart,
+  onStartPlaceFlow,
   bookColors,
   sportDisplayMap,
 }: PlayerPropListProps) {
@@ -49,8 +55,11 @@ export function PlayerPropList({
             <PlayerPropCard
               key={`${side.selection_key}-${side.sportsbook}`}
               side={side}
+              kellyMultiplier={kellyMultiplier}
+              bankroll={bankroll}
               onLogBet={onLogBet}
               onAddToCart={onAddToCart}
+              onStartPlaceFlow={onStartPlaceFlow}
               bookColors={bookColors}
               sportDisplayMap={sportDisplayMap}
             />

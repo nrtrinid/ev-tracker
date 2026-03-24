@@ -17,6 +17,12 @@ def build_settings_update_payload(settings_update) -> dict[str, Any]:
         data["default_stake"] = settings_update.default_stake
     if settings_update.preferred_sportsbooks is not None:
         data["preferred_sportsbooks"] = settings_update.preferred_sportsbooks
+    if settings_update.kelly_multiplier is not None:
+        data["kelly_multiplier"] = settings_update.kelly_multiplier
+    if settings_update.bankroll_override is not None:
+        data["bankroll_override"] = settings_update.bankroll_override
+    if settings_update.use_computed_bankroll is not None:
+        data["use_computed_bankroll"] = settings_update.use_computed_bankroll
     if settings_update.k_factor_mode is not None:
         data["k_factor_mode"] = settings_update.k_factor_mode
     if settings_update.k_factor_min_stake is not None:

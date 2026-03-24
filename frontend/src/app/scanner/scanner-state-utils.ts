@@ -1,5 +1,5 @@
 import type { MarketSide, ParlayCartLeg, PromoType, ScannedBetData } from "@/lib/types";
-import { calculateStealthStake } from "@/lib/utils";
+import { calculateStealthStake, decimalToAmerican } from "@/lib/utils";
 
 import type { ScannerLens } from "./scanner-ui-model";
 
@@ -19,6 +19,13 @@ export function parseScannerCustomBoostInput(input: string): number | null {
     return null;
   }
   return parsed;
+}
+
+function fairAmericanFromTrueProbability(trueProb: number | null | undefined): number | null {
+  if (trueProb == null || !Number.isFinite(trueProb) || trueProb <= 0 || trueProb >= 1) {
+    return null;
+  }
+  return decimalToAmerican(1 / trueProb);
 }
 
 export function buildScannerLogBetInitialValues(params: {
@@ -56,7 +63,7 @@ export function buildScannerLogBetInitialValues(params: {
       odds_american: side.book_odds,
       promo_type: promoType,
       boost_percent: boostPct,
-      pinnacle_odds_at_entry: side.pinnacle_odds,
+      pinnacle_odds_at_entry: side.reference_odds,
       commence_time: side.commence_time,
       clv_team: side.team ?? side.player_name,
       clv_sport_key: side.sport,
@@ -73,6 +80,8 @@ export function buildScannerLogBetInitialValues(params: {
         market: side.market,
         opponent: side.opponent,
         display_name: side.display_name,
+        reference_source: side.reference_source,
+        reference_bookmakers: side.reference_bookmakers,
       },
       raw_kelly_stake: rawKellyStake,
       stealth_kelly_stake: stealthKellyStake,
@@ -121,15 +130,36 @@ export function buildParlayCartLeg(side: MarketSide): ParlayCartLeg {
       selectionKey: side.selection_key,
       sportsbook: side.sportsbook,
       oddsAmerican: side.book_odds,
+      referenceOddsAmerican: side.reference_odds,
+      referenceTrueProbability: side.true_prob,
+      referenceSource: side.reference_source,
       display: side.display_name,
       event: side.event,
       sport: side.sport,
       commenceTime: side.commence_time,
       correlationTags: [side.event_id ?? side.event, side.player_name, side.market_key],
+      team: side.team ?? undefined,
+      participantName: side.player_name,
+      participantId: side.participant_id ?? undefined,
+      selectionSide: side.selection_side,
+      lineValue: side.line_value ?? undefined,
+      marketDisplay: side.market,
+      sourceEventId: side.event_id ?? undefined,
+      sourceMarketKey: side.market_key,
+      sourceSelectionKey: side.selection_key,
+      selectionMeta: {
+        opponent: side.opponent,
+        referenceBookmakers: side.reference_bookmakers,
+        referenceBookmakerCount: side.reference_bookmaker_count,
+        confidenceLabel: side.confidence_label,
+        sportsbookDeeplinkUrl: side.sportsbook_deeplink_url,
+        sportsbookDeeplinkLevel: side.sportsbook_deeplink_level,
+      },
     };
   }
 
   const selectionKey = side.selection_key ?? `${side.event_id ?? side.commence_time}:${side.team}`;
+  const deviggedFairOdds = fairAmericanFromTrueProbability(side.true_prob);
   return {
     id: `${side.surface}:${selectionKey}:${side.sportsbook}`,
     surface: side.surface,
@@ -138,10 +168,24 @@ export function buildParlayCartLeg(side: MarketSide): ParlayCartLeg {
     selectionKey,
     sportsbook: side.sportsbook,
     oddsAmerican: side.book_odds,
+    referenceOddsAmerican: deviggedFairOdds ?? side.pinnacle_odds,
+    referenceTrueProbability: side.true_prob,
+    referenceSource: "pinnacle",
     display: `${side.team} ML`,
     event: side.event,
     sport: side.sport,
     commenceTime: side.commence_time,
     correlationTags: [side.event_id ?? side.event, side.team],
+    team: side.team,
+    selectionSide: side.team,
+    marketDisplay: "Moneyline",
+    sourceEventId: side.event_id ?? undefined,
+    sourceMarketKey: side.market_key ?? "h2h",
+    sourceSelectionKey: selectionKey,
+    selectionMeta: {
+      rawPinnacleOdds: side.pinnacle_odds,
+      sportsbookDeeplinkUrl: side.sportsbook_deeplink_url,
+      sportsbookDeeplinkLevel: side.sportsbook_deeplink_level,
+    },
   };
 }

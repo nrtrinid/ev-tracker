@@ -41,7 +41,6 @@ logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO), format="%(m
 logger = logging.getLogger("ev_tracker")
 
 SCHEDULER_STALE_WINDOWS = {
-    "clv_daily": timedelta(hours=30),
     "jit_clv": timedelta(minutes=45),
     "auto_settler": timedelta(hours=30),
     "scheduled_scan": timedelta(hours=20),
@@ -182,7 +181,7 @@ def _annotate_sides_with_duplicate_state(db, user_id: str, sides: list[dict]) ->
     Backend-owned scanner duplicate state.
 
     Matching scope: pending (unsettled exposure) only.
-    State enum: new | already_logged | better_now
+    State enum: new | logged_elsewhere | already_logged | better_now
     """
     if not sides:
         return sides
@@ -197,6 +196,7 @@ def _annotate_sides_with_duplicate_state(db, user_id: str, sides: list[dict]) ->
     )
 
     matches_by_key: dict[tuple[str, str, str, str, str], list[dict]] = {}
+    cross_book_matches_by_key: dict[tuple[str, str, str, str], list[dict]] = {}
     for row in pending_res.data or []:
         key = _scanner_match_key_from_bet(row)
         legacy_key = _scanner_legacy_match_key_from_bet(row)
@@ -204,6 +204,8 @@ def _annotate_sides_with_duplicate_state(db, user_id: str, sides: list[dict]) ->
             continue
         matches_by_key.setdefault(key, []).append(row)
         matches_by_key.setdefault(legacy_key, []).append(row)
+        cross_book_matches_by_key.setdefault(key[:4], []).append(row)
+        cross_book_matches_by_key.setdefault(legacy_key[:4], []).append(row)
 
     annotated: list[dict] = []
     for side in sides:
@@ -213,11 +215,32 @@ def _annotate_sides_with_duplicate_state(db, user_id: str, sides: list[dict]) ->
         matched = matches_by_key.get(key, [])
         if not matched:
             matched = matches_by_key.get(legacy_key, [])
+        cross_book_matched = cross_book_matches_by_key.get(key[:4], [])
+        if not cross_book_matched:
+            cross_book_matched = cross_book_matches_by_key.get(legacy_key[:4], [])
         current_odds = side.get("book_odds")
         current_quality = _price_quality_from_american(current_odds)
         side_out["current_odds_american"] = current_odds
 
         if not matched:
+            if cross_book_matched:
+                best_row = None
+                best_quality = None
+                for row in cross_book_matched:
+                    q = _price_quality_from_american(row.get("odds_american"))
+                    if q is None:
+                        continue
+                    if best_quality is None or q > best_quality:
+                        best_quality = q
+                        best_row = row
+
+                side_out["scanner_duplicate_state"] = "logged_elsewhere"
+                side_out["best_logged_odds_american"] = best_row.get("odds_american") if best_row else None
+                side_out["matched_pending_bet_id"] = (
+                    best_row.get("id") if best_row is not None else cross_book_matched[0].get("id")
+                )
+                annotated.append(side_out)
+                continue
             side_out["scanner_duplicate_state"] = "new"
             side_out["best_logged_odds_american"] = None
             side_out["matched_pending_bet_id"] = None
@@ -535,18 +558,55 @@ def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _capture_research_opportunities(sides: list[dict], *, source: str) -> None:
+    """Persist fresh straight-bet scan sides into the internal research ledger."""
+    if not sides:
+        return
+
+    from services.research_opportunities import capture_scan_opportunities
+
+    try:
+        capture_scan_opportunities(
+            get_db(),
+            sides=sides,
+            source=source,
+            captured_at=_utc_now_iso(),
+        )
+    except Exception as e:
+        _log_event(
+            "research.capture.failed",
+            level="warning",
+            source=source,
+            error_class=type(e).__name__,
+            error=str(e),
+        )
+
+
+async def _apply_fresh_straight_scan_followups(result: dict, *, source: str) -> None:
+    """Run research capture + CLV piggyback only for fresh straight-bet scan payloads."""
+    sides = result.get("sides") or []
+    if not sides or result.get("cache_hit"):
+        return
+    _capture_research_opportunities(sides, source=source)
+    await _piggyback_clv(sides)
+
+
 def _get_environment() -> str:
     return os.getenv("ENVIRONMENT", "production").lower()
 
 
 def _scanner_supported_sports(surface: str) -> list[str]:
     if surface == "player_props":
-        from services.odds_api import SUPPORTED_SPORTS
-
-        return SUPPORTED_SPORTS
+        return ["basketball_nba"]
     from services.odds_api import SUPPORTED_SPORTS
 
     return SUPPORTED_SPORTS
+
+
+def _append_scan_activity(**kwargs) -> None:
+    from services.odds_api import append_scan_activity
+
+    append_scan_activity(**kwargs)
 
 
 async def _get_cached_or_scan_for_surface(surface: str, sport: str, *, source: str = "unknown") -> dict:
@@ -589,6 +649,8 @@ def _persist_latest_full_scan(
     events_with_both_books: int,
     api_requests_remaining: str | None,
     scanned_at: str | None,
+    diagnostics: dict | None = None,
+    prizepicks_cards: list[dict] | None = None,
     retry_supabase,
     log_event,
 ):
@@ -601,6 +663,8 @@ def _persist_latest_full_scan(
         events_with_both_books=events_with_both_books,
         api_requests_remaining=api_requests_remaining,
         scanned_at=scanned_at,
+        diagnostics=diagnostics,
+        prizepicks_cards=prizepicks_cards,
         retry_supabase=retry_supabase,
         log_event=log_event,
     )
@@ -756,23 +820,9 @@ def _check_db_ready() -> tuple[bool, str | None]:
 
 
 def _init_ops_status() -> None:
-    app.state.ops_status = {
-        "last_scheduler_scan": None,
-        "last_ops_trigger_scan": None,
-        "last_manual_scan": None,
-        "last_auto_settle": None,
-        "last_auto_settle_summary": None,
-        "last_readiness_failure": None,
-        "odds_api_activity": {
-            "summary": {
-                "calls_last_hour": 0,
-                "errors_last_hour": 0,
-                "last_success_at": None,
-                "last_error_at": None,
-            },
-            "recent_calls": [],
-        },
-    }
+    from services.ops_history import build_empty_ops_status
+
+    app.state.ops_status = build_empty_ops_status()
 
 
 def _set_ops_status(key: str, value: dict) -> None:
@@ -781,6 +831,28 @@ def _set_ops_status(key: str, value: dict) -> None:
         _init_ops_status()
         state = app.state.ops_status
     state[key] = value
+
+
+def _persist_ops_job_run(**kwargs) -> None:
+    from services.ops_history import persist_ops_job_run
+
+    try:
+        db = get_db()
+    except Exception as exc:
+        _log_event(
+            "ops_history.get_db_failed",
+            level="warning",
+            error_class=type(exc).__name__,
+            error=str(exc),
+        )
+        db = None
+
+    persist_ops_job_run(
+        db=db,
+        retry_supabase=_retry_supabase,
+        log_event=_log_event,
+        **kwargs,
+    )
 
 
 def _require_ops_token(x_ops_token: str | None, x_cron_token: str | None = None) -> None:
@@ -802,52 +874,6 @@ except Exception as e:
     # If the runtime lacks IANA tzdata, scheduled scans should not run at wrong times.
     # Install the `tzdata` package if this occurs in production.
     print(f"[Scheduler] Failed to load America/Phoenix timezone: {e}")
-
-
-# ---------- CLV daily safety-net scheduler ----------
-# Fires once per day at 23:30 UTC (6:30 PM ET). Makes one fetch_odds call per
-# active sport and updates pinnacle_odds_at_close for all pending tracked bets.
-# This is a backstop — the piggyback in scan_markets does most of the work for free.
-
-async def _run_clv_daily_job():
-    """Safety-net: fetch closing Pinnacle lines for all pending CLV-tracked bets."""
-    from services.odds_api import fetch_clv_for_pending_bets
-
-    run_id = _new_run_id("clv_daily")
-    started_at = time.monotonic()
-    _record_scheduler_heartbeat("clv_daily", run_id, "started")
-    _log_event("scheduler.clv_daily.started", run_id=run_id)
-    db = get_db()
-    try:
-        updated = await fetch_clv_for_pending_bets(db)
-        _log_event(
-            "scheduler.clv_daily.completed",
-            run_id=run_id,
-            updated=updated,
-            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
-        )
-        _record_scheduler_heartbeat(
-            "clv_daily",
-            run_id,
-            "success",
-            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
-        )
-    except Exception as e:
-        _record_scheduler_heartbeat(
-            "clv_daily",
-            run_id,
-            "failure",
-            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
-            error=str(e),
-        )
-        _log_event(
-            "scheduler.clv_daily.failed",
-            level="error",
-            run_id=run_id,
-            error_class=type(e).__name__,
-            error=str(e),
-            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
-        )
 
 
 async def _run_jit_clv_snatcher_job():
@@ -914,12 +940,14 @@ async def _run_auto_settler_job():
     from services.odds_api import run_auto_settler, get_last_auto_settler_summary
 
     run_id = _new_run_id("auto_settler")
+    started = datetime.now(UTC).isoformat() + "Z"
     started_at = time.monotonic()
     _record_scheduler_heartbeat("auto_settler", run_id, "started")
     _log_event("scheduler.auto_settler.started", run_id=run_id)
     db = get_db()
     try:
         settled = await run_auto_settler(db, source="auto_settle_scheduler")
+        finished = datetime.now(UTC).isoformat() + "Z"
         _log_event(
             "scheduler.auto_settler.completed",
             run_id=run_id,
@@ -937,14 +965,29 @@ async def _run_auto_settler_job():
             {
                 "source": "scheduler",
                 "run_id": run_id,
+                "started_at": started,
+                "finished_at": finished,
                 "settled": settled,
                 "duration_ms": round((time.monotonic() - started_at) * 1000, 2),
-                "captured_at": _utc_now_iso(),
+                "captured_at": finished,
             },
         )
         summary = get_last_auto_settler_summary()
         if summary:
             _set_ops_status("last_auto_settle_summary", summary)
+        _persist_ops_job_run(
+            job_kind="auto_settle",
+            source="scheduler",
+            status="completed",
+            run_id=run_id,
+            captured_at=finished,
+            started_at=started,
+            finished_at=finished,
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+            settled=settled,
+            skipped_totals=summary.get("skipped_totals") if isinstance(summary, dict) else None,
+            meta={"sports": summary.get("sports")} if isinstance(summary, dict) and isinstance(summary.get("sports"), list) else None,
+        )
         if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1":
             from services.discord_alerts import send_discord_webhook
 
@@ -988,8 +1031,10 @@ async def _run_scheduled_scan_job():
     """
     Scheduled scan job: warms the same cache used by GET /api/scan-markets by
     calling services.odds_api.get_cached_or_scan across SUPPORTED_SPORTS.
+
+    Player props are intentionally excluded here and remain manual-only.
     """
-    from services.odds_api import get_cached_or_scan, SUPPORTED_SPORTS
+    from services.odds_api import append_scan_activity, get_cached_or_scan, SUPPORTED_SPORTS
 
     run_id = _new_run_id("scheduled_scan")
     started = datetime.now(UTC).isoformat()
@@ -1008,13 +1053,36 @@ async def _run_scheduled_scan_job():
     from services.discord_alerts import schedule_alerts
 
     for sport_key in SUPPORTED_SPORTS:
+        sport_started_at = time.monotonic()
         try:
             result = await get_cached_or_scan(sport_key, source="scheduled_scan")
+            scan_duration_ms = round((time.monotonic() - sport_started_at) * 1000, 2)
             sides_count = len(result.get("sides") or [])
             fetched = result.get("events_fetched")
             with_both = result.get("events_with_both_books")
             sides = result.get("sides") or []
+            append_scan_activity(
+                scan_session_id=run_id,
+                source="scheduled_scan",
+                surface="straight_bets",
+                scan_scope="all",
+                requested_sport=None,
+                sport=sport_key,
+                actor_label=None,
+                run_id=run_id,
+                cache_hit=bool(result.get("cache_hit")),
+                outbound_call_made=not bool(result.get("cache_hit")),
+                duration_ms=scan_duration_ms,
+                events_fetched=int(fetched or 0),
+                events_with_both_books=int(with_both or 0),
+                sides_count=sides_count,
+                api_requests_remaining=result.get("api_requests_remaining"),
+                status_code=200,
+                error_type=None,
+                error_message=None,
+            )
             all_sides.extend(sides)
+            await _apply_fresh_straight_scan_followups(result, source="scheduled_scan")
             total_sides += len(sides)
             total_events += int(fetched or 0)
             total_with_both += int(with_both or 0)
@@ -1041,6 +1109,31 @@ async def _run_scheduled_scan_job():
                 events_with_both_books=with_both,
             )
         except httpx.HTTPStatusError as e:
+            scan_duration_ms = round((time.monotonic() - sport_started_at) * 1000, 2)
+            remaining = None
+            status_code = e.response.status_code if e.response is not None else None
+            if e.response is not None:
+                remaining = e.response.headers.get("x-requests-remaining") or e.response.headers.get("x-request-remaining")
+            append_scan_activity(
+                scan_session_id=run_id,
+                source="scheduled_scan",
+                surface="straight_bets",
+                scan_scope="all",
+                requested_sport=None,
+                sport=sport_key,
+                actor_label=None,
+                run_id=run_id,
+                cache_hit=False,
+                outbound_call_made=True,
+                duration_ms=scan_duration_ms,
+                events_fetched=0,
+                events_with_both_books=0,
+                sides_count=0,
+                api_requests_remaining=remaining,
+                status_code=status_code,
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
             if e.response is not None and e.response.status_code == 404:
                 _log_event(
                     "scheduler.scan.sport_skipped",
@@ -1060,6 +1153,27 @@ async def _run_scheduled_scan_job():
             )
             hard_errors += 1
         except Exception as e:
+            scan_duration_ms = round((time.monotonic() - sport_started_at) * 1000, 2)
+            append_scan_activity(
+                scan_session_id=run_id,
+                source="scheduled_scan",
+                surface="straight_bets",
+                scan_scope="all",
+                requested_sport=None,
+                sport=sport_key,
+                actor_label=None,
+                run_id=run_id,
+                cache_hit=False,
+                outbound_call_made=False,
+                duration_ms=scan_duration_ms,
+                events_fetched=0,
+                events_with_both_books=0,
+                sides_count=0,
+                api_requests_remaining=None,
+                status_code=None,
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
             # Never crash the server/scheduler; log and continue.
             _log_event(
                 "scheduler.scan.sport_failed",
@@ -1153,8 +1267,30 @@ async def _run_scheduled_scan_job():
             "total_sides": total_sides,
             "alerts_scheduled": alerts_scheduled,
             "hard_errors": hard_errors,
+            "captured_at": finished + "Z",
             "autolog_summary": autolog_summary,
         },
+    )
+    _persist_ops_job_run(
+        job_kind="scheduled_scan",
+        source="scheduler",
+        status="completed" if hard_errors == 0 else "completed_with_errors",
+        run_id=run_id,
+        scan_session_id=run_id,
+        surface="straight_bets",
+        scan_scope="all",
+        requested_sport="all",
+        captured_at=finished + "Z",
+        started_at=started + "Z",
+        finished_at=finished + "Z",
+        duration_ms=duration_ms,
+        events_fetched=total_events,
+        events_with_both_books=total_with_both,
+        total_sides=total_sides,
+        alerts_scheduled=alerts_scheduled,
+        hard_errors=hard_errors,
+        api_requests_remaining=min_remaining,
+        meta={"autolog_summary": autolog_summary},
     )
 
     # Optional heartbeat so we can confirm the scheduled scan ran even when it finds no lines.
@@ -1181,14 +1317,18 @@ async def _run_scheduled_scan_job():
 
 async def _piggyback_clv(sides: list[dict]):
     """
-    Fire-and-forget task: update CLV snapshots for all pending tracked bets
-    from the just-completed scan. Errors are swallowed so they never affect
-    the scan response the user sees.
+    Fire-and-forget task: update CLV reference snapshots for pending bets and
+    open research opportunities from the just-completed fresh scan. Errors are
+    swallowed so they never affect the scan response the user sees.
     """
-    from services.odds_api import update_clv_snapshots
+    from services.clv_tracking import (
+        update_bet_reference_snapshots,
+        update_scan_opportunity_reference_snapshots,
+    )
     try:
         db = get_db()
-        update_clv_snapshots(sides, db)
+        update_bet_reference_snapshots(db, sides=sides, allow_close=True)
+        update_scan_opportunity_reference_snapshots(db, sides=sides, allow_close=True)
     except Exception as e:
         print(f"[CLV piggyback] Error: {e}")
 
@@ -1203,8 +1343,6 @@ async def start_scheduler():
     from apscheduler.triggers.interval import IntervalTrigger
     _init_scheduler_heartbeats()
     scheduler = AsyncIOScheduler()
-    # 23:30 UTC = 6:30 PM ET (accounts for EST; shift to 22:30 during EDT if needed)
-    scheduler.add_job(_run_clv_daily_job, CronTrigger(hour=23, minute=30))
     # Every 15 min: capture closing Pinnacle lines for games starting within 20 min
     scheduler.add_job(_run_jit_clv_snatcher_job, IntervalTrigger(minutes=15))
     # 4:00 AM Phoenix daily: auto-grade completed ML bets via /scores.
@@ -1293,6 +1431,7 @@ from routes.scan_routes import router as scan_router
 from routes.ops_cron import router as ops_router
 from routes.settings_routes import router as settings_router
 from routes.transactions_routes import router as transactions_router
+from routes.parlay_routes import router as parlay_router
 from routes.utility_routes import router as utility_router
 from routes.admin_routes import router as admin_router
 
@@ -1300,6 +1439,7 @@ app.include_router(scan_router)
 app.include_router(ops_router)
 app.include_router(settings_router)
 app.include_router(transactions_router)
+app.include_router(parlay_router)
 app.include_router(utility_router)
 app.include_router(admin_router)
 
@@ -1357,6 +1497,9 @@ def get_user_settings(db, user_id: str) -> dict:
         "k_factor": 0.78,
         "default_stake": None,
         "preferred_sportsbooks": DEFAULT_SPORTSBOOKS,
+        "kelly_multiplier": 0.25,
+        "bankroll_override": 1000.0,
+        "use_computed_bankroll": True,
         "k_factor_mode": "baseline",
         "k_factor_min_stake": 300.0,
         "k_factor_smoothing": 700.0,
@@ -1379,14 +1522,14 @@ def compute_k_user(db, user_id: str) -> dict:
     Compute observed bonus retention from settled bonus bets.
     Returns k_obs (None if no data), bonus_stake_settled.
     """
+    created_after = datetime.now(UTC) - timedelta(days=999)
     try:
         res = _retry_supabase(lambda: (
             db.table("bets")
-            .select("stake, result, win_payout, payout_override, promo_type")
+            # Keep this query simple and filter in Python. The narrower PostgREST
+            # filter shape here has produced noisy 400s in local auth contexts.
+            .select("*")
             .eq("user_id", user_id)
-            .eq("promo_type", "bonus_bet")
-            .gte("created_at", (datetime.now(UTC) - timedelta(days=999)).isoformat())  # All settled bets
-            .neq("result", "pending")  # Exclude pending bets
             .execute()
         ))
         rows = res.data or []
@@ -1396,8 +1539,20 @@ def compute_k_user(db, user_id: str) -> dict:
     total_stake = 0.0
     total_profit = 0.0
     for row in rows:
+        if row.get("promo_type") != "bonus_bet":
+            continue
         stake = float(row.get("stake") or 0)
         result = row.get("result")
+        if result == "pending":
+            continue
+        created_at = row.get("created_at")
+        if created_at:
+            try:
+                created_dt = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+                if created_dt < created_after:
+                    continue
+            except Exception:
+                pass
         win_payout = float(row.get("payout_override") or row.get("win_payout") or 0)
         total_stake += stake
         if result == "win":
@@ -1600,6 +1755,14 @@ def readiness_check():
                 "checks": checks,
                 "db_error": db_error,
             },
+        )
+        _persist_ops_job_run(
+            job_kind="readiness_failure",
+            source="readiness",
+            status="failed",
+            captured_at=_utc_now_iso(),
+            checks=checks,
+            meta={"db_error": db_error, "runtime": runtime},
         )
 
     response = {
@@ -2238,6 +2401,12 @@ def update_settings(
         data["default_stake"] = settings.default_stake
     if settings.preferred_sportsbooks is not None:
         data["preferred_sportsbooks"] = settings.preferred_sportsbooks
+    if settings.kelly_multiplier is not None:
+        data["kelly_multiplier"] = settings.kelly_multiplier
+    if settings.bankroll_override is not None:
+        data["bankroll_override"] = settings.bankroll_override
+    if settings.use_computed_bankroll is not None:
+        data["use_computed_bankroll"] = settings.use_computed_bankroll
     if settings.k_factor_mode is not None:
         data["k_factor_mode"] = settings.k_factor_mode
     if settings.k_factor_min_stake is not None:
@@ -2329,141 +2498,32 @@ async def scan_markets(
     sport: str | None = None,
     user: dict = Depends(require_scan_rate_limit),
 ):
-    """
-    Full market scan: returns every matched side between Pinnacle and the target
-    books with de-vigged true probabilities. Uses server-side 5-min TTL cache per
-    sport. If sport is omitted, scans all supported sports (cached per sport; only
-    stale sports hit the API).
-    """
-    from datetime import datetime, timezone
+    from routes.scan_routes import scan_markets_impl
+    from services.scan_markets import apply_manual_scan_bundle, scan_exception_to_http_exception
 
-    db = get_db()
-    supported_sports = _scanner_supported_sports(surface)
-
-    if sport is not None and sport not in supported_sports:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported sport. Choose from: {', '.join(supported_sports)}",
-        )
-
-    try:
-        if sport is not None:
-            result = await _get_cached_or_scan_for_surface(surface, sport, source="manual_scan")
-            base_sides = _with_surface(surface, result["sides"])
-            response_sides = _with_surface(surface, _annotate_sides_with_duplicate_state(db, user["id"], base_sides))
-            scanned_at = datetime.fromtimestamp(result["fetched_at"], tz=UTC).isoformat().replace("+00:00", "Z")
-            _set_ops_status(
-                "last_manual_scan",
-                {
-                    "captured_at": _utc_now_iso(),
-                    "sport": sport,
-                    "events_fetched": result.get("events_fetched"),
-                    "events_with_both_books": result.get("events_with_both_books"),
-                    "total_sides": len(base_sides or []),
-                    "api_requests_remaining": result.get("api_requests_remaining"),
-                },
-            )
-            # Piggyback CLV update — zero extra API calls
-            if surface == "straight_bets":
-                asyncio.create_task(_piggyback_clv(base_sides))
-            response = FullScanResponse(
-                surface=surface,
-                sport=sport,
-                sides=response_sides,
-                events_fetched=result["events_fetched"],
-                events_with_both_books=result["events_with_both_books"],
-                api_requests_remaining=result.get("api_requests_remaining"),
-                scanned_at=scanned_at,
-            )
-            _persist_latest_full_scan(
-                db=db,
-                surface=surface,
-                sport=sport,
-                sides=base_sides,
-                events_fetched=result["events_fetched"],
-                events_with_both_books=result["events_with_both_books"],
-                api_requests_remaining=result.get("api_requests_remaining"),
-                scanned_at=scanned_at,
-                retry_supabase=_retry_supabase,
-                log_event=_log_event,
-            )
-            return response
-        # Full scan: all sports (skip any that 404 — e.g. out of season)
-        all_sides = []
-        total_events = 0
-        total_with_both = 0
-        min_remaining = None
-        oldest_fetched = None
-        from os import getenv
-        env = getenv("ENVIRONMENT", "production").lower()
-        sports_to_scan = ["basketball_nba"] if env == "development" else supported_sports
-        for s in sports_to_scan:
-            try:
-                result = await _get_cached_or_scan_for_surface(surface, s, source="manual_scan")
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 404:
-                    continue  # sport has no odds right now (e.g. off-season)
-                raise
-            all_sides.extend(result["sides"])
-            total_events += result["events_fetched"]
-            total_with_both += result["events_with_both_books"]
-            rem = result.get("api_requests_remaining")
-            if rem is not None:
-                try:
-                    r = int(rem)
-                    min_remaining = str(r) if min_remaining is None else str(min(r, int(min_remaining)))
-                except ValueError:
-                    min_remaining = rem
-            ft = result.get("fetched_at")
-            if ft is not None:
-                oldest_fetched = ft if oldest_fetched is None else min(oldest_fetched, ft)
-        scanned_at = (
-            datetime.fromtimestamp(oldest_fetched, tz=UTC).isoformat().replace("+00:00", "Z")
-            if oldest_fetched
-            else None
-        )
-        _set_ops_status(
-            "last_manual_scan",
-            {
-                "captured_at": _utc_now_iso(),
-                "sport": "all",
-                "events_fetched": total_events,
-                "events_with_both_books": total_with_both,
-                "total_sides": len(all_sides),
-                "api_requests_remaining": min_remaining,
-            },
-        )
-        # Piggyback CLV update across all scanned sides — zero extra API calls
-        all_sides = _with_surface(surface, all_sides)
-        if surface == "straight_bets":
-            asyncio.create_task(_piggyback_clv(all_sides))
-        response_sides = _with_surface(surface, _annotate_sides_with_duplicate_state(db, user["id"], all_sides))
-        response = FullScanResponse(
-            surface=surface,
-            sport="all",
-            sides=response_sides,
-            events_fetched=total_events,
-            events_with_both_books=total_with_both,
-            api_requests_remaining=min_remaining,
-            scanned_at=scanned_at,
-        )
-        _persist_latest_full_scan(
-            db=db,
-            surface=surface,
-            sport="all",
-            sides=all_sides,
-            events_fetched=total_events,
-            events_with_both_books=total_with_both,
-            api_requests_remaining=min_remaining,
-            scanned_at=scanned_at,
-            retry_supabase=_retry_supabase,
-            log_event=_log_event,
-        )
-        return response
-    except ValueError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Odds API error: {e}")
+    return await scan_markets_impl(
+        surface=surface,
+        sport=sport,
+        user=user,
+        get_db=get_db,
+        supported_sports=_scanner_supported_sports(surface),
+        get_cached_or_scan=lambda sport_key, source="manual_scan": _get_cached_or_scan_for_surface(surface, sport_key, source=source),
+        apply_manual_scan_bundle_fn=apply_manual_scan_bundle,
+        set_ops_status=_set_ops_status,
+        utc_now_iso=_utc_now_iso,
+        piggyback_clv=_piggyback_clv,
+        capture_research_opportunities=_capture_research_opportunities,
+        persist_latest_full_scan=_persist_latest_full_scan,
+        retry_supabase=_retry_supabase,
+        log_event=_log_event,
+        annotate_sides=_annotate_sides_with_duplicate_state,
+        append_scan_activity=_append_scan_activity,
+        persist_ops_job_run=_persist_ops_job_run,
+        new_run_id=_new_run_id,
+        map_error=scan_exception_to_http_exception,
+        build_full_scan_response=_build_full_scan_response,
+        get_environment=_get_environment,
+    )
 
 
 async def scan_latest(
@@ -2626,7 +2686,26 @@ async def ops_trigger_scan(
             "alerts_scheduled": alerts_scheduled,
             "error_count": len(errors),
             "errors": errors,
+            "captured_at": finished,
         },
+    )
+    _persist_ops_job_run(
+        job_kind="ops_trigger_scan",
+        source="ops_trigger",
+        status="completed" if not errors else "completed_with_errors",
+        run_id=run_id,
+        scan_session_id=run_id,
+        surface="straight_bets",
+        scan_scope="all",
+        requested_sport="all",
+        captured_at=finished,
+        started_at=started,
+        finished_at=finished,
+        duration_ms=duration_ms,
+        total_sides=total_sides,
+        alerts_scheduled=alerts_scheduled,
+        error_count=len(errors),
+        errors=errors,
     )
 
     # Optional heartbeat so we can confirm the scheduled scan ran even when it finds no lines.
@@ -2713,11 +2792,25 @@ async def ops_trigger_auto_settle(
             "finished_at": finished,
             "duration_ms": duration_ms,
             "settled": settled,
+            "captured_at": finished,
         },
     )
     summary = get_last_auto_settler_summary()
     if summary:
         _set_ops_status("last_auto_settle_summary", summary)
+    _persist_ops_job_run(
+        job_kind="auto_settle",
+        source="ops_trigger",
+        status="completed",
+        run_id=run_id,
+        captured_at=finished,
+        started_at=started,
+        finished_at=finished,
+        duration_ms=duration_ms,
+        settled=settled,
+        skipped_totals=summary.get("skipped_totals") if isinstance(summary, dict) else None,
+        meta={"sports": summary.get("sports")} if isinstance(summary, dict) and isinstance(summary.get("sports"), list) else None,
+    )
 
     if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1":
         from services.discord_alerts import send_discord_webhook
@@ -2760,12 +2853,20 @@ def ops_status(
     runtime = _runtime_state()
     db_ok, db_error = _check_db_ready()
     scheduler_fresh_ok, scheduler_freshness = _check_scheduler_freshness(runtime["scheduler_expected"])
-    ops = getattr(app.state, "ops_status", {})
     from services.odds_api import get_odds_api_activity_snapshot
+    from services.ops_history import load_ops_status_snapshot
 
-    odds_api_activity = get_odds_api_activity_snapshot()
-    if isinstance(ops, dict):
-        ops["odds_api_activity"] = odds_api_activity
+    try:
+        db = get_db()
+    except Exception:
+        db = None
+    ops = load_ops_status_snapshot(
+        db=db,
+        retry_supabase=_retry_supabase,
+        log_event=_log_event,
+        fallback_ops_status=getattr(app.state, "ops_status", {}),
+        fallback_odds_api_activity=get_odds_api_activity_snapshot(),
+    )
 
     return {
         "timestamp": _utc_now_iso(),

@@ -44,6 +44,7 @@ What these cover:
 - Protected ops status response expectations.
 - Odds API activity summary and recent-call sanitization.
 - Scanner/ops payload contract-shape parity against golden fixtures.
+- Manual player-props route behavior, including shortlist -> match -> fetch -> persist -> latest payload flow with mocked upstream data.
 
 #### Backend integration tests (Supabase-backed)
 
@@ -126,6 +127,7 @@ Notes:
 ### Known gaps (intentionally not automated yet)
 
 - Scanner end-to-end correctness against live odds + market mapping edge cases.
+- Live acceptance of ESPN shortlist behavior on a real day-of slate.
 - Full time-based scheduler execution lifecycle in CI-like environments.
 - Performance/load, rate-limit behavior, and broader UI regression coverage.
 - Playwright in CI (requires browser/auth secrets/services; kept local for now).

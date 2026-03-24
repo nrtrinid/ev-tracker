@@ -31,15 +31,15 @@ export const STRAIGHT_BETS_SURFACE: ScannerSurfaceConfig = {
 export const PLAYER_PROPS_SURFACE: ScannerSurfaceConfig = {
   id: "player_props",
   label: "Player Props",
-  tagline: "Player markets with fair odds, line matching, and log-ready selections",
-  teaser: "Points, rebounds, assists, and threes from sharp-vs-book comparisons.",
+  tagline: "Curated national-TV props with consensus fair odds and log-ready selections",
+  teaser: "Points, rebounds, assists, and threes from the manual sniper scan.",
   path: "/scanner/player_props",
   searchPlaceholder: "Search player or market",
   resultLabel: "Player Props",
-  emptyLabel: "No player props match your current books and filters yet.",
+  emptyLabel: "No player props are available for this scan yet.",
   supportsLensSelector: false,
   supportsProfitBoost: false,
-  isPublic: false,
+  isPublic: true,
 };
 
 export const SCANNER_SURFACES: ScannerSurfaceConfig[] = [

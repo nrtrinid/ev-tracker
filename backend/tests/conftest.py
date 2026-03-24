@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from calculations import DEFAULT_VIG
+from .test_utils import ensure_supabase_stub
 
 __all__ = ["DEFAULT_VIG"]
 
@@ -25,6 +26,7 @@ async def fake_get_current_user():
 @pytest.fixture
 def public_client():
     """TestClient with no auth override. Use for unauthenticated behavior (e.g. 401)."""
+    ensure_supabase_stub()
     from main import app
     client = TestClient(app)
     return client
@@ -33,6 +35,7 @@ def public_client():
 @pytest.fixture
 def auth_client():
     """TestClient with get_current_user overridden to return fixed test user."""
+    ensure_supabase_stub()
     from main import app
     from auth import get_current_user
 

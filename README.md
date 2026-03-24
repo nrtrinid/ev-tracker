@@ -47,11 +47,21 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 - Per-book badges (DK, FD, MGM, CZR, ESPN)
 - "Fair Odds" line shows the de-vigged Pinnacle line for every result
 - One-tap pre-fill into the log drawer
+- Player Props surface with two clear modes:
+  - **Sportsbooks** for curated prop cards with consensus fair odds
+  - **Pick'em** for exact-line board comparisons and matching-book support
+- Pregame-only availability messaging so stale scans explain when started games are hidden
 
 ### Bet Logging
 - Log bets with full promo context (standard, boost %, bonus bet, no-sweat, qualifier)
 - Supports winnings cap for boosted bets
 - Settle bets (win/loss/push/void) and see real P&L vs. expected
+
+### Parlay Builder
+- Build one-book parlays from straight bets and sportsbook props
+- Uses de-vigged fair odds from the scanner for parlay pricing and EV estimation
+- Auto-fills stake from the current Kelly recommendation when a fair estimate is available
+- Logs directly into the main tracker instead of relying on saved server-side drafts
 
 ### Dashboard & Analytics
 - Total P&L, EV earned, edge vs. actual
@@ -61,7 +71,7 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 ### Settings
 - Configure Kelly multiplier (10%, 25%, 50%, full)
 - Set bankroll: use computed (sum of logged balances) or override manually
-- Persisted to `localStorage`
+- Persisted per user and mirrored locally for fast reloads
 
 ### Internal Ops Console
 - Route: `/admin/ops` (allowlisted operators only)
@@ -106,6 +116,9 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 - `frontend/src/app/scanner/components/ScannerResultFilters.tsx` — scanner filter bar UI
 - `frontend/src/lib/scanner-filters.ts` — scanner result-filter helpers
 - `frontend/src/lib/kelly-context.tsx` — global Kelly/bankroll state
+
+- `frontend/src/app/scanner/ScannerSurfacePage.tsx` - scanner orchestration, filtering, and props subviews
+- `frontend/src/app/parlay/page.tsx` - local parlay builder and tracker handoff
 
 See [PROJECT.md](./PROJECT.md) for full architecture, conventions, and key decisions.
 

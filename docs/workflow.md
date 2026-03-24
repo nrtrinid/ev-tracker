@@ -50,8 +50,8 @@ Before merging `dev` into `main`, verify:
 - No backend startup errors
 - Home page loads
 - `/scanner/straight_bets` loads and scans
-- `/scanner/player_props` loads and either returns data or fails with a clear message
-- `/parlay` loads and retains cart state
+- `/scanner/player_props` loads, the `Sportsbooks` and `Pick'em` modes are obvious, and stale scans explain when started games are hidden
+- `/parlay` loads, auto-fills the suggested stake when pricing is available, and logs into Tracker cleanly
 - `/settings` loads
 
 If the change touches automation or ops:
@@ -71,5 +71,6 @@ If you only keep one deployment for now, it should track `main`, not `dev`.
 ## Notes
 
 - Do not commit local `.env` files.
+- Rotate any secret that was pasted into logs, screenshots, or chat history.
 - Do not rely on `frontend/tsconfig.tsbuildinfo`; it is generated and ignored.
 - If you need to hotfix production, branch from `main`, fix locally, merge to `main`, then back-merge into `dev`.

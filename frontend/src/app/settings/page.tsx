@@ -15,6 +15,7 @@ import {
   useSettings,
   useUpdateSettings,
 } from "@/lib/hooks";
+import { useBettingPlatformStore } from "@/lib/betting-platform-store";
 import { SPORTSBOOKS } from "@/lib/types";
 import type { Transaction, TransactionType } from "@/lib/types";
 import { useKellySettings } from "@/lib/kelly-context";
@@ -31,6 +32,7 @@ export default function SettingsPage() {
     setBankrollOverride,
     setKellyMultiplier,
   } = useKellySettings();
+  const { clearTutorialSession, clearScannerReviewCandidate, hydrateOnboarding } = useBettingPlatformStore();
   const createTransaction = useCreateTransaction();
   const deleteTransaction = useDeleteTransaction();
   const updateSettings = useUpdateSettings();
@@ -261,7 +263,7 @@ export default function SettingsPage() {
                   Kelly Sizing
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  Used to compute the “Rec Bet” amount shown in the Scanner.
+                  Used to compute suggested stake sizing in the Scanner and Parlay Builder. These values now follow your account across devices.
                 </p>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -527,7 +529,10 @@ export default function SettingsPage() {
                 </div>
                 <Button
                   variant="outline"
-                  onClick={() =>
+                  onClick={() => {
+                    clearTutorialSession();
+                    clearScannerReviewCandidate();
+                    hydrateOnboarding({ completed: [], dismissed: [] });
                     updateSettings.mutate({
                       onboarding_state: {
                         version: 1,
@@ -535,8 +540,8 @@ export default function SettingsPage() {
                         dismissed: [],
                         last_seen_at: new Date().toISOString(),
                       },
-                    })
-                  }
+                    });
+                  }}
                   disabled={updateSettings.isPending}
                 >
                   Reset onboarding

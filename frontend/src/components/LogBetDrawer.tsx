@@ -17,8 +17,10 @@ import {
   MARKETS,
   PROMO_TYPES,
   PROMO_TYPE_CONFIG,
+  type BetCreate,
   type PromoType,
   type ScannedBetData,
+  type TutorialPracticeBet,
 } from "@/lib/types";
 import {
   formatCurrency,
@@ -57,6 +59,10 @@ interface LogBetDrawerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initialValues?: ScannedBetData;
+  practiceMode?: boolean;
+  onPracticeLogged?: (bet: TutorialPracticeBet) => void;
+  onLogged?: () => void;
+  onSubmitOverride?: (payload: BetCreate) => Promise<void>;
 }
 
 // CLV metadata is read-only scanner passthrough — never user-editable
@@ -75,7 +81,7 @@ interface ClvMeta {
   selection_side?: string;
   line_value?: number;
   selection_meta?: Record<string, unknown>;
-  surface?: "straight_bets" | "player_props";
+  surface?: ScannedBetData["surface"];
 }
 
 interface FormState {
@@ -127,60 +133,73 @@ function isBoostRowValue(value: unknown): value is BoostRowValue {
     (typeof candidate.fairPct === "string" || candidate.fairPct === null);
 }
 
-export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawerProps) {
-  const [formState, setFormState] = useState<FormState>(() => {
-    if (initialValues) {
-      // Derive event_date from commence_time when logging from scanner
-      const initialEventDate =
-        initialValues.commence_time
-          ? new Date(initialValues.commence_time).toISOString().slice(0, 10)
-          : new Date().toISOString().slice(0, 10);
-      // Set stake in initial state so EV card and submit are valid on first paint (no useEffect delay).
-      const isPromo = initialValues.promo_type !== "standard";
-      const initialStake = isPromo
-        ? "10.00"
-        : (() => {
-            const stealth =
-              initialValues.stealth_kelly_stake ??
-              (initialValues.raw_kelly_stake != null
-                ? calculateStealthStake(initialValues.raw_kelly_stake)
-                : undefined);
-            const stake = stealth ?? initialValues.kelly_suggestion;
-            return stake != null && stake > 0 ? stake.toFixed(2) : "";
-          })();
-      return {
-        sportsbook: initialValues.sportsbook,
-        sport: initialValues.sport,
-        market: initialValues.market,
-        promo_type: initialValues.promo_type,
-        odds: String(initialValues.odds_american),
-        stake: initialStake,
-        event: initialValues.event,
-        event_date: initialEventDate,
-        // Opposing odds are only meaningful for manual bets without a sharp line;
-        // scanner-originated bets rely on Pinnacle fair odds instead.
-        opposing_odds: initialValues.opposing_odds != null ? String(initialValues.opposing_odds) : "",
-        boost_percent: initialValues.boost_percent != null ? String(initialValues.boost_percent) : "",
-        payout_override: "",
-        notes: "",
-      };
-    }
+function buildScannerInitialStake(initialValues: ScannedBetData): string {
+  const isPromo = initialValues.promo_type !== "standard";
+  if (isPromo) {
+    return "10.00";
+  }
+  const stealth =
+    initialValues.stealth_kelly_stake ??
+    (initialValues.raw_kelly_stake != null
+      ? calculateStealthStake(initialValues.raw_kelly_stake)
+      : undefined);
+  const stake = stealth ?? initialValues.kelly_suggestion;
+  return stake != null && stake > 0 ? stake.toFixed(2) : "";
+}
+
+function buildInitialFormState(initialValues?: ScannedBetData): FormState {
+  if (initialValues) {
+    const initialEventDate =
+      initialValues.commence_time
+        ? new Date(initialValues.commence_time).toISOString().slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
+
     return {
-      sportsbook: "",
-      sport: "",
-      market: "ML",
-      promo_type: "standard",
-      odds: "",
-      stake: "",
-      event: "",
-      event_date: new Date().toISOString().slice(0, 10),
-      opposing_odds: "",
-      boost_percent: "",
+      sportsbook: initialValues.sportsbook,
+      sport: initialValues.sport,
+      market: initialValues.market,
+      promo_type: initialValues.promo_type,
+      odds: String(initialValues.odds_american),
+      stake: buildScannerInitialStake(initialValues),
+      event: initialValues.event,
+      event_date: initialEventDate,
+      opposing_odds: initialValues.opposing_odds != null ? String(initialValues.opposing_odds) : "",
+      boost_percent: initialValues.boost_percent != null ? String(initialValues.boost_percent) : "",
       payout_override: "",
       notes: "",
     };
-  });
-  const [showAdvanced, setShowAdvanced] = useState(!!initialValues);
+  }
+
+  return {
+    sportsbook: getStickySportsbook(),
+    sport: "",
+    market: "ML",
+    promo_type: getStickyPromoType(),
+    odds: "",
+    stake: "",
+    event: "",
+    event_date: new Date().toISOString().slice(0, 10),
+    opposing_odds: "",
+    boost_percent: "",
+    payout_override: "",
+    notes: "",
+  };
+}
+
+export function LogBetDrawer({
+  open,
+  onOpenChange,
+  initialValues,
+  practiceMode = false,
+  onPracticeLogged,
+  onLogged,
+  onSubmitOverride,
+}: LogBetDrawerProps) {
+  const isScannerFlow = !!initialValues;
+  const isTutorialPracticeFlow = isScannerFlow && practiceMode;
+  const [formState, setFormState] = useState<FormState>(() => buildInitialFormState(initialValues));
+  const [showManualSetup, setShowManualSetup] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // CLV metadata — captured from scanner, passed through silently to backend
   const clvMeta = useRef<ClvMeta>({});
@@ -207,42 +226,17 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
   const oddsInputRef = useRef<SmartOddsInputRef>(null);
   const opposingOddsInputRef = useRef<SmartOddsInputRef>(null);
   const createBet = useCreateBet();
+  const [customSubmitPending, setCustomSubmitPending] = useState(false);
 
   // Initialize sticky values on mount (skip when pre-filled from scanner)
   useEffect(() => {
     if (open) {
-      if (!initialValues) {
-        setFormState(prev => ({
-          ...prev,
-          sportsbook: prev.sportsbook || getStickySportsbook(),
-          promo_type: getStickyPromoType(),
-        }));
-      }
+      setFormState(buildInitialFormState(initialValues));
+      setShowManualSetup((initialValues?.promo_type ?? getStickyPromoType()) !== "standard");
       setTimeout(() => {
         const input = document.querySelector('[data-odds-input]') as HTMLInputElement;
         input?.focus();
       }, 300);
-    }
-  }, [open, initialValues]);
-
-  // Smart Stake: auto-fill stake when drawer opens with scanner data.
-  // Promos always get $25; standard +EV bets get the stealth-rounded Kelly amount.
-  useEffect(() => {
-    if (open && initialValues) {
-      const isPromo = initialValues.promo_type !== "standard";
-      if (isPromo) {
-        updateField("stake", "10.00");
-      } else {
-        const stealth =
-          initialValues.stealth_kelly_stake ??
-          (initialValues.raw_kelly_stake != null
-            ? calculateStealthStake(initialValues.raw_kelly_stake)
-            : undefined);
-        const stake = stealth ?? initialValues.kelly_suggestion;
-        if (stake != null && stake > 0) {
-          updateField("stake", stake.toFixed(2));
-        }
-      }
     }
   }, [open, initialValues]);
 
@@ -288,7 +282,13 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
 
   const invalidBoost = formState.promo_type === "boost_custom" && (isNaN(boostPercentRaw) || boostPercentNum < 0 || boostPercentNum > 300);
   const duplicateState = initialValues?.scanner_duplicate_state ?? "new";
-  const hasDuplicateExposure = duplicateState === "already_logged" || duplicateState === "better_now";
+  const hasDuplicateExposure =
+    duplicateState === "logged_elsewhere" ||
+    duplicateState === "already_logged" ||
+    duplicateState === "better_now";
+  const isSubmitting = createBet.isPending || customSubmitPending;
+  const selectedPromoLabel =
+    PROMO_TYPES.find((promo) => promo.value === formState.promo_type)?.label ?? "Standard";
 
   const bestLoggedOdds = initialValues?.best_logged_odds_american;
   const currentOdds = initialValues?.current_odds_american ?? initialValues?.odds_american;
@@ -311,11 +311,37 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
     localStorage.setItem("ev-tracker-sportsbook", formState.sportsbook);
     localStorage.setItem("ev-tracker-promo-type", formState.promo_type);
 
+    if (isTutorialPracticeFlow) {
+      const tutorialBet: TutorialPracticeBet = {
+        id: `tutorial-practice-${Date.now()}`,
+        created_at: new Date().toISOString(),
+        event_date: formState.event_date || new Date().toISOString().slice(0, 10),
+        sport: formState.sport,
+        event: formState.event || `${formState.sport} Practice Ticket`,
+        market: formState.market,
+        sportsbook: formState.sportsbook,
+        surface: clvMeta.current.surface ?? "straight_bets",
+        promo_type: formState.promo_type,
+        odds_american: oddsNum,
+        stake: stakeNum,
+        win_payout: ev.winPayout,
+        ev_total: ev.evTotal,
+        ev_per_dollar: stakeNum > 0 ? ev.evTotal / stakeNum : 0,
+      };
+
+      toast.success("Practice ticket saved", {
+        description: "This tutorial ticket is local only. We are taking you back Home to review where it appears in the tracker.",
+      });
+      onOpenChange(false);
+      onPracticeLogged?.(tutorialBet);
+      return;
+    }
+
     // Optimistic toast for speed
     const toastId = toast.loading("Logging bet...");
 
     try {
-      await createBet.mutateAsync({
+      const payload: BetCreate = {
         sportsbook: formState.sportsbook,
         sport: formState.sport,
         event: formState.event || `${formState.sport} Game`,
@@ -330,12 +356,24 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
         event_date: formState.event_date || undefined,
         // CLV passthrough — silently stored for closing-line tracking
         ...clvMeta.current,
-      });
+      };
+
+      if (onSubmitOverride) {
+        setCustomSubmitPending(true);
+        try {
+          await onSubmitOverride(payload);
+        } finally {
+          setCustomSubmitPending(false);
+        }
+      } else {
+        await createBet.mutateAsync(payload);
+      }
 
       toast.success("Bet logged!", {
         id: toastId,
         description: `${ev.evTotal >= 0 ? "+" : ""}${formatCurrency(ev.evTotal)} EV on ${formState.sportsbook}`,
       });
+      onLogged?.();
 
       if (keepOpen) {
         // Batch mode: Clear bet-specific fields, keep sportsbook/sport/market/promo
@@ -388,6 +426,13 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
         {/* Header */}
         <SheetHeader className="px-4 pt-4 pb-2">
           <SheetTitle className="text-left">Log Bet</SheetTitle>
+          <p className="text-left text-sm text-muted-foreground">
+            {isTutorialPracticeFlow
+              ? "Practice the final step here. This ticket stays local to the tutorial and will not touch your real stats or bankroll."
+              : isScannerFlow
+              ? "Step 3 of 3: confirm what you placed, then log it."
+              : "Quick Log starts with the essentials. We assume a standard moneyline bet unless you change the setup."}
+          </p>
         </SheetHeader>
 
         {/* Scrollable Content */}
@@ -396,67 +441,115 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
             <div className="mb-4 rounded-lg border border-[#B85C38]/30 bg-[#B85C38]/10 px-3 py-2 text-xs text-[#8B3D20]">
               {duplicateState === "better_now" ? (
                 <>
-                  <p className="font-semibold">You already logged this side at a lower price.</p>
+                  <p className="font-semibold">You already placed this side at a lower price.</p>
                   <p className="mt-0.5">
-                    You already logged this side at {bestLoggedOdds != null ? formatAmerican(bestLoggedOdds) : "previous odds"}. The scanner now shows {currentOdds != null ? formatAmerican(currentOdds) : "a better line"}.
+                    You already placed this side at {bestLoggedOdds != null ? formatAmerican(bestLoggedOdds) : "previous odds"}. The scanner now shows {currentOdds != null ? formatAmerican(currentOdds) : "a better line"}.
                   </p>
+                </>
+              ) : duplicateState === "logged_elsewhere" ? (
+                <>
+                  <p className="font-semibold">You already logged this side elsewhere.</p>
+                  <p className="mt-0.5">Logging here will add cross-book exposure on the same outcome.</p>
                 </>
               ) : (
                 <>
-                  <p className="font-semibold">You already logged this side.</p>
+                  <p className="font-semibold">You already placed this side.</p>
                   <p className="mt-0.5">Logging again will increase exposure on the same outcome.</p>
                 </>
               )}
             </div>
           )}
 
-          {/* Sportsbook Carousel */}
-          <div className="mb-4">
-            <label className="text-xs font-medium text-muted-foreground mb-2 block">
-              Sportsbook
-            </label>
-            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-              {SPORTSBOOKS.map((book) => (
-                <button
-                  key={book}
-                  type="button"
-                  onClick={() => updateField("sportsbook", book)}
-                  className={cn(
-                    "flex-shrink-0 px-3 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap",
-                    formState.sportsbook === book
-                      ? `${sportsbookColors[book] || "bg-foreground"} text-white shadow-md scale-105`
-                      : "bg-muted text-muted-foreground hover:bg-secondary"
-                  )}
-                >
-                  {book}
-                </button>
-              ))}
+          {isScannerFlow ? (
+            <div className="mb-4 rounded-xl border border-border bg-muted/40 p-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
+                {isTutorialPracticeFlow ? "Tutorial Practice" : "Scanner Review"}
+              </p>
+              <p className="mt-1 text-sm font-semibold text-foreground">{formState.event}</p>
+              <div className="mt-2 grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <p className="text-muted-foreground">Book</p>
+                  <p className="font-medium text-foreground">{formState.sportsbook}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Market</p>
+                  <p className="font-medium text-foreground">{formState.market}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Sport</p>
+                  <p className="font-medium text-foreground">{formState.sport}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Date</p>
+                  <p className="font-medium text-foreground">{formState.event_date}</p>
+                </div>
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {isTutorialPracticeFlow
+                  ? "Use this practice ticket to learn where scanner plays get confirmed. Saving it here keeps everything local to the tutorial."
+                  : "Only change the odds or stake below if your bet slip differed from the scanner card."}
+              </p>
             </div>
-          </div>
+          ) : (
+            <>
+              <div className="mb-4 rounded-xl border border-border bg-muted/40 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
+                  Quick Log
+                </p>
+                <p className="mt-1 text-sm text-foreground">
+                  Start with book, sport, odds, and stake. Open Bet Setup only if this ticket is not a normal moneyline cash bet.
+                </p>
+              </div>
 
-          {/* Sport Carousel */}
-          <div className="mb-4">
-            <label className="text-xs font-medium text-muted-foreground mb-2 block">
-              Sport
-            </label>
-            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-              {SPORTS.map((sport) => (
-                <button
-                  key={sport}
-                  type="button"
-                  onClick={() => updateField("sport", sport)}
-                  className={cn(
-                    "flex-shrink-0 px-3 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap",
-                    formState.sport === sport
-                      ? "bg-foreground text-background shadow-md scale-105"
-                      : "bg-muted text-muted-foreground hover:bg-secondary"
-                  )}
-                >
-                  {sport}
-                </button>
-              ))}
-            </div>
-          </div>
+              {/* Sportsbook Carousel */}
+              <div className="mb-4">
+                <label className="text-xs font-medium text-muted-foreground mb-2 block">
+                  Sportsbook
+                </label>
+                <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                  {SPORTSBOOKS.map((book) => (
+                    <button
+                      key={book}
+                      type="button"
+                      onClick={() => updateField("sportsbook", book)}
+                      className={cn(
+                        "flex-shrink-0 px-3 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap",
+                        formState.sportsbook === book
+                          ? `${sportsbookColors[book] || "bg-foreground"} text-white shadow-md scale-105`
+                          : "bg-muted text-muted-foreground hover:bg-secondary"
+                      )}
+                    >
+                      {book}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Sport Carousel */}
+              <div className="mb-4">
+                <label className="text-xs font-medium text-muted-foreground mb-2 block">
+                  Sport
+                </label>
+                <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                  {SPORTS.map((sport) => (
+                    <button
+                      key={sport}
+                      type="button"
+                      onClick={() => updateField("sport", sport)}
+                      className={cn(
+                        "flex-shrink-0 px-3 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap",
+                        formState.sport === sport
+                          ? "bg-foreground text-background shadow-md scale-105"
+                          : "bg-muted text-muted-foreground hover:bg-secondary"
+                      )}
+                    >
+                      {sport}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Odds & Stake - Side by Side */}
           <div className="grid grid-cols-2 gap-3 mb-4">
@@ -466,12 +559,12 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
               onChange={(value) => updateField("odds", value)}
               placeholder="150"
               defaultSign="+"
-              label="Odds"
+              label={isScannerFlow ? "Placed Odds" : "Odds"}
               className="[&_input]:h-12 [&_input]:text-lg"
             />
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-                Stake
+                {isScannerFlow ? "Stake Placed" : "Stake"}
               </label>
               <Input
                 type="text"
@@ -502,57 +595,85 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
             </div>
           </div>
 
-          {/* Market Selection */}
-          <div className="mb-4">
-            <label className="text-xs font-medium text-muted-foreground mb-2 block">
-              Market
-            </label>
-            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-              {MARKETS.map((market) => (
-                <button
-                  key={market}
-                  type="button"
-                  onClick={() => updateField("market", market)}
-                  className={cn(
-                    "flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap",
-                    formState.market === market
-                      ? "bg-foreground text-background"
-                      : "bg-muted text-muted-foreground hover:bg-secondary"
-                  )}
-                >
-                  {market}
-                </button>
-              ))}
-            </div>
-          </div>
+          {!isScannerFlow && (
+            <div className="mb-4 rounded-lg border border-border bg-muted/30 p-3">
+              <button
+                type="button"
+                onClick={() => setShowManualSetup((current) => !current)}
+                className="flex w-full items-center justify-between text-left"
+              >
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground">Bet Setup</p>
+                  <p className="mt-0.5 text-sm text-foreground">
+                    {formState.market} • {selectedPromoLabel}
+                  </p>
+                </div>
+                {showManualSetup ? (
+                  <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                ) : (
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                )}
+              </button>
 
-          {/* Promo Type Selection */}
-          <div className="mb-4">
-            <label className="text-xs font-medium text-muted-foreground mb-2 block">
-              Promo Type
-            </label>
-            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 pt-0.5">
-              {PROMO_TYPES.map((promo) => {
-                const config = PROMO_TYPE_CONFIG[promo.value];
-                const isSelected = formState.promo_type === promo.value;
-                return (
-                  <button
-                    key={promo.value}
-                    type="button"
-                    onClick={() => updateField("promo_type", promo.value)}
-                    className={cn(
-                      "flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap",
-                      isSelected
-                        ? cn(config.selectedBg, config.selectedText, config.ring)
-                        : "bg-muted text-muted-foreground hover:bg-secondary"
-                    )}
-                  >
-                    {promo.label}
-                  </button>
-                );
-              })}
+              {showManualSetup ? (
+                <div className="mt-3 space-y-4">
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-2 block">
+                      Market
+                    </label>
+                    <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                      {MARKETS.map((market) => (
+                        <button
+                          key={market}
+                          type="button"
+                          onClick={() => updateField("market", market)}
+                          className={cn(
+                            "flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap",
+                            formState.market === market
+                              ? "bg-foreground text-background"
+                              : "bg-background text-muted-foreground hover:bg-secondary"
+                          )}
+                        >
+                          {market}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-2 block">
+                      Promo Type
+                    </label>
+                    <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 pt-0.5">
+                      {PROMO_TYPES.map((promo) => {
+                        const config = PROMO_TYPE_CONFIG[promo.value];
+                        const isSelected = formState.promo_type === promo.value;
+                        return (
+                          <button
+                            key={promo.value}
+                            type="button"
+                            onClick={() => updateField("promo_type", promo.value)}
+                            className={cn(
+                              "flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap",
+                              isSelected
+                                ? cn(config.selectedBg, config.selectedText, config.ring)
+                                : "bg-background text-muted-foreground hover:bg-secondary"
+                            )}
+                          >
+                            {promo.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Leave this closed for a normal moneyline cash bet, or open it if you are logging a prop, parlay, or promo ticket.
+                </p>
+              )}
             </div>
-          </div>
+          )}
 
           {/* Vig Nudge was shown here previously; EV now primarily relies on sharp fair odds when available. */}
 
@@ -587,11 +708,65 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
             className="flex items-center gap-1 text-xs text-muted-foreground mb-3"
           >
             {showAdvanced ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-            {showAdvanced ? "Hide" : "Show"} advanced options
+            {showAdvanced ? "Hide" : "Show"} {isScannerFlow ? "more details" : "advanced options"}
           </button>
 
           {showAdvanced && (
             <div className="space-y-3 mb-4 p-3 rounded-lg bg-muted/50 border border-border">
+              {isScannerFlow && (
+                <>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-2 block">
+                      Promo Type
+                    </label>
+                    <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 pt-0.5">
+                      {PROMO_TYPES.map((promo) => {
+                        const config = PROMO_TYPE_CONFIG[promo.value];
+                        const isSelected = formState.promo_type === promo.value;
+                        return (
+                          <button
+                            key={promo.value}
+                            type="button"
+                            onClick={() => updateField("promo_type", promo.value)}
+                            className={cn(
+                              "flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap",
+                              isSelected
+                                ? cn(config.selectedBg, config.selectedText, config.ring)
+                                : "bg-background text-muted-foreground hover:bg-secondary"
+                            )}
+                          >
+                            {promo.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-2 block">
+                      Market
+                    </label>
+                    <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                      {MARKETS.map((market) => (
+                        <button
+                          key={market}
+                          type="button"
+                          onClick={() => updateField("market", market)}
+                          className={cn(
+                            "flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap",
+                            formState.market === market
+                              ? "bg-foreground text-background"
+                              : "bg-background text-muted-foreground hover:bg-secondary"
+                          )}
+                        >
+                          {market}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+
               {/* Selection Name */}
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
@@ -842,32 +1017,62 @@ export function LogBetDrawer({ open, onOpenChange, initialValues }: LogBetDrawer
 
         {/* Sticky Footer */}
         <div className="absolute bottom-0 left-0 right-0 bg-background border-t border-border p-4 flex gap-3">
-          <Button
-            variant="outline"
-            className="flex-1 h-12"
-            onClick={() => handleLogBet(true)}
-            disabled={!isValid || invalidBoost || createBet.isPending}
-          >
-            {createBet.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <>
-                <Plus className="h-4 w-4 mr-1" />
-                Log & Add Another
-              </>
-            )}
-          </Button>
-          <Button
-            className="flex-1 h-12"
-            onClick={() => handleLogBet(false)}
-            disabled={!isValid || invalidBoost || createBet.isPending}
-          >
-            {createBet.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              hasDuplicateExposure ? "Log Another Ticket" : "Log Bet"
-            )}
-          </Button>
+          {isScannerFlow ? (
+            <>
+              <Button
+                variant="outline"
+                className="flex-1 h-12"
+                onClick={() => setShowAdvanced((current) => !current)}
+                disabled={isSubmitting}
+              >
+                {showAdvanced ? "Hide Details" : "More Details"}
+              </Button>
+              <Button
+                className="flex-1 h-12"
+                onClick={() => handleLogBet(false)}
+                disabled={!isValid || invalidBoost || isSubmitting}
+              >
+                {isSubmitting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : isTutorialPracticeFlow ? (
+                  "Save Practice Ticket"
+                ) : hasDuplicateExposure ? (
+                  "Log Another Ticket"
+                ) : (
+                  "Confirm & Log Bet"
+                )}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                variant="outline"
+                className="flex-1 h-12"
+                onClick={() => handleLogBet(true)}
+                disabled={!isValid || invalidBoost || isSubmitting}
+              >
+                {isSubmitting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <Plus className="h-4 w-4 mr-1" />
+                    Log & Add Another
+                  </>
+                )}
+              </Button>
+              <Button
+                className="flex-1 h-12"
+                onClick={() => handleLogBet(false)}
+                disabled={!isValid || invalidBoost || isSubmitting}
+              >
+                {isSubmitting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  hasDuplicateExposure ? "Log Another Ticket" : "Log Bet"
+                )}
+              </Button>
+            </>
+          )}
         </div>
       </SheetContent>
     </Sheet>

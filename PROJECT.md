@@ -156,9 +156,10 @@ ev-betting-tracker/
 | **Auth** | `backend/auth.py` — `get_current_user`; `frontend/src/lib/auth-context.tsx`; `frontend/src/middleware.ts` |
 | **Frontend API** | `frontend/src/lib/api.ts` — `fetchAPI`, all API wrappers |
 | **React Query hooks** | `frontend/src/lib/hooks.ts` — `useBets`, `useCreateBet`, `useSummary`, etc. |
-| **Kelly settings** | `frontend/src/lib/kelly-context.tsx` — bankroll, multiplier, localStorage |
-| **Scanner UI** | `frontend/src/app/scanner/page.tsx` — lens ranking orchestration, null-state handling, Log Bet flow |
+| **Kelly settings** | `frontend/src/lib/kelly-context.tsx` — bankroll, multiplier, backend-backed sync, local cache |
+| **Scanner UI** | `frontend/src/app/scanner/[surface]/page.tsx` + `frontend/src/app/scanner/ScannerSurfacePage.tsx` — surface routing, lens ranking, props modes, null-state handling, Log Bet flow |
 | **Scanner result filters** | `frontend/src/app/scanner/components/ScannerResultFilters.tsx` + `frontend/src/lib/scanner-filters.ts` |
+| **Parlay builder** | `frontend/src/app/parlay/page.tsx` + `frontend/src/lib/parlay-utils.ts` — local cart review, fair-pricing preview, Kelly auto-sizing, tracker handoff |
 | **Ops dashboard UI** | `frontend/src/app/admin/ops/OpsDashboard.tsx` — scheduler-first health + odds activity card |
 | **Protected ops bridge** | `frontend/src/app/api/ops/status/route.ts` + `frontend/src/lib/server/admin-access.ts` |
 | **Log Bet form** | `frontend/src/components/LogBetDrawer.tsx` — form, EV preview, vig handling |
@@ -230,9 +231,10 @@ ev-betting-tracker/
 
 ### Scanner UX
 
-- **Lenses**: Standard EV, Profit Boost, Bonus Bet, Qualifier.
+- **Straight-bet lenses**: Standard EV, Profit Boost, Bonus Bet, Qualifier.
+- **Player props modes**: Sportsbooks and Pick'em behave as separate props views rather than promo lenses.
 - **Client-side lens math**: Frontend applies promo-specific EV on top of raw scan data.
-- **Kelly**: Recommended bet size from `base_kelly_fraction × kellyMultiplier × bankroll`.
+- **Kelly**: Recommended bet size from `base_kelly_fraction x kellyMultiplier x bankroll`, with scanner cards and the parlay builder using stealth-rounded stake suggestions.
 
 ---
 

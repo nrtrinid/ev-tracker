@@ -34,6 +34,7 @@
         "last_success_at": null,
         "last_error_at": null
       },
+      "recent_scans": [],
       "recent_calls": []
     }
   }

@@ -22,7 +22,7 @@ export function TopNav() {
   const router = useRouter();
   const { signOut } = useAuth();
   const { data: readiness } = useBackendReadiness();
-  const { cart } = useBettingPlatformStore();
+  const { cart, scannerReviewCandidate, onboardingDismissed } = useBettingPlatformStore();
 
   if (pathname === "/login") return null;
 
@@ -39,6 +39,8 @@ export function TopNav() {
   const statusLabel = hasCrossSurfaceImpact
     ? "Sync issue"
     : "Updates delayed";
+  const showHomeReviewBadge =
+    Boolean(scannerReviewCandidate) && !onboardingDismissed.includes("home_scanner_review");
 
   const handleSignOut = async () => {
     await signOut();
@@ -85,6 +87,14 @@ export function TopNav() {
               >
                 <Icon className="h-4 w-4" />
                 <span className="hidden sm:inline">{item.label}</span>
+                {item.href === "/" && showHomeReviewBadge && (
+                  <span
+                    className="inline-flex min-w-5 items-center justify-center rounded-full bg-[#C4A35A] px-1.5 py-0.5 text-[10px] font-semibold text-[#2C2416]"
+                    title="Saved scanner pick ready to review"
+                  >
+                    1
+                  </span>
+                )}
                 {item.href === "/parlay" && cart.length > 0 && (
                   <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-[#C4A35A] px-1.5 py-0.5 text-[10px] font-semibold text-[#2C2416]">
                     {cart.length}

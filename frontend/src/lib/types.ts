@@ -12,6 +12,7 @@ export type PromoType =
 
 export type BetResult = "pending" | "win" | "loss" | "push" | "void";
 export type ScannerSurface = "straight_bets" | "player_props";
+export type BetSurface = ScannerSurface | "parlay";
 
 export interface Bet {
   id: string;
@@ -21,7 +22,7 @@ export interface Bet {
   sport: string;
   event: string;
   market: string;
-  surface: ScannerSurface;
+  surface: BetSurface;
   sportsbook: string;
   promo_type: PromoType;
   odds_american: number;
@@ -69,7 +70,7 @@ export interface BetCreate {
   sport: string;
   event: string;
   market: string;
-  surface?: ScannerSurface;
+  surface?: BetSurface;
   sportsbook: string;
   promo_type: PromoType;
   odds_american: number;
@@ -101,7 +102,7 @@ export interface BetUpdate {
   sport?: string;
   event?: string;
   market?: string;
-  surface?: ScannerSurface;
+  surface?: BetSurface;
   sportsbook?: string;
   promo_type?: PromoType;
   odds_american?: number;
@@ -119,6 +120,9 @@ export interface Settings {
   k_factor: number;
   default_stake: number | null;
   preferred_sportsbooks: string[];
+  kelly_multiplier: number;
+  bankroll_override: number;
+  use_computed_bankroll: boolean;
   // Personalized k-factor auto mode
   k_factor_mode: string;             // 'baseline' | 'auto'
   k_factor_min_stake: number;
@@ -193,6 +197,8 @@ export interface Balance {
 }
 
 // Scanner types
+export type SportsbookDeeplinkLevel = "selection" | "market" | "event" | "homepage";
+
 export interface StraightBetMarketSide {
   surface: "straight_bets";
   event_id?: string | null;
@@ -200,6 +206,7 @@ export interface StraightBetMarketSide {
   selection_key?: string | null;
   sportsbook: string;
   sportsbook_deeplink_url?: string | null;
+  sportsbook_deeplink_level?: SportsbookDeeplinkLevel | null;
   sport: string;
   event: string;
   commence_time: string;
@@ -210,7 +217,7 @@ export interface StraightBetMarketSide {
   base_kelly_fraction: number;
   book_decimal: number;
   ev_percentage: number;
-  scanner_duplicate_state?: "new" | "already_logged" | "better_now";
+  scanner_duplicate_state?: "new" | "logged_elsewhere" | "already_logged" | "better_now";
   best_logged_odds_american?: number | null;
   current_odds_american?: number | null;
   matched_pending_bet_id?: string | null;
@@ -223,6 +230,7 @@ export interface PlayerPropMarketSide {
   selection_key: string;
   sportsbook: string;
   sportsbook_deeplink_url?: string | null;
+  sportsbook_deeplink_level?: SportsbookDeeplinkLevel | null;
   sport: string;
   event: string;
   commence_time: string;
@@ -234,28 +242,98 @@ export interface PlayerPropMarketSide {
   selection_side: string;
   line_value?: number | null;
   display_name: string;
-  pinnacle_odds: number;
+  reference_odds: number;
+  reference_source: string;
+  reference_bookmakers: string[];
+  reference_bookmaker_count?: number | null;
+  confidence_label?: string | null;
   book_odds: number;
   true_prob: number;
   base_kelly_fraction: number;
   book_decimal: number;
   ev_percentage: number;
-  scanner_duplicate_state?: "new" | "already_logged" | "better_now";
+  scanner_duplicate_state?: "new" | "logged_elsewhere" | "already_logged" | "better_now";
   best_logged_odds_american?: number | null;
   current_odds_american?: number | null;
   matched_pending_bet_id?: string | null;
 }
 
+export interface PrizePicksComparisonCard {
+  comparison_key: string;
+  event_id?: string | null;
+  sport: string;
+  event: string;
+  commence_time: string;
+  player_name: string;
+  participant_id?: string | null;
+  team?: string | null;
+  opponent?: string | null;
+  market_key: string;
+  market: string;
+  prizepicks_line: number;
+  exact_line_bookmakers: string[];
+  exact_line_bookmaker_count: number;
+  consensus_over_prob: number;
+  consensus_under_prob: number;
+  consensus_side: "over" | "under";
+  confidence_label: string;
+  best_over_sportsbook?: string | null;
+  best_over_odds?: number | null;
+  best_over_deeplink_url?: string | null;
+  best_under_sportsbook?: string | null;
+  best_under_odds?: number | null;
+  best_under_deeplink_url?: string | null;
+}
+
 export type MarketSide = StraightBetMarketSide | PlayerPropMarketSide;
 
+export interface PlayerPropDiagnosticGame {
+  event_id?: string | null;
+  away_team: string;
+  home_team: string;
+  selection_reason: string;
+  broadcasts: string[];
+  odds_event_id?: string | null;
+  commence_time?: string | null;
+  matched: boolean;
+}
+
+export interface PlayerPropScanDiagnostics {
+  scan_mode: string;
+  scan_scope?: string | null;
+  scoreboard_event_count: number;
+  odds_event_count: number;
+  curated_games: PlayerPropDiagnosticGame[];
+  matched_event_count: number;
+  unmatched_game_count: number;
+  fallback_reason?: string | null;
+  fallback_event_count?: number;
+  events_fetched: number;
+  events_skipped_pregame: number;
+  events_with_results: number;
+  candidate_sides_count: number;
+  quality_gate_filtered_count: number;
+  quality_gate_min_reference_bookmakers: number;
+  sides_count: number;
+  markets_requested: string[];
+  prizepicks_status?: string | null;
+  prizepicks_message?: string | null;
+  prizepicks_board_items_count?: number;
+  prizepicks_exact_line_matches_count?: number;
+  prizepicks_unmatched_count?: number;
+  prizepicks_filtered_count?: number;
+}
+
 export interface ScanResult {
-  surface: ScannerSurface;
+  surface: BetSurface;
   sport: string;
   sides: MarketSide[];
+  prizepicks_cards?: PrizePicksComparisonCard[] | null;
   events_fetched: number;
   events_with_both_books: number;
   api_requests_remaining: string | null;
   scanned_at?: string | null;
+  diagnostics?: PlayerPropScanDiagnostics | null;
 }
 
 export interface BackendReadiness {
@@ -286,6 +364,73 @@ export interface BackendReadiness {
     >;
   };
   detail?: string;
+}
+
+export interface OddsApiActivitySummary {
+  calls_last_hour?: number;
+  errors_last_hour?: number;
+  last_success_at?: string | null;
+  last_error_at?: string | null;
+}
+
+export interface OddsApiActivityCall {
+  activity_kind?: "raw_call";
+  timestamp?: string | null;
+  source?: string | null;
+  endpoint?: string | null;
+  sport?: string | null;
+  cache_hit?: boolean;
+  outbound_call_made?: boolean;
+  status_code?: number | null;
+  duration_ms?: number | null;
+  api_requests_remaining?: string | number | null;
+  error_type?: string | null;
+  error_message?: string | null;
+}
+
+export interface OddsApiActivityScanDetail {
+  activity_kind?: "scan_detail";
+  timestamp?: string | null;
+  source?: string | null;
+  surface?: ScannerSurface | null;
+  scan_scope?: "all" | "single_sport" | string | null;
+  requested_sport?: string | null;
+  sport?: string | null;
+  actor_label?: string | null;
+  run_id?: string | null;
+  cache_hit?: boolean;
+  outbound_call_made?: boolean;
+  duration_ms?: number | null;
+  events_fetched?: number | null;
+  events_with_both_books?: number | null;
+  sides_count?: number | null;
+  api_requests_remaining?: string | number | null;
+  status_code?: number | null;
+  error_type?: string | null;
+  error_message?: string | null;
+}
+
+export interface OddsApiActivityScanSession {
+  activity_kind?: "scan_session";
+  scan_session_id?: string | null;
+  timestamp?: string | null;
+  source?: string | null;
+  surface?: ScannerSurface | null;
+  scan_scope?: "all" | "single_sport" | string | null;
+  requested_sport?: string | null;
+  actor_label?: string | null;
+  run_id?: string | null;
+  detail_count?: number;
+  live_call_count?: number;
+  cache_hit_count?: number;
+  other_count?: number;
+  total_events_fetched?: number;
+  total_events_with_both_books?: number;
+  total_sides?: number;
+  min_api_requests_remaining?: string | number | null;
+  error_count?: number;
+  has_errors?: boolean;
+  details?: OddsApiActivityScanDetail[];
 }
 
 export interface OperatorStatusResponse {
@@ -357,31 +502,132 @@ export interface OperatorStatusResponse {
       db_error?: string | null;
     } | null;
     odds_api_activity?: {
-      summary?: {
-        calls_last_hour?: number;
-        errors_last_hour?: number;
-        last_success_at?: string | null;
-        last_error_at?: string | null;
-      };
-      recent_calls?: Array<{
-        timestamp?: string | null;
-        source?: string | null;
-        endpoint?: string | null;
-        sport?: string | null;
-        cache_hit?: boolean;
-        outbound_call_made?: boolean;
-        status_code?: number | null;
-        duration_ms?: number | null;
-        api_requests_remaining?: string | number | null;
-        error_type?: string | null;
-        error_message?: string | null;
-      }>;
+      summary?: OddsApiActivitySummary;
+      recent_scans?: OddsApiActivityScanSession[];
+      recent_calls?: OddsApiActivityCall[];
     } | null;
   };
 }
 
+export interface ResearchOpportunityBreakdownItem {
+  key: string;
+  captured_count: number;
+  clv_ready_count: number;
+  beat_close_pct: number | null;
+  avg_clv_percent: number | null;
+}
+
+export interface ResearchOpportunityRecentRow {
+  opportunity_key: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  commence_time: string;
+  sport: string;
+  event: string;
+  team: string;
+  sportsbook: string;
+  market: string;
+  event_id?: string | null;
+  first_source: string;
+  seen_count: number;
+  first_ev_percentage: number;
+  first_book_odds: number;
+  best_book_odds: number;
+  latest_reference_odds: number | null;
+  reference_odds_at_close: number | null;
+  clv_ev_percent: number | null;
+  beat_close: boolean | null;
+}
+
+export interface ResearchOpportunitySummary {
+  captured_count: number;
+  open_count: number;
+  close_captured_count: number;
+  clv_ready_count: number;
+  beat_close_pct: number | null;
+  avg_clv_percent: number | null;
+  by_source: ResearchOpportunityBreakdownItem[];
+  by_sportsbook: ResearchOpportunityBreakdownItem[];
+  by_edge_bucket: ResearchOpportunityBreakdownItem[];
+  by_odds_bucket: ResearchOpportunityBreakdownItem[];
+  recent_opportunities: ResearchOpportunityRecentRow[];
+}
+
+export interface ParlayWarning {
+  code: string;
+  severity: "warning" | "blocking";
+  title: string;
+  detail: string;
+  relatedLegIds: string[];
+}
+
+export interface ParlayPricingPreview {
+  legCount: number;
+  sportsbook: string | null;
+  combinedDecimalOdds: number;
+  combinedAmericanOdds: number;
+  stake: number | null;
+  totalPayout: number | null;
+  profit: number | null;
+  estimatedFairDecimalOdds: number | null;
+  estimatedFairAmericanOdds: number | null;
+  estimatedTrueProbability: number | null;
+  estimatedEvPercent: number | null;
+  baseKellyFraction: number | null;
+  rawKellyStake: number | null;
+  stealthKellyStake: number | null;
+  bankrollUsed: number | null;
+  kellyMultiplierUsed: number | null;
+  estimateAvailable: boolean;
+  estimateUnavailableReason: string | null;
+  hasBlockingCorrelation: boolean;
+  warnings: ParlayWarning[];
+}
+
+export interface ParlaySlip {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  sportsbook: string;
+  stake: number | null;
+  legs: ParlayCartLeg[];
+  warnings: ParlayWarning[];
+  pricingPreview: ParlayPricingPreview | null;
+  logged_bet_id: string | null;
+}
+
+export interface ParlaySlipCreate {
+  sportsbook: string;
+  stake: number | null;
+  legs: ParlayCartLeg[];
+  warnings: ParlayWarning[];
+  pricingPreview: ParlayPricingPreview | null;
+}
+
+export interface ParlaySlipUpdate {
+  sportsbook?: string;
+  stake?: number | null;
+  legs?: ParlayCartLeg[];
+  warnings?: ParlayWarning[];
+  pricingPreview?: ParlayPricingPreview | null;
+}
+
+export interface ParlaySlipLogRequest {
+  sport?: string;
+  event?: string;
+  promo_type: PromoType;
+  odds_american: number;
+  stake: number;
+  boost_percent?: number;
+  winnings_cap?: number;
+  notes?: string;
+  event_date?: string;
+  opposing_odds?: number;
+  payout_override?: number;
+}
+
 export interface ScannedBetData {
-  surface?: ScannerSurface;
+  surface?: BetSurface;
   sportsbook: string;
   sport: string;
   event: string;
@@ -409,10 +655,38 @@ export interface ScannedBetData {
   raw_kelly_stake?: number;     // raw Kelly $ (base_kelly * multiplier * bankroll)
   stealth_kelly_stake?: number; // stealth-rounded stake for display and auto-fill
   // Backend duplicate/exposure awareness for scanner UX
-  scanner_duplicate_state?: "new" | "already_logged" | "better_now";
+  scanner_duplicate_state?: "new" | "logged_elsewhere" | "already_logged" | "better_now";
   best_logged_odds_american?: number | null;
   current_odds_american?: number | null;
   matched_pending_bet_id?: string | null;
+}
+
+export interface TutorialPracticeBet {
+  id: string;
+  created_at: string;
+  event_date: string;
+  sport: string;
+  event: string;
+  market: string;
+  sportsbook: string;
+  surface: BetSurface;
+  promo_type: PromoType;
+  odds_american: number;
+  stake: number;
+  win_payout: number;
+  ev_total: number;
+  ev_per_dollar: number;
+}
+
+export type TutorialSessionStep = "scanner_empty" | "scanner_ready" | "home_review";
+
+export interface TutorialSession {
+  surface: BetSurface;
+  step: TutorialSessionStep;
+  has_seeded_scan: boolean;
+  practice_bet: TutorialPracticeBet | null;
+  started_at: string;
+  updated_at: string;
 }
 
 export interface ParlayCartLeg {
@@ -423,11 +697,24 @@ export interface ParlayCartLeg {
   selectionKey: string;
   sportsbook: string;
   oddsAmerican: number;
+  referenceOddsAmerican: number | null;
+  referenceTrueProbability?: number | null;
+  referenceSource: string | null;
   display: string;
   event: string;
   sport: string;
   commenceTime: string;
   correlationTags: string[];
+  team?: string | null;
+  participantName?: string | null;
+  participantId?: string | null;
+  selectionSide?: string | null;
+  lineValue?: number | null;
+  marketDisplay?: string | null;
+  sourceEventId?: string | null;
+  sourceMarketKey?: string | null;
+  sourceSelectionKey?: string | null;
+  selectionMeta?: Record<string, unknown> | null;
 }
 
 // Constants

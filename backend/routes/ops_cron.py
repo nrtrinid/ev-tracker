@@ -8,6 +8,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Header
 
 from dependencies import require_ops_token
+from models import ResearchOpportunitySummaryResponse
 
 
 router = APIRouter()
@@ -20,6 +21,8 @@ async def cron_run_scan_impl(
     new_run_id: Callable[[str], str],
     log_event: Callable[..., None],
     set_ops_status: Callable[[str, dict], None],
+    persist_ops_job_run: Callable[..., None],
+    apply_fresh_scan_followups: Callable[[dict[str, Any]], Any] | None = None,
     run_id_prefix: str = "cron_scan",
     log_prefix: str = "cron.scan",
     scan_source: str = "cron_scan",
@@ -32,7 +35,7 @@ async def cron_run_scan_impl(
     started_clock = time.monotonic()
     log_event(f"{log_prefix}.started", run_id=run_id)
 
-    from services.odds_api import get_cached_or_scan, SUPPORTED_SPORTS
+    from services.odds_api import append_scan_activity, get_cached_or_scan, SUPPORTED_SPORTS
     from services.discord_alerts import schedule_alerts
 
     started = datetime.now(UTC).isoformat() + "Z"
@@ -40,11 +43,40 @@ async def cron_run_scan_impl(
     errors: list[dict] = []
     total_sides = 0
     alerts_scheduled = 0
+    total_events = 0
+    total_with_both = 0
+    min_remaining: str | None = None
 
     for sport_key in SUPPORTED_SPORTS:
+        sport_started_at = time.monotonic()
         try:
             result = await get_cached_or_scan(sport_key, source=scan_source)
+            scan_duration_ms = round((time.monotonic() - sport_started_at) * 1000, 2)
             sides = result.get("sides") or []
+            append_scan_activity(
+                scan_session_id=run_id,
+                source=scan_source,
+                surface="straight_bets",
+                scan_scope="all",
+                requested_sport=None,
+                sport=sport_key,
+                actor_label=None,
+                run_id=run_id,
+                cache_hit=bool(result.get("cache_hit")),
+                outbound_call_made=not bool(result.get("cache_hit")),
+                duration_ms=scan_duration_ms,
+                events_fetched=int(result.get("events_fetched") or 0),
+                events_with_both_books=int(result.get("events_with_both_books") or 0),
+                sides_count=len(sides),
+                api_requests_remaining=result.get("api_requests_remaining"),
+                status_code=200,
+                error_type=None,
+                error_message=None,
+            )
+            if apply_fresh_scan_followups is not None:
+                followup_result = apply_fresh_scan_followups(result)
+                if asyncio.iscoroutine(followup_result):
+                    await followup_result
             scanned.append(
                 {
                     "sport": sport_key,
@@ -55,9 +87,46 @@ async def cron_run_scan_impl(
                 }
             )
             total_sides += len(sides)
+            total_events += int(result.get("events_fetched") or 0)
+            total_with_both += int(result.get("events_with_both_books") or 0)
+            remaining = result.get("api_requests_remaining")
+            if remaining is not None:
+                try:
+                    remaining_int = int(remaining)
+                    min_remaining = (
+                        str(remaining_int)
+                        if min_remaining is None
+                        else str(min(remaining_int, int(min_remaining)))
+                    )
+                except (TypeError, ValueError):
+                    min_remaining = str(remaining)
             alerts_scheduled += schedule_alerts(sides)
         except httpx.HTTPStatusError as e:
+            scan_duration_ms = round((time.monotonic() - sport_started_at) * 1000, 2)
             status = e.response.status_code if e.response is not None else None
+            remaining = None
+            if e.response is not None:
+                remaining = e.response.headers.get("x-requests-remaining") or e.response.headers.get("x-request-remaining")
+            append_scan_activity(
+                scan_session_id=run_id,
+                source=scan_source,
+                surface="straight_bets",
+                scan_scope="all",
+                requested_sport=None,
+                sport=sport_key,
+                actor_label=None,
+                run_id=run_id,
+                cache_hit=False,
+                outbound_call_made=True,
+                duration_ms=scan_duration_ms,
+                events_fetched=0,
+                events_with_both_books=0,
+                sides_count=0,
+                api_requests_remaining=remaining,
+                status_code=status,
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
             if status == 404:
                 errors.append({"sport": sport_key, "status": 404, "error": "no odds"})
                 log_event(f"{log_prefix}.sport_skipped", run_id=run_id, sport=sport_key, status=404, reason="no odds")
@@ -73,6 +142,27 @@ async def cron_run_scan_impl(
                 error=str(e),
             )
         except Exception as e:
+            scan_duration_ms = round((time.monotonic() - sport_started_at) * 1000, 2)
+            append_scan_activity(
+                scan_session_id=run_id,
+                source=scan_source,
+                surface="straight_bets",
+                scan_scope="all",
+                requested_sport=None,
+                sport=sport_key,
+                actor_label=None,
+                run_id=run_id,
+                cache_hit=False,
+                outbound_call_made=False,
+                duration_ms=scan_duration_ms,
+                events_fetched=0,
+                events_with_both_books=0,
+                sides_count=0,
+                api_requests_remaining=None,
+                status_code=None,
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
             errors.append({"sport": sport_key, "error": str(e)})
             log_event(
                 f"{log_prefix}.sport_failed",
@@ -105,7 +195,30 @@ async def cron_run_scan_impl(
             "alerts_scheduled": alerts_scheduled,
             "error_count": len(errors),
             "errors": errors,
+            "captured_at": finished,
         },
+    )
+    persist_ops_job_run(
+        job_kind="ops_trigger_scan" if ops_status_key == "last_ops_trigger_scan" else "scheduled_scan",
+        source="ops_trigger" if ops_status_key == "last_ops_trigger_scan" else "scheduler",
+        status="completed" if not errors else "completed_with_errors",
+        run_id=run_id,
+        scan_session_id=run_id,
+        surface="straight_bets",
+        scan_scope="all",
+        requested_sport="all",
+        captured_at=finished,
+        started_at=started,
+        finished_at=finished,
+        duration_ms=duration_ms,
+        events_fetched=total_events,
+        events_with_both_books=total_with_both,
+        total_sides=total_sides,
+        alerts_scheduled=alerts_scheduled,
+        api_requests_remaining=min_remaining,
+        hard_errors=len(errors) if ops_status_key != "last_ops_trigger_scan" else None,
+        error_count=len(errors),
+        errors=errors,
     )
 
     if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1" and alerts_scheduled == 0:
@@ -147,6 +260,7 @@ async def cron_run_auto_settle_impl(
     new_run_id: Callable[[str], str],
     log_event: Callable[..., None],
     set_ops_status: Callable[[str, dict], None],
+    persist_ops_job_run: Callable[..., None],
     get_db: Callable[[], Any],
     run_id_prefix: str = "cron_auto_settle",
     log_prefix: str = "cron.auto_settle",
@@ -193,11 +307,25 @@ async def cron_run_auto_settle_impl(
             "finished_at": finished,
             "duration_ms": duration_ms,
             "settled": settled,
+            "captured_at": finished,
         },
     )
     summary = get_last_auto_settler_summary()
     if summary:
         set_ops_status("last_auto_settle_summary", summary)
+    persist_ops_job_run(
+        job_kind="auto_settle",
+        source=ops_status_source,
+        status="completed",
+        run_id=run_id,
+        captured_at=finished,
+        started_at=started,
+        finished_at=finished,
+        duration_ms=duration_ms,
+        settled=settled,
+        skipped_totals=summary.get("skipped_totals") if isinstance(summary, dict) else None,
+        meta={"sports": summary.get("sports")} if isinstance(summary, dict) and isinstance(summary.get("sports"), list) else None,
+    )
 
     if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1":
         from services.discord_alerts import send_discord_webhook
@@ -234,6 +362,9 @@ def ops_status_impl(
     check_db_ready: Callable[[], tuple[bool, str | None]],
     check_scheduler_freshness: Callable[[bool], tuple[bool, dict]],
     utc_now_iso: Callable[[], str],
+    get_db: Callable[[], Any],
+    retry_supabase: Callable[[Callable[[], Any]], Any],
+    log_event: Callable[..., None],
     get_ops_status: Callable[[], dict],
 ) -> dict[str, Any]:
     """Protected operator status implementation used by the API route wrapper."""
@@ -242,12 +373,22 @@ def ops_status_impl(
     runtime = runtime_state()
     db_ok, db_error = check_db_ready()
     scheduler_fresh_ok, scheduler_freshness = check_scheduler_freshness(runtime["scheduler_expected"])
-    ops = get_ops_status()
     from services.odds_api import get_odds_api_activity_snapshot
+    from services.ops_history import load_ops_status_snapshot
 
+    fallback_ops = get_ops_status()
     odds_api_activity = get_odds_api_activity_snapshot()
-    if isinstance(ops, dict):
-        ops["odds_api_activity"] = odds_api_activity
+    try:
+        db = get_db()
+    except Exception:
+        db = None
+    ops = load_ops_status_snapshot(
+        db=db,
+        retry_supabase=retry_supabase,
+        log_event=log_event,
+        fallback_ops_status=fallback_ops,
+        fallback_odds_api_activity=odds_api_activity,
+    )
 
     return {
         "timestamp": utc_now_iso(),
@@ -260,6 +401,18 @@ def ops_status_impl(
         "scheduler_freshness": scheduler_freshness,
         "ops": ops,
     }
+
+
+def ops_research_opportunities_summary_impl(
+    x_cron_token: str | None,
+    *,
+    require_valid_cron_token: Callable[[str | None], None],
+    get_db: Callable[[], Any],
+    get_summary: Callable[[Any], ResearchOpportunitySummaryResponse],
+) -> ResearchOpportunitySummaryResponse:
+    """Protected research summary implementation used by the API route wrapper."""
+    require_valid_cron_token(x_cron_token)
+    return get_summary(get_db())
 
 
 async def cron_test_discord_impl(
@@ -412,6 +565,11 @@ async def ops_trigger_scan(
         new_run_id=main._new_run_id,
         log_event=main._log_event,
         set_ops_status=main._set_ops_status,
+        persist_ops_job_run=main._persist_ops_job_run,
+        apply_fresh_scan_followups=lambda result: main._apply_fresh_straight_scan_followups(
+            result,
+            source="ops_trigger_scan",
+        ),
         run_id_prefix="ops_scan",
         log_prefix="ops.trigger.scan",
         scan_source="ops_trigger_scan",
@@ -433,6 +591,7 @@ async def ops_trigger_auto_settle(
         new_run_id=main._new_run_id,
         log_event=main._log_event,
         set_ops_status=main._set_ops_status,
+        persist_ops_job_run=main._persist_ops_job_run,
         get_db=main.get_db,
         run_id_prefix="ops_auto_settle",
         log_prefix="ops.trigger.auto_settle",
@@ -456,7 +615,27 @@ def ops_status(
         check_db_ready=main._check_db_ready,
         check_scheduler_freshness=main._check_scheduler_freshness,
         utc_now_iso=main._utc_now_iso,
+        get_db=main.get_db,
+        retry_supabase=main._retry_supabase,
+        log_event=main._log_event,
         get_ops_status=lambda: getattr(main.app.state, "ops_status", {}),
+    )
+
+
+@router.get("/api/ops/research-opportunities/summary", response_model=ResearchOpportunitySummaryResponse)
+def ops_research_opportunities_summary(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    import main
+    from services.research_opportunities import get_research_opportunities_summary
+
+    return ops_research_opportunities_summary_impl(
+        x_cron_token=x_ops_token or x_cron_token,
+        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        get_db=main.get_db,
+        get_summary=get_research_opportunities_summary,
     )
 
 

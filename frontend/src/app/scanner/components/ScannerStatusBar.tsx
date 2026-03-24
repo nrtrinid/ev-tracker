@@ -10,6 +10,7 @@ interface ScannerStatusBarProps {
   scanError: string | null;
   scanAgeMinutes: number | null;
   eventsFetched: number;
+  tutorialMode?: boolean;
   showBackendHint: boolean;
   backendHint: string;
 }
@@ -22,6 +23,7 @@ export function ScannerStatusBar({
   scanError,
   scanAgeMinutes,
   eventsFetched,
+  tutorialMode = false,
   showBackendHint,
   backendHint,
 }: ScannerStatusBarProps) {
@@ -37,17 +39,17 @@ export function ScannerStatusBar({
         {isRunningScan ? (
           <>
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Scanning all sports...
+            Finding the best plays...
           </>
         ) : cooldown > 0 ? (
           <>
             <Clock className="mr-2 h-4 w-4" />
-            Rescan in {cooldown}s
+            {tutorialMode ? `Tutorial scan ready in ${cooldown}s` : `Refresh in ${cooldown}s`}
           </>
         ) : (
           <>
             <Radar className="mr-2 h-4 w-4" />
-            {hasScanData ? "Rescan" : "Full Scan"}
+            {tutorialMode ? (hasScanData ? "Reload Tutorial Lines" : "Run Tutorial Scan") : hasScanData ? "Refresh Plays" : "Find Plays"}
           </>
         )}
       </Button>
@@ -56,23 +58,37 @@ export function ScannerStatusBar({
 
       {hasScanData && (
         <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
-          <div
-            className={
-              isStale
-                ? "inline-flex items-center rounded-full border border-[#B85C38]/30 bg-[#B85C38]/10 px-2 py-0.5 text-[10px] text-[#8B3D20]"
-                : "inline-flex items-center rounded-full border border-[#4A7C59]/25 bg-[#4A7C59]/8 px-2 py-0.5 text-[10px] text-[#2E5D39]"
-            }
-          >
-            {isStale ? "Stale" : "Fresh"}
-          </div>
-          {scanAgeMinutes !== null && (
+          {tutorialMode ? (
             <>
+              <div className="inline-flex items-center rounded-full border border-primary/25 bg-primary/8 px-2 py-0.5 text-[10px] text-primary">
+                Tutorial Sample
+              </div>
               <span className="h-3 w-px bg-border" />
-              <span>Last scan {scanAgeMinutes} min ago</span>
+              <span>Practice scanner</span>
+              <span className="h-3 w-px bg-border" />
+              <span>{eventsFetched} sample events</span>
+            </>
+          ) : (
+            <>
+              <div
+                className={
+                  isStale
+                    ? "inline-flex items-center rounded-full border border-[#B85C38]/30 bg-[#B85C38]/10 px-2 py-0.5 text-[10px] text-[#8B3D20]"
+                    : "inline-flex items-center rounded-full border border-[#4A7C59]/25 bg-[#4A7C59]/8 px-2 py-0.5 text-[10px] text-[#2E5D39]"
+                }
+              >
+                {isStale ? "Stale" : "Fresh"}
+              </div>
+              {scanAgeMinutes !== null && (
+                <>
+                  <span className="h-3 w-px bg-border" />
+                  <span>Last scan {scanAgeMinutes} min ago</span>
+                </>
+              )}
+              <span className="h-3 w-px bg-border" />
+              <span>{eventsFetched} events</span>
             </>
           )}
-          <span className="h-3 w-px bg-border" />
-          <span>{eventsFetched} events</span>
         </div>
       )}
 

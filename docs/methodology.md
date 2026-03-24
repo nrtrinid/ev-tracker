@@ -1,6 +1,8 @@
 # Methodology: How EV Is Calculated
 
-This document explains the mathematical foundation behind EV Betting Tracker's scanner. All calculations are implemented in `backend/calculations.py` and `backend/services/odds_api.py`.
+This document explains the mathematical foundation behind EV Betting Tracker's scanners. Straight bets and player props now use different reference models.
+
+For straight bets, Pinnacle remains the sharp reference. For player props, the V2 scanner uses a curated market-median consensus across supported books instead. See [Player Props V2](./player-props-v2.md).
 
 ---
 
@@ -137,7 +139,8 @@ With $1,000 bankroll and 0.25× multiplier: `0.0037 × 0.25 × 1000 = $0.93`
 
 ## Operational Notes
 
-- **Scheduler-first operations:** Math and de-vig logic are unchanged, but production scan execution is expected to run primarily through scheduler jobs when enabled.
+- **Straight bets can run on scheduler jobs:** Math and de-vig logic are unchanged for the straight-bets path.
+- **Player props are manual-only:** The V2 prop sniper does not run on the scheduler, cache warmers, or alert cron paths.
 - **Cron fallback:** If your host sleeps or scheduler is disabled, external cron routes can trigger the same scan pipeline.
 - **Shared cache behavior:** Multiple scan triggers (manual, scheduler, cron) share the same 5-minute per-sport cache, reducing quota usage and keeping outputs consistent.
 - **Operator visibility:** `/api/ops/status` and `/admin/ops` expose compact scan/odds activity summaries (counts, recency, status) to diagnose data freshness and API reliability.

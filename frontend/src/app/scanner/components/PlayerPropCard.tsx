@@ -1,14 +1,18 @@
-import { ChevronRight, ExternalLink } from "lucide-react";
+import { ChevronRight, ExternalLink, Info } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import type { PlayerPropMarketSide } from "@/lib/types";
-import { cn, formatOdds } from "@/lib/utils";
+import { calculateStealthStake, cn, formatCurrency, formatOdds } from "@/lib/utils";
 import { buildScannerActionModel } from "../scanner-ui-model";
 
 interface PlayerPropCardProps {
   side: PlayerPropMarketSide & { _retention?: number; _boostedEV?: number };
+  kellyMultiplier: number;
+  bankroll: number;
   onLogBet: (side: PlayerPropMarketSide) => void;
   onAddToCart: (side: PlayerPropMarketSide) => void;
+  onStartPlaceFlow: (side: PlayerPropMarketSide) => void;
   bookColors: Record<string, string>;
   sportDisplayMap: Record<string, string>;
 }
@@ -23,141 +27,221 @@ function formatGameTime(isoString: string): string {
   });
 }
 
-function decimalToAmerican(decimal: number): number {
-  if (decimal >= 2.0) return Math.round((decimal - 1) * 100);
-  return Math.round(-100 / (decimal - 1));
-}
-
 function formatMarketLabel(value: string): string {
   return value.replaceAll("_", " ");
 }
 
+function formatConfidenceLabel(label: string | null | undefined): string {
+  const normalized = (label || "thin").trim().toLowerCase();
+  return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : "Thin";
+}
+
+function bookAbbrev(name: string): string {
+  const map: Record<string, string> = {
+    DraftKings: "DK",
+    FanDuel: "FD",
+    BetMGM: "MGM",
+    Caesars: "CZR",
+    Bovada: "BVD",
+    "BetOnline.ag": "BOL",
+  };
+  return map[name] || name;
+}
+
+function getDuplicateBadge(duplicateState: PlayerPropMarketSide["scanner_duplicate_state"]) {
+  if (duplicateState === "better_now") {
+    return {
+      label: "Better Now",
+      className:
+        "rounded border border-[#4A7C59]/35 bg-[#4A7C59]/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#2E5D39]",
+    };
+  }
+  if (duplicateState === "already_logged") {
+    return {
+      label: "Already Placed",
+      className:
+        "rounded border border-[#B85C38]/35 bg-[#B85C38]/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#8B3D20]",
+    };
+  }
+  if (duplicateState === "logged_elsewhere") {
+    return {
+      label: "Logged Elsewhere",
+      className:
+        "rounded border border-[#C4A35A]/35 bg-[#C4A35A]/12 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#6B5E4F]",
+    };
+  }
+  return null;
+}
+
 export function PlayerPropCard({
   side,
+  kellyMultiplier,
+  bankroll,
   onLogBet,
   onAddToCart,
+  onStartPlaceFlow,
   bookColors,
   sportDisplayMap,
 }: PlayerPropCardProps) {
   const actionModel = buildScannerActionModel({
     sportsbook: side.sportsbook,
     sportsbookDeeplinkUrl: side.sportsbook_deeplink_url,
+    sportsbookDeeplinkLevel: side.sportsbook_deeplink_level,
   });
-  const fairAmerican = decimalToAmerican(1 / side.true_prob);
-  const fairPct = (side.true_prob * 100).toFixed(1);
   const duplicateState = side.scanner_duplicate_state ?? "new";
+  const duplicateBadge = getDuplicateBadge(duplicateState);
+  const referenceBookCount = side.reference_bookmaker_count ?? side.reference_bookmakers.length;
+  const confidenceLabel = side.confidence_label ?? (referenceBookCount >= 2 ? "solid" : "thin");
+  const confidenceDisplay = formatConfidenceLabel(confidenceLabel);
+  const rawKellyStake = Math.max(0, side.base_kelly_fraction * kellyMultiplier * bankroll);
+  const stealthKellyStake = calculateStealthStake(rawKellyStake);
+  const edgeColorClass =
+    side.ev_percentage > 0
+      ? "text-green-600"
+      : side.ev_percentage < 0
+        ? "text-red-500"
+        : "text-[#3B6C8E]";
 
   return (
-    <Card className="card-hover overflow-hidden border-border/80">
-      <CardContent className="space-y-3 p-4">
-        <div className="flex items-start justify-between gap-3">
+    <Card className="card-hover">
+      <CardContent className="space-y-2.5 p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
+            <div className="mb-1.5 flex flex-wrap items-center gap-2">
               <span
                 className={cn(
                   "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white",
                   bookColors[side.sportsbook] || "bg-foreground"
                 )}
               >
-                {side.sportsbook}
+                {bookAbbrev(side.sportsbook)}
               </span>
               <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                 {sportDisplayMap[side.sport] || side.sport}
               </span>
-              <span className="rounded bg-[#EDE4D0] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[#6D5431]">
-                {formatMarketLabel(side.market)}
-              </span>
-              <span className="rounded border border-[#3B6C8E]/20 bg-[#3B6C8E]/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#2D5673]">
-                {side.selection_side}
-              </span>
-              {duplicateState !== "new" && (
-                <span className="rounded border border-[#B85C38]/35 bg-[#B85C38]/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#8B3D20]">
-                  Already Logged
+              {duplicateBadge && (
+                <span className={duplicateBadge.className}>
+                  {duplicateBadge.label}
                 </span>
               )}
             </div>
 
-            <div className="space-y-1">
-              <p className="text-sm font-semibold">{side.display_name}</p>
-              <p className="text-xs text-muted-foreground">
-                {side.player_name}
-                {side.team ? ` | ${side.team}` : ""}
-                {side.opponent ? ` vs ${side.opponent}` : ""}
-              </p>
-              <p className="text-xs text-muted-foreground">{side.event}</p>
+            <div className="mb-2 flex items-center gap-2">
+              <p className="line-clamp-2 text-sm font-semibold">{side.display_name}</p>
+              <span className="shrink-0 rounded bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                {formatMarketLabel(side.market)}
+              </span>
+            </div>
+
+            <p className="line-clamp-1 mt-0.5 text-xs text-muted-foreground">{side.event}</p>
+
+            <div className="mt-2 flex flex-col gap-1 text-xs">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono font-medium">
+                  <span className="text-[11px] text-muted-foreground">Book</span>
+                  <span className="text-foreground">{formatOdds(side.book_odds)}</span>
+                  <span className="text-[11px] text-muted-foreground">
+                    Fair {formatOdds(side.reference_odds)}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">
+                    Backed by {referenceBookCount} books
+                  </span>
+                </span>
+
+                {duplicateState === "better_now" && side.best_logged_odds_american != null && (
+                  <span className="text-[11px] text-[#2E5D39]">
+                    Logged at {formatOdds(side.best_logged_odds_american)} - now{" "}
+                    {formatOdds(side.current_odds_american ?? side.book_odds)}
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+                <span>{formatGameTime(side.commence_time)}</span>
+              </div>
             </div>
           </div>
 
-          <div className="text-right">
-            <p className="text-lg font-mono font-bold text-[#3B6C8E]">
-              {side.ev_percentage >= 0 ? "+" : ""}
-              {side.ev_percentage.toFixed(1)}%
-            </p>
-            <p className="text-[10px] text-muted-foreground">EV</p>
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-border/70 bg-muted/30 px-3 py-2 text-xs">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="font-mono text-foreground">Book: {formatOdds(side.book_odds)}</span>
-            <span className="font-mono text-muted-foreground">
-              Fair: {formatOdds(fairAmerican)} ({fairPct}%)
-            </span>
-            {side.line_value != null && (
-              <span className="text-muted-foreground">Line: {side.line_value}</span>
-            )}
-            <span className="text-muted-foreground">{formatGameTime(side.commence_time)}</span>
+          <div className="shrink-0 sm:min-w-[92px]">
+            <div className="flex items-start justify-between rounded-lg border border-border/60 bg-muted/30 px-3 py-2 sm:block sm:rounded-none sm:border-0 sm:bg-transparent sm:px-0 sm:py-0 sm:text-right">
+              <div>
+              <p className={cn("text-lg font-mono font-bold leading-tight", edgeColorClass)}>
+                {side.ev_percentage >= 0 ? "+" : ""}
+                {side.ev_percentage.toFixed(1)}%
+              </p>
+              <p className="text-[10px] text-muted-foreground">Edge</p>
+              </div>
+              <div className="sm:mt-0.5">
+                <p className="text-[10px] text-muted-foreground">
+                  Confidence: {confidenceDisplay}
+                </p>
+                <p className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground sm:justify-end">
+                  Suggested stake:
+                  <span className="font-mono font-semibold text-foreground">
+                    {formatCurrency(stealthKellyStake)}
+                  </span>
+                  <span title={`Raw Kelly: ${formatCurrency(rawKellyStake)}`} className="inline-flex">
+                    <Info
+                      className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70"
+                      aria-label="Raw Kelly amount"
+                    />
+                  </span>
+                </p>
+              </div>
+            </div>
           </div>
         </div>
 
         {actionModel.primary.kind === "open" && actionModel.primary.href ? (
-          <div className="space-y-1.5 border-t border-border/60 pt-2">
-            <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="space-y-2 border-t border-border/60 pt-2">
+            <Button asChild className="h-10 w-full text-xs font-semibold">
               <a
                 href={actionModel.primary.href}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-lg bg-foreground px-3 text-xs font-semibold text-background transition-opacity hover:opacity-90"
+                onClick={() => onStartPlaceFlow(side)}
               >
                 {actionModel.primary.label}
-                <ExternalLink className="h-3 w-3" />
+                <ExternalLink className="ml-1 h-3.5 w-3.5" />
               </a>
-              <button
+            </Button>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button
                 type="button"
-                onClick={() => onAddToCart(side)}
-                className="inline-flex h-9 items-center justify-center gap-1 rounded-lg border border-[#C4A35A]/35 bg-[#C4A35A]/10 px-3 text-xs font-medium text-[#5C4D2E] transition-colors hover:bg-[#C4A35A]/20"
-              >
-                Add to Cart
-              </button>
-              <button
-                type="button"
+                variant="outline"
+                className="h-10 flex-1 text-xs font-medium"
                 onClick={() => onLogBet(side)}
-                className="inline-flex h-9 items-center justify-center gap-1 rounded-lg border border-border bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted"
               >
-                Log Bet
-                <ChevronRight className="h-3 w-3" />
-              </button>
+                {actionModel.secondary?.label ?? "Review & Log"}
+                <ChevronRight className="ml-1 h-3.5 w-3.5" />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-10 flex-1 text-xs font-medium text-muted-foreground"
+                onClick={() => onAddToCart(side)}
+              >
+                Save to Cart
+              </Button>
             </div>
           </div>
         ) : (
-          <div className="border-t border-border/60 pt-2">
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <button
-                type="button"
-                onClick={() => onAddToCart(side)}
-                className="inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-lg border border-[#C4A35A]/35 bg-[#C4A35A]/10 px-3 text-xs font-semibold text-[#5C4D2E] transition-colors hover:bg-[#C4A35A]/20"
-              >
-                Add to Cart
-              </button>
-              <button
-                type="button"
-                onClick={() => onLogBet(side)}
-                className="inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-lg bg-foreground px-3 text-xs font-semibold text-background transition-opacity hover:opacity-90"
-              >
-                Log Bet
-                <ChevronRight className="h-3 w-3" />
-              </button>
-            </div>
+          <div className="space-y-2 border-t border-border/60 pt-2">
+            <Button
+              type="button"
+              className="h-10 w-full text-xs font-semibold"
+              onClick={() => onLogBet(side)}
+            >
+              {actionModel.primary.label}
+              <ChevronRight className="ml-1 h-3.5 w-3.5" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-10 w-full text-xs font-medium text-muted-foreground"
+              onClick={() => onAddToCart(side)}
+            >
+              Save to Cart
+            </Button>
           </div>
         )}
       </CardContent>

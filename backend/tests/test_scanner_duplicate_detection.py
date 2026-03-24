@@ -55,6 +55,28 @@ def _pending_bet(*, bet_id, team, commence_time, sportsbook, odds, clv_event_id=
     }
 
 
+def _prop_side(*, market_key, selection_key, sportsbook, odds):
+    return {
+        "surface": "player_props",
+        "market_key": market_key,
+        "selection_key": selection_key,
+        "sportsbook": sportsbook,
+        "book_odds": odds,
+    }
+
+
+def _pending_prop(*, bet_id, market_key, selection_key, sportsbook, odds):
+    return {
+        "id": bet_id,
+        "surface": "player_props",
+        "source_market_key": market_key,
+        "source_selection_key": selection_key,
+        "sportsbook": sportsbook,
+        "odds_american": odds,
+        "result": "pending",
+    }
+
+
 def test_annotate_sides_with_duplicate_state_marks_new_when_no_pending_match():
     db = _DB(rows=[])
     sides = [_side(team="lakers", commence_time="2026-01-01T00:00:00Z", sportsbook="fanduel", odds=110)]
@@ -156,3 +178,52 @@ def test_annotate_sides_with_duplicate_state_matches_by_event_id_before_time():
 
     assert out[0]["scanner_duplicate_state"] == "better_now"
     assert out[0]["matched_pending_bet_id"] == "b1"
+
+
+def test_annotate_sides_with_duplicate_state_marks_logged_elsewhere_for_cross_book_ml_match():
+    db = _DB(
+        rows=[
+            _pending_bet(
+                bet_id="b1",
+                team="lakers",
+                commence_time="2026-01-01T00:00:00Z",
+                sportsbook="fanduel",
+                odds=100,
+            )
+        ]
+    )
+    sides = [_side(team="lakers", commence_time="2026-01-01T00:00:00Z", sportsbook="draftkings", odds=130)]
+
+    out = annotate_sides_with_duplicate_state(db, "user-1", sides)
+
+    assert out[0]["scanner_duplicate_state"] == "logged_elsewhere"
+    assert out[0]["best_logged_odds_american"] == 100
+    assert out[0]["matched_pending_bet_id"] == "b1"
+
+
+def test_annotate_sides_with_duplicate_state_marks_logged_elsewhere_for_cross_book_prop_match():
+    db = _DB(
+        rows=[
+            _pending_prop(
+                bet_id="p1",
+                market_key="player_points",
+                selection_key="evt-1|player_points|jokic|over:24.5",
+                sportsbook="fanduel",
+                odds=110,
+            )
+        ]
+    )
+    sides = [
+        _prop_side(
+            market_key="player_points",
+            selection_key="evt-1|player_points|jokic|over:24.5",
+            sportsbook="draftkings",
+            odds=115,
+        )
+    ]
+
+    out = annotate_sides_with_duplicate_state(db, "user-1", sides)
+
+    assert out[0]["scanner_duplicate_state"] == "logged_elsewhere"
+    assert out[0]["best_logged_odds_american"] == 110
+    assert out[0]["matched_pending_bet_id"] == "p1"

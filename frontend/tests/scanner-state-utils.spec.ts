@@ -47,7 +47,9 @@ const BASE_PROP_SIDE: MarketSide = {
   selection_side: "over",
   line_value: 24.5,
   display_name: "Nikola Jokic Over 24.5",
-  pinnacle_odds: -110,
+  reference_odds: -110,
+  reference_source: "market_median",
+  reference_bookmakers: ["bovada", "betmgm"],
   book_odds: 105,
   true_prob: 0.52,
   base_kelly_fraction: 0.022,
@@ -132,5 +134,34 @@ test.describe("scanner state utils", () => {
     expect(out.marketKey).toBe("player_points");
     expect(out.selectionKey).toBe("evt-2|player_points|jokic|over|24.5");
     expect(out.display).toBe("Nikola Jokic Over 24.5");
+    expect(out.referenceOddsAmerican).toBe(-110);
+    expect(out.referenceSource).toBe("market_median");
+    expect(out.participantName).toBe("Nikola Jokic");
+    expect(out.marketDisplay).toBe("player_points");
+  });
+
+  test("buildParlayCartLeg carries reference pricing for straight bets", async () => {
+    const out = buildParlayCartLeg(BASE_SIDE);
+
+    expect(out.surface).toBe("straight_bets");
+    expect(out.referenceOddsAmerican).toBe(108);
+    expect(out.referenceTrueProbability).toBe(0.48);
+    expect(out.referenceSource).toBe("pinnacle");
+    expect(out.team).toBe("Lakers");
+    expect(out.marketDisplay).toBe("Moneyline");
+  });
+
+  test("buildParlayCartLeg uses de-vigged true probability for straight-bet fair odds", async () => {
+    const out = buildParlayCartLeg({
+      ...BASE_SIDE,
+      book_odds: 250,
+      pinnacle_odds: 227,
+      true_prob: 100 / 340,
+      book_decimal: 3.5,
+    });
+
+    expect(out.referenceOddsAmerican).toBe(240);
+    expect(out.referenceTrueProbability).toBeCloseTo(100 / 340, 8);
+    expect(out.selectionMeta).toMatchObject({ rawPinnacleOdds: 227 });
   });
 });

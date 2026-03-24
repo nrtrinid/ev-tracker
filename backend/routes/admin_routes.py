@@ -2,7 +2,8 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, Depends
 
-from dependencies import require_current_user
+from dependencies import require_admin_user
+from models import ResearchOpportunitySummaryResponse
 
 
 router = APIRouter()
@@ -42,8 +43,16 @@ def backfill_ev_locks_impl(
     return {"backfilled": locked, "total_eligible": len(rows)}
 
 
+def research_opportunities_summary_impl(
+    *,
+    get_db: Callable[[], Any],
+    get_summary: Callable[[Any], ResearchOpportunitySummaryResponse],
+) -> ResearchOpportunitySummaryResponse:
+    return get_summary(get_db())
+
+
 @router.post("/admin/backfill-ev-locks")
-def backfill_ev_locks(user: dict = Depends(require_current_user)):
+def backfill_ev_locks(user: dict = Depends(require_admin_user)):
     import main
 
     return backfill_ev_locks_impl(
@@ -54,4 +63,15 @@ def backfill_ev_locks(user: dict = Depends(require_current_user)):
         ev_lock_promo_types=main.EV_LOCK_PROMO_TYPES,
         lock_ev_for_row=main._lock_ev_for_row,
         log_warning=main.logger.warning,
+    )
+
+
+@router.get("/admin/research-opportunities/summary", response_model=ResearchOpportunitySummaryResponse)
+def research_opportunities_summary(_user: dict = Depends(require_admin_user)):
+    import main
+    from services.research_opportunities import get_research_opportunities_summary
+
+    return research_opportunities_summary_impl(
+        get_db=main.get_db,
+        get_summary=get_research_opportunities_summary,
     )

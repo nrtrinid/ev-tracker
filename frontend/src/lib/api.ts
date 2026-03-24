@@ -13,6 +13,11 @@ import type {
   ScanResult,
   BackendReadiness,
   OperatorStatusResponse,
+  ParlaySlip,
+  ParlaySlipCreate,
+  ParlaySlipLogRequest,
+  ParlaySlipUpdate,
+  ResearchOpportunitySummary,
   ScannerSurface,
 } from "./types";
 import { createClient } from "./supabase";
@@ -259,4 +264,41 @@ export async function getBackendReadiness(): Promise<BackendReadiness> {
 
 export async function getOperatorStatus(): Promise<OperatorStatusResponse> {
   return fetchInternalAPI<OperatorStatusResponse>("/api/ops/status");
+}
+
+export async function getResearchOpportunitySummary(): Promise<ResearchOpportunitySummary> {
+  return fetchInternalAPI<ResearchOpportunitySummary>("/api/ops/research-opportunities/summary");
+}
+
+// ============ Parlay Slips API ============
+
+export async function getParlaySlips(): Promise<ParlaySlip[]> {
+  return fetchAPI<ParlaySlip[]>("/parlay-slips");
+}
+
+export async function createParlaySlip(payload: ParlaySlipCreate): Promise<ParlaySlip> {
+  return fetchAPI<ParlaySlip>("/parlay-slips", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateParlaySlip(id: string, payload: ParlaySlipUpdate): Promise<ParlaySlip> {
+  return fetchAPI<ParlaySlip>(`/parlay-slips/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteParlaySlip(id: string): Promise<{ deleted: boolean; id: string }> {
+  return fetchAPI<{ deleted: boolean; id: string }>(`/parlay-slips/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export async function logParlaySlip(id: string, payload: ParlaySlipLogRequest): Promise<Bet> {
+  return fetchAPI<Bet>(`/parlay-slips/${id}/log`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }

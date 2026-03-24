@@ -1,3 +1,6 @@
+import time
+
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 
 from dependencies import require_scan_rate_limit
@@ -18,7 +21,7 @@ from services.scan_markets import (
 router = APIRouter()
 
 
-SUPPORTED_SURFACES = {"straight_bets"}
+SUPPORTED_SURFACES = {"straight_bets", "player_props"}
 
 
 async def scan_impl(
@@ -55,10 +58,14 @@ async def scan_markets_impl(
     set_ops_status,
     utc_now_iso,
     piggyback_clv,
+    capture_research_opportunities,
     persist_latest_full_scan,
     retry_supabase,
     log_event,
     annotate_sides,
+    append_scan_activity,
+    persist_ops_job_run,
+    new_run_id,
     map_error,
     build_full_scan_response,
     get_environment,
@@ -67,6 +74,83 @@ async def scan_markets_impl(
         raise HTTPException(status_code=400, detail=f"Unsupported surface '{surface}'")
 
     db = get_db()
+    scan_session_id = new_run_id("manual_scan")
+    actor_label = str(user.get("email") or user.get("id") or "").strip() or None
+    scan_scope = "all" if sport is None else "single_sport"
+
+    async def _get_cached_or_scan_with_activity(sport_key: str) -> dict:
+        started_at = time.monotonic()
+        try:
+            result = await get_cached_or_scan(sport_key, source="manual_scan")
+            append_scan_activity(
+                scan_session_id=scan_session_id,
+                source="manual_scan",
+                surface=surface,
+                scan_scope=scan_scope,
+                requested_sport=sport,
+                sport=sport_key,
+                actor_label=actor_label,
+                run_id=None,
+                cache_hit=bool(result.get("cache_hit")),
+                outbound_call_made=not bool(result.get("cache_hit")),
+                duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+                events_fetched=int(result.get("events_fetched") or 0),
+                events_with_both_books=int(result.get("events_with_both_books") or 0),
+                sides_count=len(result.get("sides") or []),
+                api_requests_remaining=result.get("api_requests_remaining"),
+                status_code=200,
+                error_type=None,
+                error_message=None,
+            )
+            return result
+        except httpx.HTTPStatusError as e:
+            remaining = None
+            status_code = e.response.status_code if e.response is not None else None
+            if e.response is not None:
+                remaining = e.response.headers.get("x-requests-remaining") or e.response.headers.get("x-request-remaining")
+            append_scan_activity(
+                scan_session_id=scan_session_id,
+                source="manual_scan",
+                surface=surface,
+                scan_scope=scan_scope,
+                requested_sport=sport,
+                sport=sport_key,
+                actor_label=actor_label,
+                run_id=None,
+                cache_hit=False,
+                outbound_call_made=True,
+                duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+                events_fetched=0,
+                events_with_both_books=0,
+                sides_count=0,
+                api_requests_remaining=remaining,
+                status_code=status_code,
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
+            raise
+        except Exception as e:
+            append_scan_activity(
+                scan_session_id=scan_session_id,
+                source="manual_scan",
+                surface=surface,
+                scan_scope=scan_scope,
+                requested_sport=sport,
+                sport=sport_key,
+                actor_label=actor_label,
+                run_id=None,
+                cache_hit=False,
+                outbound_call_made=False,
+                duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+                events_fetched=0,
+                events_with_both_books=0,
+                sides_count=0,
+                api_requests_remaining=None,
+                status_code=None,
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
+            raise
 
     if sport is not None and sport not in supported_sports:
         raise HTTPException(
@@ -78,14 +162,34 @@ async def scan_markets_impl(
         response_payload = apply_manual_scan_bundle_fn(
             bundle=bundle,
             captured_at=utc_now_iso(),
-            set_last_manual_scan_status=lambda status: set_ops_status("last_manual_scan", status),
+            set_last_manual_scan_status=lambda status: set_ops_status(
+                "last_manual_scan",
+                {**status, "scan_session_id": scan_session_id},
+            ),
             schedule_piggyback=lambda sides: piggyback_clv(sides) if surface == DEFAULT_SURFACE else None,
+            schedule_research_capture=lambda sides: capture_research_opportunities(sides, source="manual_scan")
+            if surface == DEFAULT_SURFACE
+            else None,
             persist_latest_scan=lambda payload: persist_latest_full_scan(
                 db=db,
                 retry_supabase=retry_supabase,
                 log_event=log_event,
                 **payload,
             ),
+        )
+        persist_ops_job_run(
+            job_kind="manual_scan",
+            source="manual_scan",
+            status="completed",
+            scan_session_id=scan_session_id,
+            surface=bundle["ops_status_payload"].get("surface"),
+            scan_scope=scan_scope,
+            requested_sport=bundle["ops_status_payload"].get("sport"),
+            captured_at=utc_now_iso(),
+            events_fetched=bundle["ops_status_payload"].get("events_fetched"),
+            events_with_both_books=bundle["ops_status_payload"].get("events_with_both_books"),
+            total_sides=bundle["ops_status_payload"].get("total_sides"),
+            api_requests_remaining=bundle["ops_status_payload"].get("api_requests_remaining"),
         )
         return build_full_scan_response(response_payload)
 
@@ -94,7 +198,7 @@ async def scan_markets_impl(
             single_sport = await run_single_sport_manual_scan(
                 surface=surface,
                 sport=sport,
-                get_cached_or_scan=lambda sport_key: get_cached_or_scan(sport_key, source="manual_scan"),
+                get_cached_or_scan=_get_cached_or_scan_with_activity,
                 annotate_sides=lambda sides: annotate_sides(db, user["id"], sides),
             )
             return _finalize_manual_scan_bundle(single_sport)
@@ -103,7 +207,7 @@ async def scan_markets_impl(
             surface=surface,
             environment=get_environment(),
             supported_sports=supported_sports,
-            get_cached_or_scan=lambda sport_key: get_cached_or_scan(sport_key, source="manual_scan"),
+            get_cached_or_scan=_get_cached_or_scan_with_activity,
             annotate_sides=lambda sides: annotate_sides(db, user["id"], sides),
         )
         return _finalize_manual_scan_bundle(all_sports)
@@ -178,10 +282,14 @@ async def scan_markets(
         set_ops_status=main._set_ops_status,
         utc_now_iso=main._utc_now_iso,
         piggyback_clv=main._piggyback_clv,
+        capture_research_opportunities=main._capture_research_opportunities,
         persist_latest_full_scan=main._persist_latest_full_scan,
         retry_supabase=main._retry_supabase,
         log_event=main._log_event,
         annotate_sides=main._annotate_sides_with_duplicate_state,
+        append_scan_activity=main._append_scan_activity,
+        persist_ops_job_run=main._persist_ops_job_run,
+        new_run_id=main._new_run_id,
         map_error=scan_exception_to_http_exception,
         build_full_scan_response=main._build_full_scan_response,
         get_environment=main._get_environment,
