@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import type { MarketSide } from "@/lib/types";
 import { calculateStealthStake, cn, formatCurrency, formatOdds } from "@/lib/utils";
 import { buildScannerActionModel, canAddScannerLensToParlayCart } from "../scanner-ui-model";
+import { getStandardEdgeColorClass } from "./scanner-card-colors";
 
 interface StraightBetCardProps {
   side: MarketSide & { _retention?: number; _boostedEV?: number };
@@ -60,19 +61,6 @@ function decimalToAmerican(decimal: number): number {
 
 function calculateRetention(side: MarketSide): number {
   return (side.book_decimal - 1) * side.true_prob;
-}
-
-function getLootTier(evPercentage: number): { colorClass: string } {
-  if (evPercentage < 1.5) {
-    return { colorClass: "text-muted-foreground" };
-  }
-  if (evPercentage < 3.5) {
-    return { colorClass: "text-[#4A7C59]" };
-  }
-  if (evPercentage < 5.5) {
-    return { colorClass: "text-[#3B6C8E]" };
-  }
-  return { colorClass: "text-[#9A3F86]" };
 }
 
 function getDuplicateBadge(duplicateState: MarketSide["scanner_duplicate_state"]) {
@@ -143,7 +131,7 @@ export function StraightBetCard({
 
   let metricColorClass = "text-foreground";
   if (activeLens === "standard") {
-    metricColorClass = getLootTier(side.ev_percentage).colorClass;
+    metricColorClass = getStandardEdgeColorClass(side.ev_percentage);
   } else if (activeLens === "profit_boost") {
     const bev = side._boostedEV ?? calculateBoostedEV(side, boostPercent);
     metricColorClass = bev > 0 ? "text-[#C4A35A]" : "text-muted-foreground";

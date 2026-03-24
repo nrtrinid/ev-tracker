@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import type { PlayerPropMarketSide } from "@/lib/types";
 import { calculateStealthStake, cn, formatCurrency, formatOdds } from "@/lib/utils";
 import { buildScannerActionModel } from "../scanner-ui-model";
+import { getStandardEdgeColorClass } from "./scanner-card-colors";
 
 interface PlayerPropCardProps {
   side: PlayerPropMarketSide & { _retention?: number; _boostedEV?: number };
@@ -95,12 +96,7 @@ export function PlayerPropCard({
   const confidenceDisplay = formatConfidenceLabel(confidenceLabel);
   const rawKellyStake = Math.max(0, side.base_kelly_fraction * kellyMultiplier * bankroll);
   const stealthKellyStake = calculateStealthStake(rawKellyStake);
-  const edgeColorClass =
-    side.ev_percentage > 0
-      ? "text-green-600"
-      : side.ev_percentage < 0
-        ? "text-red-500"
-        : "text-[#3B6C8E]";
+  const edgeColorClass = getStandardEdgeColorClass(side.ev_percentage);
 
   return (
     <Card className="card-hover">
