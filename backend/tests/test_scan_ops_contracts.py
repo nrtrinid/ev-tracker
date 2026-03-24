@@ -752,9 +752,11 @@ def test_ops_trigger_scan_contract_shape(auth_client, monkeypatch):
 
 @pytest.mark.integration
 def test_ops_research_opportunities_summary_contract_shape(auth_client, monkeypatch):
+    import main
     import services.research_opportunities as research
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
+    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
 
     monkeypatch.setattr(research, "get_research_opportunities_summary", lambda _db: {
         "captured_count": 4,
