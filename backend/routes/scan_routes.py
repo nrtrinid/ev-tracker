@@ -166,10 +166,8 @@ async def scan_markets_impl(
                 "last_manual_scan",
                 {**status, "scan_session_id": scan_session_id},
             ),
-            schedule_piggyback=lambda sides: piggyback_clv(sides) if surface == DEFAULT_SURFACE else None,
-            schedule_research_capture=lambda sides: capture_research_opportunities(sides, source="manual_scan")
-            if surface == DEFAULT_SURFACE
-            else None,
+            schedule_piggyback=lambda sides: piggyback_clv(sides),
+            schedule_research_capture=lambda sides: capture_research_opportunities(sides, source="manual_scan"),
             persist_latest_scan=lambda payload: persist_latest_full_scan(
                 db=db,
                 retry_supabase=retry_supabase,

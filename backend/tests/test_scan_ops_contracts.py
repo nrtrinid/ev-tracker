@@ -765,11 +765,39 @@ def test_ops_research_opportunities_summary_contract_shape(auth_client, monkeypa
         "clv_ready_count": 2,
         "beat_close_pct": 50.0,
         "avg_clv_percent": 0.8,
+        "by_surface": [],
         "by_source": [],
         "by_sportsbook": [],
         "by_edge_bucket": [],
         "by_odds_bucket": [],
-        "recent_opportunities": [],
+        "recent_opportunities": [
+            {
+                "opportunity_key": "prop-1",
+                "surface": "player_props",
+                "first_seen_at": "2026-03-24T15:00:00Z",
+                "last_seen_at": "2026-03-24T15:00:00Z",
+                "commence_time": "2026-03-24T19:00:00Z",
+                "sport": "basketball_nba",
+                "event": "Nuggets @ Suns",
+                "team": "Denver Nuggets",
+                "sportsbook": "FanDuel",
+                "market": "player_points",
+                "event_id": "evt-prop-1",
+                "player_name": "Nikola Jokic",
+                "source_market_key": "player_points",
+                "selection_side": "over",
+                "line_value": 24.5,
+                "first_source": "manual_scan",
+                "seen_count": 1,
+                "first_ev_percentage": 6.6,
+                "first_book_odds": 105,
+                "best_book_odds": 105,
+                "latest_reference_odds": -108,
+                "reference_odds_at_close": None,
+                "clv_ev_percent": None,
+                "beat_close": None,
+            }
+        ],
     }, raising=True)
 
     resp = auth_client.get("/api/ops/research-opportunities/summary", headers={"X-Ops-Token": "ops-secret"})
@@ -780,8 +808,10 @@ def test_ops_research_opportunities_summary_contract_shape(auth_client, monkeypa
     assert isinstance(body.get("open_count"), int)
     assert isinstance(body.get("close_captured_count"), int)
     assert isinstance(body.get("clv_ready_count"), int)
+    assert isinstance(body.get("by_surface"), list)
     assert isinstance(body.get("by_source"), list)
     assert isinstance(body.get("recent_opportunities"), list)
+    assert body["recent_opportunities"][0]["surface"] == "player_props"
 
 
 @pytest.mark.integration

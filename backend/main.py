@@ -559,7 +559,7 @@ def _utc_now_iso() -> str:
 
 
 def _capture_research_opportunities(sides: list[dict], *, source: str) -> None:
-    """Persist fresh straight-bet scan sides into the internal research ledger."""
+    """Persist fresh scanner sides into the internal research ledger."""
     if not sides:
         return
 
@@ -583,7 +583,7 @@ def _capture_research_opportunities(sides: list[dict], *, source: str) -> None:
 
 
 async def _apply_fresh_straight_scan_followups(result: dict, *, source: str) -> None:
-    """Run research capture + CLV piggyback only for fresh straight-bet scan payloads."""
+    """Run research capture + CLV piggyback for fresh scan payloads."""
     sides = result.get("sides") or []
     if not sides or result.get("cache_hit"):
         return
@@ -1680,6 +1680,8 @@ def build_bet_response(row: dict, k_factor: float) -> BetResponse:
         ev_total=ev_total_out,
         real_profit=real_profit,
         pinnacle_odds_at_entry=row.get("pinnacle_odds_at_entry"),
+        latest_pinnacle_odds=row.get("latest_pinnacle_odds"),
+        latest_pinnacle_updated_at=row.get("latest_pinnacle_updated_at"),
         pinnacle_odds_at_close=row.get("pinnacle_odds_at_close"),
         clv_updated_at=row.get("clv_updated_at"),
         commence_time=row.get("commence_time"),

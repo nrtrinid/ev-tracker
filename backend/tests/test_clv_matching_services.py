@@ -255,6 +255,47 @@ def test_update_clv_snapshots_can_capture_close_inside_window():
     assert db.tables["bets"][0]["clv_updated_at"] is not None
 
 
+def test_update_clv_snapshots_repairs_invalid_early_close_inside_window():
+    mod = _reload_clv_tracking()
+    now = datetime(2026, 3, 23, 18, 35, tzinfo=timezone.utc)
+    commence_time = "2026-03-23T18:40:00Z"
+    db = _DB(
+        bets=[
+            {
+                "id": 27,
+                "result": "pending",
+                "clv_team": "Team Repair",
+                "commence_time": commence_time,
+                "clv_event_id": "evt_repair",
+                "clv_sport_key": "basketball_nba",
+                "odds_american": -118,
+                "pinnacle_odds_at_close": -130,
+                "clv_updated_at": "2026-03-22T22:37:00Z",
+            }
+        ]
+    )
+
+    counts = mod.update_bet_reference_snapshots(
+        db,
+        sides=[
+            {
+                "event_id": "evt_repair",
+                "commence_time": commence_time,
+                "team": "Team Repair",
+                "pinnacle_odds": -119,
+            }
+        ],
+        allow_close=True,
+        now=now,
+    )
+
+    assert counts["latest_updated"] == 1
+    assert counts["close_updated"] == 1
+    assert db.tables["bets"][0]["latest_pinnacle_odds"] == -119
+    assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -119
+    assert db.tables["bets"][0]["clv_updated_at"] == now.isoformat()
+
+
 def test_update_scan_opportunity_reference_snapshots_updates_latest_without_close_outside_window():
     mod = _reload_clv_tracking()
     now = datetime(2026, 3, 23, 12, 0, tzinfo=timezone.utc)
@@ -291,6 +332,113 @@ def test_update_scan_opportunity_reference_snapshots_updates_latest_without_clos
     assert counts == {"latest_updated": 1, "close_updated": 0}
     assert db.tables["scan_opportunities"][0]["latest_reference_odds"] == 135
     assert db.tables["scan_opportunities"][0]["reference_odds_at_close"] is None
+
+
+def test_update_scan_opportunity_reference_snapshots_updates_prop_latest_without_close_outside_window():
+    mod = _reload_clv_tracking()
+    now = datetime(2026, 3, 23, 12, 0, tzinfo=timezone.utc)
+    commence_time = "2026-03-23T15:00:00Z"
+    db = _DB(
+        scan_opportunities=[
+            {
+                "id": "opp-prop-1",
+                "surface": "player_props",
+                "sport": "basketball_nba",
+                "team": "Denver Nuggets",
+                "commence_time": commence_time,
+                "event_id": "evt-prop",
+                "player_name": "Nikola Jokic",
+                "source_market_key": "player_points",
+                "selection_side": "over",
+                "line_value": 24.5,
+                "first_book_odds": 105,
+                "reference_odds_at_close": None,
+            }
+        ]
+    )
+
+    counts = mod.update_scan_opportunity_reference_snapshots(
+        db,
+        sides=[
+            {
+                "surface": "player_props",
+                "sport": "basketball_nba",
+                "event_id": "evt-prop",
+                "commence_time": "2026-03-23T16:00:00Z",
+                "player_name": "Nikola Jokic",
+                "market_key": "player_points",
+                "selection_side": "over",
+                "line_value": 24.5,
+                "reference_odds": -112,
+            }
+        ],
+        allow_close=True,
+        now=now,
+    )
+
+    assert counts == {"latest_updated": 1, "close_updated": 0}
+    assert db.tables["scan_opportunities"][0]["latest_reference_odds"] == -112
+    assert db.tables["scan_opportunities"][0]["reference_odds_at_close"] is None
+
+
+def test_update_scan_opportunity_reference_snapshots_captures_prop_close_inside_window_and_ignores_wrong_line():
+    mod = _reload_clv_tracking()
+    now = datetime(2026, 3, 23, 14, 50, tzinfo=timezone.utc)
+    commence_time = "2026-03-23T15:00:00Z"
+    db = _DB(
+        scan_opportunities=[
+            {
+                "id": "opp-prop-2",
+                "surface": "player_props",
+                "sport": "basketball_nba",
+                "team": "Denver Nuggets",
+                "commence_time": commence_time,
+                "event_id": "evt-prop-close",
+                "player_name": "Nikola Jokic",
+                "source_market_key": "player_points",
+                "selection_side": "over",
+                "line_value": 24.5,
+                "first_book_odds": 105,
+                "reference_odds_at_close": None,
+            }
+        ]
+    )
+
+    counts = mod.update_scan_opportunity_reference_snapshots(
+        db,
+        sides=[
+            {
+                "surface": "player_props",
+                "sport": "basketball_nba",
+                "event_id": "evt-prop-close",
+                "commence_time": commence_time,
+                "player_name": "Nikola Jokic",
+                "market_key": "player_points",
+                "selection_side": "over",
+                "line_value": 25.5,
+                "reference_odds": -115,
+            },
+            {
+                "surface": "player_props",
+                "sport": "basketball_nba",
+                "event_id": "evt-prop-close",
+                "commence_time": commence_time,
+                "player_name": "Nikola Jokic",
+                "market_key": "player_points",
+                "selection_side": "over",
+                "line_value": 24.5,
+                "reference_odds": -110,
+            },
+        ],
+        allow_close=True,
+        now=now,
+    )
+
+    assert counts == {"latest_updated": 1, "close_updated": 1}
+    assert db.tables["scan_opportunities"][0]["latest_reference_odds"] == -110
+    assert db.tables["scan_opportunities"][0]["reference_odds_at_close"] == -110
+    assert db.tables["scan_opportunities"][0]["clv_ev_percent"] is not None
+    assert db.tables["scan_opportunities"][0]["beat_close"] is not None
 
 
 @pytest.mark.asyncio
@@ -343,6 +491,60 @@ async def test_run_jit_clv_snatcher_updates_bets_and_scan_opportunities(monkeypa
     assert db.tables["scan_opportunities"][0]["reference_odds_at_close"] == 100
     assert db.tables["scan_opportunities"][0]["clv_ev_percent"] is not None
     assert db.tables["scan_opportunities"][0]["beat_close"] is not None
+
+
+@pytest.mark.asyncio
+async def test_run_jit_clv_snatcher_repairs_stale_close_snapshots(monkeypatch):
+    mod = _reload_odds_api()
+    commence_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    db = _DB(
+        bets=[
+            {
+                "id": 32,
+                "result": "pending",
+                "clv_sport_key": "basketball_nba",
+                "clv_team": "Team Repair",
+                "commence_time": commence_time,
+                "clv_event_id": "evt_repair_jit",
+                "pinnacle_odds_at_close": -130,
+                "clv_updated_at": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+            }
+        ],
+        scan_opportunities=[
+            {
+                "id": "opp-repair",
+                "sport": "basketball_nba",
+                "team": "Team Repair Opp",
+                "commence_time": commence_time,
+                "event_id": "evt_repair_jit",
+                "first_book_odds": 130,
+                "reference_odds_at_close": 100,
+                "close_captured_at": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+            }
+        ],
+    )
+
+    async def _fake_fetch_odds(_sport_key, source="jit_clv"):
+        event = {
+            "id": "evt_repair_jit",
+            "home_team": "Team Repair",
+            "away_team": "Team Repair Opp",
+            "commence_time": commence_time,
+            "bookmakers": [
+                _bookmaker_event(mod.SHARP_BOOK, "Team Repair", "Team Repair Opp", -119, 101),
+            ],
+        }
+        return [event], None
+
+    monkeypatch.setattr(mod, "fetch_odds", _fake_fetch_odds)
+
+    updated = await mod.run_jit_clv_snatcher(db)
+
+    assert updated == 2
+    assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -119
+    assert db.tables["scan_opportunities"][0]["reference_odds_at_close"] == 101
+    assert db.tables["bets"][0]["clv_updated_at"] is not None
+    assert db.tables["scan_opportunities"][0]["close_captured_at"] is not None
 
 
 @pytest.mark.asyncio

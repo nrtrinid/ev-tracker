@@ -13,6 +13,7 @@ import type {
   OddsApiActivitySummary,
   OperatorStatusResponse,
   ResearchOpportunityBreakdownItem,
+  ResearchOpportunityRecentRow,
 } from "@/lib/types";
 
 type HealthState = "healthy" | "warning" | "degraded" | "unknown";
@@ -501,6 +502,73 @@ function BreakdownChips({
   );
 }
 
+function formatAmericanOdds(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "Unknown";
+  return value > 0 ? `+${value}` : String(value);
+}
+
+function formatMarketLabel(value?: string | null): string {
+  if (!value) return "Unknown market";
+  return value.replace(/_/g, " ");
+}
+
+function formatPropLine(value?: number | null): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "";
+  return Number.isInteger(value) ? String(value) : String(value);
+}
+
+function formatResearchPrimaryLabel(row: ResearchOpportunityRecentRow): string {
+  if (row.surface === "player_props") {
+    const player = row.player_name || row.team || "Unknown player";
+    const side = row.selection_side ? row.selection_side.toLowerCase() : "line";
+    const line = formatPropLine(row.line_value);
+    const market = formatMarketLabel(row.market || row.source_market_key);
+    return `${player} ${side}${line ? ` ${line}` : ""} ${market} @ ${row.sportsbook}`;
+  }
+  return `${row.team} @ ${row.sportsbook}`;
+}
+
+function formatResearchCloseLabel(row: ResearchOpportunityRecentRow): string {
+  if (row.reference_odds_at_close === null || row.reference_odds_at_close === undefined) {
+    return "pending";
+  }
+  return formatAmericanOdds(row.reference_odds_at_close);
+}
+
+function ResearchRecentList({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: ResearchOpportunityRecentRow[];
+}) {
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs text-muted-foreground">{title}</p>
+      <div className="space-y-1.5">
+        {rows.map((row) => (
+          <div key={row.opportunity_key} className="rounded border border-border/70 bg-muted/20 px-2 py-1.5 text-xs">
+            <p className="leading-relaxed">
+              {formatCompactTime(row.first_seen_at)} • {row.first_source} • {row.sport} • {formatResearchPrimaryLabel(row)}
+              {" • "}
+              EV {formatPercentValue(row.first_ev_percentage)}
+              {" • "}
+              Odds {formatAmericanOdds(row.first_book_odds)}
+              {" • "}
+              Close {formatResearchCloseLabel(row)}
+              {" • "}
+              CLV {formatPercentValue(row.clv_ev_percent)}
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground">{row.event}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function OpsDashboard() {
   const query = useOperatorStatus();
   const researchQuery = useResearchOpportunitySummary();
@@ -543,6 +611,8 @@ export function OpsDashboard() {
   const fallbackAvailable = yesNoUnknown(query.data?.runtime?.cron_token_configured);
   const research = researchQuery.data;
   const recentResearch = research?.recent_opportunities ?? [];
+  const recentStraightResearch = recentResearch.filter((row) => row.surface !== "player_props");
+  const recentPropResearch = recentResearch.filter((row) => row.surface === "player_props");
 
   return (
     <main className="min-h-screen bg-background">
@@ -867,7 +937,7 @@ export function OpsDashboard() {
                 <div>
                   <h2 className="font-semibold">Research Tracker</h2>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Fresh straight-bet scanner opportunities captured into the internal research ledger.
+                    Fresh scanner opportunities captured into the internal research ledger.
                   </p>
                 </div>
                 {research && (
@@ -911,6 +981,7 @@ export function OpsDashboard() {
                     </div>
                   </div>
 
+                  <BreakdownChips title="By Surface" rows={research?.by_surface ?? []} />
                   <BreakdownChips title="By Source" rows={research?.by_source ?? []} />
                   <BreakdownChips title="By Sportsbook" rows={research?.by_sportsbook ?? []} />
                   <BreakdownChips title="By Edge Bucket" rows={research?.by_edge_bucket ?? []} />
@@ -918,26 +989,15 @@ export function OpsDashboard() {
 
                   <div className="space-y-1.5">
                     <p className="text-xs text-muted-foreground">Recent opportunities</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Close pending means the final reference is still waiting for the last 20-minute pregame window.
+                    </p>
                     {recentResearch.length === 0 ? (
                       <p className="text-xs text-muted-foreground">No captured opportunities yet.</p>
                     ) : (
-                      <div className="space-y-1.5">
-                        {recentResearch.map((row) => (
-                          <div key={row.opportunity_key} className="rounded border border-border/70 bg-muted/20 px-2 py-1.5 text-xs">
-                            <p className="leading-relaxed">
-                              {formatCompactTime(row.first_seen_at)} • {row.first_source} • {row.sport} • {row.team} @ {row.sportsbook}
-                              {" • "}
-                              EV {formatPercentValue(row.first_ev_percentage)}
-                              {" • "}
-                              Odds {row.first_book_odds > 0 ? `+${row.first_book_odds}` : row.first_book_odds}
-                              {" • "}
-                              Close {row.reference_odds_at_close === null || row.reference_odds_at_close === undefined ? "pending" : row.reference_odds_at_close > 0 ? `+${row.reference_odds_at_close}` : row.reference_odds_at_close}
-                              {" • "}
-                              CLV {formatPercentValue(row.clv_ev_percent)}
-                            </p>
-                            <p className="mt-1 text-[11px] text-muted-foreground">{row.event}</p>
-                          </div>
-                        ))}
+                      <div className="space-y-3">
+                        <ResearchRecentList title="Straight Bets" rows={recentStraightResearch} />
+                        <ResearchRecentList title="Player Props" rows={recentPropResearch} />
                       </div>
                     )}
                   </div>

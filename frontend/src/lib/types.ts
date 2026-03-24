@@ -39,6 +39,8 @@ export interface Bet {
   real_profit: number | null;
   // CLV tracking
   pinnacle_odds_at_entry: number | null;
+  latest_pinnacle_odds: number | null;
+  latest_pinnacle_updated_at: string | null;
   pinnacle_odds_at_close: number | null;
   clv_updated_at: string | null;
   commence_time: string | null;
@@ -519,6 +521,7 @@ export interface ResearchOpportunityBreakdownItem {
 
 export interface ResearchOpportunityRecentRow {
   opportunity_key: string;
+  surface: ScannerSurface;
   first_seen_at: string;
   last_seen_at: string;
   commence_time: string;
@@ -528,6 +531,10 @@ export interface ResearchOpportunityRecentRow {
   sportsbook: string;
   market: string;
   event_id?: string | null;
+  player_name?: string | null;
+  source_market_key?: string | null;
+  selection_side?: string | null;
+  line_value?: number | null;
   first_source: string;
   seen_count: number;
   first_ev_percentage: number;
@@ -546,6 +553,7 @@ export interface ResearchOpportunitySummary {
   clv_ready_count: number;
   beat_close_pct: number | null;
   avg_clv_percent: number | null;
+  by_surface: ResearchOpportunityBreakdownItem[];
   by_source: ResearchOpportunityBreakdownItem[];
   by_sportsbook: ResearchOpportunityBreakdownItem[];
   by_edge_bucket: ResearchOpportunityBreakdownItem[];

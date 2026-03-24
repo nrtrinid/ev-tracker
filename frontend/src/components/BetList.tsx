@@ -164,6 +164,10 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
 
   // Calculate implied probability
   const impliedProb = calculateImpliedProb(bet.odds_american);
+  const hasDistinctLatestRefresh = Boolean(
+    bet.latest_pinnacle_updated_at &&
+    bet.latest_pinnacle_updated_at !== bet.clv_updated_at
+  );
   
 
 
@@ -325,11 +329,16 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
                     )}
                   </div>
                 </div>
-                {/* Snapshot timestamp + optional promo footnote */}
+                {/* Close-capture vs latest-refresh timestamps */}
                 <div className="mt-1.5 space-y-0.5">
                   {bet.clv_updated_at && (
                     <p className="text-[10px] text-muted-foreground/50">
-                      Snapshot {formatRelativeTime(bet.clv_updated_at)}
+                      Close snapshot {formatRelativeTime(bet.clv_updated_at)}
+                    </p>
+                  )}
+                  {hasDistinctLatestRefresh && bet.latest_pinnacle_updated_at && (
+                    <p className="text-[10px] text-muted-foreground/50">
+                      Latest Pinnacle refresh {formatRelativeTime(bet.latest_pinnacle_updated_at)}
                     </p>
                   )}
                   {bet.promo_type !== "standard" && (

@@ -117,6 +117,8 @@ class BetResponse(BaseModel):
     ev_total: float
     real_profit: float | None
     pinnacle_odds_at_entry: float | None = None
+    latest_pinnacle_odds: float | None = None
+    latest_pinnacle_updated_at: datetime | None = None
     pinnacle_odds_at_close: float | None = None
     clv_updated_at: datetime | None = None
     commence_time: str | None = None
@@ -433,6 +435,7 @@ class ResearchOpportunityRecentRow(BaseModel):
     """Recent research-opportunity row for operator spot checks."""
 
     opportunity_key: str
+    surface: ScannerSurface = "straight_bets"
     first_seen_at: datetime
     last_seen_at: datetime
     commence_time: str
@@ -442,6 +445,10 @@ class ResearchOpportunityRecentRow(BaseModel):
     sportsbook: str
     market: str
     event_id: str | None = None
+    player_name: str | None = None
+    source_market_key: str | None = None
+    selection_side: str | None = None
+    line_value: float | None = None
     first_source: str
     seen_count: int
     first_ev_percentage: float
@@ -462,6 +469,7 @@ class ResearchOpportunitySummaryResponse(BaseModel):
     clv_ready_count: int
     beat_close_pct: float | None = None
     avg_clv_percent: float | None = None
+    by_surface: list[ResearchOpportunityBreakdownItem]
     by_source: list[ResearchOpportunityBreakdownItem]
     by_sportsbook: list[ResearchOpportunityBreakdownItem]
     by_edge_bucket: list[ResearchOpportunityBreakdownItem]
