@@ -1,5 +1,5 @@
 -- ============================================================
--- Migration 007: Kelly Settings Persistence
+-- Migration 008: Kelly Settings Persistence
 -- ============================================================
 
 ALTER TABLE public.settings

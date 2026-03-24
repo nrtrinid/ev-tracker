@@ -2,6 +2,16 @@ import type { SportsbookDeeplinkLevel } from "@/lib/types";
 
 export type ScannerLens = "standard" | "profit_boost" | "bonus_bet" | "qualifier";
 
+const SPORTSBOOK_HOMEPAGES: Record<string, string> = {
+  BetMGM: "https://sports.betmgm.com/",
+  "BetOnline.ag": "https://www.betonline.ag/sportsbook",
+  Bovada: "https://www.bovada.lv/sports",
+  Caesars: "https://www.caesars.com/sportsbook",
+  DraftKings: "https://sportsbook.draftkings.com/",
+  "ESPN Bet": "https://sportsbook.thescore.bet/",
+  FanDuel: "https://sportsbook.fanduel.com/",
+};
+
 export interface ScannerActionModel {
   primary: {
     kind: "open" | "log";
@@ -49,11 +59,19 @@ export function buildScannerActionModel(params: {
   sportsbookDeeplinkUrl?: string | null;
   sportsbookDeeplinkLevel?: SportsbookDeeplinkLevel | null;
 }): ScannerActionModel {
-  const normalizedLink = normalizeSportsbookDeeplink(params.sportsbookDeeplinkUrl);
-  const normalizedLevel = normalizeSportsbookDeeplinkLevel(
+  const explicitLink = normalizeSportsbookDeeplink(params.sportsbookDeeplinkUrl);
+  const explicitLevel = normalizeSportsbookDeeplinkLevel(
     params.sportsbookDeeplinkLevel,
-    Boolean(normalizedLink)
+    Boolean(explicitLink)
   );
+  const homepageFallback = normalizeSportsbookDeeplink(SPORTSBOOK_HOMEPAGES[params.sportsbook]);
+  const normalizedLink = explicitLink ?? homepageFallback;
+  const normalizedLevel =
+    explicitLink && explicitLevel
+      ? explicitLevel
+      : homepageFallback
+        ? "homepage"
+        : null;
 
   if (!normalizedLink || !normalizedLevel) {
     return {
@@ -100,4 +118,8 @@ export function buildScannerActionModel(params: {
 
 export function shouldShowProfitBoostContextControls(activeLens: ScannerLens): boolean {
   return activeLens === "profit_boost";
+}
+
+export function canAddScannerLensToParlayCart(activeLens: ScannerLens): boolean {
+  return activeLens === "standard" || activeLens === "qualifier";
 }

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import type { MarketSide } from "@/lib/types";
 import { calculateStealthStake, cn, formatCurrency, formatOdds } from "@/lib/utils";
-import { buildScannerActionModel } from "../scanner-ui-model";
+import { buildScannerActionModel, canAddScannerLensToParlayCart } from "../scanner-ui-model";
 
 interface StraightBetCardProps {
   side: MarketSide & { _retention?: number; _boostedEV?: number };
@@ -75,29 +75,29 @@ function getLootTier(evPercentage: number): { colorClass: string } {
   return { colorClass: "text-[#9A3F86]" };
 }
 
-function getWorkflowHint(params: {
-  activeLens: StraightBetCardProps["activeLens"];
-  side: MarketSide;
-  boostPercent: number;
-}): string {
-  const { activeLens, side, boostPercent } = params;
-  const duplicateState = side.scanner_duplicate_state ?? "new";
+function getDuplicateBadge(duplicateState: MarketSide["scanner_duplicate_state"]) {
   if (duplicateState === "better_now") {
-    return "This line is better than the one you already logged.";
+    return {
+      label: "Better Now",
+      className:
+        "rounded border border-[#4A7C59]/35 bg-[#4A7C59]/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#2E5D39]",
+    };
   }
   if (duplicateState === "already_logged") {
-    return "You already have exposure here, so only add it if you want another ticket.";
+    return {
+      label: "Already Placed",
+      className:
+        "rounded border border-[#B85C38]/35 bg-[#B85C38]/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#8B3D20]",
+    };
   }
-  if (activeLens === "profit_boost") {
-    return `With the ${boostPercent}% boost applied, this price looks better than the regular line.`;
+  if (duplicateState === "logged_elsewhere") {
+    return {
+      label: "Logged Elsewhere",
+      className:
+        "rounded border border-[#C4A35A]/35 bg-[#C4A35A]/12 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#6B5E4F]",
+    };
   }
-  if (activeLens === "bonus_bet") {
-    return "This is a cleaner way to turn a bonus bet into cash value.";
-  }
-  if (activeLens === "qualifier") {
-    return "This stays closer to break-even, which is useful for promo setup bets.";
-  }
-  return `This line looks about ${Math.abs(side.ev_percentage).toFixed(1)}% better than our fair-price estimate.`;
+  return null;
 }
 
 export function StraightBetCard({
@@ -120,9 +120,10 @@ export function StraightBetCard({
   });
 
   const duplicateState = side.scanner_duplicate_state ?? "new";
+  const duplicateBadge = getDuplicateBadge(duplicateState);
+  const canAddToCart = canAddScannerLensToParlayCart(activeLens);
   const rawKellyStake = Math.max(0, side.base_kelly_fraction * kellyMultiplier * bankroll);
   const stealthKellyStake = calculateStealthStake(rawKellyStake);
-  const workflowHint = getWorkflowHint({ activeLens, side, boostPercent });
 
   const metric =
     activeLens === "bonus_bet"
@@ -171,14 +172,9 @@ export function StraightBetCard({
               <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                 {sportDisplayMap[side.sport] || side.sport}
               </span>
-              {duplicateState !== "new" && (
-                <span className="rounded border border-[#B85C38]/35 bg-[#B85C38]/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#8B3D20]">
-                  Already Logged
-                </span>
-              )}
-              {duplicateState === "better_now" && (
-                <span className="rounded border border-[#4A7C59]/35 bg-[#4A7C59]/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#2E5D39]">
-                  Better Now
+              {duplicateBadge && (
+                <span className={duplicateBadge.className}>
+                  {duplicateBadge.label}
                 </span>
               )}
             </div>
@@ -194,7 +190,6 @@ export function StraightBetCard({
             </div>
 
             <p className="line-clamp-1 mt-0.5 text-xs text-muted-foreground">{side.event}</p>
-            <p className="mt-1 text-[11px] text-muted-foreground">{workflowHint}</p>
 
             <div className="mt-2 flex flex-col gap-1 text-xs">
               <div className="flex flex-wrap items-center gap-3">
@@ -284,9 +279,6 @@ export function StraightBetCard({
           </div>
         ) : actionModel.primary.kind === "open" && actionModel.primary.href ? (
           <div className="space-y-2 border-t border-border/60 pt-2">
-            {actionModel.trustHint && (
-              <p className="text-[11px] text-muted-foreground">{actionModel.trustHint}</p>
-            )}
             <Button asChild className="h-10 w-full text-xs font-semibold">
               <a
                 href={actionModel.primary.href}
@@ -298,24 +290,26 @@ export function StraightBetCard({
                 <ExternalLink className="ml-1 h-3.5 w-3.5" />
               </a>
             </Button>
-            <div className="flex flex-col gap-2 sm:flex-row">
+            <div className={cn("flex flex-col gap-2", canAddToCart && "sm:flex-row")}>
               <Button
                 type="button"
                 variant="outline"
-                className="h-10 flex-1 text-xs font-medium"
+                className={cn("h-10 text-xs font-medium", canAddToCart && "flex-1")}
                 onClick={() => onLogBet(side)}
               >
                 {actionModel.secondary?.label ?? "Review & Log"}
                 <ChevronRight className="ml-1 h-3.5 w-3.5" />
               </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="h-10 flex-1 text-xs font-medium text-muted-foreground"
-                onClick={() => onAddToCart(side)}
-              >
-                Save to Cart
-              </Button>
+              {canAddToCart && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-10 flex-1 text-xs font-medium text-muted-foreground"
+                  onClick={() => onAddToCart(side)}
+                >
+                  Save to Cart
+                </Button>
+              )}
             </div>
           </div>
         ) : (
@@ -328,14 +322,16 @@ export function StraightBetCard({
               {actionModel.primary.label}
               <ChevronRight className="ml-1 h-3.5 w-3.5" />
             </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-10 w-full text-xs font-medium text-muted-foreground"
-              onClick={() => onAddToCart(side)}
-            >
-              Save to Cart
-            </Button>
+            {canAddToCart && (
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-10 w-full text-xs font-medium text-muted-foreground"
+                onClick={() => onAddToCart(side)}
+              >
+                Save to Cart
+              </Button>
+            )}
           </div>
         )}
       </CardContent>

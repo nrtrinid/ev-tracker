@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { AlertTriangle, Copy, Loader2, Lock, Save, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, Lock } from "lucide-react";
 import { toast } from "sonner";
 
 import { JourneyCoach } from "@/components/JourneyCoach";
@@ -9,22 +9,16 @@ import { LogBetDrawer } from "@/components/LogBetDrawer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import {
-  useCreateParlaySlip,
-  useDeleteParlaySlip,
-  useLogParlaySlip,
-  useParlaySlips,
-  useUpdateParlaySlip,
-  useBalances,
-} from "@/lib/hooks";
+import { useBalances } from "@/lib/hooks";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
 import { useKellySettings } from "@/lib/kelly-context";
 import {
   buildParlayEventSummary,
   buildParlayPreview,
   buildParlaySportLabel,
+  getParlayRecommendedStake,
 } from "@/lib/parlay-utils";
-import type { BetCreate, ParlayCartLeg, ParlaySlip, ScannedBetData } from "@/lib/types";
+import type { ParlayCartLeg, ScannedBetData } from "@/lib/types";
 import { formatCurrency, formatOdds } from "@/lib/utils";
 
 function cloneCartLegs(legs: ParlayCartLeg[]) {
@@ -38,30 +32,12 @@ function cloneCartLegs(legs: ParlayCartLeg[]) {
   }));
 }
 
-function formatSlipUpdatedAt(value: string) {
-  try {
-    return new Date(value).toLocaleString();
-  } catch {
-    return value;
-  }
-}
-
 function formatPercent(value: number | null | undefined) {
   if (value == null || Number.isNaN(value)) {
     return "Unavailable";
   }
   const rounded = value >= 0 ? `+${value.toFixed(1)}` : value.toFixed(1);
   return `${rounded}%`;
-}
-
-function formatKellyMultiplier(value: number | null | undefined) {
-  if (value == null || Number.isNaN(value)) {
-    return "Kelly";
-  }
-  if (Math.abs(value - 0.25) < 0.001) return "Quarter Kelly";
-  if (Math.abs(value - 0.5) < 0.001) return "Half Kelly";
-  if (Math.abs(value - 1) < 0.001) return "Full Kelly";
-  return `${value.toFixed(2)}x Kelly`;
 }
 
 function buildParlayLogInitialValues(cart: ParlayCartLeg[], stake: number | null): ScannedBetData | undefined {
@@ -94,22 +70,16 @@ export default function ParlayPage() {
   const {
     cart,
     cartStakeInput,
-    activeParlaySlipId,
     removeCartLeg,
     clearCart,
-    replaceCart,
     setCartStakeInput,
-    setActiveParlaySlipId,
   } = useBettingPlatformStore();
-  const { data: savedSlips = [], isLoading: savedSlipsLoading } = useParlaySlips();
   const { data: balances } = useBalances();
   const { useComputedBankroll, bankrollOverride, kellyMultiplier } = useKellySettings();
-  const createParlaySlip = useCreateParlaySlip();
-  const updateParlaySlip = useUpdateParlaySlip();
-  const deleteParlaySlip = useDeleteParlaySlip();
-  const logParlaySlip = useLogParlaySlip();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [loggingInitialValues, setLoggingInitialValues] = useState<ScannedBetData | undefined>(undefined);
+  const lastAutoFilledStakeRef = useRef<string | null>(null);
+  const lastAutoFillKeyRef = useRef<string | null>(null);
 
   const parsedStake = Number.parseFloat(cartStakeInput);
   const computedBankroll = useMemo(() => {
@@ -121,61 +91,43 @@ export default function ParlayPage() {
     () => buildParlayPreview(cart, parsedStake, { bankroll, kellyMultiplier }),
     [bankroll, cart, kellyMultiplier, parsedStake],
   );
+  const recommendedStake = useMemo(() => getParlayRecommendedStake(preview), [preview]);
+  const autoFillKey = useMemo(
+    () => `${cart.map((leg) => leg.id).join("|")}::${bankroll ?? "none"}::${kellyMultiplier ?? "none"}`,
+    [bankroll, cart, kellyMultiplier],
+  );
   const lockedSportsbook = cart[0]?.sportsbook ?? null;
-  const activeSlip = savedSlips.find((slip) => slip.id === activeParlaySlipId) ?? null;
-  const saveActionLabel = activeSlip
-    ? activeSlip.logged_bet_id
-      ? "Save As New Draft"
-      : "Update Draft"
-    : "Save Draft";
-  const isSaving = createParlaySlip.isPending || updateParlaySlip.isPending;
-  const isDeleting = deleteParlaySlip.isPending;
-  const isLogging = logParlaySlip.isPending;
 
-  async function saveCurrentSlip(options?: { silent?: boolean; overrideStake?: number }) {
-    const stakeForSave = options?.overrideStake ?? parsedStake;
-    const previewForSave = buildParlayPreview(cart, stakeForSave, { bankroll, kellyMultiplier });
-
-    if (!previewForSave || !lockedSportsbook) {
-      if (!options?.silent) {
-        toast.error("Add at least one leg before saving a draft.");
-      }
-      return null;
+  useEffect(() => {
+    if (cart.length === 0) {
+      lastAutoFilledStakeRef.current = null;
+      lastAutoFillKeyRef.current = null;
+      return;
     }
 
-    const payload = {
-      sportsbook: lockedSportsbook,
-      stake: previewForSave.stake,
-      legs: cloneCartLegs(cart),
-      warnings: previewForSave.warnings,
-      pricingPreview: previewForSave,
-    };
-
-    try {
-      const shouldCreateNew = !activeSlip || activeSlip.logged_bet_id != null;
-      const savedSlip = shouldCreateNew
-        ? await createParlaySlip.mutateAsync(payload)
-        : await updateParlaySlip.mutateAsync({
-            id: activeSlip.id,
-            data: payload,
-          });
-
-      setActiveParlaySlipId(savedSlip.id);
-      if (!options?.silent) {
-        toast.success(shouldCreateNew ? "Draft saved." : "Draft updated.");
-      }
-      return savedSlip;
-    } catch (error) {
-      if (!options?.silent) {
-        toast.error(error instanceof Error ? error.message : "Failed to save draft.");
-      }
-      return null;
+    if (recommendedStake == null) {
+      lastAutoFilledStakeRef.current = null;
+      lastAutoFillKeyRef.current = autoFillKey;
+      return;
     }
-  }
 
-  async function handleSaveDraft() {
-    await saveCurrentSlip();
-  }
+    const nextStakeInput = recommendedStake.toFixed(2);
+    const keyChanged = lastAutoFillKeyRef.current !== autoFillKey;
+    const followsAutoFill =
+      cartStakeInput.trim() === "" ||
+      !Number.isFinite(parsedStake) ||
+      cartStakeInput === lastAutoFilledStakeRef.current;
+
+    if (!keyChanged && !followsAutoFill) {
+      return;
+    }
+
+    lastAutoFilledStakeRef.current = nextStakeInput;
+    lastAutoFillKeyRef.current = autoFillKey;
+    if (cartStakeInput !== nextStakeInput) {
+      setCartStakeInput(nextStakeInput);
+    }
+  }, [autoFillKey, cart.length, cartStakeInput, parsedStake, recommendedStake, setCartStakeInput]);
 
   async function handleOpenLogDrawer() {
     if (!preview || preview.stake == null || preview.stake <= 0) {
@@ -187,72 +139,8 @@ export default function ParlayPage() {
     setDrawerOpen(true);
   }
 
-  function handleUseKellySuggestion() {
-    if (preview?.stealthKellyStake == null || preview.stealthKellyStake <= 0) {
-      return;
-    }
-    setCartStakeInput(preview.stealthKellyStake.toFixed(2));
-    toast.success(`${formatKellyMultiplier(preview.kellyMultiplierUsed)} stake applied.`);
-  }
-
-  async function handleSubmitLoggedParlay(payload: BetCreate) {
-    const savedSlip = await saveCurrentSlip({
-      silent: true,
-      overrideStake: payload.stake,
-    });
-
-    if (!savedSlip) {
-      throw new Error("Unable to save this parlay before logging it.");
-    }
-
-    await logParlaySlip.mutateAsync({
-      id: savedSlip.id,
-      data: {
-        sport: payload.sport,
-        event: payload.event,
-        promo_type: payload.promo_type,
-        odds_american: payload.odds_american,
-        stake: payload.stake,
-        boost_percent: payload.boost_percent,
-        winnings_cap: payload.winnings_cap,
-        notes: payload.notes,
-        event_date: payload.event_date,
-        opposing_odds: payload.opposing_odds,
-        payout_override: payload.payout_override,
-      },
-    });
-    setActiveParlaySlipId(savedSlip.id);
-  }
-
-  function handleLoadSlip(slip: ParlaySlip) {
-    replaceCart(cloneCartLegs(slip.legs), {
-      stakeInput: slip.stake != null ? slip.stake.toFixed(2) : "",
-      activeParlaySlipId: slip.logged_bet_id ? null : slip.id,
-    });
-    toast.success(slip.logged_bet_id ? "Logged slip copied into the builder." : "Draft loaded into the builder.");
-  }
-
-  function handleDuplicateSlip(slip: ParlaySlip) {
-    replaceCart(cloneCartLegs(slip.legs), {
-      stakeInput: slip.stake != null ? slip.stake.toFixed(2) : "",
-      activeParlaySlipId: null,
-    });
-    toast.success("Slip copied into a new local draft.");
-  }
-
-  async function handleDeleteSlip(slip: ParlaySlip) {
-    try {
-      await deleteParlaySlip.mutateAsync(slip.id);
-      if (activeParlaySlipId === slip.id) {
-        setActiveParlaySlipId(null);
-      }
-      toast.success("Draft deleted.");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to delete draft.");
-    }
-  }
-
   const hasCart = cart.length > 0;
+  const canOpenLogDrawer = hasCart && preview?.stake != null && preview.stake > 0;
 
   return (
     <main className="min-h-screen bg-background">
@@ -262,13 +150,13 @@ export default function ParlayPage() {
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold">Parlay Builder</h1>
           <p className="text-sm text-muted-foreground">
-            Build one-book parlays from straight bets and sportsbook props, save drafts across devices, and log the finished slip when you place it.
+            Build one-book parlays from straight bets and sportsbook props, review the pricing, and log the finished ticket into your tracker when you place it.
           </p>
         </div>
 
         <Card>
           <CardHeader className="pb-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-1">
               <div>
                 <h2 className="font-semibold">Active Slip</h2>
                 <p className="text-xs text-muted-foreground">
@@ -276,23 +164,9 @@ export default function ParlayPage() {
                     ? `Sportsbook lock: ${lockedSportsbook}`
                     : "Add the first leg from the scanner to lock this slip to a sportsbook."}
                 </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                {activeSlip && !activeSlip.logged_bet_id && (
-                  <span className="rounded-full border border-border bg-muted/40 px-3 py-1 text-muted-foreground">
-                    Saved draft
-                  </span>
-                )}
-                {activeSlip?.logged_bet_id && (
-                  <span className="rounded-full border border-[#2E5D39]/20 bg-[#2E5D39]/10 px-3 py-1 text-[#2E5D39]">
-                    Logged draft
-                  </span>
-                )}
-                {!activeSlip && hasCart && (
-                  <span className="rounded-full border border-border bg-muted/40 px-3 py-1 text-muted-foreground">
-                    Local only
-                  </span>
-                )}
+                <p className="text-xs text-muted-foreground">
+                  This builder stays local on this device until you log the parlay.
+                </p>
               </div>
             </div>
           </CardHeader>
@@ -324,7 +198,14 @@ export default function ParlayPage() {
               </div>
 
               <div className="space-y-2 rounded-xl border border-border bg-background px-4 py-3">
-                <label className="text-xs font-medium text-muted-foreground">Stake</label>
+                <div className="flex items-center justify-between gap-3">
+                  <label className="text-xs font-medium text-muted-foreground">Stake</label>
+                  {recommendedStake != null ? (
+                    <p className="text-[11px] text-muted-foreground">
+                      Suggested: {formatCurrency(recommendedStake)}
+                    </p>
+                  ) : null}
+                </div>
                 <Input
                   type="number"
                   min="0"
@@ -366,32 +247,6 @@ export default function ParlayPage() {
                     : "The book payout still shows above; only the fair-odds estimate is hidden."}
                 </p>
               </div>
-
-              <div className="rounded-xl border border-border bg-background px-4 py-3 md:col-span-2">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Kelly suggestion</p>
-                    <p className="mt-1 text-lg font-semibold">
-                      {preview?.stealthKellyStake != null ? formatCurrency(preview.stealthKellyStake) : "Unavailable"}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {preview?.stealthKellyStake != null && preview.rawKellyStake != null
-                        ? `${formatKellyMultiplier(preview.kellyMultiplierUsed)} on ${formatCurrency(preview.bankrollUsed ?? 0)} bankroll. Raw Kelly ${formatCurrency(preview.rawKellyStake)} before stake rounding.`
-                        : preview?.estimateAvailable
-                        ? "Kelly sizing only appears for positive-EV slips with a trustworthy fair-odds estimate."
-                        : "Kelly sizing is hidden whenever the fair-odds estimate is unavailable."}
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={handleUseKellySuggestion}
-                    disabled={preview?.stealthKellyStake == null || preview.stealthKellyStake <= 0 || isSaving || isLogging}
-                  >
-                    Use Suggestion
-                  </Button>
-                </div>
-              </div>
             </div>
 
             {preview?.warnings.length ? (
@@ -418,24 +273,16 @@ export default function ParlayPage() {
 
             <div className="flex flex-wrap gap-2">
               <Button
-                variant="outline"
-                onClick={handleSaveDraft}
-                disabled={!hasCart || isSaving || isLogging}
-              >
-                {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                {saveActionLabel}
-              </Button>
-              <Button
                 onClick={handleOpenLogDrawer}
-                disabled={!hasCart || preview?.stake == null || isSaving || isLogging}
+                disabled={!canOpenLogDrawer}
               >
-                {isLogging ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Lock className="mr-2 h-4 w-4" />}
-                Log Parlay
+                <Lock className="mr-2 h-4 w-4" />
+                Review & Log Parlay
               </Button>
               <Button
                 variant="ghost"
                 onClick={clearCart}
-                disabled={!hasCart || isSaving || isLogging}
+                disabled={!hasCart}
               >
                 Clear Cart
               </Button>
@@ -474,7 +321,7 @@ export default function ParlayPage() {
                     <div className="flex flex-wrap gap-3 text-xs">
                       <span className="font-mono text-foreground">{formatOdds(leg.oddsAmerican)}</span>
                       <span className="text-muted-foreground">
-                        Ref: {leg.referenceOddsAmerican != null ? formatOdds(leg.referenceOddsAmerican) : "Unavailable"}
+                        Fair: {leg.referenceOddsAmerican != null ? formatOdds(leg.referenceOddsAmerican) : "Unavailable"}
                       </span>
                     </div>
                   </div>
@@ -483,83 +330,6 @@ export default function ParlayPage() {
                   </Button>
                 </div>
               ))
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="font-semibold">Saved Slips</h2>
-                <p className="text-xs text-muted-foreground">
-                  Drafts live on the backend so you can reopen them across devices.
-                </p>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {savedSlipsLoading ? (
-              <p className="text-sm text-muted-foreground">Loading saved slips...</p>
-            ) : savedSlips.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No saved slips yet. Save the active cart when you want to keep a draft around.
-              </p>
-            ) : (
-              savedSlips.map((slip) => {
-                const slipPreview = slip.pricingPreview;
-                const isLogged = slip.logged_bet_id != null;
-                return (
-                  <div key={slip.id} className="rounded-xl border border-border bg-background px-3 py-3">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="space-y-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-sm font-semibold">{buildParlayEventSummary(slip.legs, slip.sportsbook)}</p>
-                          <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">
-                            {slip.sportsbook}
-                          </span>
-                          {isLogged && (
-                            <span className="rounded-full border border-[#2E5D39]/20 bg-[#2E5D39]/10 px-2 py-0.5 text-[11px] text-[#2E5D39]">
-                              Logged
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          {slip.legs.length} legs | Updated {formatSlipUpdatedAt(slip.updated_at)}
-                        </p>
-                        <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-                          <span>Book: {slipPreview ? formatOdds(slipPreview.combinedAmericanOdds) : "-"}</span>
-                          <span>Stake: {slip.stake != null ? formatCurrency(slip.stake) : "-"}</span>
-                          <span>EV: {slipPreview?.estimateAvailable ? formatPercent(slipPreview.estimatedEvPercent) : "Unavailable"}</span>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                        {!isLogged && (
-                          <Button variant="outline" size="sm" onClick={() => handleLoadSlip(slip)}>
-                            Load
-                          </Button>
-                        )}
-                        <Button variant="outline" size="sm" onClick={() => handleDuplicateSlip(slip)}>
-                          <Copy className="mr-2 h-4 w-4" />
-                          Duplicate
-                        </Button>
-                        {!isLogged && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleDeleteSlip(slip)}
-                            disabled={isDeleting}
-                          >
-                            {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
-                            Delete
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
             )}
           </CardContent>
         </Card>
@@ -574,9 +344,10 @@ export default function ParlayPage() {
           }
         }}
         initialValues={loggingInitialValues}
-        onSubmitOverride={handleSubmitLoggedParlay}
         onLogged={() => {
           setLoggingInitialValues(undefined);
+          clearCart();
+          setCartStakeInput("10.00");
         }}
       />
     </main>

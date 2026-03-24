@@ -5,6 +5,7 @@ import {
   defaultScannerResultFilters,
   describeScannerResultFilters,
   hasActiveScannerResultFilters,
+  isPregameCommenceTime,
   normalizeSearchQuery,
 } from "@/lib/scanner-filters";
 import type { MarketSide } from "@/lib/types";
@@ -82,6 +83,14 @@ test.describe("scanner filters", () => {
 
   test("normalizes whitespace and casing for search", async () => {
     expect(normalizeSearchQuery("  Lakers    Warriors  ")).toBe("lakers warriors");
+  });
+
+  test("treats All as pregame-only, not literally every scanned event", async () => {
+    const now = new Date("2026-03-20T12:00:00Z");
+
+    expect(isPregameCommenceTime("2026-03-20T12:00:00Z", now)).toBeTruthy();
+    expect(isPregameCommenceTime("2026-03-20T12:01:00Z", now)).toBeTruthy();
+    expect(isPregameCommenceTime("2026-03-20T11:59:59Z", now)).toBeFalsy();
   });
 
   test("applies standard edge filter only in standard lens", async () => {

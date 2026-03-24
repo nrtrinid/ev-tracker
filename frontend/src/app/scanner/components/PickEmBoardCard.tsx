@@ -25,11 +25,6 @@ function formatMarketLabel(value: string) {
   return value.replaceAll("_", " ");
 }
 
-function formatConfidenceLabel(label: string | null | undefined): string {
-  const normalized = (label || "thin").trim().toLowerCase();
-  return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : "Thin";
-}
-
 function bookAbbrev(name: string | null | undefined): string {
   const map: Record<string, string> = {
     DraftKings: "DK",
@@ -47,6 +42,13 @@ function percentLabel(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
+function formatLineValue(value: number): string {
+  if (Number.isInteger(value)) {
+    return `${value}`;
+  }
+  return `${Number.parseFloat(value.toFixed(2))}`;
+}
+
 export function PickEmBoardCard({
   card,
   bookColors,
@@ -55,7 +57,6 @@ export function PickEmBoardCard({
   const lean = card.consensus_side === "over" ? "Over" : "Under";
   const leanProbability =
     card.consensus_side === "over" ? card.consensus_over_prob : card.consensus_under_prob;
-  const confidenceDisplay = formatConfidenceLabel(card.confidence_label);
 
   return (
     <Card className="card-hover">
@@ -74,12 +75,7 @@ export function PickEmBoardCard({
               </span>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="text-sm font-semibold">{card.player_name}</p>
-              <span className="rounded border border-border/70 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                Line {card.line_value}
-              </span>
-            </div>
+            <p className="text-sm font-semibold">{card.player_name}</p>
 
             <p className="line-clamp-1 text-xs text-muted-foreground">{card.event}</p>
             <p className="text-[11px] text-muted-foreground">
@@ -87,10 +83,13 @@ export function PickEmBoardCard({
             </p>
           </div>
 
-          <div className="shrink-0 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-left sm:min-w-[112px] sm:text-right">
-            <p className="text-sm font-semibold">{confidenceDisplay}</p>
-            <p className="text-[10px] text-muted-foreground">
-              {card.exact_line_bookmaker_count} book{card.exact_line_bookmaker_count === 1 ? "" : "s"}
+          <div className="shrink-0 rounded-xl border border-[#E9D7B9] bg-[#FCF7EC] px-4 py-3 text-left sm:min-w-[132px] sm:text-right">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8B7355]">Line</p>
+            <p className="mt-1 text-2xl font-mono font-bold leading-none text-[#5C4D2E]">
+              {formatLineValue(card.line_value)}
+            </p>
+            <p className="mt-2 text-[10px] text-[#8B7355]">
+              {card.exact_line_bookmaker_count} book{card.exact_line_bookmaker_count === 1 ? "" : "s"} match
             </p>
           </div>
         </div>
@@ -123,7 +122,6 @@ export function PickEmBoardCard({
 
         <div className="space-y-2 border-t border-border/60 pt-2">
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-            <span>Exact-line support:</span>
             {card.exact_line_bookmakers.map((book) => (
               <span
                 key={book}

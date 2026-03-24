@@ -163,7 +163,87 @@ def test_build_parlay_logged_bet_payload_uses_pricing_snapshot_for_true_prob():
     assert payload["market"] == "Parlay"
     assert payload["sportsbook"] == "DraftKings"
     assert payload["true_prob_at_entry"] == pytest.approx(0.2222)
-    assert payload["event"] == "1-leg Lakers @ Warriors parlay"
+    assert payload["event"] == "Lakers ML"
     assert payload["event_date"] == "2026-03-24"
     assert payload["selection_meta"]["slip_id"] == "slip-1"
     assert payload["selection_meta"]["pricingPreview"]["estimatedEvPercent"] == 16.7
+
+
+def test_build_parlay_logged_bet_payload_compacts_multi_leg_summary_after_two_labels():
+    log_request = SimpleNamespace(
+        sport=None,
+        event=None,
+        promo_type=SimpleNamespace(value="standard"),
+        odds_american=800,
+        stake=10.0,
+        boost_percent=None,
+        winnings_cap=None,
+        notes=None,
+        event_date=None,
+        opposing_odds=None,
+        payout_override=None,
+    )
+    prop_leg = {
+        **BASE_LEG,
+        "id": "props:1",
+        "surface": "player_props",
+        "eventId": "evt-2",
+        "marketKey": "player_points",
+        "selectionKey": "evt-2|player_points|jokic|over|24.5",
+        "display": "Nikola Jokic Over 24.5",
+        "event": "Nuggets @ Suns",
+        "commenceTime": "2026-03-24T03:00:00Z",
+        "correlationTags": ["evt-2", "Nikola Jokic", "player_points"],
+        "team": "Nuggets",
+        "participantName": "Nikola Jokic",
+        "selectionSide": "over",
+        "lineValue": 24.5,
+        "marketDisplay": "Player Points",
+        "sourceEventId": "evt-2",
+        "sourceMarketKey": "player_points",
+        "sourceSelectionKey": "evt-2|player_points|jokic|over|24.5",
+    }
+    extra_prop_leg = {
+        **prop_leg,
+        "id": "props:2",
+        "eventId": "evt-3",
+        "selectionKey": "evt-3|player_points|lebron|over|27.5",
+        "display": "LeBron James Over 27.5",
+        "event": "Lakers @ Celtics",
+        "commenceTime": "2026-03-24T05:00:00Z",
+        "correlationTags": ["evt-3", "LeBron James", "player_points"],
+        "participantName": "LeBron James",
+        "lineValue": 27.5,
+        "sourceEventId": "evt-3",
+        "sourceSelectionKey": "evt-3|player_points|lebron|over|27.5",
+    }
+    extra_straight_leg = {
+        **BASE_LEG,
+        "id": "straight:2",
+        "eventId": "evt-4",
+        "selectionKey": "evt-4|celtics",
+        "display": "Celtics ML",
+        "event": "Celtics @ Heat",
+        "commenceTime": "2026-03-24T07:00:00Z",
+        "correlationTags": ["evt-4", "celtics"],
+        "team": "Celtics",
+        "selectionSide": "Celtics",
+        "sourceEventId": "evt-4",
+        "sourceSelectionKey": "evt-4|celtics",
+    }
+    slip_row = {
+        "id": "slip-2",
+        "sportsbook": "DraftKings",
+        "legs_json": [BASE_LEG, prop_leg, extra_prop_leg, extra_straight_leg],
+        "warnings_json": [],
+        "pricing_preview_json": None,
+    }
+
+    payload = build_parlay_logged_bet_payload(
+        slip_row=slip_row,
+        log_request=log_request,
+        utc_now_iso=lambda: "2026-03-23T02:30:00Z",
+    )
+
+    assert payload["event"] == "Lakers ML + Nikola Jokic Over 24.5 + 2 more"
+    assert payload["event_date"] == "2026-03-24"

@@ -278,27 +278,6 @@ export function JourneyCoach({
         return null;
       }
 
-      if (cart.length > 0) {
-        return {
-          key: `scanner-cart-${cart.length}`,
-          eyebrow: "Optional Step",
-          title: `You already have ${cart.length} ${cart.length === 1 ? "leg" : "legs"} saved`,
-          body: "Keep scanning for one more leg, or open Parlay Builder when you want to sanity-check the combined payout.",
-          actions: [
-            {
-              label: "Open Parlay Builder",
-              href: "/parlay",
-              icon: "arrow",
-            },
-            {
-              label: "Keep Scanning",
-              variant: "outline",
-              hideOnClick: true,
-            },
-          ],
-        };
-      }
-
       return null;
     }
 

@@ -61,6 +61,10 @@ export function KellyProvider({ children }: { children: React.ReactNode }) {
 
   const remoteHydratedRef = useRef(false);
   const lastPersistedRef = useRef<KellySnapshot>(DEFAULT_KELLY_SETTINGS);
+  const hasRemoteSettings = settings !== null && settings !== undefined;
+  const remoteUseComputedBankroll = settings?.use_computed_bankroll;
+  const remoteBankrollOverride = settings?.bankroll_override;
+  const remoteKellyMultiplier = settings?.kelly_multiplier;
 
   useEffect(() => {
     try {
@@ -77,14 +81,14 @@ export function KellyProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!settings) {
+    if (!hasRemoteSettings) {
       return;
     }
 
     const remoteSnapshot = normalizeKellySnapshot({
-      useComputedBankroll: settings.use_computed_bankroll,
-      bankrollOverride: settings.bankroll_override,
-      kellyMultiplier: settings.kelly_multiplier,
+      useComputedBankroll: remoteUseComputedBankroll,
+      bankrollOverride: remoteBankrollOverride,
+      kellyMultiplier: remoteKellyMultiplier,
     });
 
     remoteHydratedRef.current = true;
@@ -93,9 +97,10 @@ export function KellyProvider({ children }: { children: React.ReactNode }) {
     setBankrollOverrideState(remoteSnapshot.bankrollOverride);
     setKellyMultiplierState(remoteSnapshot.kellyMultiplier);
   }, [
-    settings?.bankroll_override,
-    settings?.kelly_multiplier,
-    settings?.use_computed_bankroll,
+    hasRemoteSettings,
+    remoteBankrollOverride,
+    remoteKellyMultiplier,
+    remoteUseComputedBankroll,
   ]);
 
   const snapshot = useMemo(

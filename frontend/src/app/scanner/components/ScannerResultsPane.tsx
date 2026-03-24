@@ -15,6 +15,7 @@ interface ScannerResultsPaneProps {
   results: Array<MarketSide & { _retention?: number; _boostedEV?: number }>;
   pickemCards?: PickEmBoardCard[];
   sourceCount: number;
+  rawSourceCount: number;
   filteredCount: number;
   nullState: ScannerNullState;
   activeResultFilterSummary: string;
@@ -40,6 +41,7 @@ export function ScannerResultsPane({
   results,
   pickemCards = [],
   sourceCount,
+  rawSourceCount,
   filteredCount,
   nullState,
   activeResultFilterSummary,
@@ -59,6 +61,8 @@ export function ScannerResultsPane({
   const surfaceConfig = getScannerSurface(surface);
   const isPropsSurface = surface === "player_props";
   const isPickEmView = isPropsSurface && playerPropsView === "pickem";
+  const pregameExcludedCount = Math.max(0, rawSourceCount - sourceCount);
+  const scanExpiredOutOfPregame = nullState === "backend_empty" && pregameExcludedCount > 0;
 
   return (
     <div className="space-y-2">
@@ -75,8 +79,8 @@ export function ScannerResultsPane({
       <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
         {isPropsSurface
           ? isPickEmView
-            ? `Showing ${pickemCards.length} of ${filteredCount} pick'em board lines`
-            : `Showing ${results.length} of ${sourceCount} raw props`
+            ? `Showing ${pickemCards.length} of ${sourceCount} available pick'em board lines`
+            : `Showing ${results.length} of ${sourceCount} available props`
           : tutorialMode
             ? `Showing ${results.length} of ${filteredCount} Tutorial Lines`
             : `Showing ${results.length} of ${filteredCount} ${
@@ -94,7 +98,13 @@ export function ScannerResultsPane({
         <Card className="border-dashed">
           <CardContent className="py-8 text-center">
             <p className="text-sm text-muted-foreground">
-              {isPickEmView && nullState === "backend_empty"
+              {scanExpiredOutOfPregame
+                ? isPickEmView
+                  ? `${rawSourceCount} pick'em board lines were scanned, but none are still pregame.`
+                  : isPropsSurface
+                    ? `${rawSourceCount} props were scanned, but none are still pregame.`
+                    : `${rawSourceCount} plays were scanned, but none are still pregame.`
+                : isPickEmView && nullState === "backend_empty"
                 ? pickemEmptyMessage ||
                   "No supported pick'em board lines are available for this scan yet."
                 : nullState === "backend_empty"
@@ -114,7 +124,9 @@ export function ScannerResultsPane({
                   : "Your current filters are hiding all of the available plays."}
             </p>
             <p className="mt-2 text-xs text-muted-foreground">
-              {isPickEmView && nullState === "backend_empty"
+              {scanExpiredOutOfPregame
+                ? "Started games are hidden by default. Refresh to load the current slate."
+                : isPickEmView && nullState === "backend_empty"
                 ? pickemEmptySubMessage ||
                   "Adjust your market filters or try a new scan later."
                 : nullState === "backend_empty"

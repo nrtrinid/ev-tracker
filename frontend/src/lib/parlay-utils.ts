@@ -25,6 +25,83 @@ function uniqueValues(values: Array<string | null | undefined>) {
   return out;
 }
 
+function truncateText(value: string, maxLength: number) {
+  const normalized = value.trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  if (maxLength <= 3) {
+    return normalized.slice(0, maxLength);
+  }
+  return `${normalized.slice(0, maxLength - 3).trimEnd()}...`;
+}
+
+function formatSelectionSide(value: string | null | undefined) {
+  const raw = (value ?? "").trim();
+  if (!raw) {
+    return null;
+  }
+
+  const normalized = raw.toLowerCase();
+  if (normalized === "over" || normalized === "under" || normalized === "yes" || normalized === "no") {
+    return `${normalized[0].toUpperCase()}${normalized.slice(1)}`;
+  }
+  return raw;
+}
+
+function formatLineValue(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) {
+    return null;
+  }
+  if (Number.isInteger(value)) {
+    return `${value}`;
+  }
+  return `${Number.parseFloat(value.toFixed(2))}`;
+}
+
+function buildParlayLegLabel(leg: ParlayCartLeg) {
+  const display = leg.display.trim();
+  if (display) {
+    return display;
+  }
+
+  const participant = (leg.participantName ?? "").trim();
+  const selectionSide = formatSelectionSide(leg.selectionSide);
+  const lineValue = formatLineValue(leg.lineValue);
+  const team = (leg.team ?? "").trim();
+  const marketDisplay = (leg.marketDisplay ?? "").trim();
+  const marketKey = normalizeText(leg.marketKey);
+
+  if (participant && selectionSide && lineValue != null) {
+    return `${participant} ${selectionSide} ${lineValue}`;
+  }
+  if (participant && selectionSide) {
+    return `${participant} ${selectionSide}`;
+  }
+  if (participant && marketDisplay) {
+    return `${participant} ${marketDisplay}`;
+  }
+  if (team && (marketKey === "h2h" || normalizeText(marketDisplay) === "moneyline")) {
+    return `${team} ML`;
+  }
+  if (team && selectionSide && lineValue != null) {
+    return `${team} ${selectionSide} ${lineValue}`;
+  }
+  if (team && marketDisplay) {
+    return `${team} ${marketDisplay}`;
+  }
+  if (team) {
+    return team;
+  }
+  if (marketDisplay) {
+    return marketDisplay;
+  }
+  if (leg.event.trim()) {
+    return leg.event.trim();
+  }
+  return "Parlay leg";
+}
+
 function getEventGroupKey(leg: ParlayCartLeg) {
   return normalizeText(leg.eventId ?? leg.event);
 }
@@ -46,6 +123,28 @@ function getMeaningfulCorrelationTags(leg: ParlayCartLeg) {
     }
     return true;
   });
+}
+
+function getLegReferenceTrueProbability(leg: ParlayCartLeg): number | null {
+  const explicitTrueProbability = leg.referenceTrueProbability;
+  if (
+    typeof explicitTrueProbability === "number" &&
+    Number.isFinite(explicitTrueProbability) &&
+    explicitTrueProbability > 0 &&
+    explicitTrueProbability < 1
+  ) {
+    return explicitTrueProbability;
+  }
+
+  if (leg.referenceOddsAmerican == null || !Number.isFinite(leg.referenceOddsAmerican)) {
+    return null;
+  }
+
+  const referenceDecimal = americanToDecimal(leg.referenceOddsAmerican);
+  if (!Number.isFinite(referenceDecimal) || referenceDecimal <= 1) {
+    return null;
+  }
+  return 1 / referenceDecimal;
 }
 
 export function buildParlayWarnings(cart: ParlayCartLeg[]): ParlayWarning[] {
@@ -167,7 +266,8 @@ export function buildParlayPreview(
   const stake = Number.isFinite(stakeInput) && stakeInput > 0 ? stakeInput : null;
   const totalPayout = stake != null ? stake * combinedDecimalOdds : null;
   const profit = totalPayout != null && stake != null ? totalPayout - stake : null;
-  const missingReferencePrice = cart.some((leg) => leg.referenceOddsAmerican == null);
+  const referenceTrueProbabilities = cart.map((leg) => getLegReferenceTrueProbability(leg));
+  const missingReferencePrice = referenceTrueProbabilities.some((value) => value == null);
 
   let estimatedFairDecimalOdds: number | null = null;
   let estimatedFairAmericanOdds: number | null = null;
@@ -192,12 +292,16 @@ export function buildParlayPreview(
   } else if (missingReferencePrice) {
     estimateUnavailableReason = "Missing reference price";
   } else {
-    estimatedFairDecimalOdds = cart.reduce(
-      (running, leg) => running * americanToDecimal(leg.referenceOddsAmerican as number),
+    const resolvedReferenceTrueProbabilities = referenceTrueProbabilities as number[];
+    estimatedTrueProbability = resolvedReferenceTrueProbabilities.reduce(
+      (running, probability) => running * probability,
       1
     );
-    estimatedFairAmericanOdds = decimalToAmerican(estimatedFairDecimalOdds);
-    estimatedTrueProbability = estimatedFairDecimalOdds > 0 ? 1 / estimatedFairDecimalOdds : null;
+    estimatedFairDecimalOdds = estimatedTrueProbability > 0 ? 1 / estimatedTrueProbability : null;
+    estimatedFairAmericanOdds =
+      estimatedFairDecimalOdds != null && Number.isFinite(estimatedFairDecimalOdds)
+        ? decimalToAmerican(estimatedFairDecimalOdds)
+        : null;
     estimatedEvPercent =
       estimatedTrueProbability != null
         ? (estimatedTrueProbability * combinedDecimalOdds - 1) * 100
@@ -253,15 +357,33 @@ export function buildParlaySportLabel(cart: ParlayCartLeg[]): string {
   return "Other";
 }
 
+export function getParlayRecommendedStake(preview: ParlayPricingPreview | null | undefined): number | null {
+  if (!preview?.estimateAvailable) {
+    return null;
+  }
+  return preview.stealthKellyStake ?? 0;
+}
+
 export function buildParlayEventSummary(cart: ParlayCartLeg[], sportsbook?: string | null): string {
   const book = sportsbook ?? cart[0]?.sportsbook ?? "Parlay";
   if (cart.length === 0) {
     return `${book} parlay`;
   }
 
-  const events = uniqueValues(cart.map((leg) => leg.event));
-  if (events.length === 1) {
-    return `${cart.length}-leg ${events[0]} parlay`;
+  const maxLabelLength = cart.length === 1 ? 72 : cart.length === 2 ? 32 : cart.length === 3 ? 22 : 24;
+  const legLabels = cart.map((leg) => truncateText(buildParlayLegLabel(leg), maxLabelLength));
+  if (legLabels.length === 1) {
+    return legLabels[0];
   }
-  return `${cart.length}-leg ${book} parlay`;
+
+  if (legLabels.length === 2) {
+    return `${legLabels[0]} + ${legLabels[1]}`;
+  }
+
+  const fullSummary = legLabels.join(" + ");
+  if (legLabels.length === 3 && fullSummary.length <= 72) {
+    return fullSummary;
+  }
+
+  return `${legLabels[0]} + ${legLabels[1]} + ${cart.length - 2} more`;
 }

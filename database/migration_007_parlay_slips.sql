@@ -1,5 +1,5 @@
 -- ============================================================
--- Migration 006: Saved Parlay Slips
+-- Migration 007: Saved Parlay Slips
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS public.parlay_slips (

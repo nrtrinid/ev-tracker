@@ -13,6 +13,7 @@ import {
   applyScannerResultFilters,
   defaultScannerResultFilters,
   describeScannerResultFilters,
+  isPregameCommenceTime,
   type ScannerRiskPreset,
   type ScannerTimePreset,
 } from "@/lib/scanner-filters";
@@ -24,10 +25,10 @@ import type {
   TutorialPracticeBet,
 } from "@/lib/types";
 import { useKellySettings } from "@/lib/kelly-context";
+import { cn } from "@/lib/utils";
 import {
   classifyScannerNullState,
   describeActiveResultFilters,
-  isPlayerPropScanDiagnostics,
 } from "@/lib/scanner-contract";
 
 import { ScannerHeader } from "./components/ScannerHeader";
@@ -37,7 +38,6 @@ import { ScannerResultsPane } from "./components/ScannerResultsPane";
 import { ScannerScopeBar } from "./components/ScannerScopeBar";
 import { ScannerStatusBar } from "./components/ScannerStatusBar";
 import { ScannerPreScanEmptyState } from "./components/ScannerPreScanEmptyState";
-import { PlayerPropDiagnosticsPanel } from "./components/PlayerPropDiagnosticsPanel";
 import { buildPickEmBoardCards } from "./pickem-board";
 import type { PickEmBoardCard } from "./pickem-board";
 import { getScannerSurface } from "./scanner-surfaces";
@@ -46,7 +46,7 @@ import {
   isStraightBetsTutorialActive,
   STRAIGHT_BETS_TUTORIAL_SCAN,
 } from "./scanner-tutorial";
-import type { ScannerLens } from "./scanner-ui-model";
+import { canAddScannerLensToParlayCart, type ScannerLens } from "./scanner-ui-model";
 import {
   buildParlayCartLeg,
   buildScannerLogBetInitialValues,
@@ -106,8 +106,9 @@ function matchesScannerComparisonTimePreset(
   const start = new Date(commenceTime);
   if (Number.isNaN(start.getTime())) return false;
 
+  if (!isPregameCommenceTime(commenceTime, now)) return false;
+
   const deltaMs = start.getTime() - now.getTime();
-  if (deltaMs < 0) return false;
   if (preset === "all") return true;
   if (preset === "starting_soon") return deltaMs < 2 * 60 * 60 * 1000;
   if (preset === "today") return isSameCalendarDay(start, now);
@@ -449,6 +450,10 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
     });
   }, [edgeMinStandard, effectiveLens, fullResults, hideAlreadyLogged, hideLongshots, propMarket, propSide, riskPreset, searchQuery, timePreset]);
 
+  const availableResultCount = useMemo(() => {
+    return fullResults.filter((side) => isPregameCommenceTime(side.commence_time)).length;
+  }, [fullResults]);
+
   const filteredPickEmCards = useMemo(() => {
     return sortPickEmBoardCards(
       filterPickEmBoardCards({
@@ -459,6 +464,10 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
       })
     );
   }, [pickEmSourceCards, propMarket, searchQuery, timePreset]);
+
+  const availablePickEmSourceCount = useMemo(() => {
+    return pickEmSourceCards.filter((card) => isPregameCommenceTime(card.commence_time)).length;
+  }, [pickEmSourceCards]);
 
   const activeResultFilterChips = useMemo(() => {
     return describeScannerResultFilters({
@@ -480,10 +489,10 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
 
   const nullState = useMemo(() => {
     return classifyScannerNullState({
-      sourceCount: isPickEmSubview ? pickEmSourceCards.length : fullResults.length,
+      sourceCount: isPickEmSubview ? availablePickEmSourceCount : availableResultCount,
       filteredCount: isPickEmSubview ? filteredPickEmCards.length : filteredResults.length,
     });
-  }, [filteredPickEmCards.length, filteredResults.length, fullResults.length, isPickEmSubview, pickEmSourceCards.length]);
+  }, [availablePickEmSourceCount, availableResultCount, filteredPickEmCards.length, filteredResults.length, isPickEmSubview]);
 
   useEffect(() => {
     setVisibleCount(10);
@@ -506,10 +515,6 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
       .forEach((side) => markets.add(side.market_key));
     return Array.from(markets).sort((left, right) => left.localeCompare(right));
   }, [effectiveScanData, surface]);
-  const playerPropDiagnostics =
-    surface === "player_props" && isPlayerPropScanDiagnostics(effectiveScanData?.diagnostics)
-      ? effectiveScanData.diagnostics
-      : null;
   const pickEmEmptyMessage =
     isPickEmSubview && pickEmSourceCards.length === 0
       ? "No pick'em board lines were available from the current sportsbook scan."
@@ -593,6 +598,10 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
   };
 
   const handleAddToCart = (side: MarketSide) => {
+    if (!canAddScannerLensToParlayCart(effectiveLens)) {
+      toast.error("Parlay cart is only available from Standard and Qualifier lines.");
+      return;
+    }
     const result = addCartLeg(buildParlayCartLeg(side));
     if (!result.added) {
       toast.error(
@@ -621,29 +630,54 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
         <ScannerHeader tagline={surfaceConfig.tagline} />
 
         {surface === "player_props" && (
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setPlayerPropsView("sportsbooks")}
-              className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
-                playerPropsView === "sportsbooks"
-                  ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
-                  : "border-border bg-background text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Sportsbooks
-            </button>
-            <button
-              type="button"
-              onClick={() => setPlayerPropsView("pickem")}
-              className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
-                playerPropsView === "pickem"
-                  ? "border-[#C4A35A]/40 bg-[#C4A35A]/15 text-[#5C4D2E]"
-                  : "border-border bg-background text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Pick&apos;em
-            </button>
+          <div className="space-y-2">
+            <p className="pl-0.5 text-xs font-medium text-muted-foreground">View</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setPlayerPropsView("sportsbooks")}
+                className={cn(
+                  "rounded-lg border px-4 py-3 text-left transition-colors",
+                  playerPropsView === "sportsbooks"
+                    ? "border-[#B7D1C2] bg-[#F3F7F5] text-[#2E5D39]"
+                    : "border-border bg-background text-foreground hover:bg-muted"
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold leading-tight md:text-sm">Sportsbooks</span>
+                  {playerPropsView === "sportsbooks" && (
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                      Active
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 text-[11px] leading-tight text-muted-foreground">
+                  Book lines with fair odds, stake sizing, and parlay support.
+                </p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPlayerPropsView("pickem")}
+                className={cn(
+                  "rounded-lg border px-4 py-3 text-left transition-colors",
+                  playerPropsView === "pickem"
+                    ? "border-[#E9D7B9] bg-[#FCF7EC] text-[#5C4D2E]"
+                    : "border-border bg-background text-foreground hover:bg-muted"
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold leading-tight md:text-sm">Pick&apos;em</span>
+                  {playerPropsView === "pickem" && (
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                      Active
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 text-[11px] leading-tight text-muted-foreground">
+                  Consensus exact-line board view across supported pick&apos;em books.
+                </p>
+              </button>
+            </div>
           </div>
         )}
 
@@ -661,10 +695,6 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
           showBackendHint={!tutorialScannerActive && showBackendHint}
           backendHint={backendHint}
         />
-
-        {playerPropDiagnostics && (
-          <PlayerPropDiagnosticsPanel diagnostics={playerPropDiagnostics} />
-        )}
 
         {surfaceConfig.supportsLensSelector && (effectiveScanData || tutorialScannerActive) && (
           <ScannerLensSelector
@@ -729,7 +759,8 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
             tutorialMode={tutorialScannerActive}
             results={results}
             pickemCards={visiblePickEmCards}
-            sourceCount={isPickEmSubview ? pickEmSourceCards.length : fullResults.length}
+            sourceCount={isPickEmSubview ? availablePickEmSourceCount : availableResultCount}
+            rawSourceCount={isPickEmSubview ? pickEmSourceCards.length : fullResults.length}
             filteredCount={isPickEmSubview ? filteredPickEmCards.length : filteredResults.length}
             nullState={nullState}
             activeResultFilterSummary={describeActiveResultFilters(activeResultFilterChips)}

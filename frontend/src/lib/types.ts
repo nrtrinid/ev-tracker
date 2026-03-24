@@ -217,7 +217,7 @@ export interface StraightBetMarketSide {
   base_kelly_fraction: number;
   book_decimal: number;
   ev_percentage: number;
-  scanner_duplicate_state?: "new" | "already_logged" | "better_now";
+  scanner_duplicate_state?: "new" | "logged_elsewhere" | "already_logged" | "better_now";
   best_logged_odds_american?: number | null;
   current_odds_american?: number | null;
   matched_pending_bet_id?: string | null;
@@ -252,7 +252,7 @@ export interface PlayerPropMarketSide {
   base_kelly_fraction: number;
   book_decimal: number;
   ev_percentage: number;
-  scanner_duplicate_state?: "new" | "already_logged" | "better_now";
+  scanner_duplicate_state?: "new" | "logged_elsewhere" | "already_logged" | "better_now";
   best_logged_odds_american?: number | null;
   current_odds_american?: number | null;
   matched_pending_bet_id?: string | null;
@@ -655,7 +655,7 @@ export interface ScannedBetData {
   raw_kelly_stake?: number;     // raw Kelly $ (base_kelly * multiplier * bankroll)
   stealth_kelly_stake?: number; // stealth-rounded stake for display and auto-fill
   // Backend duplicate/exposure awareness for scanner UX
-  scanner_duplicate_state?: "new" | "already_logged" | "better_now";
+  scanner_duplicate_state?: "new" | "logged_elsewhere" | "already_logged" | "better_now";
   best_logged_odds_american?: number | null;
   current_odds_american?: number | null;
   matched_pending_bet_id?: string | null;
@@ -698,6 +698,7 @@ export interface ParlayCartLeg {
   sportsbook: string;
   oddsAmerican: number;
   referenceOddsAmerican: number | null;
+  referenceTrueProbability?: number | null;
   referenceSource: string | null;
   display: string;
   event: string;

@@ -298,6 +298,13 @@ def test_annotate_sides_with_duplicate_state_uses_pending_best_price(monkeypatch
         },
         {
             "sport": "basketball_nba",
+            "commence_time": "2026-03-19T20:00:00Z",
+            "team": "Lakers",
+            "sportsbook": "FanDuel",
+            "book_odds": 140,
+        },
+        {
+            "sport": "basketball_nba",
             "commence_time": "2026-03-19T21:00:00Z",
             "team": "Celtics",
             "sportsbook": "DraftKings",
@@ -314,8 +321,12 @@ def test_annotate_sides_with_duplicate_state_uses_pending_best_price(monkeypatch
     assert annotated[1]["scanner_duplicate_state"] == "better_now"
     assert annotated[1]["best_logged_odds_american"] == 130
 
-    assert annotated[2]["scanner_duplicate_state"] == "new"
-    assert annotated[2]["matched_pending_bet_id"] is None
+    assert annotated[2]["scanner_duplicate_state"] == "logged_elsewhere"
+    assert annotated[2]["best_logged_odds_american"] == 130
+    assert annotated[2]["matched_pending_bet_id"] == "bet-best"
+
+    assert annotated[3]["scanner_duplicate_state"] == "new"
+    assert annotated[3]["matched_pending_bet_id"] is None
 
 
 @pytest.mark.asyncio

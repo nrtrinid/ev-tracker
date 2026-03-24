@@ -21,6 +21,70 @@ def _normalize_text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _truncate_text(value: Any, max_length: int) -> str:
+    normalized = _normalize_text(value)
+    if len(normalized) <= max_length:
+        return normalized
+    if max_length <= 3:
+        return normalized[:max_length]
+    return f"{normalized[: max_length - 3].rstrip()}..."
+
+
+def _format_selection_side(value: Any) -> str | None:
+    raw = _normalize_text(value)
+    if not raw:
+        return None
+    normalized = raw.lower()
+    if normalized in {"over", "under", "yes", "no"}:
+        return normalized.capitalize()
+    return raw
+
+
+def _format_line_value(value: Any) -> str | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if not parsed.is_integer():
+        return f"{parsed:.2f}".rstrip("0").rstrip(".")
+    return str(int(parsed))
+
+
+def _build_parlay_leg_label(leg: dict[str, Any]) -> str:
+    display = _normalize_text(leg.get("display"))
+    if display:
+        return display
+
+    participant = _normalize_text(leg.get("participantName"))
+    selection_side = _format_selection_side(leg.get("selectionSide"))
+    line_value = _format_line_value(leg.get("lineValue"))
+    team = _normalize_text(leg.get("team"))
+    market_display = _normalize_text(leg.get("marketDisplay"))
+    market_key = _normalize_text(leg.get("marketKey")).lower()
+
+    if participant and selection_side and line_value is not None:
+        return f"{participant} {selection_side} {line_value}"
+    if participant and selection_side:
+        return f"{participant} {selection_side}"
+    if participant and market_display:
+        return f"{participant} {market_display}"
+    if team and (market_key == "h2h" or market_display.lower() == "moneyline"):
+        return f"{team} ML"
+    if team and selection_side and line_value is not None:
+        return f"{team} {selection_side} {line_value}"
+    if team and market_display:
+        return f"{team} {market_display}"
+    if team:
+        return team
+    if market_display:
+        return market_display
+    event = _normalize_text(leg.get("event"))
+    if event:
+        return event
+    return "Parlay leg"
+
+
 def _legs_from_payload(legs: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     return [dict(leg) for leg in (legs or [])]
 
@@ -133,16 +197,23 @@ def derive_parlay_logged_sport(legs: list[dict[str, Any]]) -> str:
 
 
 def derive_parlay_event_summary(*, sportsbook: str, legs: list[dict[str, Any]]) -> str:
-    leg_count = len(legs)
-    unique_events: list[str] = []
-    for leg in legs:
-        event = _normalize_text(leg.get("event"))
-        if event and event not in unique_events:
-            unique_events.append(event)
+    if not legs:
+        return f"{sportsbook} parlay"
 
-    if len(unique_events) == 1:
-        return f"{leg_count}-leg {unique_events[0]} parlay"
-    return f"{leg_count}-leg {sportsbook} parlay"
+    if len(legs) == 1:
+        return _truncate_text(_build_parlay_leg_label(legs[0]), 72)
+
+    max_label_length = 32 if len(legs) == 2 else 22 if len(legs) == 3 else 24
+    leg_labels = [_truncate_text(_build_parlay_leg_label(leg), max_label_length) for leg in legs]
+
+    if len(leg_labels) == 2:
+        return f"{leg_labels[0]} + {leg_labels[1]}"
+
+    full_summary = " + ".join(leg_labels)
+    if len(leg_labels) == 3 and len(full_summary) <= 72:
+        return full_summary
+
+    return f"{leg_labels[0]} + {leg_labels[1]} + {len(legs) - 2} more"
 
 
 def derive_parlay_event_date(legs: list[dict[str, Any]]) -> date | None:

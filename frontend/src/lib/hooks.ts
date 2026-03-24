@@ -1,9 +1,15 @@
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api";
+import {
+  markParlaySlipLoggedInCache,
+  removeParlaySlipFromCache,
+  upsertParlaySlipCache,
+} from "@/lib/parlay-slip-cache";
 import type {
   BetCreate,
   BetUpdate,
   BetResult,
+  ParlaySlip,
   ParlaySlipCreate,
   ParlaySlipLogRequest,
   ParlaySlipUpdate,
@@ -181,7 +187,10 @@ export function useCreateParlaySlip() {
 
   return useMutation({
     mutationFn: (payload: ParlaySlipCreate) => api.createParlaySlip(payload),
-    onSuccess: () => {
+    onSuccess: (savedSlip) => {
+      queryClient.setQueryData(queryKeys.parlaySlips, (current: ParlaySlip[] | undefined) => (
+        upsertParlaySlipCache(current, savedSlip)
+      ));
       queryClient.invalidateQueries({ queryKey: queryKeys.parlaySlips });
     },
   });
@@ -192,7 +201,10 @@ export function useUpdateParlaySlip() {
 
   return useMutation({
     mutationFn: ({ id, data }: { id: string; data: ParlaySlipUpdate }) => api.updateParlaySlip(id, data),
-    onSuccess: () => {
+    onSuccess: (savedSlip) => {
+      queryClient.setQueryData(queryKeys.parlaySlips, (current: ParlaySlip[] | undefined) => (
+        upsertParlaySlipCache(current, savedSlip)
+      ));
       queryClient.invalidateQueries({ queryKey: queryKeys.parlaySlips });
     },
   });
@@ -203,7 +215,10 @@ export function useDeleteParlaySlip() {
 
   return useMutation({
     mutationFn: (id: string) => api.deleteParlaySlip(id),
-    onSuccess: () => {
+    onSuccess: (_, slipId) => {
+      queryClient.setQueryData(queryKeys.parlaySlips, (current: ParlaySlip[] | undefined) => (
+        removeParlaySlipFromCache(current, slipId)
+      ));
       queryClient.invalidateQueries({ queryKey: queryKeys.parlaySlips });
     },
   });
@@ -214,7 +229,13 @@ export function useLogParlaySlip() {
 
   return useMutation({
     mutationFn: ({ id, data }: { id: string; data: ParlaySlipLogRequest }) => api.logParlaySlip(id, data),
-    onSuccess: () => {
+    onSuccess: (loggedBet, { id }) => {
+      queryClient.setQueryData(queryKeys.parlaySlips, (current: ParlaySlip[] | undefined) => (
+        markParlaySlipLoggedInCache(current, {
+          slipId: id,
+          loggedBetId: loggedBet.id,
+        })
+      ));
       queryClient.invalidateQueries({ queryKey: queryKeys.parlaySlips });
       invalidateBetDerivedQueries(queryClient);
     },

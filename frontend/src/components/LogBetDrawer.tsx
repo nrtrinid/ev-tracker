@@ -282,7 +282,10 @@ export function LogBetDrawer({
 
   const invalidBoost = formState.promo_type === "boost_custom" && (isNaN(boostPercentRaw) || boostPercentNum < 0 || boostPercentNum > 300);
   const duplicateState = initialValues?.scanner_duplicate_state ?? "new";
-  const hasDuplicateExposure = duplicateState === "already_logged" || duplicateState === "better_now";
+  const hasDuplicateExposure =
+    duplicateState === "logged_elsewhere" ||
+    duplicateState === "already_logged" ||
+    duplicateState === "better_now";
   const isSubmitting = createBet.isPending || customSubmitPending;
   const selectedPromoLabel =
     PROMO_TYPES.find((promo) => promo.value === formState.promo_type)?.label ?? "Standard";
@@ -438,14 +441,19 @@ export function LogBetDrawer({
             <div className="mb-4 rounded-lg border border-[#B85C38]/30 bg-[#B85C38]/10 px-3 py-2 text-xs text-[#8B3D20]">
               {duplicateState === "better_now" ? (
                 <>
-                  <p className="font-semibold">You already logged this side at a lower price.</p>
+                  <p className="font-semibold">You already placed this side at a lower price.</p>
                   <p className="mt-0.5">
-                    You already logged this side at {bestLoggedOdds != null ? formatAmerican(bestLoggedOdds) : "previous odds"}. The scanner now shows {currentOdds != null ? formatAmerican(currentOdds) : "a better line"}.
+                    You already placed this side at {bestLoggedOdds != null ? formatAmerican(bestLoggedOdds) : "previous odds"}. The scanner now shows {currentOdds != null ? formatAmerican(currentOdds) : "a better line"}.
                   </p>
+                </>
+              ) : duplicateState === "logged_elsewhere" ? (
+                <>
+                  <p className="font-semibold">You already logged this side elsewhere.</p>
+                  <p className="mt-0.5">Logging here will add cross-book exposure on the same outcome.</p>
                 </>
               ) : (
                 <>
-                  <p className="font-semibold">You already logged this side.</p>
+                  <p className="font-semibold">You already placed this side.</p>
                   <p className="mt-0.5">Logging again will increase exposure on the same outcome.</p>
                 </>
               )}

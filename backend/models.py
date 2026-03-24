@@ -288,7 +288,7 @@ class StraightBetSide(BaseModel):
     base_kelly_fraction: float
     book_decimal: float
     ev_percentage: float
-    scanner_duplicate_state: Literal["new", "already_logged", "better_now"] | None = None
+    scanner_duplicate_state: Literal["new", "logged_elsewhere", "already_logged", "better_now"] | None = None
     best_logged_odds_american: float | None = None
     current_odds_american: float | None = None
     matched_pending_bet_id: str | None = None
@@ -325,7 +325,7 @@ class PlayerPropSide(BaseModel):
     base_kelly_fraction: float
     book_decimal: float
     ev_percentage: float
-    scanner_duplicate_state: Literal["new", "already_logged", "better_now"] | None = None
+    scanner_duplicate_state: Literal["new", "logged_elsewhere", "already_logged", "better_now"] | None = None
     best_logged_odds_american: float | None = None
     current_odds_american: float | None = None
     matched_pending_bet_id: str | None = None
@@ -510,6 +510,7 @@ class ParlaySlipLeg(BaseModel):
     sportsbook: str
     oddsAmerican: float
     referenceOddsAmerican: float | None = None
+    referenceTrueProbability: float | None = None
     referenceSource: str | None = None
     display: str
     event: str

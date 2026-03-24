@@ -7,6 +7,34 @@ Version labels use pre-release suffixes until the app is ready for outside users
 
 ---
 
+## [2.2.0-alpha.4] - 2026-03-24
+
+### Added
+
+- **Parlay builder polish**
+  - Smarter parlay naming based on the legs in the cart.
+  - De-vigged fair-odds inputs and reference true probabilities now carry from the scanner into parlay pricing.
+  - Auto-applied stealth Kelly sizing in the parlay builder stake field when a fair estimate is available.
+- **Player props UX polish**
+  - Larger Sportsbooks vs Pick'em mode selector for the props surface.
+  - Pick'em board cards now emphasize the line and matching-book support more clearly.
+
+### Changed
+
+- **Parlay workflow**
+  - Removed saved-slip drafting from the main parlay helper flow so the page acts as a local builder and logs directly into the tracker.
+  - Simplified Kelly presentation on the parlay page to a compact inline suggestion instead of a larger sizing panel.
+- **Scanner behavior**
+  - Stale started-game results are no longer counted as available props in empty states.
+  - Player-props empty messaging now distinguishes between real filter empties and pregame-only stale scans.
+  - Optional scanner parlay coaching was removed to keep the scanner focused on finding and logging plays.
+
+### Docs
+
+- Updated README, workflow guidance, and project documentation for the current player-props, parlay, Kelly, and migration behavior.
+
+---
+
 ## [2.2.0-alpha.3] - 2026-03-20
 
 ### Added
@@ -98,4 +126,5 @@ Version labels use pre-release suffixes until the app is ready for outside users
 [2.2.0-alpha.1]: https://github.com/your-org/ev-betting-tracker/compare/v2.1.0...v2.2.0-alpha.1
 [2.2.0-alpha.2]: https://github.com/your-org/ev-betting-tracker/compare/v2.2.0-alpha.1...v2.2.0-alpha.2
 [2.2.0-alpha.3]: https://github.com/your-org/ev-betting-tracker/compare/v2.2.0-alpha.2...v2.2.0-alpha.3
+[2.2.0-alpha.4]: https://github.com/your-org/ev-betting-tracker/compare/v2.2.0-alpha.3...v2.2.0-alpha.4
 [2.1.0]: https://github.com/your-org/ev-betting-tracker/compare/v2.0.0...v2.1.0

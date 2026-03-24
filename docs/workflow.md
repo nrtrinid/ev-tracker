@@ -50,8 +50,8 @@ Before merging `dev` into `main`, verify:
 - No backend startup errors
 - Home page loads
 - `/scanner/straight_bets` loads and scans
-- `/scanner/player_props` loads, shows diagnostics, and makes it clear whether filters or the quality gate hid results
-- `/parlay` loads and retains cart state
+- `/scanner/player_props` loads, the `Sportsbooks` and `Pick'em` modes are obvious, and stale scans explain when started games are hidden
+- `/parlay` loads, auto-fills the suggested stake when pricing is available, and logs into Tracker cleanly
 - `/settings` loads
 
 If the change touches automation or ops:

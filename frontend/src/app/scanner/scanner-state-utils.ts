@@ -1,5 +1,5 @@
 import type { MarketSide, ParlayCartLeg, PromoType, ScannedBetData } from "@/lib/types";
-import { calculateStealthStake } from "@/lib/utils";
+import { calculateStealthStake, decimalToAmerican } from "@/lib/utils";
 
 import type { ScannerLens } from "./scanner-ui-model";
 
@@ -19,6 +19,13 @@ export function parseScannerCustomBoostInput(input: string): number | null {
     return null;
   }
   return parsed;
+}
+
+function fairAmericanFromTrueProbability(trueProb: number | null | undefined): number | null {
+  if (trueProb == null || !Number.isFinite(trueProb) || trueProb <= 0 || trueProb >= 1) {
+    return null;
+  }
+  return decimalToAmerican(1 / trueProb);
 }
 
 export function buildScannerLogBetInitialValues(params: {
@@ -124,6 +131,7 @@ export function buildParlayCartLeg(side: MarketSide): ParlayCartLeg {
       sportsbook: side.sportsbook,
       oddsAmerican: side.book_odds,
       referenceOddsAmerican: side.reference_odds,
+      referenceTrueProbability: side.true_prob,
       referenceSource: side.reference_source,
       display: side.display_name,
       event: side.event,
@@ -151,6 +159,7 @@ export function buildParlayCartLeg(side: MarketSide): ParlayCartLeg {
   }
 
   const selectionKey = side.selection_key ?? `${side.event_id ?? side.commence_time}:${side.team}`;
+  const deviggedFairOdds = fairAmericanFromTrueProbability(side.true_prob);
   return {
     id: `${side.surface}:${selectionKey}:${side.sportsbook}`,
     surface: side.surface,
@@ -159,7 +168,8 @@ export function buildParlayCartLeg(side: MarketSide): ParlayCartLeg {
     selectionKey,
     sportsbook: side.sportsbook,
     oddsAmerican: side.book_odds,
-    referenceOddsAmerican: side.pinnacle_odds,
+    referenceOddsAmerican: deviggedFairOdds ?? side.pinnacle_odds,
+    referenceTrueProbability: side.true_prob,
     referenceSource: "pinnacle",
     display: `${side.team} ML`,
     event: side.event,
@@ -173,6 +183,7 @@ export function buildParlayCartLeg(side: MarketSide): ParlayCartLeg {
     sourceMarketKey: side.market_key ?? "h2h",
     sourceSelectionKey: selectionKey,
     selectionMeta: {
+      rawPinnacleOdds: side.pinnacle_odds,
       sportsbookDeeplinkUrl: side.sportsbook_deeplink_url,
       sportsbookDeeplinkLevel: side.sportsbook_deeplink_level,
     },

@@ -32,6 +32,12 @@ export function normalizeSearchQuery(value: string): string {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+export function isPregameCommenceTime(commenceTime: string, now: Date = new Date()): boolean {
+  const start = new Date(commenceTime);
+  if (Number.isNaN(start.getTime())) return false;
+  return start.getTime() >= now.getTime();
+}
+
 function matchesSearch(side: MarketSide, normalizedQuery: string): boolean {
   if (!normalizedQuery) return true;
   const searchableLabel =
@@ -70,9 +76,9 @@ function matchesTimePreset(
   const start = new Date(commenceTime);
   if (Number.isNaN(start.getTime())) return false;
 
+  if (!isPregameCommenceTime(commenceTime, now)) return false;
+
   const deltaMs = start.getTime() - now.getTime();
-  // Past-started events are excluded from all filtered views.
-  if (deltaMs < 0) return false;
 
   if (preset === "all") return true;
 

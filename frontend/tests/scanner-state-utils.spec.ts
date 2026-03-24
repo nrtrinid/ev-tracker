@@ -145,8 +145,23 @@ test.describe("scanner state utils", () => {
 
     expect(out.surface).toBe("straight_bets");
     expect(out.referenceOddsAmerican).toBe(108);
+    expect(out.referenceTrueProbability).toBe(0.48);
     expect(out.referenceSource).toBe("pinnacle");
     expect(out.team).toBe("Lakers");
     expect(out.marketDisplay).toBe("Moneyline");
+  });
+
+  test("buildParlayCartLeg uses de-vigged true probability for straight-bet fair odds", async () => {
+    const out = buildParlayCartLeg({
+      ...BASE_SIDE,
+      book_odds: 250,
+      pinnacle_odds: 227,
+      true_prob: 100 / 340,
+      book_decimal: 3.5,
+    });
+
+    expect(out.referenceOddsAmerican).toBe(240);
+    expect(out.referenceTrueProbability).toBeCloseTo(100 / 340, 8);
+    expect(out.selectionMeta).toMatchObject({ rawPinnacleOdds: 227 });
   });
 });

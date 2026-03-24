@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import {
   buildScannerActionModel,
+  canAddScannerLensToParlayCart,
   normalizeSportsbookDeeplink,
   shouldShowProfitBoostContextControls,
 } from "@/app/scanner/scanner-ui-model";
@@ -56,9 +57,20 @@ test.describe("scanner ui model", () => {
     expect(model.trustHint).toBe("This opens the sportsbook home page, so navigate to the game before you log it.");
   });
 
-  test("falls back to log-only hierarchy when deeplink missing", async () => {
+  test("falls back to sportsbook homepage when deeplink missing for known books", async () => {
     const model = buildScannerActionModel({
       sportsbook: "DraftKings",
+      sportsbookDeeplinkUrl: null,
+    });
+
+    expect(model.primary.kind).toBe("open");
+    expect(model.primary.label).toBe("Open DraftKings");
+    expect(model.secondary?.label).toBe("Review & Log");
+  });
+
+  test("falls back to log-only hierarchy when deeplink missing for unknown books", async () => {
+    const model = buildScannerActionModel({
+      sportsbook: "Unknown Book",
       sportsbookDeeplinkUrl: null,
     });
 
@@ -82,5 +94,12 @@ test.describe("scanner ui model", () => {
     expect(shouldShowProfitBoostContextControls("standard")).toBeFalsy();
     expect(shouldShowProfitBoostContextControls("bonus_bet")).toBeFalsy();
     expect(shouldShowProfitBoostContextControls("qualifier")).toBeFalsy();
+  });
+
+  test("only standard and qualifier lenses can add to parlay cart", async () => {
+    expect(canAddScannerLensToParlayCart("standard")).toBeTruthy();
+    expect(canAddScannerLensToParlayCart("qualifier")).toBeTruthy();
+    expect(canAddScannerLensToParlayCart("bonus_bet")).toBeFalsy();
+    expect(canAddScannerLensToParlayCart("profit_boost")).toBeFalsy();
   });
 });
