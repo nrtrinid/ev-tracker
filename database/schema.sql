@@ -264,3 +264,19 @@ CREATE INDEX IF NOT EXISTS idx_parlay_slips_logged_bet_id
     WHERE logged_bet_id IS NOT NULL;
 
 ALTER TABLE public.parlay_slips ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.global_scan_cache (
+    key TEXT PRIMARY KEY,
+    surface TEXT NOT NULL DEFAULT 'straight_bets',
+    payload JSONB NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now())
+);
+
+ALTER TABLE public.global_scan_cache
+    ADD COLUMN IF NOT EXISTS surface TEXT NOT NULL DEFAULT 'straight_bets';
+
+ALTER TABLE public.global_scan_cache ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Authenticated users can read global scan cache" ON public.global_scan_cache;
+CREATE POLICY "Authenticated users can read global scan cache" ON public.global_scan_cache
+    FOR SELECT TO authenticated USING (true);

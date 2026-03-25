@@ -10,6 +10,15 @@ create table if not exists public.global_scan_cache (
 alter table public.global_scan_cache
   add column if not exists surface text not null default 'straight_bets';
 
+alter table public.global_scan_cache enable row level security;
+
+drop policy if exists "Authenticated users can read global scan cache" on public.global_scan_cache;
+create policy "Authenticated users can read global scan cache"
+on public.global_scan_cache
+for select
+to authenticated
+using (true);
+
 -- Automatically keep updated_at current on upserts/updates.
 create or replace function public.set_updated_at()
 returns trigger as $$

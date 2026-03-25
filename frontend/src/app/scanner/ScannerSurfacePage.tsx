@@ -39,7 +39,7 @@ import { ScannerScopeBar } from "./components/ScannerScopeBar";
 import { ScannerStatusBar } from "./components/ScannerStatusBar";
 import { ScannerPreScanEmptyState } from "./components/ScannerPreScanEmptyState";
 import { buildPickEmBoardCards } from "./pickem-board";
-import type { PickEmBoardCard } from "./pickem-board";
+import type { PickEmBoardCard, PickEmSlipPick } from "./pickem-board";
 import { getScannerSurface } from "./scanner-surfaces";
 import { rankScannerSidesByLens } from "./scanner-lenses";
 import {
@@ -262,6 +262,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
   const [drawerKey, setDrawerKey] = useState(0);
   const [drawerInitialValues, setDrawerInitialValues] = useState<ScannedBetData | undefined>();
   const [drawerMode, setDrawerMode] = useState<"standard" | "tutorial_practice">("standard");
+  const [pickEmSlipComparisonKeys, setPickEmSlipComparisonKeys] = useState<string[]>([]);
   const effectiveScanData = tutorialScannerActive
     ? hasTutorialScan
       ? STRAIGHT_BETS_TUTORIAL_SCAN
@@ -614,6 +615,15 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
     toast.success(`Added to parlay cart (${cart.length + 1})`);
   };
 
+  const handleAddPickEmToSlip = (pick: PickEmSlipPick) => {
+    setPickEmSlipComparisonKeys((current) => (
+      current.includes(pick.comparisonKey) ? current : [...current, pick.comparisonKey]
+    ));
+    toast.success("Added to slip", {
+      description: `${pick.playerName} ${pick.selectedSide} ${pick.lineValue} (${Math.round(pick.selectedPercentage * 100)}%)`,
+    });
+  };
+
   return (
     <main className="min-h-screen bg-background">
       <div className="container mx-auto max-w-2xl space-y-2 px-4 py-6 pb-20 sm:pb-24">
@@ -766,11 +776,13 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
             activeResultFilterSummary={describeActiveResultFilters(activeResultFilterChips)}
             pickemEmptyMessage={pickEmEmptyMessage}
             pickemEmptySubMessage={pickEmEmptySubMessage}
+            addedPickEmComparisonKeys={pickEmSlipComparisonKeys}
             kellyMultiplier={kellyMultiplier}
             bankroll={bankroll}
             boostPercent={boostPercent}
             canLoadMore={isPickEmSubview ? filteredPickEmCards.length > visiblePickEmCards.length : filteredResults.length > results.length}
             onLoadMore={() => setVisibleCount((count) => count + 10)}
+            onAddPickEmToSlip={handleAddPickEmToSlip}
             onLogBet={handleLogBet}
             onAddToCart={handleAddToCart}
             onStartPlaceFlow={handleStartPlaceFlow}

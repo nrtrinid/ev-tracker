@@ -2,7 +2,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import type { ScannerNullState } from "@/lib/scanner-contract";
 import type { MarketSide, ScannerSurface } from "@/lib/types";
 import { getScannerSurface } from "../scanner-surfaces";
-import type { PickEmBoardCard } from "../pickem-board";
+import type { PickEmBoardCard, PickEmSlipPick } from "../pickem-board";
 import { PlayerPropList } from "./PlayerPropList";
 import { PickEmBoardList } from "./PickEmBoardList";
 import { StraightBetList } from "./StraightBetList";
@@ -21,11 +21,13 @@ interface ScannerResultsPaneProps {
   activeResultFilterSummary: string;
   pickemEmptyMessage?: string | null;
   pickemEmptySubMessage?: string | null;
+  addedPickEmComparisonKeys?: string[];
   kellyMultiplier: number;
   bankroll: number;
   boostPercent: number;
   canLoadMore: boolean;
   onLoadMore: () => void;
+  onAddPickEmToSlip: (pick: PickEmSlipPick) => void;
   onLogBet: (side: MarketSide) => void;
   onAddToCart: (side: MarketSide) => void;
   onStartPlaceFlow: (side: MarketSide) => void;
@@ -47,11 +49,13 @@ export function ScannerResultsPane({
   activeResultFilterSummary,
   pickemEmptyMessage = null,
   pickemEmptySubMessage = null,
+  addedPickEmComparisonKeys = [],
   kellyMultiplier,
   bankroll,
   boostPercent,
   canLoadMore,
   onLoadMore,
+  onAddPickEmToSlip,
   onLogBet,
   onAddToCart,
   onStartPlaceFlow,
@@ -146,6 +150,8 @@ export function ScannerResultsPane({
             onLoadMore={onLoadMore}
             bookColors={bookColors}
             sportDisplayMap={sportDisplayMap}
+            addedComparisonKeys={addedPickEmComparisonKeys}
+            onAddToSlip={onAddPickEmToSlip}
           />
         ) : isPropsSurface ? (
           <PlayerPropList

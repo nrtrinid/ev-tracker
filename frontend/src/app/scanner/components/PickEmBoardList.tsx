@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import type { PickEmBoardCard as PickEmBoardCardType } from "../pickem-board";
+import type { PickEmBoardCard as PickEmBoardCardType, PickEmSlipPick } from "../pickem-board";
 
 import { PickEmBoardCard } from "./PickEmBoardCard";
 
@@ -13,6 +13,8 @@ interface PickEmBoardListProps {
   onLoadMore: () => void;
   bookColors: Record<string, string>;
   sportDisplayMap: Record<string, string>;
+  addedComparisonKeys: string[];
+  onAddToSlip: (pick: PickEmSlipPick) => void;
 }
 
 export function PickEmBoardList({
@@ -21,6 +23,8 @@ export function PickEmBoardList({
   onLoadMore,
   bookColors,
   sportDisplayMap,
+  addedComparisonKeys,
+  onAddToSlip,
 }: PickEmBoardListProps) {
   const groupedCards = cards.reduce<Record<string, PickEmBoardCardType[]>>((groups, card) => {
     const key = card.market_key;
@@ -47,6 +51,8 @@ export function PickEmBoardList({
               card={card}
               bookColors={bookColors}
               sportDisplayMap={sportDisplayMap}
+              isAdded={addedComparisonKeys.includes(card.comparison_key)}
+              onAddToSlip={onAddToSlip}
             />
           ))}
         </section>
