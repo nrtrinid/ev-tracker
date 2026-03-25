@@ -187,37 +187,63 @@ def update_bet_reference_snapshots(
     if not sides:
         return {"latest_updated": 0, "close_updated": 0}
 
-    snapshot_by_event, snapshot_by_time = build_reference_snapshots(sides)
-    if not snapshot_by_event and not snapshot_by_time:
+    straight_snapshot_by_event, straight_snapshot_by_time = build_reference_snapshots(sides)
+    prop_snapshot_by_event, prop_snapshot_by_time = build_prop_reference_snapshots(sides)
+
+    if (
+        not straight_snapshot_by_event
+        and not straight_snapshot_by_time
+        and not prop_snapshot_by_event
+        and not prop_snapshot_by_time
+    ):
         return {"latest_updated": 0, "close_updated": 0}
 
     sports = sorted({str(side.get("sport") or "").strip() for side in sides if side.get("sport")})
     query = (
         db.table("bets")
         .select(
-            "id,result,clv_team,commence_time,clv_event_id,clv_sport_key,odds_american,"
+            "id,result,surface,commence_time,clv_event_id,source_event_id,clv_sport_key,clv_team,"
+            "participant_name,source_market_key,selection_side,line_value,odds_american,"
             "latest_pinnacle_odds,latest_pinnacle_updated_at,pinnacle_odds_at_close,clv_updated_at"
         )
         .eq("result", "pending")
-        .not_.is_("clv_team", "null")
     )
     if sports:
         query = query.in_("clv_sport_key", sports)
+
     result = query.execute()
 
     current = now or _utc_now()
+    updated_at = current.isoformat()
     latest_updated = 0
     close_updated = 0
-    updated_at = current.isoformat()
 
     for row in result.data or []:
-        reference_odds = lookup_reference_odds(
-            team=row.get("clv_team"),
-            commence_time=row.get("commence_time"),
-            event_id=row.get("clv_event_id"),
-            snapshot_by_event=snapshot_by_event,
-            snapshot_by_time=snapshot_by_time,
-        )
+        surface = str(row.get("surface") or "straight_bets").strip().lower()
+
+        if surface == "player_props":
+            reference_odds = lookup_prop_reference_odds(
+                player_name=row.get("participant_name"),
+                source_market_key=row.get("source_market_key"),
+                selection_side=row.get("selection_side"),
+                line_value=_normalize_line_value(row.get("line_value")),
+                commence_time=row.get("commence_time"),
+                event_id=row.get("source_event_id") or row.get("clv_event_id"),
+                snapshot_by_event=prop_snapshot_by_event,
+                snapshot_by_time=prop_snapshot_by_time,
+            )
+        else:
+            if not row.get("clv_team"):
+                continue
+
+            reference_odds = lookup_reference_odds(
+                team=row.get("clv_team"),
+                commence_time=row.get("commence_time"),
+                event_id=row.get("clv_event_id"),
+                snapshot_by_event=straight_snapshot_by_event,
+                snapshot_by_time=straight_snapshot_by_time,
+            )
+
         if reference_odds is None:
             continue
 
@@ -225,6 +251,7 @@ def update_bet_reference_snapshots(
             "latest_pinnacle_odds": reference_odds,
             "latest_pinnacle_updated_at": updated_at,
         }
+        latest_updated += 1
 
         if allow_close and should_capture_close_snapshot(
             row.get("commence_time"),
@@ -232,15 +259,17 @@ def update_bet_reference_snapshots(
             captured_at=row.get("clv_updated_at"),
             now=current,
         ):
-            payload["pinnacle_odds_at_close"] = reference_odds
-            payload["clv_updated_at"] = updated_at
+            payload.update(
+                {
+                    "pinnacle_odds_at_close": reference_odds,
+                    "clv_updated_at": updated_at,
+                }
+            )
             close_updated += 1
-        latest_updated += 1
 
         db.table("bets").update(payload).eq("id", row["id"]).execute()
 
     return {"latest_updated": latest_updated, "close_updated": close_updated}
-
 
 def update_scan_opportunity_reference_snapshots(
     db,
