@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 
 export default function ScannerIndexPage() {
-  redirect("/scanner/straight_bets");
+  // Markets page at / is now the primary surface for scanner discovery
+  redirect("/");
 }

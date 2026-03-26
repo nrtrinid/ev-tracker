@@ -9,6 +9,9 @@ import httpx
 
 ESPN_NBA_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
 ESPN_NBA_TEAM_ROSTER_URL_TEMPLATE = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{team_id}/roster"
+ESPN_NBA_GAME_SUMMARY_URL_TEMPLATE = (
+    "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event={event_id}"
+)
 NATIONAL_TV_NETWORKS = ("espn", "tnt", "abc")
 SECONDARY_TV_NETWORKS = ("nba tv", "nbatv")
 _team_roster_cache: dict[str, dict[str, Any]] = {}
@@ -40,6 +43,19 @@ def build_scoreboard_date_window(now: datetime | None = None) -> list[str]:
     ]
 
 
+async def fetch_nba_game_summary(espn_event_id: str) -> dict[str, Any]:
+    """Fetch NBA game summary (includes boxscore player stats) for a completed game."""
+    eid = str(espn_event_id or "").strip()
+    if not eid:
+        return {}
+    url = ESPN_NBA_GAME_SUMMARY_URL_TEMPLATE.format(event_id=eid)
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        payload = resp.json()
+        return payload if isinstance(payload, dict) else {}
+
+
 async def fetch_nba_scoreboard_window(now: datetime | None = None) -> dict[str, Any]:
     merged_events: list[dict[str, Any]] = []
     seen_event_ids: set[str] = set()
@@ -58,6 +74,60 @@ async def fetch_nba_scoreboard_window(now: datetime | None = None) -> dict[str, 
             merged_events.append(event)
 
     merged_events.sort(key=lambda event: str(event.get("date") or ""))
+    return {"events": merged_events}
+
+
+def build_auto_settle_scoreboard_dates(
+    commence_anchor: datetime | None,
+    *,
+    now: datetime | None = None,
+    days_around_commence: int = 4,
+) -> list[str]:
+    """Widen ESPN scoreboard pulls: default window around `now` plus days around kickoff.
+
+    Reduces missed matches when settle runs late or kickoff crosses calendar dates (UTC vs US).
+    """
+    anchor = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def _push(d: str) -> None:
+        if d not in seen:
+            seen.add(d)
+            ordered.append(d)
+
+    for d in build_scoreboard_date_window(anchor):
+        _push(d)
+
+    if commence_anchor is not None:
+        cd = commence_anchor.astimezone(timezone.utc).date()
+        for delta in range(-days_around_commence, days_around_commence + 1):
+            _push((cd + timedelta(days=delta)).strftime("%Y%m%d"))
+
+    return ordered
+
+
+async def fetch_nba_scoreboard_for_dates(date_strings: list[str]) -> dict[str, Any]:
+    """Fetch and merge scoreboard events for many YYYYMMDD values (dedupe by ESPN event id)."""
+    merged_events: list[dict[str, Any]] = []
+    seen_event_ids: set[str] = set()
+
+    for date_value in date_strings:
+        payload = await fetch_nba_scoreboard_for_date(date_value)
+        events = payload.get("events") or []
+        if not isinstance(events, list):
+            continue
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            event_id = str(event.get("id") or "").strip()
+            if event_id and event_id in seen_event_ids:
+                continue
+            if event_id:
+                seen_event_ids.add(event_id)
+            merged_events.append(event)
+
+    merged_events.sort(key=lambda e: str(e.get("date") or ""))
     return {"events": merged_events}
 
 

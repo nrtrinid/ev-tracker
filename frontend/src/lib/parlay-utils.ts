@@ -1,6 +1,17 @@
 import type { ParlayCartLeg, ParlayPricingPreview, ParlayWarning } from "@/lib/types";
 import { americanToDecimal, calculateStealthStake, decimalToAmerican } from "@/lib/utils";
 
+const PICKEM_UNAVAILABLE = "Pick'em slip — pricing is handled in your app.";
+
+export function isPickEmParlayLeg(leg: ParlayCartLeg): boolean {
+  const meta = leg.selectionMeta;
+  if (!meta || typeof meta !== "object") {
+    return false;
+  }
+  const key = (meta as { pickEmComparisonKey?: unknown }).pickEmComparisonKey;
+  return typeof key === "string" && key.trim().length > 0;
+}
+
 const SPORT_DISPLAY_MAP: Record<string, string> = {
   americanfootball_nfl: "NFL",
   basketball_nba: "NBA",
@@ -148,6 +159,10 @@ function getLegReferenceTrueProbability(leg: ParlayCartLeg): number | null {
 }
 
 export function buildParlayWarnings(cart: ParlayCartLeg[]): ParlayWarning[] {
+  if (cart.length > 0 && cart.every(isPickEmParlayLeg)) {
+    return [];
+  }
+
   if (cart.length <= 1) {
     return [];
   }
@@ -256,6 +271,42 @@ export function buildParlayPreview(
     return null;
   }
 
+  const stake = Number.isFinite(stakeInput) && stakeInput > 0 ? stakeInput : null;
+
+  if (cart.every(isPickEmParlayLeg)) {
+    return {
+      slipMode: "pickem_notes",
+      legCount: cart.length,
+      sportsbook: null,
+      combinedDecimalOdds: null,
+      combinedAmericanOdds: null,
+      stake,
+      totalPayout: null,
+      profit: null,
+      estimatedFairDecimalOdds: null,
+      estimatedFairAmericanOdds: null,
+      estimatedTrueProbability: null,
+      estimatedEvPercent: null,
+      baseKellyFraction: null,
+      rawKellyStake: null,
+      stealthKellyStake: null,
+      bankrollUsed:
+        typeof options?.bankroll === "number" && Number.isFinite(options.bankroll) && options.bankroll > 0
+          ? options.bankroll
+          : null,
+      kellyMultiplierUsed:
+        typeof options?.kellyMultiplier === "number" &&
+        Number.isFinite(options.kellyMultiplier) &&
+        options.kellyMultiplier > 0
+          ? options.kellyMultiplier
+          : null,
+      estimateAvailable: false,
+      estimateUnavailableReason: PICKEM_UNAVAILABLE,
+      hasBlockingCorrelation: false,
+      warnings: [],
+    };
+  }
+
   const warnings = buildParlayWarnings(cart);
   const hasBlockingCorrelation = warnings.some((warning) => warning.severity === "blocking");
   const combinedDecimalOdds = cart.reduce(
@@ -263,7 +314,6 @@ export function buildParlayPreview(
     1
   );
   const sportsbook = cart[0]?.sportsbook ?? null;
-  const stake = Number.isFinite(stakeInput) && stakeInput > 0 ? stakeInput : null;
   const totalPayout = stake != null ? stake * combinedDecimalOdds : null;
   const profit = totalPayout != null && stake != null ? totalPayout - stake : null;
   const referenceTrueProbabilities = cart.map((leg) => getLegReferenceTrueProbability(leg));
@@ -323,6 +373,7 @@ export function buildParlayPreview(
   }
 
   return {
+    slipMode: "standard",
     legCount: cart.length,
     sportsbook,
     combinedDecimalOdds,

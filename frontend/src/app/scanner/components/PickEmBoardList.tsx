@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import type { PickEmBoardCard as PickEmBoardCardType, PickEmSlipPick } from "../pickem-board";
+import type { PickEmBoardCard as PickEmBoardCardType } from "../pickem-board";
 
 import { PickEmBoardCard } from "./PickEmBoardCard";
 
@@ -14,7 +14,7 @@ interface PickEmBoardListProps {
   bookColors: Record<string, string>;
   sportDisplayMap: Record<string, string>;
   addedComparisonKeys: string[];
-  onAddToSlip: (pick: PickEmSlipPick) => void;
+  onAddToSlip: (card: PickEmBoardCardType) => void;
 }
 
 export function PickEmBoardList({

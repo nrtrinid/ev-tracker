@@ -533,6 +533,9 @@ async def fetch_odds(
     *,
     source: str = "unknown",
     endpoint: str | None = None,
+    markets: str = "h2h",
+    regions: str = "us,us2",
+    bookmakers: str | None = None,
 ) -> tuple[list[dict], httpx.Response]:
     """
     Hit The Odds API and return raw event data with odds
@@ -541,12 +544,12 @@ async def fetch_odds(
     if not ODDS_API_KEY:
         raise ValueError("ODDS_API_KEY not set in environment")
 
-    all_books = ",".join([SHARP_BOOK] + list(TARGET_BOOKS.keys()))
+    all_books = bookmakers or ",".join([SHARP_BOOK] + list(TARGET_BOOKS.keys()))
     url = f"{ODDS_API_BASE}/sports/{sport}/odds"
     params = {
         "apiKey": ODDS_API_KEY,
-        "regions": "us,us2",
-        "markets": "h2h",
+        "regions": regions,
+        "markets": markets,
         "oddsFormat": "american",
         "bookmakers": all_books,
         "includeLinks": "true",
@@ -609,6 +612,100 @@ async def fetch_odds(
             error_message=str(e),
         )
         raise
+
+
+def _extract_totals_market(bookmakers: list[dict], book_key: str) -> dict | None:
+    for bm in bookmakers:
+        if bm.get("key") != book_key:
+            continue
+        for market in bm.get("markets", []):
+            if market.get("key") != "totals":
+                continue
+            outcomes = market.get("outcomes") or []
+            over = next((o for o in outcomes if str(o.get("name") or "").strip().lower() == "over"), None)
+            under = next((o for o in outcomes if str(o.get("name") or "").strip().lower() == "under"), None)
+            if not over or not under:
+                return None
+            try:
+                point_over = float(over.get("point"))
+                point_under = float(under.get("point"))
+            except Exception:
+                return None
+            # Require the total points to match (avoids mixing alt totals).
+            if point_over != point_under:
+                return None
+            try:
+                over_price = float(over.get("price"))
+                under_price = float(under.get("price"))
+            except Exception:
+                return None
+            return {
+                "total": point_over,
+                "over_odds": over_price,
+                "under_odds": under_price,
+            }
+    return None
+
+
+async def fetch_nba_totals_slate(*, source: str) -> dict:
+    """Broad NBA totals fetch used for daily-board event selection + context."""
+    # Use the same book set as straight-bets scans (Pinnacle + target books).
+    all_books = ",".join([SHARP_BOOK] + list(TARGET_BOOKS.keys()))
+    data, resp = await fetch_odds(
+        "basketball_nba",
+        source=source,
+        markets="totals",
+        regions="us,us2",
+        bookmakers=all_books,
+        endpoint="/sports/basketball_nba/odds?markets=totals",
+    )
+    events = data if isinstance(data, list) else []
+    remaining = resp.headers.get("x-requests-remaining") or resp.headers.get("x-request-remaining")
+
+    games: list[dict] = []
+    for event in events:
+        event_id = str(event.get("id") or "").strip() or None
+        home = str(event.get("home_team") or "").strip()
+        away = str(event.get("away_team") or "").strip()
+        commence = str(event.get("commence_time") or "").strip()
+        if not home or not away or not commence:
+            continue
+
+        offers: list[dict] = []
+        for book_key, book_display in {SHARP_BOOK: "Pinnacle", **TARGET_BOOKS}.items():
+            market = _extract_totals_market(event.get("bookmakers", []), book_key)
+            if not market:
+                continue
+            offers.append(
+                {
+                    "sportsbook": book_display,
+                    "total": market["total"],
+                    "over_odds": market["over_odds"],
+                    "under_odds": market["under_odds"],
+                }
+            )
+
+        if not offers:
+            continue
+
+        games.append(
+            {
+                "event_id": event_id,
+                "sport": "basketball_nba",
+                "event": f"{away} @ {home}",
+                "away_team": away,
+                "home_team": home,
+                "commence_time": commence,
+                "totals_offers": offers,
+            }
+        )
+
+    return {
+        "sport": "basketball_nba",
+        "games": games,
+        "events_fetched": len(events),
+        "api_requests_remaining": remaining,
+    }
 
 
 async def fetch_events(
@@ -1277,17 +1374,20 @@ def _select_completed_event_for_bet(bet: dict, completed_events: list[dict]) -> 
 
 async def run_auto_settler(db, source: str = "auto_settle") -> int:
     """
-    Auto-Settler — runs once daily at 4:00 AM UTC via APScheduler.
+    Auto-Settler — runs once daily (APScheduler) or via ops trigger.
 
-    Grades pending ML bets for games that have already started (commence_time
-    in the past). Groups by sport_key, fetches scores once per sport (1 token),
-    and updates result + settled_at for every completed game found.
-
-    Non-ML markets (Spread, Total, SGP, Prop, Futures) are skipped — the schema
-    does not store the bet line needed for algorithmic grading of those markets.
-    Returns the number of bets settled.
+    Grades pending bets: moneyline (The Odds API /scores), NBA player props
+    (ESPN boxscore), and parlays (per-leg ML + NBA props, combined result).
     """
     from datetime import datetime, timezone
+
+    from services.prop_settler import (
+        collect_sport_keys_from_parlays,
+        create_prop_settle_telemetry,
+        is_standalone_prop_bet,
+        settle_parlays,
+        settle_standalone_props,
+    )
 
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
@@ -1295,7 +1395,10 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
     try:
         result = (
             db.table("bets")
-            .select("id,market,clv_sport_key,clv_team,commence_time,clv_event_id")
+            .select(
+                "id,market,surface,clv_sport_key,clv_team,commence_time,clv_event_id,"
+                "participant_name,source_market_key,line_value,selection_side"
+            )
             .eq("result", "pending")
             .not_.is_("clv_sport_key", "null")
             .lt("commence_time", now_iso)
@@ -1308,21 +1411,53 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
             raise
         result = (
             db.table("bets")
-            .select("id,market,clv_sport_key,clv_team,commence_time")
+            .select("id,market,surface,clv_sport_key,clv_team,commence_time")
             .eq("result", "pending")
             .not_.is_("clv_sport_key", "null")
             .lt("commence_time", now_iso)
             .execute()
         )
 
-    if not result.data:
+    standalone_bets = list(result.data or [])
+
+    try:
+        parlay_result = (
+            db.table("bets")
+            .select("id,selection_meta")
+            .eq("result", "pending")
+            .eq("market", "Parlay")
+            .execute()
+        )
+        parlay_bets = list(parlay_result.data or [])
+    except Exception:
+        parlay_bets = []
+
+    if not standalone_bets and not parlay_bets:
         return 0
 
-    sport_bets: dict[str, list[dict]] = {}
-    for bet in result.data:
+    sport_keys: set[str] = set()
+    for bet in standalone_bets:
         sk = bet.get("clv_sport_key")
         if sk:
-            sport_bets.setdefault(sk, []).append(bet)
+            sport_keys.add(str(sk))
+    sport_keys.update(collect_sport_keys_from_parlays(parlay_bets))
+
+    completed_by_sport: dict[str, list[dict]] = {}
+    fetch_errors: list[dict] = []
+    for sport_key in sorted(sport_keys):
+        try:
+            events = await fetch_scores(sport_key, source=source)
+            completed_by_sport[sport_key] = [event for event in events if event.get("completed")]
+        except Exception as e:
+            print(f"[Auto-Settler] Error fetching scores for '{sport_key}': {e}")
+            completed_by_sport[sport_key] = []
+            fetch_errors.append({"sport_key": sport_key, "error": f"{type(e).__name__}: {e}"})
+
+    sport_bets: dict[str, list[dict]] = {}
+    for bet in standalone_bets:
+        sk = bet.get("clv_sport_key")
+        if sk:
+            sport_bets.setdefault(str(sk), []).append(bet)
 
     total_settled = 0
     settled_at = now.isoformat()
@@ -1338,9 +1473,7 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
 
     for sport_key, bets in sport_bets.items():
         try:
-            events = await fetch_scores(sport_key, source=source)
-
-            completed_events = [event for event in events if event.get("completed")]
+            completed_events = completed_by_sport.get(sport_key, [])
             skipped_reasons: dict[str, int] = {
                 "missing_clv_team": 0,
                 "missing_commence_time": 0,
@@ -1355,6 +1488,8 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
                 clv_team = bet.get("clv_team")
 
                 if market != "ML":
+                    if is_standalone_prop_bet(bet):
+                        continue
                     print(
                         f"[Auto-Settler] Skipping bet {bet['id']} — "
                         f"market '{market}' requires manual grading."
@@ -1419,15 +1554,46 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
                 }
             )
 
+    prop_candidates = [b for b in standalone_bets if is_standalone_prop_bet(b)]
+    prop_telemetry = create_prop_settle_telemetry()
+    props_settled, props_skipped = await settle_standalone_props(
+        db,
+        prop_candidates,
+        completed_by_sport,
+        settled_at,
+        source=source,
+        now=now,
+        telemetry=prop_telemetry,
+    )
+
+    parlays_settled, parlay_skipped = await settle_parlays(
+        db,
+        parlay_bets,
+        completed_by_sport,
+        settled_at,
+        now=now,
+        source=source,
+        telemetry=prop_telemetry,
+    )
+
+    combined_total = total_settled + props_settled + parlays_settled
+
     global _LAST_AUTO_SETTLER_SUMMARY
     _LAST_AUTO_SETTLER_SUMMARY = {
         "captured_at": settled_at,
         "sports": sport_summaries,
-        "total_settled": total_settled,
+        "total_settled": combined_total,
+        "ml_settled": total_settled,
+        "props_settled": props_settled,
+        "parlays_settled": parlays_settled,
         "skipped_totals": aggregate_skipped,
+        "props_skipped": props_skipped,
+        "parlay_skipped": parlay_skipped,
+        "score_fetch_errors": fetch_errors,
+        "prop_settle_telemetry": prop_telemetry,
     }
 
-    return total_settled
+    return combined_total
 
 
 def get_last_auto_settler_summary() -> dict | None:

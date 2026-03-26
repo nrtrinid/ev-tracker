@@ -559,6 +559,7 @@ export function LogBetDrawer({
               onChange={(value) => updateField("odds", value)}
               placeholder="150"
               defaultSign="+"
+              americanOddsSeed={initialValues?.odds_american ?? null}
               label={isScannerFlow ? "Placed Odds" : "Odds"}
               className="[&_input]:h-12 [&_input]:text-lg"
             />
@@ -803,6 +804,7 @@ export function LogBetDrawer({
                     onChange={(value) => updateField("opposing_odds", value)}
                     placeholder="180"
                     defaultSign="-"
+                    americanOddsSeed={initialValues?.opposing_odds ?? null}
                     label="Opposing Odds"
                     className="[&_input]:h-10"
                   />

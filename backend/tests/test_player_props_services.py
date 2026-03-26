@@ -7,10 +7,12 @@ from services.player_props import (
     PLAYER_PROP_REFERENCE_SOURCE,
     _build_prizepicks_comparison_cards,
     _build_prop_side_candidates,
+    _compute_confidence,
     _prop_cache_slot,
     _match_curated_events,
     _normalize_prop_outcomes,
     _parse_prop_sides,
+    _weighted_consensus_prob,
     get_cached_or_scan_player_props,
     get_player_prop_markets,
     scan_player_props,
@@ -148,6 +150,8 @@ def test_parse_prop_sides_builds_consensus_reference_payload():
     assert first_draftkings["reference_bookmakers"] == ["bovada", "betmgm"]
     assert first_draftkings["reference_bookmaker_count"] == 2
     assert first_draftkings["confidence_label"] == "solid"
+    assert isinstance(first_draftkings["confidence_score"], float)
+    assert 0.0 <= first_draftkings["confidence_score"] <= 1.0
     assert first_draftkings["reference_odds"] == -104
     assert first_draftkings["sportsbook_deeplink_url"] == "https://example.test/jokic/over"
     assert first_draftkings["sportsbook_deeplink_level"] == "selection"
@@ -1373,3 +1377,297 @@ async def test_scan_player_props_disables_external_prizepicks_provider(monkeypat
     assert result["prizepicks_cards"] == []
     assert result["diagnostics"]["prizepicks_status"] == "disabled"
     assert result["diagnostics"]["prizepicks_message"] is None
+
+
+# ── Weighted consensus probability tests ──────────────────────────────────────
+
+
+def test_weighted_consensus_prob_single_book_returns_its_own_prob():
+    assert _weighted_consensus_prob([0.55], ["draftkings"]) == 0.55
+
+
+def test_weighted_consensus_prob_equal_weights_returns_mean():
+    # Two follower books with equal weight → result is the plain mean
+    result = _weighted_consensus_prob([0.50, 0.54], ["draftkings", "fanduel"])
+    assert abs(result - 0.52) < 1e-9
+
+
+def test_weighted_consensus_prob_betonline_pulls_result_toward_its_estimate():
+    # betonlineag (weight=3) has prob 0.58; two followers at 0.50
+    # weighted mean = (0.58*3 + 0.50 + 0.50) / (3+1+1) = (1.74+1.00)/5 = 0.548
+    result = _weighted_consensus_prob(
+        [0.50, 0.58, 0.50],
+        ["draftkings", "betonlineag", "fanduel"],
+    )
+    expected = (0.50 * 1.0 + 0.58 * 3.0 + 0.50 * 1.0) / (1.0 + 3.0 + 1.0)
+    assert abs(result - expected) < 1e-9
+    # Result is clearly pulled above the plain mean (0.527)
+    plain_mean = (0.50 + 0.58 + 0.50) / 3
+    assert result > plain_mean
+
+
+def test_weighted_consensus_prob_bovada_has_intermediate_weight():
+    # bovada (weight=1.5) at 0.56; one follower at 0.50
+    # weighted mean = (0.56*1.5 + 0.50*1.0) / (1.5+1.0) = (0.84+0.50)/2.5 = 0.536
+    result = _weighted_consensus_prob([0.56, 0.50], ["bovada", "betmgm"])
+    expected = (0.56 * 1.5 + 0.50 * 1.0) / (1.5 + 1.0)
+    assert abs(result - expected) < 1e-9
+
+
+def test_weighted_consensus_prob_excludes_outlier_beyond_threshold():
+    # Three books: two agree around 0.50, one outlier at 0.80
+    # anchor (median) = 0.50; outlier gap = 0.30 > threshold 0.12 → excluded
+    result = _weighted_consensus_prob(
+        [0.50, 0.51, 0.80],
+        ["draftkings", "fanduel", "betonlineag"],
+        outlier_threshold=0.12,
+    )
+    # betonlineag is excluded as outlier; result is mean of 0.50/0.51 at equal weight
+    expected = (0.50 + 0.51) / 2
+    assert abs(result - expected) < 1e-9
+
+
+def test_weighted_consensus_prob_fallback_to_median_when_all_outliers():
+    # Highly dispersed set with very tight threshold → all excluded
+    result = _weighted_consensus_prob(
+        [0.30, 0.70],
+        ["draftkings", "fanduel"],
+        outlier_threshold=0.01,
+    )
+    # Both are > 0.01 from median (0.50) → fallback to median = 0.50
+    assert abs(result - 0.50) < 1e-9
+
+
+# ── Confidence scoring tests ───────────────────────────────────────────────────
+
+
+def test_compute_confidence_thin_for_single_book_no_anchor():
+    label, score, std = _compute_confidence(
+        reference_bookmakers=["draftkings"],
+        reference_probs=[0.55],
+    )
+    # base=0.25, no anchor, no dispersion → score=0.25 → "thin" (< 0.30)
+    assert label == "thin"
+    assert abs(score - 0.25) < 1e-4
+    assert std == 0.0
+
+
+def test_compute_confidence_solid_for_two_follower_books_low_dispersion():
+    # std is ~0.01, base=0.50, no anchor, small dispersion penalty
+    label, score, std = _compute_confidence(
+        reference_bookmakers=["draftkings", "fanduel"],
+        reference_probs=[0.50, 0.52],
+    )
+    assert label == "solid"
+    assert 0.30 <= score < 0.55
+
+
+def test_compute_confidence_betonline_anchor_upgrades_two_book_consensus():
+    # Same count as above but betonlineag is present → +0.20 bonus → "high"
+    label, score, std = _compute_confidence(
+        reference_bookmakers=["betonlineag", "draftkings"],
+        reference_probs=[0.50, 0.52],
+    )
+    assert label == "high"
+    assert score >= 0.55
+
+
+def test_compute_confidence_penalises_high_dispersion():
+    # 3 books but wildly spread → dispersion penalty should drop label below elite
+    label_low_disp, score_low, _ = _compute_confidence(
+        reference_bookmakers=["draftkings", "fanduel", "betmgm"],
+        reference_probs=[0.50, 0.51, 0.52],
+    )
+    label_high_disp, score_high, _ = _compute_confidence(
+        reference_bookmakers=["draftkings", "fanduel", "betmgm"],
+        reference_probs=[0.40, 0.55, 0.65],
+    )
+    assert score_low > score_high
+    assert label_low_disp in ("elite", "high")
+    assert label_high_disp in ("solid", "thin")
+
+
+def test_compute_confidence_four_tight_books_is_elite():
+    label, score, std = _compute_confidence(
+        reference_bookmakers=["draftkings", "fanduel", "betmgm", "caesars"],
+        reference_probs=[0.525, 0.528, 0.522, 0.530],
+    )
+    assert label == "elite"
+    assert score >= 0.75
+
+
+def test_compute_confidence_betonline_with_high_dispersion_stays_reasonable():
+    # betonlineag present but strong disagreement → bonus partially offset by penalty
+    label, score, std = _compute_confidence(
+        reference_bookmakers=["betonlineag", "draftkings"],
+        reference_probs=[0.35, 0.65],
+    )
+    # std ≈ 0.15, penalty = min(0.15*4, 0.40) = 0.40; base=0.50, bonus=0.20
+    # raw = 0.50+0.20-0.40 = 0.30 → "solid"
+    assert label in ("solid", "thin")
+    assert score <= 0.55
+
+
+# ── End-to-end confidence field tests ────────────────────────────────────────
+
+
+def test_parse_prop_sides_exposes_confidence_score_field():
+    """All surfaced sides must carry the new confidence_score and prob_std fields."""
+    event_payload = {
+        "id": "evt-conf",
+        "home_team": "Suns",
+        "away_team": "Nuggets",
+        "commence_time": "2026-03-21T03:00:00Z",
+        "bookmakers": [
+            {
+                "key": "bovada",
+                "markets": [{"key": "player_points", "outcomes": [
+                    {"name": "Over", "description": "Nikola Jokic", "point": 24.5, "price": -110},
+                    {"name": "Under", "description": "Nikola Jokic", "point": 24.5, "price": -110},
+                ]}],
+            },
+            {
+                "key": "betonlineag",
+                "markets": [{"key": "player_points", "outcomes": [
+                    {"name": "Over", "description": "Nikola Jokic", "point": 24.5, "price": -115},
+                    {"name": "Under", "description": "Nikola Jokic", "point": 24.5, "price": -105},
+                ]}],
+            },
+            {
+                "key": "draftkings",
+                "markets": [{"key": "player_points", "outcomes": [
+                    {"name": "Over", "description": "Nikola Jokic", "point": 24.5, "price": 110},
+                    {"name": "Under", "description": "Nikola Jokic", "point": 24.5, "price": -130},
+                ]}],
+            },
+        ],
+    }
+    sides = _parse_prop_sides(
+        sport="basketball_nba",
+        event_payload=event_payload,
+        target_markets=["player_points"],
+    )
+    assert len(sides) > 0
+    for side in sides:
+        assert "confidence_score" in side
+        assert isinstance(side["confidence_score"], float)
+        assert 0.0 <= side["confidence_score"] <= 1.0
+        assert "prob_std" in side
+        assert isinstance(side["prob_std"], float)
+
+
+def test_parse_prop_sides_betonline_reference_boosts_confidence_vs_follower_only():
+    """A consensus that includes betonlineag should yield higher confidence_score
+    than one using the same number of pure follower books."""
+    base_bookmaker_set = [
+        {
+            "key": "bovada",
+            "markets": [{"key": "player_points", "outcomes": [
+                {"name": "Over", "description": "Nikola Jokic", "point": 24.5, "price": -110},
+                {"name": "Under", "description": "Nikola Jokic", "point": 24.5, "price": -110},
+            ]}],
+        },
+        {
+            "key": "betmgm",
+            "markets": [{"key": "player_points", "outcomes": [
+                {"name": "Over", "description": "Nikola Jokic", "point": 24.5, "price": -108},
+                {"name": "Under", "description": "Nikola Jokic", "point": 24.5, "price": -112},
+            ]}],
+        },
+        {
+            "key": "draftkings",
+            "markets": [{"key": "player_points", "outcomes": [
+                {"name": "Over", "description": "Nikola Jokic", "point": 24.5, "price": -112},
+                {"name": "Under", "description": "Nikola Jokic", "point": 24.5, "price": -108},
+            ]}],
+        },
+    ]
+
+    # Variant with betonlineag instead of betmgm as reference
+    betonline_bookmaker_set = [
+        {
+            "key": "bovada",
+            "markets": [{"key": "player_points", "outcomes": [
+                {"name": "Over", "description": "Nikola Jokic", "point": 24.5, "price": -110},
+                {"name": "Under", "description": "Nikola Jokic", "point": 24.5, "price": -110},
+            ]}],
+        },
+        {
+            "key": "betonlineag",
+            "markets": [{"key": "player_points", "outcomes": [
+                {"name": "Over", "description": "Nikola Jokic", "point": 24.5, "price": -108},
+                {"name": "Under", "description": "Nikola Jokic", "point": 24.5, "price": -112},
+            ]}],
+        },
+        {
+            "key": "draftkings",
+            "markets": [{"key": "player_points", "outcomes": [
+                {"name": "Over", "description": "Nikola Jokic", "point": 24.5, "price": -112},
+                {"name": "Under", "description": "Nikola Jokic", "point": 24.5, "price": -108},
+            ]}],
+        },
+    ]
+
+    base_payload = {"id": "evt-base", "home_team": "Suns", "away_team": "Nuggets",
+                    "commence_time": "2026-03-21T03:00:00Z", "bookmakers": base_bookmaker_set}
+    betonline_payload = {"id": "evt-bol", "home_team": "Suns", "away_team": "Nuggets",
+                         "commence_time": "2026-03-21T03:00:00Z", "bookmakers": betonline_bookmaker_set}
+
+    dk_side = lambda sides: next(
+        s for s in sides if s["sportsbook"] == "DraftKings" and s["selection_side"] == "over"
+    )
+
+    base_sides = _parse_prop_sides(sport="basketball_nba", event_payload=base_payload,
+                                   target_markets=["player_points"])
+    bol_sides = _parse_prop_sides(sport="basketball_nba", event_payload=betonline_payload,
+                                  target_markets=["player_points"])
+
+    base_score = dk_side(base_sides)["confidence_score"]
+    bol_score = dk_side(bol_sides)["confidence_score"]
+
+    # Having betonlineag as a reference should yield a strictly higher confidence_score
+    assert bol_score > base_score
+
+
+def test_parse_prop_sides_high_dispersion_reduces_confidence_score():
+    """A consensus where books disagree significantly should score lower than tight agreement."""
+    def make_payload(over_tight, under_tight, over_wide, under_wide):
+        return {
+            "id": "evt-disp",
+            "home_team": "Suns",
+            "away_team": "Nuggets",
+            "commence_time": "2026-03-21T03:00:00Z",
+            "bookmakers": [
+                {"key": "bovada", "markets": [{"key": "player_points", "outcomes": [
+                    {"name": "Over", "description": "Nikola Jokic", "point": 24.5, "price": over_tight},
+                    {"name": "Under", "description": "Nikola Jokic", "point": 24.5, "price": under_tight},
+                ]}]},
+                {"key": "betmgm", "markets": [{"key": "player_points", "outcomes": [
+                    {"name": "Over", "description": "Nikola Jokic", "point": 24.5, "price": over_wide},
+                    {"name": "Under", "description": "Nikola Jokic", "point": 24.5, "price": under_wide},
+                ]}]},
+                {"key": "draftkings", "markets": [{"key": "player_points", "outcomes": [
+                    {"name": "Over", "description": "Nikola Jokic", "point": 24.5, "price": 105},
+                    {"name": "Under", "description": "Nikola Jokic", "point": 24.5, "price": -125},
+                ]}]},
+            ],
+        }
+
+    tight_payload = make_payload(-110, -110, -108, -112)  # refs tightly agree
+    wide_payload  = make_payload(-130, 110,  -145, 125)   # refs strongly disagree
+
+    dk = lambda sides: next(
+        s for s in sides if s["sportsbook"] == "DraftKings" and s["selection_side"] == "over"
+    )
+
+    tight_sides = _parse_prop_sides(sport="basketball_nba", event_payload=tight_payload,
+                                    target_markets=["player_points"])
+    wide_sides  = _parse_prop_sides(sport="basketball_nba", event_payload=wide_payload,
+                                    target_markets=["player_points"])
+
+    tight_score = dk(tight_sides)["confidence_score"]
+    wide_score  = dk(wide_sides)["confidence_score"]
+
+    assert tight_score > wide_score
+    # High dispersion should also push prob_std up
+    assert dk(wide_sides)["prob_std"] > dk(tight_sides)["prob_std"]

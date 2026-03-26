@@ -28,17 +28,6 @@ export interface PickEmBoardCard {
   best_under_deeplink_url?: string | null;
 }
 
-export interface PickEmSlipPick {
-  comparisonKey: string;
-  playerName: string;
-  market: string;
-  marketKey: string;
-  lineValue: number;
-  selectedSide: "over" | "under";
-  selectedPercentage: number;
-  event: string;
-}
-
 function canonicalize(value: string | null | undefined): string {
   return String(value || "")
     .trim()

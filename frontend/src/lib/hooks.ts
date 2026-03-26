@@ -17,6 +17,7 @@ import type {
   ScannerSurface,
   TransactionCreate,
 } from "@/lib/types";
+// BoardResponse / ScopedRefreshResponse used via api return types (inferred)
 
 // Query keys
 export const queryKeys = {
@@ -31,6 +32,7 @@ export const queryKeys = {
   transactions: ["transactions"] as const,
   balances: ["balances"] as const,
   scanMarkets: (surface: ScannerSurface) => ["scan-markets", surface] as const,
+  board: ["board"] as const,
 };
 
 function invalidateBetDerivedQueries(queryClient: QueryClient, betId?: string) {
@@ -345,5 +347,27 @@ export function useBalances() {
   return useQuery({
     queryKey: queryKeys.balances,
     queryFn: api.getBalances,
+  });
+}
+
+// ============ Board Hooks ============
+
+/** Load the canonical board snapshot. staleTime: Infinity — invalidated by Supabase realtime or explicit refresh. */
+export function useBoard() {
+  return useQuery({
+    queryKey: queryKeys.board,
+    queryFn: api.getBoard,
+    staleTime: Infinity,
+    gcTime: 60 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 1,
+  });
+}
+
+/** Scoped manual refresh — does NOT overwrite the canonical board:latest. */
+export function useRefreshBoard() {
+  return useMutation({
+    mutationFn: (scope: ScannerSurface) => api.refreshBoard(scope),
   });
 }

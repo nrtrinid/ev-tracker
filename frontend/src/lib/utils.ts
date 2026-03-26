@@ -115,6 +115,24 @@ export function calculateStealthStake(rawStake: number): number {
   return Math.round(safe / 10) * 10;
 }
 
+/**
+ * Abbreviate large numbers for compact display.
+ * e.g. 1400 → "1.4K", 1_500_000 → "1.5M", 900 → "900"
+ */
+export function abbreviateNumber(n: number): string {
+  const abs = Math.abs(n);
+  const sign = n < 0 ? "-" : "";
+  if (abs >= 1_000_000) {
+    const val = abs / 1_000_000;
+    return `${sign}${val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)}M`;
+  }
+  if (abs >= 1_000) {
+    const val = abs / 1_000;
+    return `${sign}${val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)}K`;
+  }
+  return `${sign}${abs % 1 === 0 ? abs.toFixed(0) : abs.toFixed(2)}`;
+}
+
 // Calculate hold (vig) from two American odds
 export function calculateHoldFromOdds(odds1: number, odds2: number): number | null {
   if (odds1 === 0 || odds2 === 0) return null;

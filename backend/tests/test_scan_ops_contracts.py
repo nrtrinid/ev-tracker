@@ -720,23 +720,23 @@ def test_ops_status_contract_shape_degraded(monkeypatch, auth_client):
 
 @pytest.mark.integration
 def test_ops_trigger_scan_contract_shape(auth_client, monkeypatch):
-    import services.odds_api as odds_api
-    import services.discord_alerts as discord_alerts
+    import services.daily_board as daily_board
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
 
-    async def _fake_get_cached_or_scan(_sport: str, source: str = "ops_trigger_scan"):
-        assert source == "ops_trigger_scan"
+    async def _fake_daily_board_drop(*, db, source: str, retry_supabase, log_event):
+        assert source == "ops_trigger_board_drop"
         return {
-            "sides": [{"team": "Lakers"}, {"team": "Warriors"}],
-            "events_fetched": 1,
-            "events_with_both_books": 1,
-            "api_requests_remaining": "496",
+            "ok": True,
+            "snapshot_id": "snap_test",
+            "scanned_at": "2026-03-26T20:00:00Z",
+            "selected_event_ids": ["evt-1"],
+            "selected_games": [],
+            "props_sides": 2,
+            "duration_ms": 12.0,
         }
 
-    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)
-    monkeypatch.setattr(odds_api, "get_cached_or_scan", _fake_get_cached_or_scan, raising=True)
-    monkeypatch.setattr(discord_alerts, "schedule_alerts", lambda _sides: 0, raising=True)
+    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
 
     resp = auth_client.post("/api/ops/trigger/scan", headers={"X-Ops-Token": "ops-secret"})
     assert resp.status_code == 200
@@ -744,9 +744,10 @@ def test_ops_trigger_scan_contract_shape(auth_client, monkeypatch):
     body = resp.json()
     assert isinstance(body.get("ok"), bool)
     assert isinstance(body.get("run_id"), str)
-    assert isinstance(body.get("sports_scanned"), list)
+    assert body.get("board_drop") is True
+    assert isinstance(body.get("result"), dict) or body.get("result") is None
     assert isinstance(body.get("errors"), list)
-    assert isinstance(body.get("total_sides"), int)
+    assert (isinstance(body.get("total_sides"), int) or body.get("total_sides") is None)
     assert isinstance(body.get("alerts_scheduled"), int)
 
 

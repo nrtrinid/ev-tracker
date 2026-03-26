@@ -581,10 +581,10 @@ export default function AnalyticsPage() {
   return (
     <main className="min-h-screen bg-background">
       {/* Sticky Filter Bar - Positioned below TopNav (56px) */}
-      <div className="sticky top-14 z-10 w-full py-3 bg-[#FAF8F5] border-b border-border shadow-sm">
+      <div className="sticky top-14 z-10 w-full py-3 bg-background border-b border-border shadow-sm">
         <div className="container mx-auto px-4 max-w-4xl">
           <div className="flex justify-between items-center">
-            <h1 className="text-lg font-semibold">Analytics</h1>
+            <h1 className="text-lg font-semibold">Stats</h1>
             <Button
               variant="outline"
               size="sm"
@@ -1226,10 +1226,10 @@ function StatCard({
     displayValue = "—";
   } else if (format === "currency" && typeof value === "number") {
     displayValue = formatCurrency(value);
-    if (colorize) colorClass = value >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]";
+    if (colorize) colorClass = value >= 0 ? "text-profit" : "text-loss";
   } else if (format === "percent" && typeof value === "number") {
     displayValue = formatPercent(value);
-    if (colorize) colorClass = value >= 0.05 ? "text-[#4A7C59]" : value <= -0.05 ? "text-[#B85C38]" : "text-[#8B7355]";
+    if (colorize) colorClass = value >= 0.05 ? "text-profit" : value <= -0.05 ? "text-loss" : "text-pending";
   } else if (format === "number" && typeof value === "number") {
     displayValue = value.toLocaleString();
   } else {

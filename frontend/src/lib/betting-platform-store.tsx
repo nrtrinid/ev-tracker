@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 
+import { isPickEmParlayLeg } from "@/lib/parlay-utils";
 import type {
   ParlayCartLeg,
   ScannedBetData,
@@ -130,8 +131,24 @@ export function BettingPlatformProvider({ children }: { children: React.ReactNod
         result = { added: false, reason: "duplicate" };
         return current;
       }
+
+      const legIsPick = isPickEmParlayLeg(leg);
+      const cartHasLegs = current.cart.length > 0;
+      const cartIsPickemOnly = cartHasLegs && current.cart.every(isPickEmParlayLeg);
+      const cartHasNonPick = cartHasLegs && current.cart.some((item) => !isPickEmParlayLeg(item));
+
+      if (cartIsPickemOnly && !legIsPick) {
+        result = { added: false, reason: "slip_kind_mismatch" };
+        return current;
+      }
+      if (cartHasNonPick && legIsPick) {
+        result = { added: false, reason: "slip_kind_mismatch" };
+        return current;
+      }
+
       const lockedSportsbook = current.cart[0]?.sportsbook;
-      if (lockedSportsbook && lockedSportsbook !== leg.sportsbook) {
+      const skipSportsbookLock = cartIsPickemOnly && legIsPick;
+      if (!skipSportsbookLock && lockedSportsbook && lockedSportsbook !== leg.sportsbook) {
         result = { added: false, reason: "sportsbook_mismatch" };
         return current;
       }

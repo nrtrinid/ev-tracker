@@ -39,6 +39,10 @@ module.exports = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        // Semantic status colors — adapt between light/dark via CSS vars
+        profit: "hsl(var(--profit))",
+        loss: "hsl(var(--loss))",
+        pending: "hsl(var(--pending))",
         // Sportsbook brand colors (authentic)
         draftkings: "#4CBB17",
         fanduel: "#0E7ACA",

@@ -56,14 +56,14 @@ export function Dashboard() {
   return (
     <>
       <TopKpiCards
-        href="/analytics"
+        href="/bets/stats"
         netProfit={summary.total_real_profit}
         expectedProfit={settledEV}
         totalBalance={totalBalance}
         beatClose={{ beatClosePct, avgClvPct: avgCLV, trackedCount: clvBets.length }}
       />
       {showDegradedHint && (
-        <div className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-[#B85C38]/30 bg-[#B85C38]/10 px-2.5 py-1.5 text-xs text-[#8B3D20]">
+        <div className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
           <AlertTriangle className="h-3.5 w-3.5" />
           {degradedLabel}
         </div>

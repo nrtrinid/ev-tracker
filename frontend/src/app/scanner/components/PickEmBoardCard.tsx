@@ -1,13 +1,13 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import type { PickEmBoardCard as PickEmBoardCardType, PickEmSlipPick } from "../pickem-board";
+import type { PickEmBoardCard as PickEmBoardCardType } from "../pickem-board";
 
 interface PickEmBoardCardProps {
   card: PickEmBoardCardType;
   bookColors: Record<string, string>;
   sportDisplayMap: Record<string, string>;
   isAdded: boolean;
-  onAddToSlip: (pick: PickEmSlipPick) => void;
+  onAddToSlip: (card: PickEmBoardCardType) => void;
 }
 
 function formatGameTime(isoString: string): string {
@@ -63,16 +63,7 @@ export function PickEmBoardCard({
   const underIsWinner = card.consensus_under_prob > card.consensus_over_prob;
 
   const handleAddToSlip = () => {
-    onAddToSlip({
-      comparisonKey: card.comparison_key,
-      playerName: card.player_name,
-      market: card.market,
-      marketKey: card.market_key,
-      lineValue: card.line_value,
-      selectedSide: card.consensus_side,
-      selectedPercentage: winningProbability,
-      event: card.event,
-    });
+    onAddToSlip(card);
   };
 
   return (
@@ -100,12 +91,12 @@ export function PickEmBoardCard({
             </p>
           </div>
 
-          <div className="shrink-0 rounded-lg border border-[#E9D7B9] bg-[#FCF7EC] px-3 py-1.5 text-left sm:min-w-[118px] sm:text-right">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8B7355]">{marketLabel}</p>
-            <p className="mt-0.5 text-xl font-mono font-bold leading-none text-[#5C4D2E]">
+          <div className="shrink-0 rounded-lg border border-border bg-muted/50 px-3 py-1.5 text-left sm:min-w-[118px] sm:text-right">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{marketLabel}</p>
+            <p className="mt-0.5 text-xl font-mono font-bold leading-none text-foreground">
               {formatLineValue(card.line_value)}
             </p>
-            <p className="mt-1 text-[10px] text-[#8B7355]">
+            <p className="mt-1 text-[10px] text-muted-foreground">
               {card.exact_line_bookmaker_count} book{card.exact_line_bookmaker_count === 1 ? "" : "s"} match
             </p>
           </div>
@@ -115,14 +106,14 @@ export function PickEmBoardCard({
           <div
             className={`flex items-center justify-between rounded-lg bg-background/80 px-3 py-2 ${
               overIsWinner
-                ? "border border-[#B7D1C2]"
+                ? "border border-profit/40"
                 : "border border-border/60"
             }`}
           >
-            <span className={`text-xs font-medium uppercase tracking-wide ${overIsWinner ? "text-[#2E5D39]" : "text-muted-foreground"}`}>
+            <span className={`text-xs font-medium uppercase tracking-wide ${overIsWinner ? "text-profit" : "text-muted-foreground"}`}>
               Over
             </span>
-            <span className={`text-sm font-semibold ${overIsWinner ? "text-[#2E5D39]" : "text-muted-foreground"}`}>
+            <span className={`text-sm font-semibold ${overIsWinner ? "text-profit" : "text-muted-foreground"}`}>
               {percentLabel(card.consensus_over_prob)}
             </span>
           </div>
@@ -130,14 +121,14 @@ export function PickEmBoardCard({
           <div
             className={`flex items-center justify-between rounded-lg bg-background/80 px-3 py-2 ${
               underIsWinner
-                ? "border border-[#B7D1C2]"
+                ? "border border-profit/40"
                 : "border border-border/60"
             }`}
           >
-            <span className={`text-xs font-medium uppercase tracking-wide ${underIsWinner ? "text-[#2E5D39]" : "text-muted-foreground"}`}>
+            <span className={`text-xs font-medium uppercase tracking-wide ${underIsWinner ? "text-profit" : "text-muted-foreground"}`}>
               Under
             </span>
-            <span className={`text-sm font-semibold ${underIsWinner ? "text-[#2E5D39]" : "text-muted-foreground"}`}>
+            <span className={`text-sm font-semibold ${underIsWinner ? "text-profit" : "text-muted-foreground"}`}>
               {percentLabel(card.consensus_under_prob)}
             </span>
           </div>
@@ -158,7 +149,7 @@ export function PickEmBoardCard({
           <Button
             type="button"
             variant={isAdded ? "outline" : "default"}
-            className={isAdded ? "h-10 w-full border-[#B7D1C2] bg-[#F3F7F5] text-[#2E5D39] hover:bg-[#F3F7F5]" : "h-10 w-full"}
+            className={isAdded ? "h-10 w-full border-profit/40 bg-profit/10 text-profit hover:bg-profit/10" : "h-10 w-full"}
             disabled={isAdded}
             onClick={handleAddToSlip}
           >
