@@ -21,10 +21,10 @@ import {
   SheetTitle,
   SheetClose,
 } from "@/components/ui/sheet";
-import { useBets, useUpdateBetResult, useDeleteBet, useCreateBet, useBalances } from "@/lib/hooks";
+import { useBets, useUpdateBetResult, useDeleteBet, useCreateBet, useBalances, useParlaySlips } from "@/lib/hooks";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EditBetModal } from "@/components/EditBetModal";
-import type { Bet, BetResult, TutorialPracticeBet } from "@/lib/types";
+import type { Bet, BetResult, ParlaySlip, TutorialPracticeBet } from "@/lib/types";
 import { PROMO_TYPE_CONFIG } from "@/lib/types";
 import { formatCurrency, formatOdds, cn, formatRelativeTime, formatShortDate, formatFullDateTime, americanToDecimal, decimalToAmerican, calculateImpliedProb } from "@/lib/utils";
 import {
@@ -55,36 +55,36 @@ const resultConfig: Record<
 > = {
   pending: {
     label: "Pending",
-    color: "text-[#C4A35A]",
-    bgColor: "bg-[#C4A35A]/10",
+    color: "text-pending",
+    bgColor: "bg-pending/10",
     icon: <Clock className="h-3.5 w-3.5" />,
     stampClass: "stamp",
   },
   win: {
     label: "Win",
-    color: "text-[#4A7C59]",
-    bgColor: "bg-[#4A7C59]/20",
+    color: "text-profit",
+    bgColor: "bg-profit/20",
     icon: <Check className="h-3.5 w-3.5" />,
     stampClass: "stamp-win",
   },
   loss: {
     label: "Loss",
-    color: "text-[#B85C38]",
-    bgColor: "bg-[#B85C38]/20",
+    color: "text-loss",
+    bgColor: "bg-loss/20",
     icon: <X className="h-3.5 w-3.5" />,
     stampClass: "stamp-loss",
   },
   push: {
     label: "Push",
-    color: "text-[#6B5E4F]",
-    bgColor: "bg-[#6B5E4F]/15",
+    color: "text-muted-foreground",
+    bgColor: "bg-muted/50",
     icon: <Minus className="h-3.5 w-3.5" />,
     stampClass: "stamp-push",
   },
   void: {
     label: "Void",
-    color: "text-[#6B5E4F]",
-    bgColor: "bg-[#6B5E4F]/15",
+    color: "text-muted-foreground",
+    bgColor: "bg-muted/50",
     icon: <Minus className="h-3.5 w-3.5" />,
     stampClass: "stamp",
   },
@@ -146,9 +146,10 @@ interface BetCardBaseProps {
   headerRight: React.ReactNode;
   footer: React.ReactNode;
   mode: "pending" | "settled";
+  parlaySlip?: ParlaySlip;
 }
 
-function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
+function BetCardBase({ bet, headerRight, footer, mode, parlaySlip }: BetCardBaseProps) {
   const [expanded, setExpanded] = useState(false);
   const borderColor = SPORTSBOOK_BADGE_COLORS[bet.sportsbook] || "bg-gray-400";
   const textColor = SPORTSBOOK_TEXT_COLORS[bet.sportsbook] || "text-gray-600";
@@ -203,8 +204,8 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
                 <span className={cn(
                   "px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none",
                   bet.beat_close
-                    ? "bg-[#4A7C59]/15 text-[#4A7C59]"
-                    : "bg-[#B85C38]/15 text-[#B85C38]"
+                    ? "bg-profit/15 text-profit"
+                    : "bg-loss/15 text-loss"
                 )}>
                   CLV {bet.clv_ev_percent >= 0 ? "+" : ""}{bet.clv_ev_percent.toFixed(1)}%
                 </span>
@@ -248,7 +249,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
           {/* EV - Col 2 on mobile, Col 3 on desktop */}
           <div className="order-2 md:order-3">
             <p className="text-muted-foreground text-xs">EV</p>
-            <p className={cn("font-mono font-semibold", bet.ev_total >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}
+            <p className={cn("font-mono font-semibold", bet.ev_total >= 0 ? "text-profit" : "text-loss")}
                style={{ whiteSpace: "nowrap" }}>
               {bet.ev_total >= 0 ? "+" : ""}{formatCurrency(bet.ev_total)}{" "}
               <span className="font-normal text-xs opacity-70">
@@ -267,7 +268,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
             <p className={cn(
               "font-mono font-semibold",
               mode === "settled"
-                ? bet.real_profit !== null && bet.real_profit >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]"
+                ? bet.real_profit !== null && bet.real_profit >= 0 ? "text-profit" : "text-loss"
                 : "text-foreground"
             )} style={{ whiteSpace: "nowrap" }}>
               {mode === "settled"
@@ -296,6 +297,37 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
         {expanded && (
           <div className="pt-3 border-t border-border space-y-4">
 
+            {/* ── Parlay legs (parlay bets only) ── */}
+            {bet.surface === "parlay" && parlaySlip && parlaySlip.legs.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-2">
+                  Parlay Legs ({parlaySlip.legs.length})
+                </p>
+                <div className="space-y-1.5">
+                  {parlaySlip.legs.map((leg) => (
+                    <div
+                      key={leg.id}
+                      className="flex items-center justify-between rounded-md bg-muted/40 px-2.5 py-2"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-medium">{leg.display}</p>
+                        <p className="truncate text-[11px] text-muted-foreground">
+                          {leg.marketDisplay ?? leg.marketKey}
+                          {leg.lineValue != null ? ` ${leg.lineValue}` : ""}
+                          {leg.selectionSide
+                            ? ` · ${leg.selectionSide.charAt(0).toUpperCase() + leg.selectionSide.slice(1)}`
+                            : ""}
+                        </p>
+                      </div>
+                      <span className="ml-3 shrink-0 font-mono text-xs font-semibold">
+                        {formatOdds(leg.oddsAmerican)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* ── Row 1: CLV (all bets with a Pinnacle entry snapshot) ── */}
             {bet.pinnacle_odds_at_entry != null && (
               <div>
@@ -320,7 +352,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
                     {bet.clv_ev_percent != null ? (
                       <p className={cn(
                         "font-mono text-sm font-semibold",
-                        bet.beat_close ? "text-[#4A7C59]" : "text-[#B85C38]"
+                        bet.beat_close ? "text-profit" : "text-loss"
                       )}>
                         {bet.clv_ev_percent >= 0 ? "+" : ""}{bet.clv_ev_percent.toFixed(2)}%
                       </p>
@@ -359,6 +391,17 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
                 <p className="text-muted-foreground/60 text-xs mb-0.5">Req. Win %</p>
                 <p className="font-mono text-xs text-muted-foreground">{(impliedProb * 100).toFixed(1)}%</p>
               </div>
+              {bet.scan_ev_percent_at_log !== null && (
+                <div>
+                  <p className="text-muted-foreground/60 text-xs mb-0.5">EV at log</p>
+                  <p className={cn(
+                    "font-mono text-xs font-semibold",
+                    bet.scan_ev_percent_at_log >= 0 ? "text-profit" : "text-loss"
+                  )}>
+                    {bet.scan_ev_percent_at_log >= 0 ? "+" : ""}{bet.scan_ev_percent_at_log.toFixed(1)}%
+                  </p>
+                </div>
+              )}
               <div>
                 <p className="text-muted-foreground/60 text-xs mb-0.5">
                   {bet.commence_time ? "Game Start" : "Event Date"}
@@ -422,7 +465,7 @@ function TutorialPracticeCard({ bet }: { bet: TutorialPracticeBet }) {
         </div>
         <div>
           <p className="text-xs text-muted-foreground">Practice EV</p>
-          <p className={cn("font-mono font-semibold", bet.ev_total >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+          <p className={cn("font-mono font-semibold", bet.ev_total >= 0 ? "text-profit" : "text-loss")}>
             {bet.ev_total >= 0 ? "+" : ""}
             {formatCurrency(bet.ev_total)}
           </p>
@@ -444,12 +487,13 @@ function TutorialPracticeCard({ bet }: { bet: TutorialPracticeBet }) {
 // Action-focused with big Win/Loss buttons
 interface PendingCardProps {
   bet: Bet;
+  parlaySlip?: ParlaySlip;
   onEdit: (bet: Bet) => void;
   onResultChange: (bet: Bet, result: BetResult, previousResult: BetResult) => void;
   onDelete: (bet: Bet) => void;
 }
 
-function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps) {
+function PendingCard({ bet, parlaySlip, onEdit, onResultChange, onDelete }: PendingCardProps) {
 
   const headerRight = (
     <DropdownMenu>
@@ -484,7 +528,7 @@ function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps
               disabled={bet.result === "win"}
               className={cn(bet.result === "win" && "opacity-50")}
             >
-              {bet.result === "win" ? <Check className="h-4 w-4 mr-2" /> : <Check className="h-4 w-4 mr-2 text-green-600" />}
+              {bet.result === "win" ? <Check className="h-4 w-4 mr-2" /> : <Check className="h-4 w-4 mr-2 text-profit" />}
               Mark Win {bet.result === "win" && "✓"}
             </DropdownMenuItem>
             <DropdownMenuItem 
@@ -492,7 +536,7 @@ function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps
               disabled={bet.result === "loss"}
               className={cn(bet.result === "loss" && "opacity-50")}
             >
-              {bet.result === "loss" ? <Check className="h-4 w-4 mr-2" /> : <X className="h-4 w-4 mr-2 text-red-600" />}
+              {bet.result === "loss" ? <Check className="h-4 w-4 mr-2" /> : <X className="h-4 w-4 mr-2 text-loss" />}
               Mark Loss {bet.result === "loss" && "✓"}
             </DropdownMenuItem>
             <DropdownMenuItem 
@@ -514,7 +558,7 @@ function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps
           </DropdownMenuSubContent>
         </DropdownMenuSub>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => onDelete(bet)} className="text-red-600">
+        <DropdownMenuItem onClick={() => onDelete(bet)} className="text-destructive">
           <Trash2 className="h-4 w-4 mr-2" />
           Delete
         </DropdownMenuItem>
@@ -541,14 +585,14 @@ function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps
   const footer = (
     <div className="flex gap-2 pt-2 border-t border-border mt-1">
       <button
-        className="flex-1 h-8 min-h-[44px] flex items-center justify-center gap-1.5 text-sm font-medium rounded-md text-[#4A7C59] border border-[#4A7C59]/30 bg-[#4A7C59]/10 hover:bg-[#4A7C59]/20 active:bg-[#4A7C59]/25 transition-colors"
+        className="flex-1 h-8 min-h-[44px] flex items-center justify-center gap-1.5 text-sm font-medium rounded-md text-profit border border-profit/30 bg-profit/10 hover:bg-profit/20 active:bg-profit/25 transition-colors"
         onClick={handleWin}
       >
         <Check className="h-4 w-4" />
         Mark Win
       </button>
       <button
-        className="flex-1 h-8 min-h-[44px] flex items-center justify-center gap-1.5 text-sm font-medium rounded-md text-[#B85C38] border border-[#B85C38]/30 bg-[#B85C38]/10 hover:bg-[#B85C38]/20 active:bg-[#B85C38]/25 transition-colors"
+        className="flex-1 h-8 min-h-[44px] flex items-center justify-center gap-1.5 text-sm font-medium rounded-md text-loss border border-loss/30 bg-loss/10 hover:bg-loss/20 active:bg-loss/25 transition-colors"
         onClick={handleLoss}
       >
         <X className="h-4 w-4" />
@@ -557,19 +601,20 @@ function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps
     </div>
   );
 
-  return <BetCardBase bet={bet} headerRight={headerRight} footer={footer} mode="pending" />;
+  return <BetCardBase bet={bet} headerRight={headerRight} footer={footer} mode="pending" parlaySlip={parlaySlip} />;
 }
 
 // ============ HISTORY CARD ============
 // Read-only with result badge and menu for corrections
 interface HistoryCardProps {
   bet: Bet;
+  parlaySlip?: ParlaySlip;
   onEdit: (bet: Bet) => void;
   onResultChange: (bet: Bet, result: BetResult, previousResult: BetResult) => void;
   onDelete: (bet: Bet) => void;
 }
 
-function HistoryCard({ bet, onEdit, onResultChange, onDelete }: HistoryCardProps) {
+function HistoryCard({ bet, parlaySlip, onEdit, onResultChange, onDelete }: HistoryCardProps) {
   const config = resultConfig[bet.result];
   
   // Random stamp rotation for realistic hand-stamped look - re-randomizes when result changes
@@ -622,16 +667,16 @@ function HistoryCard({ bet, onEdit, onResultChange, onDelete }: HistoryCardProps
                 disabled={bet.result === "win"}
                 className={cn(bet.result === "win" && "opacity-50")}
               >
-                {bet.result === "win" ? <Check className="h-4 w-4 mr-2" /> : <Check className="h-4 w-4 mr-2 text-green-600" />}
-                Change to Win {bet.result === "win" && "✓"}
+              {bet.result === "win" ? <Check className="h-4 w-4 mr-2" /> : <Check className="h-4 w-4 mr-2 text-profit" />}
+              Change to Win {bet.result === "win" && "✓"}
               </DropdownMenuItem>
               <DropdownMenuItem 
                 onClick={() => onResultChange(bet, "loss", bet.result)}
                 disabled={bet.result === "loss"}
                 className={cn(bet.result === "loss" && "opacity-50")}
               >
-                {bet.result === "loss" ? <Check className="h-4 w-4 mr-2" /> : <X className="h-4 w-4 mr-2 text-red-600" />}
-                Change to Loss {bet.result === "loss" && "✓"}
+              {bet.result === "loss" ? <Check className="h-4 w-4 mr-2" /> : <X className="h-4 w-4 mr-2 text-loss" />}
+              Change to Loss {bet.result === "loss" && "✓"}
               </DropdownMenuItem>
               <DropdownMenuItem 
                 onClick={() => onResultChange(bet, "push", bet.result)}
@@ -652,19 +697,19 @@ function HistoryCard({ bet, onEdit, onResultChange, onDelete }: HistoryCardProps
             </DropdownMenuSubContent>
           </DropdownMenuSub>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => onDelete(bet)} className="text-red-600">
-            <Trash2 className="h-4 w-4 mr-2" />
-            Delete
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+          <DropdownMenuItem onClick={() => onDelete(bet)} className="text-destructive">
+          <Trash2 className="h-4 w-4 mr-2" />
+          Delete
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
     </div>
   );
 
   // No action footer for history - just the static result
   const footer = null;
 
-  return <BetCardBase bet={bet} headerRight={headerRight} footer={footer} mode="settled" />;
+  return <BetCardBase bet={bet} headerRight={headerRight} footer={footer} mode="settled" parlaySlip={parlaySlip} />;
 }
 
 // ============ HISTORY FILTER TYPES ============
@@ -680,9 +725,19 @@ export function BetList({
 } = {}) {
   const { data: bets, isLoading, error } = useBets();
   const { data: balances } = useBalances();
+  const { data: parlaySlips } = useParlaySlips();
   const updateResult = useUpdateBetResult();
   const deleteBet = useDeleteBet();
   const createBet = useCreateBet();
+
+  // Map logged_bet_id → ParlaySlip for parlay leg lookups
+  const slipByBetId = useMemo(() => {
+    const map = new Map<string, ParlaySlip>();
+    parlaySlips?.forEach((slip) => {
+      if (slip.logged_bet_id) map.set(slip.logged_bet_id, slip);
+    });
+    return map;
+  }, [parlaySlips]);
   const [editingBet, setEditingBet] = useState<Bet | null>(null);
   const [activeTab, setActiveTab] = useState<"pending" | "history">("pending");
   
@@ -800,6 +855,7 @@ export function BetList({
       stake: bet.stake,
       boost_percent: bet.boost_percent || undefined,
       winnings_cap: bet.winnings_cap || undefined,
+      payout_override: bet.payout_override || undefined,
       notes: bet.notes || undefined,
       opposing_odds: bet.opposing_odds || undefined,
       event_date: bet.event_date || undefined,
@@ -988,9 +1044,9 @@ export function BetList({
               {visiblePendingCount > 0 && (
                 <span className={cn(
                   "text-xs font-mono font-semibold px-1.5 rounded",
-                  activeTab === "pending" 
-                    ? "bg-[#C4A35A]/20 text-[#8B7355]" 
-                    : "bg-[#C4A35A]/10 text-[#8B7355]/70"
+                  activeTab === "pending"
+                    ? "bg-pending/20 text-pending"
+                    : "bg-pending/10 text-pending/70"
                 )}>
                   {visiblePendingCount}
                 </span>
@@ -1035,7 +1091,7 @@ export function BetList({
                   <span className="ml-auto text-xs text-muted-foreground">
                     Balance: <span className="font-mono font-semibold text-foreground">{formatCurrency(selectedBalance.balance)}</span>
                     {pendingCashForBook.length > 0 && (
-                      <> · Open: <span className="font-mono font-semibold text-[#C4A35A]">{formatCurrency(pendingCashForBook.reduce((s, b) => s + b.stake, 0))}</span></>
+                      <> · Open: <span className="font-mono font-semibold text-pending">{formatCurrency(pendingCashForBook.reduce((s, b) => s + b.stake, 0))}</span></>
                     )}
                   </span>
                 )}
@@ -1091,7 +1147,7 @@ export function BetList({
                             View Past Bets
                           </Button>
                           <Button asChild variant="outline" className="h-10 sm:flex-1">
-                            <Link href="/scanner/straight_bets">
+                            <Link href="/">
                               Find a Play
                               <ArrowRight className="ml-2 h-4 w-4" />
                             </Link>
@@ -1099,7 +1155,7 @@ export function BetList({
                         </>
                       ) : (
                         <Button asChild className="h-10 sm:w-auto">
-                          <Link href="/scanner/straight_bets">
+                          <Link href="/">
                             Find a Play
                             <ArrowRight className="ml-2 h-4 w-4" />
                           </Link>
@@ -1148,7 +1204,7 @@ export function BetList({
                         </Button>
                       ) : settledBets.length === 0 ? (
                         <Button asChild className="h-10 sm:w-auto">
-                          <Link href="/scanner/straight_bets">
+                          <Link href="/">
                             Find a Play
                             <ArrowRight className="ml-2 h-4 w-4" />
                           </Link>
@@ -1176,7 +1232,7 @@ export function BetList({
                 <p
                   className={cn(
                     "font-mono font-semibold",
-                    pendingEvTotal >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]",
+                    pendingEvTotal >= 0 ? "text-profit" : "text-loss",
                   )}
                 >
                   {pendingEvTotal >= 0 ? "+" : ""}
@@ -1219,6 +1275,7 @@ export function BetList({
                   <PendingCard
                     key={bet.id}
                     bet={bet}
+                    parlaySlip={slipByBetId.get(bet.id)}
                     onEdit={setEditingBet}
                     onResultChange={handleResultChange}
                     onDelete={handleDeleteWithUndo}
@@ -1247,6 +1304,7 @@ export function BetList({
                   <HistoryCard
                     key={bet.id}
                     bet={bet}
+                    parlaySlip={slipByBetId.get(bet.id)}
                     onEdit={setEditingBet}
                     onResultChange={handleResultChange}
                     onDelete={handleDeleteWithUndo}

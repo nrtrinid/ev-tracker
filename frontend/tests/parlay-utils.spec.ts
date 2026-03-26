@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
 
-import { buildParlayEventSummary, buildParlayPreview, getParlayRecommendedStake } from "@/lib/parlay-utils";
+import {
+  buildParlayEventSummary,
+  buildParlayPreview,
+  getParlayRecommendedStake,
+  isPickEmParlayLeg,
+} from "@/lib/parlay-utils";
 import type { ParlayCartLeg } from "@/lib/types";
 
 const STRAIGHT_LEG: ParlayCartLeg = {
@@ -108,6 +113,7 @@ test.describe("parlay utils", () => {
     });
 
     expect(preview).not.toBeNull();
+    expect(preview?.slipMode).toBe("standard");
     expect(preview?.legCount).toBe(2);
     expect(preview?.combinedAmericanOdds).toBeGreaterThan(300);
     expect(preview?.totalPayout).toBeGreaterThan(30);
@@ -246,5 +252,32 @@ test.describe("parlay utils", () => {
     expect(preview?.baseKellyFraction).toBe(0);
     expect(preview?.rawKellyStake).toBeNull();
     expect(preview?.stealthKellyStake).toBeNull();
+  });
+
+  test("pick'em-only cart uses pickem_notes preview without combined odds or warnings", async () => {
+    const pickLeg: ParlayCartLeg = {
+      ...PROP_LEG,
+      id: "pick:1",
+      selectionMeta: { pickEmComparisonKey: "k1" },
+    };
+    const pickLeg2: ParlayCartLeg = {
+      ...PROP_LEG,
+      id: "pick:2",
+      selectionKey: "evt-9|player_points|x|over|20",
+      sourceSelectionKey: "evt-9|player_points|x|over|20",
+      selectionMeta: { pickEmComparisonKey: "k2" },
+      sportsbook: "FanDuel",
+    };
+
+    expect(isPickEmParlayLeg(pickLeg)).toBe(true);
+    expect(isPickEmParlayLeg(PROP_LEG)).toBe(false);
+
+    const preview = buildParlayPreview([pickLeg, pickLeg2], 10);
+    expect(preview?.slipMode).toBe("pickem_notes");
+    expect(preview?.combinedAmericanOdds).toBeNull();
+    expect(preview?.totalPayout).toBeNull();
+    expect(preview?.estimateAvailable).toBe(false);
+    expect(preview?.warnings).toHaveLength(0);
+    expect(getParlayRecommendedStake(preview)).toBeNull();
   });
 });

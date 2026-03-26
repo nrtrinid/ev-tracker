@@ -53,9 +53,9 @@ async def test_uses_america_phoenix_timezone_when_available(monkeypatch):
     assert scheduler.started is True
 
     scan_jobs = [j for j in scheduler.jobs if j["func"] == main._run_scheduled_scan_job]
-    assert len(scan_jobs) == 2
+    assert len(scan_jobs) == 1
     assert all(getattr(j["trigger"], "timezone", None) == main.PHOENIX_TZ for j in scan_jobs)
-    assert [(j["trigger"].hour, j["trigger"].minute) for j in scan_jobs] == [(5, 30), (14, 30)]
+    assert [(j["trigger"].hour, j["trigger"].minute) for j in scan_jobs] == [(15, 30)]
 
     auto_settle_jobs = [j for j in scheduler.jobs if j["func"] == main._run_auto_settler_job]
     assert len(auto_settle_jobs) == 1
@@ -91,41 +91,36 @@ async def test_skips_scheduled_scans_cleanly_if_phoenix_zone_cannot_load(monkeyp
 async def test_scheduled_scan_job_continues_if_one_sport_scan_throws(monkeypatch):
     main = import_main_for_tests(monkeypatch)
 
-    called = []
+    called = {"count": 0}
 
-    async def fake_get_cached_or_scan(sport, source="unknown"):
-        called.append(sport)
-        if sport == "bad_sport":
-            raise RuntimeError("boom")
-        return {"sides": [], "events_fetched": 1, "events_with_both_books": 1}
+    async def _fake_daily_board_drop(*_args, **_kwargs):
+        called["count"] += 1
+        return {"ok": True, "props_sides": 0, "selected_event_ids": []}
 
-    import services.odds_api as odds_api
-    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["good1", "bad_sport", "good2"], raising=True)
-    monkeypatch.setattr(odds_api, "get_cached_or_scan", fake_get_cached_or_scan, raising=True)
+    import services.daily_board as daily_board
+    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
 
     await main._run_scheduled_scan_job()
 
-    assert called == ["good1", "bad_sport", "good2"]
+    assert called["count"] == 1
 
 
 @pytest.mark.asyncio
 async def test_scheduled_scan_job_calls_get_cached_or_scan_for_all_supported_sports(monkeypatch):
     main = import_main_for_tests(monkeypatch)
 
-    called = []
+    called = {"count": 0}
 
-    async def fake_get_cached_or_scan(sport, source="unknown"):
-        called.append(sport)
-        return {"sides": [1], "events_fetched": 1, "events_with_both_books": 1}
+    async def _fake_daily_board_drop(*_args, **_kwargs):
+        called["count"] += 1
+        return {"ok": True, "props_sides": 1, "selected_event_ids": ["evt-1"]}
 
-    import services.odds_api as odds_api
-    sports = ["s1", "s2", "s3", "s4"]
-    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", sports, raising=True)
-    monkeypatch.setattr(odds_api, "get_cached_or_scan", fake_get_cached_or_scan, raising=True)
+    import services.daily_board as daily_board
+    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
 
     await main._run_scheduled_scan_job()
 
-    assert called == sports
+    assert called["count"] == 1
 
 
 @pytest.mark.asyncio
@@ -760,35 +755,16 @@ async def test_scan_latest_enriches_duplicate_state_from_cached_payload(monkeypa
 async def test_scheduled_scan_ops_status_includes_autolog_summary(monkeypatch):
     main = import_main_for_tests(monkeypatch)
 
-    import services.odds_api as odds_api
-    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)
+    async def _fake_daily_board_drop(*_args, **_kwargs):
+        return {"ok": True, "props_sides": 0, "selected_event_ids": []}
 
-    async def _fake_cached_or_scan(_sport, source="unknown"):
-        return {
-            "sides": [],
-            "events_fetched": 0,
-            "events_with_both_books": 0,
-            "api_requests_remaining": "99",
-        }
-
-    monkeypatch.setattr(odds_api, "get_cached_or_scan", _fake_cached_or_scan, raising=True)
-
-    async def _fake_autolog(db, *, run_id: str, sides: list[dict]):
-        return {
-            "enabled": True,
-            "configured": True,
-            "run_id": run_id,
-            "inserted_total": 0,
-            "selected_by_cohort": {main.LOW_EDGE_COHORT: 0, main.HIGH_EDGE_COHORT: 0},
-        }
-
-    monkeypatch.setattr(main, "_run_longshot_autolog_for_sides", _fake_autolog, raising=True)
+    import services.daily_board as daily_board
+    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
 
     await main._run_scheduled_scan_job()
 
     snapshot = main.app.state.ops_status["last_scheduler_scan"]
     assert isinstance(snapshot, dict)
-    assert "autolog_summary" in snapshot
-    assert snapshot["autolog_summary"]["enabled"] is True
-    assert snapshot["autolog_summary"]["configured"] is True
+    assert snapshot.get("board_drop") is True
+    assert isinstance(snapshot.get("result"), (dict, type(None)))
 

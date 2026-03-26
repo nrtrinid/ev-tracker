@@ -3,10 +3,13 @@ export function getStandardEdgeColorClass(evPercentage: number): string {
     return "text-muted-foreground";
   }
   if (evPercentage < 3.5) {
-    return "text-[#4A7C59]";
+    // semantic profit token — adapts between light (#4A7C59) and dark (#52A66B)
+    return "text-profit";
   }
   if (evPercentage < 5.5) {
-    return "text-[#3B6C8E]";
+    // steel blue — dark-aware
+    return "text-[#3B6C8E] dark:text-[#6BAED6]";
   }
-  return "text-[#9A3F86]";
+  // premium purple — dark-aware
+  return "text-[#9A3F86] dark:text-[#C47DD8]";
 }

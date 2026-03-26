@@ -39,7 +39,7 @@ import { ScannerScopeBar } from "./components/ScannerScopeBar";
 import { ScannerStatusBar } from "./components/ScannerStatusBar";
 import { ScannerPreScanEmptyState } from "./components/ScannerPreScanEmptyState";
 import { buildPickEmBoardCards } from "./pickem-board";
-import type { PickEmBoardCard, PickEmSlipPick } from "./pickem-board";
+import type { PickEmBoardCard } from "./pickem-board";
 import { getScannerSurface } from "./scanner-surfaces";
 import { rankScannerSidesByLens } from "./scanner-lenses";
 import {
@@ -49,6 +49,7 @@ import {
 import { canAddScannerLensToParlayCart, type ScannerLens } from "./scanner-ui-model";
 import {
   buildParlayCartLeg,
+  buildParlayCartLegFromPickEmCard,
   buildScannerLogBetInitialValues,
   parseScannerCustomBoostInput,
   toggleScannerBookSelection,
@@ -605,22 +606,48 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
     }
     const result = addCartLeg(buildParlayCartLeg(side));
     if (!result.added) {
-      toast.error(
+      const msg =
         result.reason === "sportsbook_mismatch"
           ? "Parlay Builder only supports one sportsbook per slip."
-          : "That leg is already in your cart."
-      );
+          : result.reason === "slip_kind_mismatch"
+            ? "Pick'em slips and priced parlay slips can't be mixed. Clear your cart to switch."
+            : "That leg is already in your cart.";
+      toast.error(msg);
       return;
     }
     toast.success(`Added to parlay cart (${cart.length + 1})`);
   };
 
-  const handleAddPickEmToSlip = (pick: PickEmSlipPick) => {
+  const handleAddPickEmToSlip = (card: PickEmBoardCard) => {
+    if (!canAddScannerLensToParlayCart(effectiveLens)) {
+      toast.error("Parlay cart is only available from Standard and Qualifier lines.");
+      return;
+    }
+    const leg = buildParlayCartLegFromPickEmCard(card);
+    if (!leg) {
+      toast.error("Could not add this pick — missing best price for the consensus side.");
+      return;
+    }
+    const result = addCartLeg(leg);
+    if (!result.added) {
+      const msg =
+        result.reason === "sportsbook_mismatch"
+          ? "Parlay Builder only supports one sportsbook per slip."
+          : result.reason === "slip_kind_mismatch"
+            ? "Pick'em slips and priced parlay slips can't be mixed. Clear your cart to switch."
+            : "That leg is already in your cart.";
+      toast.error(msg);
+      return;
+    }
     setPickEmSlipComparisonKeys((current) => (
-      current.includes(pick.comparisonKey) ? current : [...current, pick.comparisonKey]
+      current.includes(card.comparison_key) ? current : [...current, card.comparison_key]
     ));
-    toast.success("Added to slip", {
-      description: `${pick.playerName} ${pick.selectedSide} ${pick.lineValue} (${Math.round(pick.selectedPercentage * 100)}%)`,
+    const pct = Math.round(
+      (card.consensus_side === "over" ? card.consensus_over_prob : card.consensus_under_prob) * 100,
+    );
+    const sideLabel = card.consensus_side === "over" ? "Over" : "Under";
+    toast.success(`Added to parlay cart (${cart.length + 1})`, {
+      description: `${card.player_name} ${sideLabel} ${card.line_value} (${pct}%)`,
     });
   };
 

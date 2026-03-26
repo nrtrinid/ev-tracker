@@ -11,7 +11,7 @@ export default function ScannerLayout({ children }: { children: React.ReactNode 
 
   return (
     <>
-      <div className="sticky top-[56px] z-10 border-b border-border bg-background/90 backdrop-blur-sm">
+      <div className="sticky top-[49px] z-10 border-b border-border bg-background/90 backdrop-blur-sm">
         <div className="container mx-auto flex max-w-2xl gap-2 px-4 py-3">
           {PUBLIC_SCANNER_SURFACES.map((surface) => {
             const isActive = pathname === surface.path;

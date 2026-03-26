@@ -42,7 +42,7 @@ function formatPercent(value: number | null | undefined) {
 
 function buildParlayLogInitialValues(cart: ParlayCartLeg[], stake: number | null): ScannedBetData | undefined {
   const preview = buildParlayPreview(cart, stake ?? Number.NaN);
-  if (!preview) {
+  if (!preview || preview.slipMode === "pickem_notes" || preview.combinedAmericanOdds == null) {
     return undefined;
   }
 
@@ -130,7 +130,11 @@ export default function ParlayPage() {
   }, [autoFillKey, cart.length, cartStakeInput, parsedStake, recommendedStake, setCartStakeInput]);
 
   async function handleOpenLogDrawer() {
-    if (!preview || preview.stake == null || preview.stake <= 0) {
+    if (!preview || preview.slipMode === "pickem_notes") {
+      toast.error("Pick'em slips are for local notes only. Log entries in your Pick'em app.");
+      return;
+    }
+    if (preview.stake == null || preview.stake <= 0) {
       toast.error("Enter a valid stake before logging this parlay.");
       return;
     }
@@ -140,17 +144,25 @@ export default function ParlayPage() {
   }
 
   const hasCart = cart.length > 0;
-  const canOpenLogDrawer = hasCart && preview?.stake != null && preview.stake > 0;
+  const isPickEmNotesSlip = preview?.slipMode === "pickem_notes";
+  const canOpenLogDrawer =
+    hasCart &&
+    preview != null &&
+    preview.slipMode !== "pickem_notes" &&
+    preview.stake != null &&
+    preview.stake > 0;
 
   return (
     <main className="min-h-screen bg-background">
-      <div className="container mx-auto max-w-4xl space-y-4 px-4 py-6 pb-24">
+      <div className="container mx-auto max-w-2xl space-y-4 px-4 py-6 pb-24">
         <JourneyCoach route="parlay" />
 
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold">Parlay Builder</h1>
           <p className="text-sm text-muted-foreground">
-            Build one-book parlays from straight bets and sportsbook props, review the pricing, and log the finished ticket into your tracker when you place it.
+            {isPickEmNotesSlip
+              ? "Pick'em slip — local notes only. Pricing and payouts are handled in your Pick'em app."
+              : "Add legs from Markets, review the pricing and EV estimate, then log the slip when you place it."}
           </p>
         </div>
 
@@ -160,41 +172,56 @@ export default function ParlayPage() {
               <div>
                 <h2 className="font-semibold">Active Slip</h2>
                 <p className="text-xs text-muted-foreground">
-                  {lockedSportsbook
-                    ? `Sportsbook lock: ${lockedSportsbook}`
-                    : "Add the first leg from the scanner to lock this slip to a sportsbook."}
+                  {isPickEmNotesSlip
+                    ? "Pick'em legs can use different sportsbooks — each line shows where the best price was."
+                    : lockedSportsbook
+                      ? `Sportsbook lock: ${lockedSportsbook}`
+                      : "Add the first leg from Markets to lock this slip to a sportsbook."}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  This builder stays local on this device until you log the parlay.
+                  {isPickEmNotesSlip
+                    ? "This slip is not a priced parlay; it stays on this device until you clear it."
+                    : "This builder stays local on this device until you log the parlay."}
                 </p>
               </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            {isPickEmNotesSlip ? (
+              <div className="rounded-xl border border-border/80 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                Combined odds, payout, and EV are hidden for Pick&apos;em slips — your app sets the real price and payout.
+              </div>
+            ) : null}
             <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div
+                className={`grid gap-3 ${isPickEmNotesSlip ? "grid-cols-1 sm:max-w-[200px]" : "grid-cols-2 sm:grid-cols-4"}`}
+              >
                 <div className="rounded-lg border border-border bg-muted/30 px-3 py-3">
                   <p className="text-xs text-muted-foreground">Legs</p>
                   <p className="mt-1 text-lg font-semibold">{preview?.legCount ?? 0}</p>
                 </div>
-                <div className="rounded-lg border border-border bg-muted/30 px-3 py-3">
-                  <p className="text-xs text-muted-foreground">Book odds</p>
-                  <p className="mt-1 text-lg font-semibold">
-                    {preview ? formatOdds(preview.combinedAmericanOdds) : "-"}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-border bg-muted/30 px-3 py-3">
-                  <p className="text-xs text-muted-foreground">Payout</p>
-                  <p className="mt-1 text-lg font-semibold">
-                    {preview?.totalPayout != null ? formatCurrency(preview.totalPayout) : "-"}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-border bg-muted/30 px-3 py-3">
-                  <p className="text-xs text-muted-foreground">Profit</p>
-                  <p className="mt-1 text-lg font-semibold text-[#2E5D39]">
-                    {preview?.profit != null ? formatCurrency(preview.profit) : "-"}
-                  </p>
-                </div>
+                {!isPickEmNotesSlip ? (
+                  <>
+                    <div className="rounded-lg border border-border bg-muted/30 px-3 py-3">
+                      <p className="text-xs text-muted-foreground">Odds</p>
+                      <p className="mt-1 text-lg font-semibold">
+                        {preview?.combinedAmericanOdds != null ? formatOdds(preview.combinedAmericanOdds) : "-"}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-border bg-muted/30 px-3 py-3">
+                      <p className="text-xs text-muted-foreground">Payout</p>
+                      <p className="mt-1 text-lg font-semibold">
+                        {preview?.totalPayout != null ? formatCurrency(preview.totalPayout) : "-"}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-border bg-muted/30 px-3 py-3">
+                      <p className="text-xs text-muted-foreground">Profit</p>
+                      <p className="mt-1 text-lg font-semibold text-profit">
+                        {preview?.profit != null ? formatCurrency(preview.profit) : "-"}
+                      </p>
+                    </div>
+                  </>
+                ) : null}
               </div>
 
               <div className="space-y-2 rounded-xl border border-border bg-background px-4 py-3">
@@ -217,50 +244,52 @@ export default function ParlayPage() {
               </div>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="rounded-xl border border-border bg-background px-4 py-3">
-                <p className="text-xs text-muted-foreground">Estimated fair odds</p>
-                <p className="mt-1 text-lg font-semibold">
-                  {preview?.estimateAvailable && preview.estimatedFairAmericanOdds != null
-                    ? formatOdds(preview.estimatedFairAmericanOdds)
-                    : "Unavailable"}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {preview?.estimateAvailable
-                    ? "Independence estimate from leg reference prices."
-                    : preview?.estimateUnavailableReason === "Correlation warning"
-                    ? "Same-event or clearly correlated legs suppress the estimate."
-                    : preview?.estimateUnavailableReason === "Missing reference price"
-                    ? "At least one leg is missing a reference price."
-                    : "Add a slip to see whether fair-odds estimation is available."}
-                </p>
-              </div>
+            {isPickEmNotesSlip ? null : (
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-xl border border-border bg-background px-4 py-3">
+                  <p className="text-xs text-muted-foreground">Estimated fair odds</p>
+                  <p className="mt-1 text-lg font-semibold">
+                    {preview?.estimateAvailable && preview.estimatedFairAmericanOdds != null
+                      ? formatOdds(preview.estimatedFairAmericanOdds)
+                      : "Unavailable"}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {preview?.estimateAvailable
+                      ? "Independence estimate from leg reference prices."
+                      : preview?.estimateUnavailableReason === "Correlation warning"
+                        ? "Same-event or clearly correlated legs suppress the estimate."
+                        : preview?.estimateUnavailableReason === "Missing reference price"
+                          ? "At least one leg is missing a reference price."
+                          : "Add a slip to see whether fair-odds estimation is available."}
+                  </p>
+                </div>
 
-              <div className="rounded-xl border border-border bg-background px-4 py-3">
-                <p className="text-xs text-muted-foreground">Estimated EV</p>
-                <p className="mt-1 text-lg font-semibold">
-                  {preview?.estimateAvailable ? formatPercent(preview.estimatedEvPercent) : "Unavailable"}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {preview?.estimateAvailable
-                    ? `Based on ${preview.legCount} uncorrelated reference prices.`
-                    : "The book payout still shows above; only the fair-odds estimate is hidden."}
-                </p>
+                <div className="rounded-xl border border-border bg-background px-4 py-3">
+                  <p className="text-xs text-muted-foreground">Estimated EV</p>
+                  <p className="mt-1 text-lg font-semibold">
+                    {preview?.estimateAvailable ? formatPercent(preview.estimatedEvPercent) : "Unavailable"}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {preview?.estimateAvailable
+                      ? `Based on ${preview.legCount} uncorrelated reference prices.`
+                      : "The book payout still shows above; only the fair-odds estimate is hidden."}
+                  </p>
+                </div>
               </div>
-            </div>
+            )}
 
             {preview?.warnings.length ? (
-              <div className="rounded-xl border border-[#B85C38]/20 bg-[#B85C38]/10 px-4 py-3">
-                <div className="flex items-center gap-2 text-[#8B3D20]">
+              <div className="rounded-xl border border-destructive/20 bg-destructive/10 px-4 py-3">
+                <div className="flex items-center gap-2 text-destructive">
                   <AlertTriangle className="h-4 w-4" />
                   <p className="text-sm font-semibold">Correlation warnings</p>
                 </div>
                 <div className="mt-3 space-y-2">
                   {preview.warnings.map((warning) => (
-                    <div key={`${warning.code}-${warning.relatedLegIds.join("-")}`} className="rounded-lg border border-[#B85C38]/15 bg-background/60 px-3 py-2">
+                    <div key={`${warning.code}-${warning.relatedLegIds.join("-")}`} className="rounded-lg border border-destructive/15 bg-background/60 px-3 py-2">
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-sm font-medium text-foreground">{warning.title}</p>
-                        <span className="rounded-full border border-[#B85C38]/20 px-2 py-0.5 text-[11px] uppercase tracking-[0.14em] text-[#8B3D20]">
+                        <span className="rounded-full border border-destructive/20 px-2 py-0.5 text-[11px] uppercase tracking-[0.14em] text-destructive">
                           {warning.severity}
                         </span>
                       </div>
@@ -271,7 +300,8 @@ export default function ParlayPage() {
               </div>
             ) : null}
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap gap-2">
               <Button
                 onClick={handleOpenLogDrawer}
                 disabled={!canOpenLogDrawer}
@@ -286,6 +316,12 @@ export default function ParlayPage() {
               >
                 Clear Cart
               </Button>
+              </div>
+              {isPickEmNotesSlip ? (
+                <p className="text-xs text-muted-foreground">
+                  Review &amp; Log is for priced parlays only. Track Pick&apos;em entries in your app; this list is for your records on this device.
+                </p>
+              ) : null}
             </div>
           </CardContent>
         </Card>
@@ -294,9 +330,9 @@ export default function ParlayPage() {
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="font-semibold">Cart Legs</h2>
+                <h2 className="font-semibold">Slip Legs</h2>
                 <p className="text-xs text-muted-foreground">
-                  Same-event legs are allowed, but they trigger warnings and suppress fair-odds estimates.
+                  Same-event legs are allowed but trigger correlation warnings and suppress fair-odds estimates.
                 </p>
               </div>
             </div>
@@ -304,7 +340,7 @@ export default function ParlayPage() {
           <CardContent className="space-y-3">
             {cart.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                Add legs from the scanner to start building a one-book parlay slip.
+                Browse Markets and add legs to build your parlay slip.
               </p>
             ) : (
               cart.map((leg) => (
@@ -315,15 +351,28 @@ export default function ParlayPage() {
                   <div className="space-y-1">
                     <p className="text-sm font-semibold">{leg.display}</p>
                     <p className="text-xs text-muted-foreground">
-                      {leg.surface === "player_props" ? "Player Props" : "Straight Bets"} | {leg.sportsbook}
+                      {leg.surface === "player_props" ? "Player Props" : "Game Lines"} · {leg.sportsbook}
                     </p>
                     <p className="text-xs text-muted-foreground">{leg.event}</p>
-                    <div className="flex flex-wrap gap-3 text-xs">
-                      <span className="font-mono text-foreground">{formatOdds(leg.oddsAmerican)}</span>
-                      <span className="text-muted-foreground">
-                        Fair: {leg.referenceOddsAmerican != null ? formatOdds(leg.referenceOddsAmerican) : "Unavailable"}
-                      </span>
-                    </div>
+                    {isPickEmNotesSlip ? (
+                      <p className="text-xs text-muted-foreground">
+                        Best book line:{" "}
+                        <span className="font-mono text-foreground">{formatOdds(leg.oddsAmerican)}</span>
+                        {leg.referenceOddsAmerican != null ? (
+                          <span className="text-muted-foreground">
+                            {" "}
+                            · consensus fair {formatOdds(leg.referenceOddsAmerican)}
+                          </span>
+                        ) : null}
+                      </p>
+                    ) : (
+                      <div className="flex flex-wrap gap-3 text-xs">
+                        <span className="font-mono text-foreground">{formatOdds(leg.oddsAmerican)}</span>
+                        <span className="text-muted-foreground">
+                          Fair: {leg.referenceOddsAmerican != null ? formatOdds(leg.referenceOddsAmerican) : "Unavailable"}
+                        </span>
+                      </div>
+                    )}
                   </div>
                   <Button variant="ghost" size="sm" onClick={() => removeCartLeg(leg.id)}>
                     Remove

@@ -3,7 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import { Toaster } from "sonner";
-import { TopNav } from "@/components/TopNav";
+import { BottomNav } from "@/components/BottomNav";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -18,18 +18,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" className="dark">
       <body className={inter.className}>
         <Providers>
-          <TopNav />
-          {/* Main content area with binding shadow like an open notebook */}
-          <main className="binding-shadow min-h-[calc(100vh-56px)]">
+          <BottomNav />
+          <main className="min-h-screen bg-background pb-20">
             {children}
           </main>
         </Providers>
-        <Toaster 
-          position="top-center" 
-          richColors 
+        <Toaster
+          position="top-center"
+          richColors
           closeButton={false}
           icons={{
             success: <></>,

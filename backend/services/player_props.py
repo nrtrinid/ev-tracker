@@ -39,7 +39,17 @@ PLAYER_PROP_BOOKS = {
     "williamhill_us": "Caesars",
     "fanduel": "FanDuel",
 }
-PLAYER_PROP_REFERENCE_SOURCE = "market_median"
+PLAYER_PROP_REFERENCE_SOURCE = "market_weighted_consensus"
+
+# Trust weights for weighted consensus probability estimation.
+# Higher weight = sharper / more trusted for true-probability anchoring.
+# betonlineag: sharpest book in the set, high-trust probability anchor.
+# bovada: decent line-setter, above pure follower level.
+# All other books default to 1.0 (follower / recreational sportsbook).
+PLAYER_PROP_REFERENCE_BOOK_WEIGHTS: dict[str, float] = {
+    "betonlineag": 3.0,
+    "bovada": 1.5,
+}
 PLAYER_PROP_MIN_SOLID_REFERENCE_BOOKMAKERS = 2
 PLAYER_PROP_MIN_REFERENCE_BOOKMAKERS_ENV = "PLAYER_PROP_MIN_REFERENCE_BOOKMAKERS"
 PLAYER_PROP_FALLBACK_MAX_EVENTS = 3
@@ -287,6 +297,48 @@ def _devig_pair_probabilities(over_outcome: dict, under_outcome: dict) -> dict[s
     }
 
 
+def _weighted_consensus_prob(
+    reference_probs: list[float],
+    reference_bookmakers: list[str],
+    *,
+    outlier_threshold: float = 0.12,
+) -> float:
+    """Weighted consensus probability that favours sharper books.
+
+    Steps:
+    1. Compute an unweighted median as the outlier anchor.
+    2. Exclude any book whose de-vigged prob is further than *outlier_threshold*
+       from the anchor (protects against stale or mis-posted lines).
+    3. Return a weighted mean of in-band probs using PLAYER_PROP_REFERENCE_BOOK_WEIGHTS
+       (betonlineag→3×, bovada→1.5×, others→1×).
+
+    Falls back to the unweighted median when all probs are outliers or the
+    in-band weight sum is zero.
+    """
+    if not reference_probs:
+        raise ValueError("reference_probs must be non-empty")
+    if len(reference_probs) == 1:
+        return reference_probs[0]
+
+    anchor = float(median(reference_probs))
+
+    in_band_probs: list[float] = []
+    in_band_weights: list[float] = []
+    for prob, book_key in zip(reference_probs, reference_bookmakers):
+        if abs(prob - anchor) <= outlier_threshold:
+            in_band_probs.append(prob)
+            in_band_weights.append(PLAYER_PROP_REFERENCE_BOOK_WEIGHTS.get(book_key, 1.0))
+
+    if not in_band_probs:
+        return anchor  # all probs were outliers — fall back to median
+
+    total_weight = sum(in_band_weights)
+    if total_weight <= 0:
+        return anchor
+
+    return sum(p * w for p, w in zip(in_band_probs, in_band_weights)) / total_weight
+
+
 def _reference_american_from_true_prob(true_prob: float) -> int | None:
     if true_prob <= 0 or true_prob >= 1:
         return None
@@ -332,6 +384,7 @@ def _resolve_player_context(
 
 
 def _confidence_label_for_reference_count(reference_count: int) -> str:
+    """Legacy label based solely on book count. Kept for any callers not yet upgraded."""
     if reference_count >= 4:
         return "elite"
     if reference_count >= 3:
@@ -339,6 +392,46 @@ def _confidence_label_for_reference_count(reference_count: int) -> str:
     if reference_count >= PLAYER_PROP_MIN_SOLID_REFERENCE_BOOKMAKERS:
         return "solid"
     return "thin"
+
+
+def _compute_confidence(
+    *,
+    reference_bookmakers: list[str],
+    reference_probs: list[float],
+) -> tuple[str, float, float]:
+    """Compute (confidence_label, confidence_score, prob_std).
+
+    confidence_score (0–1) weighs three factors:
+    - Book count:        0.25 per reference book, capped at 1.0
+    - BetOnline anchor: +0.20 bonus when "betonlineag" is in the reference set
+    - Dispersion:       penalty = min(prob_std × 4, 0.40) — punishes noisy consensus
+
+    Label thresholds:  ≥0.75 → elite | ≥0.55 → high | ≥0.30 → solid | else → thin
+    """
+    n = len(reference_bookmakers)
+    if n >= 2:
+        mean_p = sum(reference_probs) / n
+        prob_std = (sum((p - mean_p) ** 2 for p in reference_probs) / n) ** 0.5
+    else:
+        prob_std = 0.0
+
+    base = min(n / 4.0, 1.0)
+    anchor_bonus = 0.20 if "betonlineag" in reference_bookmakers else 0.0
+    dispersion_penalty = min(prob_std * 4.0, 0.40)
+
+    raw_score = base + anchor_bonus - dispersion_penalty
+    confidence_score = round(max(0.0, min(1.0, raw_score)), 4)
+
+    if confidence_score >= 0.75:
+        label = "elite"
+    elif confidence_score >= 0.55:
+        label = "high"
+    elif confidence_score >= 0.30:
+        label = "solid"
+    else:
+        label = "thin"
+
+    return label, confidence_score, round(prob_std, 4)
 
 
 def _american_price_quality(american: float | int | None) -> float | None:
@@ -528,7 +621,7 @@ def _build_prop_side_candidates(
                         continue
 
                     reference_count = len(reference_bookmakers)
-                    true_prob = float(median(reference_probs))
+                    true_prob = _weighted_consensus_prob(reference_probs, reference_bookmakers)
                     reference_odds = _reference_american_from_true_prob(true_prob)
                     if reference_odds is None:
                         continue
@@ -537,6 +630,11 @@ def _build_prop_side_candidates(
                         book_odds = float(outcome["price"])
                     except Exception:
                         continue
+
+                    confidence_label, confidence_score, prob_std = _compute_confidence(
+                        reference_bookmakers=reference_bookmakers,
+                        reference_probs=reference_probs,
+                    )
 
                     book_decimal = american_to_decimal(book_odds)
                     ev_percentage = round((true_prob * book_decimal - 1) * 100, 2)
@@ -594,7 +692,9 @@ def _build_prop_side_candidates(
                             "reference_source": PLAYER_PROP_REFERENCE_SOURCE,
                             "reference_bookmakers": reference_bookmakers,
                             "reference_bookmaker_count": reference_count,
-                            "confidence_label": _confidence_label_for_reference_count(reference_count),
+                            "confidence_label": confidence_label,
+                            "confidence_score": confidence_score,
+                            "prob_std": prob_std,
                             "book_odds": book_odds,
                             "true_prob": round(true_prob, 4),
                             "base_kelly_fraction": round(kelly_fraction(true_prob, book_decimal), 6),
@@ -616,10 +716,8 @@ def _apply_reference_quality_gate(
     ]
     filtered.sort(
         key=lambda side: (
-            side.get("reference_bookmaker_count", 0) >= PLAYER_PROP_MIN_SOLID_REFERENCE_BOOKMAKERS,
-            side.get("reference_bookmaker_count", 0),
+            side.get("confidence_score", 0.0),
             side["ev_percentage"],
-            side["true_prob"],
         ),
         reverse=True,
     )
@@ -708,7 +806,9 @@ def _build_exact_line_reference_index(
                         "market": market_key,
                         "line_value": line_value,
                         "over_probs": [],
+                        "over_prob_book_keys": [],
                         "under_probs": [],
+                        "under_prob_book_keys": [],
                         "offers": [],
                     },
                 )
@@ -716,7 +816,9 @@ def _build_exact_line_reference_index(
                 true_probs = _devig_pair_probabilities(pair["over"], pair["under"])
                 if true_probs:
                     entry["over_probs"].append(true_probs["over"])
+                    entry["over_prob_book_keys"].append(book_key)
                     entry["under_probs"].append(true_probs["under"])
+                    entry["under_prob_book_keys"].append(book_key)
 
                 over_deeplink, _ = resolve_sportsbook_deeplink(
                     sportsbook=book_display,
@@ -751,18 +853,29 @@ def _build_exact_line_reference_index(
         if not over_probs or not under_probs:
             continue
 
+        over_book_keys = entry.get("over_prob_book_keys") or []
+        under_book_keys = entry.get("under_prob_book_keys") or []
         exact_line_bookmakers = [str(offer["sportsbook"]) for offer in offers if offer.get("sportsbook")]
         exact_line_bookmaker_count = len(exact_line_bookmakers)
         best_over_offer = _pick_best_outcome_offer(offers, "over_odds")
         best_under_offer = _pick_best_outcome_offer(offers, "under_odds")
 
+        consensus_over_prob = _weighted_consensus_prob(over_probs, over_book_keys)
+        consensus_under_prob = _weighted_consensus_prob(under_probs, under_book_keys)
+        confidence_label, confidence_score, prob_std = _compute_confidence(
+            reference_bookmakers=over_book_keys,
+            reference_probs=over_probs,
+        )
+
         finalized = {
             **entry,
             "exact_line_bookmakers": exact_line_bookmakers,
             "exact_line_bookmaker_count": exact_line_bookmaker_count,
-            "consensus_over_prob": round(float(median(over_probs)), 4),
-            "consensus_under_prob": round(float(median(under_probs)), 4),
-            "confidence_label": _confidence_label_for_reference_count(exact_line_bookmaker_count),
+            "consensus_over_prob": round(float(consensus_over_prob), 4),
+            "consensus_under_prob": round(float(consensus_under_prob), 4),
+            "confidence_label": confidence_label,
+            "confidence_score": confidence_score,
+            "prob_std": prob_std,
             "best_over_sportsbook": best_over_offer.get("sportsbook") if best_over_offer else None,
             "best_over_odds": float(best_over_offer["over_odds"]) if best_over_offer and best_over_offer.get("over_odds") is not None else None,
             "best_over_deeplink_url": best_over_offer.get("over_deeplink_url") if best_over_offer else None,
@@ -1098,6 +1211,143 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
         "surface": PLAYER_PROPS_SURFACE,
         "sides": all_sides,
         "prizepicks_cards": prizepicks_cards,
+        "events_fetched": events_fetched,
+        "events_with_both_books": events_with_any_book,
+        "api_requests_remaining": remaining,
+        "diagnostics": diagnostics,
+    }
+
+
+async def scan_player_props_for_event_ids(
+    *,
+    sport: str,
+    event_ids: list[str],
+    markets: list[str],
+    source: str,
+) -> dict:
+    """Scan player props for an explicit list of Odds API event ids.
+
+    Used by the daily-board publisher (totals-driven selection), so it bypasses
+    the ESPN-scoreboard curated matching logic entirely.
+    """
+    if not event_ids:
+        return {
+            "surface": PLAYER_PROPS_SURFACE,
+            "sides": [],
+            "prizepicks_cards": [],
+            "events_fetched": 0,
+            "events_with_both_books": 0,
+            "api_requests_remaining": None,
+            "diagnostics": {
+                "scan_mode": "selected_events",
+                "scan_scope": "explicit_event_ids",
+                "scoreboard_event_count": 0,
+                "odds_event_count": 0,
+                "curated_games": [],
+                "matched_event_count": 0,
+                "unmatched_game_count": 0,
+                "fallback_reason": None,
+                "fallback_event_count": 0,
+                "events_fetched": 0,
+                "events_skipped_pregame": 0,
+                "events_with_results": 0,
+                "candidate_sides_count": 0,
+                "quality_gate_filtered_count": 0,
+                "quality_gate_min_reference_bookmakers": get_player_prop_min_reference_bookmakers(),
+                "sides_count": 0,
+                "markets_requested": markets,
+                "prizepicks_status": "disabled",
+                "prizepicks_message": None,
+                "prizepicks_board_items_count": 0,
+                "prizepicks_exact_line_matches_count": 0,
+                "prizepicks_unmatched_count": 0,
+                "prizepicks_filtered_count": 0,
+            },
+        }
+
+    target_markets = markets or get_player_prop_markets()
+    min_reference_bookmakers = get_player_prop_min_reference_bookmakers()
+    pregame_cutoff = datetime.now(timezone.utc) + timedelta(minutes=1)
+
+    all_sides: list[dict] = []
+    events_with_any_book = 0
+    events_fetched = 0
+    skipped_pregame = 0
+    candidate_sides_count = 0
+    quality_gate_filtered_count = 0
+    remaining: str | None = None
+
+    for raw_event_id in event_ids:
+        event_id = str(raw_event_id or "").strip()
+        if not event_id:
+            continue
+        try:
+            events_fetched += 1
+            event_payload, resp = await _fetch_prop_market_for_event(
+                sport=sport,
+                event_id=event_id,
+                markets=target_markets,
+                source=source,
+            )
+            remaining = resp.headers.get("x-requests-remaining") or resp.headers.get("x-request-remaining") or remaining
+        except httpx.HTTPStatusError as e:
+            if e.response is not None and e.response.status_code == 404:
+                continue
+            raise
+
+        commence = str(event_payload.get("commence_time") or "")
+        if commence:
+            commence_dt = _parse_commence_time(commence)
+            if commence_dt is not None and commence_dt <= pregame_cutoff:
+                skipped_pregame += 1
+                continue
+
+        event_candidates = _build_prop_side_candidates(
+            sport=sport,
+            event_payload=event_payload,
+            target_markets=target_markets,
+            player_context_lookup=None,
+        )
+        candidate_sides_count += len(event_candidates)
+        event_sides = _apply_reference_quality_gate(
+            event_candidates,
+            min_reference_bookmakers=min_reference_bookmakers,
+        )
+        quality_gate_filtered_count += max(0, len(event_candidates) - len(event_sides))
+        if event_sides:
+            events_with_any_book += 1
+            all_sides.extend(event_sides)
+
+    diagnostics = {
+        "scan_mode": "selected_events",
+        "scan_scope": "explicit_event_ids",
+        "scoreboard_event_count": 0,
+        "odds_event_count": 0,
+        "curated_games": [],
+        "matched_event_count": 0,
+        "unmatched_game_count": 0,
+        "fallback_reason": None,
+        "fallback_event_count": 0,
+        "events_fetched": events_fetched,
+        "events_skipped_pregame": skipped_pregame,
+        "events_with_results": events_with_any_book,
+        "candidate_sides_count": candidate_sides_count,
+        "quality_gate_filtered_count": quality_gate_filtered_count,
+        "quality_gate_min_reference_bookmakers": min_reference_bookmakers,
+        "sides_count": len(all_sides),
+        "markets_requested": target_markets,
+        "prizepicks_status": "disabled",
+        "prizepicks_message": None,
+        "prizepicks_board_items_count": 0,
+        "prizepicks_exact_line_matches_count": 0,
+        "prizepicks_unmatched_count": 0,
+        "prizepicks_filtered_count": 0,
+    }
+
+    return {
+        "surface": PLAYER_PROPS_SURFACE,
+        "sides": all_sides,
+        "prizepicks_cards": [],
         "events_fetched": events_fetched,
         "events_with_both_books": events_with_any_book,
         "api_requests_remaining": remaining,

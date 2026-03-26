@@ -30,6 +30,7 @@ export interface Bet {
   stake: number;
   boost_percent: number | null;
   winnings_cap: number | null;
+  payout_override?: number | null;
   notes: string | null;
   opposing_odds: number | null;
   result: BetResult;
@@ -249,6 +250,8 @@ export interface PlayerPropMarketSide {
   reference_bookmakers: string[];
   reference_bookmaker_count?: number | null;
   confidence_label?: string | null;
+  confidence_score?: number | null;
+  prob_std?: number | null;
   book_odds: number;
   true_prob: number;
   base_kelly_fraction: number;
@@ -336,6 +339,32 @@ export interface ScanResult {
   api_requests_remaining: string | null;
   scanned_at?: string | null;
   diagnostics?: PlayerPropScanDiagnostics | null;
+}
+
+// ── Board snapshot models ────────────────────────────────────────────────────
+
+export interface BoardSnapshotMeta {
+  snapshot_id: string;
+  snapshot_type: "scheduled" | "manual";
+  scanned_at: string;
+  surfaces_included: ScannerSurface[];
+  sports_included: string[];
+  next_scheduled_drop: string | null;
+  events_scanned: number;
+  total_sides: number;
+}
+
+export interface BoardResponse {
+  meta: BoardSnapshotMeta;
+  game_context?: Record<string, unknown> | null;
+  straight_bets: ScanResult | null;
+  player_props: ScanResult | null;
+}
+
+export interface ScopedRefreshResponse {
+  surface: ScannerSurface;
+  refreshed_at: string;
+  data: ScanResult;
 }
 
 export interface BackendReadiness {
@@ -569,11 +598,15 @@ export interface ParlayWarning {
   relatedLegIds: string[];
 }
 
+export type ParlaySlipMode = "standard" | "pickem_notes";
+
 export interface ParlayPricingPreview {
+  slipMode: ParlaySlipMode;
   legCount: number;
   sportsbook: string | null;
-  combinedDecimalOdds: number;
-  combinedAmericanOdds: number;
+  /** Combined book odds; null when slipMode is pickem_notes (not a priced parlay). */
+  combinedDecimalOdds: number | null;
+  combinedAmericanOdds: number | null;
   stake: number | null;
   totalPayout: number | null;
   profit: number | null;
@@ -786,54 +819,54 @@ export const PROMO_TYPE_CONFIG: Record<PromoType, {
     bg: "bg-[#0EA5A4]/15", 
     text: "text-[#0EA5A4]",
     selectedBg: "bg-[#0EA5A4]/25",
-    selectedText: "text-[#0B5E5D]"
+    selectedText: "text-foreground"
   },
   boost_30: { 
     short: "30%", 
-    bg: "bg-[#C4A35A]/20", 
-    text: "text-[#8B7355]",
-    selectedBg: "bg-[#C4A35A]/30",
-    selectedText: "text-[#5C4D2E]"
+    bg: "bg-pending/20", 
+    text: "text-pending",
+    selectedBg: "bg-pending/30",
+    selectedText: "text-foreground"
   },
   boost_50: { 
     short: "50%", 
-    bg: "bg-[#C4A35A]/20", 
-    text: "text-[#8B7355]",
-    selectedBg: "bg-[#C4A35A]/30",
-    selectedText: "text-[#5C4D2E]"
+    bg: "bg-pending/20", 
+    text: "text-pending",
+    selectedBg: "bg-pending/30",
+    selectedText: "text-foreground"
   },
   promo_qualifier: { 
     short: "PQ", 
-    bg: "bg-[#B85C38]/15", 
-    text: "text-[#B85C38]",
-    selectedBg: "bg-[#B85C38]/20",
-    selectedText: "text-[#8B3D20]"
+    bg: "bg-loss/15", 
+    text: "text-loss",
+    selectedBg: "bg-loss/20",
+    selectedText: "text-foreground"
   },
   boost_100: { 
     short: "100%", 
-    bg: "bg-[#C4A35A]/20", 
-    text: "text-[#8B7355]",
-    selectedBg: "bg-[#C4A35A]/30",
-    selectedText: "text-[#5C4D2E]"
+    bg: "bg-pending/20", 
+    text: "text-pending",
+    selectedBg: "bg-pending/30",
+    selectedText: "text-foreground"
   },
   boost_custom: { 
     short: "Boost", 
-    bg: "bg-[#C4A35A]/20", 
-    text: "text-[#8B7355]",
-    selectedBg: "bg-[#C4A35A]/30",
-    selectedText: "text-[#5C4D2E]"
+    bg: "bg-pending/20", 
+    text: "text-pending",
+    selectedBg: "bg-pending/30",
+    selectedText: "text-foreground"
   },
   no_sweat: { 
     short: "NS", 
-    bg: "bg-[#4A7C59]/15", 
-    text: "text-[#4A7C59]",
-    selectedBg: "bg-[#4A7C59]/25",
-    selectedText: "text-[#2C5235]"
+    bg: "bg-profit/15", 
+    text: "text-profit",
+    selectedBg: "bg-profit/25",
+    selectedText: "text-foreground"
   },
   standard: { 
     short: "Std", 
-    bg: "bg-[#DDD5C7]", 
-    text: "text-[#6B5E4F]",
+    bg: "bg-muted", 
+    text: "text-muted-foreground",
     selectedBg: "bg-foreground",
     selectedText: "text-background",
   },

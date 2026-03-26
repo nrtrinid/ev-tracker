@@ -7,7 +7,7 @@
 
 @layer base {
   :root {
-    /* Analog Warmth - vintage field notebook aesthetic */
+    /* Analog Warmth — vintage field notebook aesthetic (light mode / fallback) */
     --background: 40 33% 97%;      /* Warm off-white #FAF8F5 */
     --foreground: 36 30% 13%;      /* Dark charcoal-brown #2C2416 */
     --card: 35 26% 91%;            /* Slightly darker cream #F0EBE3 */
@@ -26,11 +26,35 @@
     --input: 34 22% 82%;
     --ring: 43 49% 56%;
     --radius: 0.5rem;              /* 8px rounded corners */
-    
     /* Semantic colors */
     --profit: 134 26% 39%;         /* Muted forest green #4A7C59 */
     --loss: 18 56% 47%;            /* Dusty terracotta #B85C38 */
     --pending: 43 49% 56%;         /* Warm amber */
+  }
+
+  .dark {
+    /* Dark slate field guide — warm charcoal, not pure black */
+    --background: 220 15% 12%;     /* #1B1D24 — dark slate */
+    --foreground: 40 20% 92%;      /* #F2EDE4 — warm off-white */
+    --card: 220 12% 16%;           /* #22252D — raised surface */
+    --card-foreground: 40 20% 92%;
+    --primary: 43 49% 56%;         /* #C4A35A — amber, preserved */
+    --primary-foreground: 36 30% 13%;
+    --secondary: 220 10% 20%;
+    --secondary-foreground: 40 20% 92%;
+    --muted: 220 10% 20%;
+    --muted-foreground: 220 8% 56%; /* #868D9C — medium slate */
+    --accent: 43 49% 56%;
+    --accent-foreground: 36 30% 13%;
+    --destructive: 18 58% 52%;     /* Terracotta, readable on dark */
+    --destructive-foreground: 40 20% 92%;
+    --border: 220 10% 24%;         /* #363B49 — subtle border */
+    --input: 220 10% 24%;
+    --ring: 43 49% 56%;
+    /* Semantic colors — more saturated against dark background */
+    --profit: 134 40% 50%;         /* Forest green, brighter */
+    --loss: 18 58% 52%;            /* Terracotta */
+    --pending: 43 49% 56%;
   }
 }
 
@@ -46,6 +70,27 @@
   body {
     @apply bg-background text-foreground antialiased;
     position: relative;
+  }
+
+  /* Text selection — theme-aware (avoids harsh default blue, esp. in dark mode) */
+  ::selection {
+    background-color: hsl(var(--primary) / 0.38);
+    color: hsl(var(--foreground));
+  }
+
+  ::-moz-selection {
+    background-color: hsl(var(--primary) / 0.38);
+    color: hsl(var(--foreground));
+  }
+
+  html.dark *::selection {
+    background-color: hsl(var(--primary) / 0.42);
+    color: hsl(var(--foreground));
+  }
+
+  html.dark *::-moz-selection {
+    background-color: hsl(var(--primary) / 0.42);
+    color: hsl(var(--foreground));
   }
   
   /* Paper grain texture overlay */
@@ -80,6 +125,11 @@
   .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
+  }
+
+  /* Safe area bottom padding for notched devices (iOS home indicator) */
+  .safe-area-pb {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
   
   /* Open book binding shadow - for main layout container only */
@@ -196,6 +246,41 @@
   }
 }
 
+/* ── Dark mode overrides ──────────────────────────────────────────────────── */
+
+/* Reduce paper grain — visible texture on dark is too noisy */
+.dark body::before {
+  opacity: 0.04;
+}
+
+/* Stamps use multiply blend which darkens — switch to normal on dark */
+.dark .stamp,
+.dark .date-stamp {
+  mix-blend-mode: normal;
+}
+
+/* Card hover shadow adapted for dark */
+.dark .card-hover:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+/* Tactile button depth adapted for dark */
+.dark .tactile-btn {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+.dark .tactile-btn:hover {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+.dark .tactile-btn:active {
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+  transform: translateY(1px);
+}
+
+/* Soft shadow adapted for dark */
+.dark .shadow-soft {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
 /* Smooth transitions */
 @layer base {
   button, a, input {
@@ -256,22 +341,26 @@
   position: relative !important;
 }
 
+.dark [data-sonner-toast] {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+
 /* Success toast */
 [data-sonner-toast][data-type="success"] {
-  border-color: #4A7C59 !important;
-  border-left: 3px solid #4A7C59 !important;
+  border-color: hsl(var(--profit)) !important;
+  border-left: 3px solid hsl(var(--profit)) !important;
 }
 
 /* Error toast */
 [data-sonner-toast][data-type="error"] {
-  border-color: #B85C38 !important;
-  border-left: 3px solid #B85C38 !important;
+  border-color: hsl(var(--loss)) !important;
+  border-left: 3px solid hsl(var(--loss)) !important;
 }
 
 /* Info/default toast */
 [data-sonner-toast][data-type="default"] {
-  border-color: #C4A35A !important;
-  border-left: 3px solid #C4A35A !important;
+  border-color: hsl(var(--pending)) !important;
+  border-left: 3px solid hsl(var(--pending)) !important;
 }
 
 /* Toast action button - undo button styling */
@@ -298,25 +387,25 @@
 /* Success toast button */
 [data-sonner-toast][data-type="success"] button[data-button],
 [data-sonner-toast][data-type="success"] [role="button"] {
-  border-color: #4A7C59 !important;
-  color: #4A7C59 !important;
+  border-color: hsl(var(--profit)) !important;
+  color: hsl(var(--profit)) !important;
 }
 
 [data-sonner-toast][data-type="success"] button[data-button]:hover,
 [data-sonner-toast][data-type="success"] [role="button"]:hover {
-  background: rgba(74, 124, 89, 0.1) !important;
-  border-color: #4A7C59 !important;
+  background: hsl(var(--profit) / 0.1) !important;
+  border-color: hsl(var(--profit)) !important;
 }
 
 /* Error toast button */
 [data-sonner-toast][data-type="error"] button[data-button],
 [data-sonner-toast][data-type="error"] [role="button"] {
-  border-color: #B85C38 !important;
-  color: #B85C38 !important;
+  border-color: hsl(var(--loss)) !important;
+  color: hsl(var(--loss)) !important;
 }
 
 [data-sonner-toast][data-type="error"] button[data-button]:hover,
 [data-sonner-toast][data-type="error"] [role="button"]:hover {
-  background: rgba(184, 92, 56, 0.1) !important;
-  border-color: #B85C38 !important;
+  background: hsl(var(--loss) / 0.1) !important;
+  border-color: hsl(var(--loss)) !important;
 }

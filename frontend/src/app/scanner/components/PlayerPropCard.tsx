@@ -54,21 +54,21 @@ function getDuplicateBadge(duplicateState: PlayerPropMarketSide["scanner_duplica
     return {
       label: "Better Now",
       className:
-        "rounded border border-[#4A7C59]/35 bg-[#4A7C59]/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#2E5D39]",
+        "rounded border border-profit/35 bg-profit/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-profit",
     };
   }
   if (duplicateState === "already_logged") {
     return {
       label: "Already Placed",
       className:
-        "rounded border border-[#B85C38]/35 bg-[#B85C38]/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#8B3D20]",
+        "rounded border border-loss/35 bg-loss/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-loss",
     };
   }
   if (duplicateState === "logged_elsewhere") {
     return {
       label: "Logged Elsewhere",
       className:
-        "rounded border border-[#C4A35A]/35 bg-[#C4A35A]/12 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#6B5E4F]",
+        "rounded border border-primary/35 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground",
     };
   }
   return null;
@@ -145,7 +145,7 @@ export function PlayerPropCard({
                 </span>
 
                 {duplicateState === "better_now" && side.best_logged_odds_american != null && (
-                  <span className="text-[11px] text-[#2E5D39]">
+                  <span className="text-[11px] text-profit">
                     Logged at {formatOdds(side.best_logged_odds_american)} - now{" "}
                     {formatOdds(side.current_odds_american ?? side.book_odds)}
                   </span>

@@ -11,6 +11,8 @@ import type {
   TransactionCreate,
   Balance,
   ScanResult,
+  BoardResponse,
+  ScopedRefreshResponse,
   BackendReadiness,
   OperatorStatusResponse,
   ParlaySlip,
@@ -203,6 +205,23 @@ export async function getLatestScan(surface: ScannerSurface = "straight_bets"): 
     if (e instanceof Error && e.message === "No scans yet") return null;
     throw e;
   }
+}
+
+// ============ Board API ============
+
+/** Load the canonical board snapshot. Pure DB read — no outbound API calls. */
+export async function getBoard(): Promise<BoardResponse> {
+  return fetchAPI<BoardResponse>("/api/board/latest");
+}
+
+/** Trigger a scoped manual refresh for a surface. Rate-limited. Does NOT overwrite board:latest. */
+export async function refreshBoard(
+  scope: ScannerSurface = "player_props",
+): Promise<ScopedRefreshResponse> {
+  return fetchAPI<ScopedRefreshResponse>(
+    `/api/board/refresh?scope=${encodeURIComponent(scope)}`,
+    { method: "POST" },
+  );
 }
 
 // ============ System Status API ============

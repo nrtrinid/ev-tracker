@@ -7,7 +7,7 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class PromoType(str, Enum):
@@ -109,6 +109,7 @@ class BetResponse(BaseModel):
     stake: float
     boost_percent: float | None
     winnings_cap: float | None
+    payout_override: float | None = None
     notes: str | None
     opposing_odds: float | None
     result: BetResult
@@ -327,6 +328,8 @@ class PlayerPropSide(BaseModel):
     base_kelly_fraction: float
     book_decimal: float
     ev_percentage: float
+    confidence_score: float | None = None
+    prob_std: float | None = None
     scanner_duplicate_state: Literal["new", "logged_elsewhere", "already_logged", "better_now"] | None = None
     best_logged_odds_american: float | None = None
     current_odds_american: float | None = None
@@ -420,6 +423,63 @@ class FullScanResponse(BaseModel):
     diagnostics: PlayerPropScanDiagnostics | None = None
     prizepicks_cards: list[PrizePicksComparisonCard] | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _inject_surface_into_sides(cls, data: Any) -> Any:
+        """Inject the response-level surface tag into any side dict that lacks it.
+
+        The scanner services return raw dicts whose side entries don't carry a
+        'surface' key.  Pydantic's discriminated union (ScannerSide) requires that
+        tag to be present before it can choose StraightBetSide vs PlayerPropSide.
+        This validator stamps the response's own surface value onto each side so
+        both the canonical-board load path and the scoped-refresh path work
+        regardless of whether the stored/returned data includes the field.
+        """
+        if isinstance(data, dict):
+            surface = data.get("surface")
+            raw_sides = data.get("sides")
+            if surface and isinstance(raw_sides, list):
+                data = {
+                    **data,
+                    "sides": [
+                        {**s, "surface": surface} if isinstance(s, dict) and "surface" not in s else s
+                        for s in raw_sides
+                    ],
+                }
+        return data
+
+
+# ── Board snapshot models ─────────────────────────────────────────────────────
+
+class BoardSnapshotMeta(BaseModel):
+    """Metadata attached to a canonical board snapshot."""
+
+    snapshot_id: str
+    snapshot_type: Literal["scheduled", "manual"]
+    scanned_at: str
+    surfaces_included: list[ScannerSurface]
+    sports_included: list[str]
+    next_scheduled_drop: str | None = None
+    events_scanned: int
+    total_sides: int
+
+
+class BoardResponse(BaseModel):
+    """Unified board response containing both surfaces from the latest snapshot."""
+
+    meta: BoardSnapshotMeta
+    game_context: dict[str, Any] | None = None
+    straight_bets: FullScanResponse | None = None
+    player_props: FullScanResponse | None = None
+
+
+class ScopedRefreshResponse(BaseModel):
+    """Response from a scoped manual refresh — does not overwrite the canonical board."""
+
+    surface: ScannerSurface
+    refreshed_at: str
+    data: FullScanResponse
+
 
 class ResearchOpportunityBreakdownItem(BaseModel):
     """Aggregate summary row for research-opportunity breakdowns."""
@@ -490,10 +550,11 @@ class ParlayWarning(BaseModel):
 class ParlayPricingPreview(BaseModel):
     """Saved pricing snapshot for an active/saved parlay slip."""
 
+    slipMode: Literal["standard", "pickem_notes"] = "standard"
     legCount: int
     sportsbook: str | None = None
-    combinedDecimalOdds: float
-    combinedAmericanOdds: float
+    combinedDecimalOdds: float | None = None
+    combinedAmericanOdds: float | None = None
     stake: float | None = None
     totalPayout: float | None = None
     profit: float | None = None
