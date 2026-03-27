@@ -11,7 +11,9 @@ export interface PickEmBoardCard {
   player_name: string;
   participant_id?: string | null;
   team?: string | null;
+  team_short?: string | null;
   opponent?: string | null;
+  opponent_short?: string | null;
   market_key: string;
   market: string;
   line_value: number;
