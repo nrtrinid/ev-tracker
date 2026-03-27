@@ -487,6 +487,7 @@ class ResearchOpportunityBreakdownItem(BaseModel):
     key: str
     captured_count: int
     clv_ready_count: int
+    valid_close_count: int
     beat_close_pct: float | None = None
     avg_clv_percent: float | None = None
 
@@ -518,6 +519,17 @@ class ResearchOpportunityRecentRow(BaseModel):
     reference_odds_at_close: float | None = None
     clv_ev_percent: float | None = None
     beat_close: bool | None = None
+    close_status: Literal["pending", "valid", "invalid"] = "pending"
+
+
+class ResearchOpportunityCohortTrendRow(BaseModel):
+    """Beat-close / CLV trend for a cohort bucket (typically daily-board captures)."""
+
+    cohort_key: str
+    captured_count: int
+    valid_close_count: int
+    beat_close_pct: float | None = None
+    avg_clv_percent: float | None = None
 
 
 class ResearchOpportunitySummaryResponse(BaseModel):
@@ -526,6 +538,13 @@ class ResearchOpportunitySummaryResponse(BaseModel):
     captured_count: int
     open_count: int
     close_captured_count: int
+    pending_close_count: int
+    valid_close_count: int
+    invalid_close_count: int
+    valid_close_coverage_pct: float | None = None
+    invalid_close_rate_pct: float | None = None
+    selected_cohort_key: str | None = None
+    cohort_trend: list[ResearchOpportunityCohortTrendRow] = Field(default_factory=list)
     clv_ready_count: int
     beat_close_pct: float | None = None
     avg_clv_percent: float | None = None

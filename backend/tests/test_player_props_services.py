@@ -26,6 +26,7 @@ def test_get_player_prop_markets_defaults_to_all_when_env_missing(monkeypatch):
         "player_points",
         "player_rebounds",
         "player_assists",
+        "player_points_rebounds_assists",
         "player_threes",
     ]
 

@@ -5,7 +5,7 @@ import { assertAdminAccess } from "@/lib/server/admin-access";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export async function GET() {
+export async function GET(request: Request) {
   const access = await assertAdminAccess();
   if (!access.ok) {
     if (access.error === "allowlist_not_configured") {
@@ -37,7 +37,9 @@ export async function GET() {
   }
 
   try {
-    const endpoint = `${backendBaseUrl.replace(/\/$/, "")}/api/ops/research-opportunities/summary`;
+    const url = new URL(request.url);
+    const qs = url.searchParams.toString();
+    const endpoint = `${backendBaseUrl.replace(/\/$/, "")}/api/ops/research-opportunities/summary${qs ? `?${qs}` : ""}`;
     const resp = await fetch(endpoint, {
       method: "GET",
       cache: "no-store",

@@ -71,18 +71,22 @@ test.describe("scanner lens ranking", () => {
     expect((results[0]._boostedEV ?? 0) >= (results[1]._boostedEV ?? 0)).toBeTruthy();
   });
 
-  test("qualifier lens enforces odds guardrail", async () => {
+  test("qualifier lens enforces odds guardrail and ranks by lowest hold", async () => {
     const results = rankScannerSidesByLens({
       sides: [
         { ...BASE_SIDE, team: "A", book_odds: -300 },
-        { ...BASE_SIDE, team: "B", book_odds: -120 },
-        { ...BASE_SIDE, team: "C", book_odds: 180 },
+        { ...BASE_SIDE, team: "B", book_odds: -120, book_decimal: 1.83, true_prob: 0.55 },
+        { ...BASE_SIDE, team: "C", book_odds: 110, book_decimal: 2.1, true_prob: 0.47 },
+        { ...BASE_SIDE, team: "D", book_odds: 180 },
       ],
       selectedBooks: ["DraftKings"],
       activeLens: "qualifier",
       boostPercent: 30,
     });
 
-    expect(results.map((s) => s.team)).toEqual(["B"]);
+    expect(results.map((s) => s.team)).toEqual(["B", "C"]);
+    expect((results[0] as { _qualifierHold?: number })._qualifierHold).toBeLessThan(
+      (results[1] as { _qualifierHold?: number })._qualifierHold ?? Number.POSITIVE_INFINITY
+    );
   });
 });

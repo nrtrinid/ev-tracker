@@ -1104,6 +1104,8 @@ async def _run_scheduled_scan_job():
             "finished_at": finished + "Z",
             "duration_ms": duration_ms,
             "total_sides": (result or {}).get("props_sides") if isinstance(result, dict) else None,
+            "props_events_scanned": (result or {}).get("props_events_scanned") if isinstance(result, dict) else None,
+            "featured_games_count": (result or {}).get("featured_games_count") if isinstance(result, dict) else None,
             "alerts_scheduled": 0,
             "hard_errors": hard_errors,
             "captured_at": finished + "Z",
@@ -1130,7 +1132,12 @@ async def _run_scheduled_scan_job():
         alerts_scheduled=0,
         hard_errors=hard_errors,
         api_requests_remaining=None,
-        meta={"board_drop": True, "result": result},
+        meta={
+            "board_drop": True,
+            "props_events_scanned": (result or {}).get("props_events_scanned") if isinstance(result, dict) else None,
+            "featured_games_count": (result or {}).get("featured_games_count") if isinstance(result, dict) else None,
+            "result": result,
+        },
     )
 
     # Optional heartbeat so we can confirm the daily board ran.
@@ -1223,6 +1230,8 @@ async def _run_early_look_scan_job():
             "finished_at": finished + "Z",
             "duration_ms": duration_ms,
             "total_sides": (result or {}).get("props_sides") if isinstance(result, dict) else None,
+            "props_events_scanned": (result or {}).get("props_events_scanned") if isinstance(result, dict) else None,
+            "featured_games_count": (result or {}).get("featured_games_count") if isinstance(result, dict) else None,
             "alerts_scheduled": 0,
             "hard_errors": hard_errors,
             "captured_at": finished + "Z",

@@ -6,6 +6,7 @@ export interface PickEmBoardCard {
   event_id?: string | null;
   sport: string;
   event: string;
+  event_short?: string | null;
   commence_time: string;
   player_name: string;
   participant_id?: string | null;
@@ -65,11 +66,14 @@ export function buildPickEmBoardCards(
       event_id?: string | null;
       sport: string;
       event: string;
+      event_short?: string | null;
       commence_time: string;
       player_name: string;
       participant_id?: string | null;
       team?: string | null;
+      team_short?: string | null;
       opponent?: string | null;
+      opponent_short?: string | null;
       market_key: string;
       market: string;
       line_value: number;
@@ -93,11 +97,14 @@ export function buildPickEmBoardCards(
       event_id: side.event_id ?? null,
       sport: side.sport,
       event: side.event,
+      event_short: side.event_short ?? null,
       commence_time: side.commence_time,
       player_name: side.player_name,
       participant_id: side.participant_id ?? null,
       team: side.team ?? null,
+      team_short: side.team_short ?? null,
       opponent: side.opponent ?? null,
+      opponent_short: side.opponent_short ?? null,
       market_key: side.market_key,
       market: side.market,
       line_value: side.line_value,
@@ -142,11 +149,14 @@ export function buildPickEmBoardCards(
       event_id: entry.event_id,
       sport: entry.sport,
       event: entry.event,
+      event_short: entry.event_short ?? null,
       commence_time: entry.commence_time,
       player_name: entry.player_name,
       participant_id: entry.participant_id,
       team: entry.team,
+      team_short: entry.team_short ?? null,
       opponent: entry.opponent,
+      opponent_short: entry.opponent_short ?? null,
       market_key: entry.market_key,
       market: entry.market,
       line_value: entry.line_value,

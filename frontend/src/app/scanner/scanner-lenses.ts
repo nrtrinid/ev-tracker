@@ -5,6 +5,7 @@ import type { ScannerLens } from "./scanner-ui-model";
 export type RankedScannerSide = MarketSide & {
   _retention?: number;
   _boostedEV?: number;
+  _qualifierHold?: number;
 };
 
 export function calculateLensRetention(side: MarketSide, kUser?: number, weight?: number): number {
@@ -20,6 +21,11 @@ export function calculateLensBoostedEV(side: MarketSide, boostPercent: number): 
   const boostedProfit = baseProfit * (1 + boostPercent / 100);
   const boostedDecimal = 1 + boostedProfit;
   return (side.true_prob * boostedDecimal - 1) * 100;
+}
+
+export function calculateLensQualifierHold(side: MarketSide): number {
+  // Approx expected hold on stake (%): lower is better for qualifier hunting.
+  return Math.abs(1 - side.true_prob * side.book_decimal) * 100;
 }
 
 export function rankScannerSidesByLens(params: {
@@ -53,6 +59,11 @@ export function rankScannerSidesByLens(params: {
     case "qualifier":
       return scopedSides
         .filter((side) => side.book_odds >= -250 && side.book_odds <= 150)
-        .sort((a, b) => b.ev_percentage - a.ev_percentage);
+        .map((side) => ({ ...side, _qualifierHold: calculateLensQualifierHold(side) }))
+        .sort((a, b) => {
+          const holdDiff = (a._qualifierHold ?? Number.POSITIVE_INFINITY) - (b._qualifierHold ?? Number.POSITIVE_INFINITY);
+          if (holdDiff !== 0) return holdDiff;
+          return b.ev_percentage - a.ev_percentage;
+        });
   }
 }

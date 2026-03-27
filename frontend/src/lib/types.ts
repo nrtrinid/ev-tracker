@@ -212,8 +212,11 @@ export interface StraightBetMarketSide {
   sportsbook_deeplink_level?: SportsbookDeeplinkLevel | null;
   sport: string;
   event: string;
+  event_short?: string | null;
   commence_time: string;
   team: string;
+  team_short?: string | null;
+  opponent_short?: string | null;
   pinnacle_odds: number;
   book_odds: number;
   true_prob: number;
@@ -236,12 +239,15 @@ export interface PlayerPropMarketSide {
   sportsbook_deeplink_level?: SportsbookDeeplinkLevel | null;
   sport: string;
   event: string;
+  event_short?: string | null;
   commence_time: string;
   market: string;
   player_name: string;
   participant_id?: string | null;
   team?: string | null;
+  team_short?: string | null;
   opponent?: string | null;
+  opponent_short?: string | null;
   selection_side: string;
   line_value?: number | null;
   display_name: string;
@@ -268,11 +274,14 @@ export interface PrizePicksComparisonCard {
   event_id?: string | null;
   sport: string;
   event: string;
+  event_short?: string | null;
   commence_time: string;
   player_name: string;
   participant_id?: string | null;
   team?: string | null;
+  team_short?: string | null;
   opponent?: string | null;
+  opponent_short?: string | null;
   market_key: string;
   market: string;
   prizepicks_line: number;
@@ -487,18 +496,28 @@ export interface OperatorStatusResponse {
   ops?: {
     last_scheduler_scan?: {
       run_id?: string;
+      scan_window?: {
+        label?: string;
+        anchor_timezone?: string;
+        anchor_time_mst?: string;
+      } | null;
       started_at?: string;
       finished_at?: string;
       duration_ms?: number;
       total_sides?: number;
+      props_events_scanned?: number;
+      featured_games_count?: number;
       alerts_scheduled?: number;
       hard_errors?: number;
       captured_at?: string;
       board_drop?: boolean;
       result?: {
         selected_event_ids?: string[];
+        props_scan_event_ids?: string[];
         selected_games?: Array<Record<string, unknown>>;
         props_sides?: number;
+        props_events_scanned?: number;
+        featured_games_count?: number;
         duration_ms?: number;
       } | null;
     } | null;
@@ -559,6 +578,7 @@ export interface ResearchOpportunityBreakdownItem {
   key: string;
   captured_count: number;
   clv_ready_count: number;
+  valid_close_count: number;
   beat_close_pct: number | null;
   avg_clv_percent: number | null;
 }
@@ -588,12 +608,20 @@ export interface ResearchOpportunityRecentRow {
   reference_odds_at_close: number | null;
   clv_ev_percent: number | null;
   beat_close: boolean | null;
+  close_status: "pending" | "valid" | "invalid";
 }
 
 export interface ResearchOpportunitySummary {
   captured_count: number;
   open_count: number;
   close_captured_count: number;
+  pending_close_count: number;
+  valid_close_count: number;
+  invalid_close_count: number;
+  valid_close_coverage_pct: number | null;
+  invalid_close_rate_pct: number | null;
+  selected_cohort_key: string | null;
+  cohort_trend: ResearchOpportunityCohortTrendRow[];
   clv_ready_count: number;
   beat_close_pct: number | null;
   avg_clv_percent: number | null;
@@ -603,6 +631,14 @@ export interface ResearchOpportunitySummary {
   by_edge_bucket: ResearchOpportunityBreakdownItem[];
   by_odds_bucket: ResearchOpportunityBreakdownItem[];
   recent_opportunities: ResearchOpportunityRecentRow[];
+}
+
+export interface ResearchOpportunityCohortTrendRow {
+  cohort_key: string;
+  captured_count: number;
+  valid_close_count: number;
+  beat_close_pct: number | null;
+  avg_clv_percent: number | null;
 }
 
 export interface ParlayWarning {
