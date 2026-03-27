@@ -44,6 +44,11 @@ async def cron_run_scan_impl(
     result: dict | None = None
     try:
         async with main._DAILY_BOARD_RUN_LOCK:
+            log_event(
+                "board.drop.started_from_ops" if ops_status_key == "last_ops_trigger_scan" else "board.drop.started_from_cron",
+                run_id=run_id,
+                locked=main._DAILY_BOARD_RUN_LOCK.locked(),
+            )
             result = await run_daily_board_drop(
                 db=main.get_db(),
                 source="ops_trigger_board_drop" if ops_status_key == "last_ops_trigger_scan" else "cron_board_drop",

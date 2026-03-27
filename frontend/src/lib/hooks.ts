@@ -255,10 +255,13 @@ export function useLogParlaySlip() {
 
 // ============ Settings Hooks ============
 
-export function useSettings() {
+export function useSettings(enabled: boolean = true) {
+  const readiness = useBackendReadiness();
+  const backendOk = readiness.data?.status === "ready";
   return useQuery({
     queryKey: queryKeys.settings,
     queryFn: api.getSettings,
+    enabled: enabled && backendOk,
   });
 }
 
@@ -352,20 +355,26 @@ export function useDeleteTransaction() {
 
 // ============ Balances Hook ============
 
-export function useBalances() {
+export function useBalances(enabled: boolean = true) {
+  const readiness = useBackendReadiness();
+  const backendOk = readiness.data?.status === "ready";
   return useQuery({
     queryKey: queryKeys.balances,
     queryFn: api.getBalances,
+    enabled: enabled && backendOk,
   });
 }
 
 // ============ Board Hooks ============
 
 /** Load the canonical board snapshot. staleTime: Infinity — invalidated by Supabase realtime or explicit refresh. */
-export function useBoard() {
+export function useBoard(enabled: boolean = true) {
+  const readiness = useBackendReadiness();
+  const backendOk = readiness.data?.status === "ready";
   return useQuery({
     queryKey: queryKeys.board,
     queryFn: api.getBoard,
+    enabled: enabled && backendOk,
     staleTime: Infinity,
     gcTime: 60 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -375,10 +384,12 @@ export function useBoard() {
 }
 
 export function useBoardSurface(surface: ScannerSurface, enabled: boolean) {
+  const readiness = useBackendReadiness();
+  const backendOk = readiness.data?.status === "ready";
   return useQuery({
     queryKey: ["board_surface", surface],
     queryFn: () => api.getBoardSurface(surface),
-    enabled,
+    enabled: enabled && backendOk,
     staleTime: Infinity,
     gcTime: 60 * 60 * 1000,
     refetchOnWindowFocus: false,

@@ -14,6 +14,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
           queries: {
             staleTime: 60 * 1000, // 1 minute
             refetchOnWindowFocus: false,
+            refetchOnReconnect: false,
+            // When the backend is unhealthy, retries across many queries can create
+            // a retry storm that amplifies outages. Individual hooks can opt back
+            // into retries where it’s safe.
+            retry: 0,
           },
         },
       })

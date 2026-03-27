@@ -1054,15 +1054,30 @@ async def _run_scheduled_scan_job():
     hard_errors = 0
     result: dict | None = None
     try:
-        async with _DAILY_BOARD_RUN_LOCK:
-            result = await run_daily_board_drop(
-                db=get_db(),
+        _log_event(
+            "board.drop.started_from_scheduler",
+            run_id=run_id,
+            locked=_DAILY_BOARD_RUN_LOCK.locked(),
+            scheduler_mode="main_drop",
+        )
+        if _DAILY_BOARD_RUN_LOCK.locked() and (os.getenv("BOARD_DROP_SKIP_IF_LOCKED") or "0") == "1":
+            _log_event(
+                "board.drop.skipped_lock",
+                level="warning",
+                run_id=run_id,
                 source="scheduled_board_drop",
-                scan_label="Late-Afternoon / Final-Context Scan",
-                mst_anchor_time="15:30",
-                retry_supabase=_retry_supabase,
-                log_event=_log_event,
             )
+            result = {"ok": False, "skipped": True, "reason": "lock_held"}
+        else:
+            async with _DAILY_BOARD_RUN_LOCK:
+                result = await run_daily_board_drop(
+                    db=get_db(),
+                    source="scheduled_board_drop",
+                    scan_label="Late-Afternoon / Final-Context Scan",
+                    mst_anchor_time="15:30",
+                    retry_supabase=_retry_supabase,
+                    log_event=_log_event,
+                )
     except Exception as e:
         _log_event(
             "scheduler.daily_board.failed",
@@ -1181,15 +1196,30 @@ async def _run_early_look_scan_job():
     hard_errors = 0
     result: dict | None = None
     try:
-        async with _DAILY_BOARD_RUN_LOCK:
-            result = await run_daily_board_drop(
-                db=get_db(),
+        _log_event(
+            "board.drop.started_from_scheduler",
+            run_id=run_id,
+            locked=_DAILY_BOARD_RUN_LOCK.locked(),
+            scheduler_mode="early_look",
+        )
+        if _DAILY_BOARD_RUN_LOCK.locked() and (os.getenv("BOARD_DROP_SKIP_IF_LOCKED") or "0") == "1":
+            _log_event(
+                "board.drop.skipped_lock",
+                level="warning",
+                run_id=run_id,
                 source="scheduled_board_drop_early_look",
-                scan_label="Early-Look / Injury-Watch Scan",
-                mst_anchor_time="10:30",
-                retry_supabase=_retry_supabase,
-                log_event=_log_event,
             )
+            result = {"ok": False, "skipped": True, "reason": "lock_held"}
+        else:
+            async with _DAILY_BOARD_RUN_LOCK:
+                result = await run_daily_board_drop(
+                    db=get_db(),
+                    source="scheduled_board_drop_early_look",
+                    scan_label="Early-Look / Injury-Watch Scan",
+                    mst_anchor_time="10:30",
+                    retry_supabase=_retry_supabase,
+                    log_event=_log_event,
+                )
     except Exception as e:
         _log_event(
             "scheduler.daily_board.early_look.failed",

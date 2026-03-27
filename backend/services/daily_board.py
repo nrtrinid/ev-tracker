@@ -6,6 +6,9 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
+from uuid import uuid4
+
+from utils.telemetry import rss_mb
 
 
 DAILY_BOARD_SPORT = "basketball_nba"
@@ -108,6 +111,72 @@ def _rank_featured_games(games: list[dict], *, max_games: int) -> list[dict]:
         ranked.append((rank, game))
     ranked.sort(key=lambda item: item[0])
     return [game for _rank, game in ranked[:max_games]]
+
+
+def _approx_sampled_json_bytes(value: Any, *, sample_sides: int = 100) -> int | None:
+    """
+    Best-effort, cheap-ish size proxy.
+    Avoids dumping entire payloads by sampling up to N sides when present.
+    """
+    try:
+        import json
+    except Exception:
+        return None
+    try:
+        if isinstance(value, dict) and isinstance(value.get("sides"), list):
+            sides = value["sides"]
+            sampled = dict(value)
+            sampled["sides"] = sides[:sample_sides]
+            return len(json.dumps(sampled, default=str))
+        return len(json.dumps(value, default=str))
+    except Exception:
+        return None
+
+
+def _ensure_surface_in_place(sides: list[Any], *, surface: str) -> None:
+    for side in sides:
+        if isinstance(side, dict) and not side.get("surface"):
+            side["surface"] = surface
+
+
+def _cap_payload_sides(
+    payload: dict[str, Any],
+    *,
+    max_sides: int | None,
+    surface: str,
+    run_id: str,
+    log_event: Callable[..., None],
+) -> dict[str, Any]:
+    if not max_sides or max_sides <= 0:
+        return payload
+    sides_raw = payload.get("sides")
+    if not isinstance(sides_raw, list):
+        return payload
+    total = len(sides_raw)
+    if total <= max_sides:
+        return payload
+
+    capped = dict(payload)
+    capped["sides"] = sides_raw[:max_sides]
+    diagnostics = capped.get("diagnostics")
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+    capped["diagnostics"] = {
+        **diagnostics,
+        "latest_cache_capped": True,
+        "latest_cache_original_sides": total,
+        "latest_cache_max_sides": max_sides,
+    }
+    log_event(
+        "board.drop.surface_payload_capped",
+        level="warning",
+        run_id=run_id,
+        surface=surface,
+        original_sides=total,
+        capped_sides=max_sides,
+        rss_mb=rss_mb(),
+    )
+    return capped
 
 
 def _select_daily_games(
@@ -227,8 +296,17 @@ async def run_daily_board_drop(
         scanned_at_from_fetched_timestamp,
     )
 
+    run_id = f"board_{uuid4().hex[:12]}"
     started_at = time.monotonic()
     scanned_at = _utc_now_iso()
+
+    log_event(
+        "board.drop.started",
+        run_id=run_id,
+        source=source,
+        scanned_at=scanned_at,
+        rss_mb=rss_mb(),
+    )
 
     featured_nba_task = fetch_featured_lines_slate(sport="basketball_nba", source=source)
     featured_cbb_task = fetch_featured_lines_slate(sport="basketball_ncaab", source=source)
@@ -314,6 +392,14 @@ async def run_daily_board_drop(
         if isinstance(side, dict)
     ]
     straight_scanned_at = scanned_at_from_fetched_timestamp(straight_aggregate.get("oldest_fetched")) or scanned_at
+    log_event(
+        "board.drop.straight_built",
+        run_id=run_id,
+        source=source,
+        straight_sides=len(straight_sides),
+        rss_mb=rss_mb(),
+        approx_bytes_sampled=_approx_sampled_json_bytes({"sides": straight_sides}, sample_sides=80),
+    )
 
     props_result = await scan_player_props_for_event_ids(
         sport=DAILY_BOARD_SPORT,
@@ -322,21 +408,24 @@ async def run_daily_board_drop(
         source=source,
     )
     props_sides = props_result.get("sides") or []
+    if isinstance(props_sides, list):
+        _ensure_surface_in_place(props_sides, surface="player_props")
+    log_event(
+        "board.drop.props_built",
+        run_id=run_id,
+        source=source,
+        player_sides=len(props_sides) if isinstance(props_sides, list) else None,
+        rss_mb=rss_mb(),
+        approx_bytes_sampled=_approx_sampled_json_bytes({"sides": props_sides}, sample_sides=80) if isinstance(props_sides, list) else None,
+    )
 
     # Persist +EV board sides into scan_opportunities for both surfaces.
     if db is not None:
         try:
-            straight_surface_sides = [
-                {**s, "surface": "straight_bets"} if isinstance(s, dict) else s
-                for s in straight_sides
-            ]
-            props_surface_sides = [
-                {**s, "surface": "player_props"} if isinstance(s, dict) else s
-                for s in props_sides
-            ]
             capture_scan_opportunities(
                 db,
-                sides=[*straight_surface_sides, *props_surface_sides],
+                # Avoid extra copies here; capture_scan_opportunities already copies each eligible side.
+                sides=[*straight_sides, *(props_sides if isinstance(props_sides, list) else [])],
                 source=source,
                 captured_at=scanned_at,
             )
@@ -348,29 +437,30 @@ async def run_daily_board_drop(
                 error=str(exc),
             )
 
-    straight_payload = _FSR(
-        surface="straight_bets",
-        sport="all",
-        sides=straight_sides,
-        events_fetched=int(straight_aggregate.get("total_events") or 0),
-        events_with_both_books=int(straight_aggregate.get("total_with_both") or 0),
-        api_requests_remaining=straight_aggregate.get("min_remaining"),
-        scanned_at=straight_scanned_at,
-        diagnostics=straight_aggregate.get("diagnostics"),
-        prizepicks_cards=straight_aggregate.get("prizepicks_cards"),
-    ).model_dump()
+    # Build payload dicts manually to avoid Pydantic model_dump() copying large sides arrays.
+    straight_payload: dict[str, Any] = {
+        "surface": "straight_bets",
+        "sport": "all",
+        "sides": straight_sides,
+        "events_fetched": int(straight_aggregate.get("total_events") or 0),
+        "events_with_both_books": int(straight_aggregate.get("total_with_both") or 0),
+        "api_requests_remaining": straight_aggregate.get("min_remaining"),
+        "scanned_at": straight_scanned_at,
+        "diagnostics": straight_aggregate.get("diagnostics"),
+        "prizepicks_cards": straight_aggregate.get("prizepicks_cards"),
+    }
 
-    props_payload = _FSR(
-        surface="player_props",
-        sport=DAILY_BOARD_SPORT,
-        sides=props_sides,
-        events_fetched=int(props_result.get("events_fetched") or 0),
-        events_with_both_books=int(props_result.get("events_with_both_books") or 0),
-        api_requests_remaining=props_result.get("api_requests_remaining"),
-        scanned_at=props_result.get("scanned_at") or scanned_at,
-        diagnostics=props_result.get("diagnostics"),
-        prizepicks_cards=props_result.get("prizepicks_cards"),
-    ).model_dump()
+    props_payload: dict[str, Any] = {
+        "surface": "player_props",
+        "sport": DAILY_BOARD_SPORT,
+        "sides": (props_sides if isinstance(props_sides, list) else []),
+        "events_fetched": int(props_result.get("events_fetched") or 0),
+        "events_with_both_books": int(props_result.get("events_with_both_books") or 0),
+        "api_requests_remaining": props_result.get("api_requests_remaining"),
+        "scanned_at": props_result.get("scanned_at") or scanned_at,
+        "diagnostics": props_result.get("diagnostics"),
+        "prizepicks_cards": props_result.get("prizepicks_cards"),
+    }
 
     featured_nba_games = _rank_featured_games(
         featured_nba_payload.get("games") if isinstance(featured_nba_payload, dict) else [],
@@ -436,10 +526,36 @@ async def run_daily_board_drop(
     snapshot_id = "snap_none"
     if db is not None:
         # Persist per-surface latest caches for lazy loading.
+        log_event(
+            "board.drop.before_persist_surface",
+            run_id=run_id,
+            source=source,
+            straight_sides=len(straight_payload.get("sides") or []),
+            player_sides=len(props_payload.get("sides") or []),
+            rss_mb=rss_mb(),
+        )
+
+        max_straight = int(os.getenv("SURFACE_LATEST_MAX_SIDES_STRAIGHT_BETS") or "0") or None
+        max_props = int(os.getenv("SURFACE_LATEST_MAX_SIDES_PLAYER_PROPS") or "0") or None
+        straight_payload_to_persist = _cap_payload_sides(
+            straight_payload,
+            max_sides=max_straight,
+            surface="straight_bets",
+            run_id=run_id,
+            log_event=log_event,
+        )
+        props_payload_to_persist = _cap_payload_sides(
+            props_payload,
+            max_sides=max_props,
+            surface="player_props",
+            run_id=run_id,
+            log_event=log_event,
+        )
+
         try:
             persist_latest_scan_payload(
                 db=db,
-                payload=straight_payload,
+                payload=straight_payload_to_persist,
                 retry_supabase=retry_supabase,
                 log_event=log_event,
                 surface="straight_bets",
@@ -456,7 +572,7 @@ async def run_daily_board_drop(
         try:
             persist_latest_scan_payload(
                 db=db,
-                payload=props_payload,
+                payload=props_payload_to_persist,
                 retry_supabase=retry_supabase,
                 log_event=log_event,
                 surface="player_props",
@@ -471,6 +587,26 @@ async def run_daily_board_drop(
                 error=str(exc),
             )
 
+        log_event(
+            "board.drop.after_persist_surface",
+            run_id=run_id,
+            source=source,
+            rss_mb=rss_mb(),
+        )
+
+        # Release large refs ASAP before meta snapshot persistence / any downstream work.
+        try:
+            del straight_payload_to_persist
+            del props_payload_to_persist
+        except Exception:
+            pass
+
+        log_event(
+            "board.drop.before_persist_meta",
+            run_id=run_id,
+            source=source,
+            rss_mb=rss_mb(),
+        )
         snapshot_id = persist_board_meta_snapshot(
             db=db,
             snapshot_type="scheduled",
@@ -483,10 +619,18 @@ async def run_daily_board_drop(
             events_scanned=int(straight_aggregate.get("total_events") or 0) + int(props_result.get("events_fetched") or 0),
             total_sides=len(straight_sides) + len(props_sides),
         )
+        log_event(
+            "board.drop.completed",
+            run_id=run_id,
+            source=source,
+            snapshot_id=snapshot_id,
+            rss_mb=rss_mb(),
+        )
 
     duration_ms = round((time.monotonic() - started_at) * 1000, 2)
     log_event(
         "daily_board.drop.completed",
+        run_id=run_id,
         source=source,
         scan_label=scan_label,
         mst_anchor_time=mst_anchor_time,
@@ -495,10 +639,12 @@ async def run_daily_board_drop(
         selected_games=len(selected_games),
         props_sides=len(props_sides),
         duration_ms=duration_ms,
+        rss_mb=rss_mb(),
     )
 
     return {
         "ok": True,
+        "run_id": run_id,
         "snapshot_id": snapshot_id,
         "scanned_at": scanned_at,
         "scan_label": scan_label,
