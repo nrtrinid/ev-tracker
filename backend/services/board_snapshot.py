@@ -107,6 +107,70 @@ def persist_board_snapshot(
     return snapshot_id
 
 
+def persist_board_meta_snapshot(
+    *,
+    db,
+    snapshot_type: str,
+    game_context: dict[str, Any] | None,
+    scanned_at: str | None = None,
+    retry_supabase: Callable,
+    log_event: Callable[..., None],
+    surfaces_included: list[str] | None = None,
+    sports_included: list[str] | None = None,
+    events_scanned: int | None = None,
+    total_sides: int | None = None,
+) -> str:
+    """
+    Persist a lightweight canonical board snapshot (meta + game_context only).
+
+    This intentionally does NOT store large surface payloads under board:latest.
+    Surfaces should be loaded from their existing per-surface latest keys.
+    """
+    snapshot_id = _new_snapshot_id()
+    now = scanned_at or _utc_now_iso()
+
+    meta = {
+        "snapshot_id": snapshot_id,
+        "snapshot_type": snapshot_type,
+        "scanned_at": now,
+        "surfaces_included": surfaces_included or [],
+        "sports_included": sports_included or [],
+        "next_scheduled_drop": None,
+        "events_scanned": int(events_scanned or 0),
+        "total_sides": int(total_sides or 0),
+    }
+
+    payload = {
+        "meta": meta,
+        "game_context": game_context,
+        # Explicitly omit large surfaces.
+        "straight_bets": None,
+        "player_props": None,
+    }
+
+    try:
+        retry_supabase(
+            lambda: (
+                db.table("global_scan_cache")
+                .upsert(
+                    {"key": BOARD_LATEST_KEY, "surface": "board", "payload": payload},
+                    on_conflict="key",
+                )
+                .execute()
+            )
+        )
+    except Exception as e:
+        log_event(
+            "board_snapshot.persist_meta_failed",
+            level="warning",
+            snapshot_id=snapshot_id,
+            error_class=type(e).__name__,
+            error=str(e),
+        )
+
+    return snapshot_id
+
+
 def load_board_snapshot(
     *,
     db,

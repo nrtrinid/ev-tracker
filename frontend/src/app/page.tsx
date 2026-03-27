@@ -17,7 +17,7 @@ import {
 } from "@/app/scanner/scanner-state-utils";
 import { canAddScannerLensToParlayCart } from "@/app/scanner/scanner-ui-model";
 import { classifyScannerNullState } from "@/lib/scanner-contract";
-import { useBoard, useBalances, useSettings, queryKeys } from "@/lib/hooks";
+import { useBoard, useBoardSurface, useBalances, useSettings, queryKeys } from "@/lib/hooks";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
 import { useKellySettings } from "@/lib/kelly-context";
 import { createClient } from "@/lib/supabase";
@@ -400,6 +400,14 @@ function getNextPhoenixDropUtcMs(now: Date): number {
 export default function MarketsPage() {
   const queryClient = useQueryClient();
   const { data: board, isLoading: isBoardLoading, error: boardError } = useBoard();
+  const propsSurface = useBoardSurface(
+    "player_props",
+    primaryMode === "player_props" || primaryMode === "promos",
+  );
+  const straightSurface = useBoardSurface(
+    "straight_bets",
+    primaryMode === "straight_bets" || primaryMode === "promos",
+  );
   const { data: balances } = useBalances();
   useSettings(); // ensure settings are warmed in cache for LogBetDrawer
 
@@ -508,8 +516,8 @@ export default function MarketsPage() {
   // - straight_bets mode: straight bets snapshot
   // - promos mode: merged sides from both surfaces
   const activeScanData: ScanResult | null = useMemo(() => {
-    const propsScan = scanLatestOverride?.player_props ?? board?.player_props ?? null;
-    const straightScan = scanLatestOverride?.straight_bets ?? board?.straight_bets ?? null;
+    const propsScan = scanLatestOverride?.player_props ?? propsSurface.data ?? null;
+    const straightScan = scanLatestOverride?.straight_bets ?? straightSurface.data ?? null;
 
     if (primaryMode === "player_props") return propsScan;
     if (primaryMode === "straight_bets") return straightScan;
@@ -522,7 +530,7 @@ export default function MarketsPage() {
       ...base,
       sides: [...(propsScan?.sides ?? []), ...(straightScan?.sides ?? [])],
     };
-  }, [board?.player_props, board?.straight_bets, primaryMode, scanLatestOverride]);
+  }, [primaryMode, scanLatestOverride, propsSurface.data, straightSurface.data]);
   const gameContextGames = useMemo(() => parseGameContextGames(board?.game_context), [board?.game_context]);
   const featuredLineBuckets = useMemo(() => parseFeaturedLines(board?.game_context), [board?.game_context]);
 

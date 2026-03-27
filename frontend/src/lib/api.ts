@@ -214,6 +214,17 @@ export async function getBoard(): Promise<BoardResponse> {
   return fetchAPI<BoardResponse>("/api/board/latest");
 }
 
+/** Load the per-surface latest payload for lazy board loading. */
+export async function getBoardSurface(surface: ScannerSurface): Promise<ScanResult | null> {
+  try {
+    return await fetchAPI<ScanResult>(`/api/board/latest/surface?surface=${encodeURIComponent(surface)}`);
+  } catch (e) {
+    // If the backend returns a controlled error or the cache is missing, treat as null and let UI degrade.
+    if (e instanceof Error && /not found|missing/i.test(e.message)) return null;
+    throw e;
+  }
+}
+
 /** Trigger a scoped manual refresh for a surface. Rate-limited. Does NOT overwrite board:latest. */
 export async function refreshBoard(
   scope: ScannerSurface = "player_props",

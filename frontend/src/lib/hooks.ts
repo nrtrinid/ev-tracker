@@ -374,6 +374,19 @@ export function useBoard() {
   });
 }
 
+export function useBoardSurface(surface: ScannerSurface, enabled: boolean) {
+  return useQuery({
+    queryKey: ["board_surface", surface],
+    queryFn: () => api.getBoardSurface(surface),
+    enabled,
+    staleTime: Infinity,
+    gcTime: 60 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 1,
+  });
+}
+
 /** Scoped manual refresh — does NOT overwrite the canonical board:latest. */
 export function useRefreshBoard() {
   return useMutation({

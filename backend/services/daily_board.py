@@ -216,10 +216,11 @@ async def run_daily_board_drop(
     6) Persist board:latest with game_context + straight_bets + player_props.
     """
     from models import FullScanResponse as _FSR
-    from services.board_snapshot import persist_board_snapshot
+    from services.board_snapshot import persist_board_meta_snapshot
     from services.odds_api import SUPPORTED_SPORTS, fetch_events, fetch_featured_lines_slate, get_cached_or_scan
     from services.player_props import scan_player_props_for_event_ids
     from services.research_opportunities import capture_scan_opportunities
+    from services.scan_cache import persist_latest_scan_payload
     from services.scan_markets import (
         aggregate_manual_scan_all_sports,
         manual_scan_sports_for_env,
@@ -434,15 +435,53 @@ async def run_daily_board_drop(
 
     snapshot_id = "snap_none"
     if db is not None:
-        snapshot_id = persist_board_snapshot(
+        # Persist per-surface latest caches for lazy loading.
+        try:
+            persist_latest_scan_payload(
+                db=db,
+                payload=straight_payload,
+                retry_supabase=retry_supabase,
+                log_event=log_event,
+                surface="straight_bets",
+                scope="latest",
+            )
+        except Exception as exc:
+            log_event(
+                "daily_board.persist_surface_latest_failed",
+                level="warning",
+                surface="straight_bets",
+                error_class=type(exc).__name__,
+                error=str(exc),
+            )
+        try:
+            persist_latest_scan_payload(
+                db=db,
+                payload=props_payload,
+                retry_supabase=retry_supabase,
+                log_event=log_event,
+                surface="player_props",
+                scope="latest",
+            )
+        except Exception as exc:
+            log_event(
+                "daily_board.persist_surface_latest_failed",
+                level="warning",
+                surface="player_props",
+                error_class=type(exc).__name__,
+                error=str(exc),
+            )
+
+        snapshot_id = persist_board_meta_snapshot(
             db=db,
             snapshot_type="scheduled",
-            straight_bets_payload=straight_payload,
-            player_props_payload=props_payload,
             scanned_at=scanned_at,
             retry_supabase=retry_supabase,
             log_event=log_event,
             game_context=game_context,
+            surfaces_included=["straight_bets", "player_props"],
+            sports_included=["all", DAILY_BOARD_SPORT],
+            events_scanned=int(straight_aggregate.get("total_events") or 0) + int(props_result.get("events_fetched") or 0),
+            total_sides=len(straight_sides) + len(props_sides),
         )
 
     duration_ms = round((time.monotonic() - started_at) * 1000, 2)

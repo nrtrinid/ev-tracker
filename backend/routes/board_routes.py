@@ -123,14 +123,13 @@ def get_board_latest(user: dict = Depends(get_current_user)):
 
     request_id = f"board_latest_{uuid4().hex[:10]}"
     rss_before = rss_mb()
-    max_sides = int(os.getenv("BOARD_LATEST_MAX_SIDES") or 8000)
-    cap_sides = int(os.getenv("BOARD_LATEST_DEGRADED_SIDES") or 200)
+    # With chunked board loading, /board/latest should be meta + game_context only.
+    # Sides are served via /board/latest/surface.
     _log_event(
         "board.latest.started",
         request_id=request_id,
         rss_mb=rss_before,
         user_id=str(user.get("id") or ""),
-        max_sides=max_sides,
     )
 
     db = get_db()
@@ -157,33 +156,8 @@ def get_board_latest(user: dict = Depends(get_current_user)):
 
     # Helper: build a response dict and return as JSONResponse to avoid
     # heavyweight Pydantic parsing/serialization on large cached payloads.
-    def _count_sides(surface_payload: object) -> int | None:
-        if not isinstance(surface_payload, dict):
-            return None
-        sides = surface_payload.get("sides")
-        return len(sides) if isinstance(sides, list) else None
-
     def _safe_keys(value: object) -> list[str]:
         return sorted(list(value.keys())) if isinstance(value, dict) else []
-
-    def _approx_payload_bytes(*, meta: object, game_context: object) -> int | None:
-        """
-        Best-effort shallow size estimate WITHOUT serializing sides arrays.
-        Uses only meta + game_context key/value strings and caps work.
-        """
-        try:
-            total = 0
-            if isinstance(meta, dict):
-                for k, v in list(meta.items())[:60]:
-                    total += len(str(k)) + len(str(v))
-            if isinstance(game_context, dict):
-                for k, v in list(game_context.items())[:80]:
-                    if k in {"games", "selected_games", "featured_lines"}:
-                        continue
-                    total += len(str(k)) + len(str(v))
-            return total
-        except Exception:
-            return None
 
     def _build_response_payload(*, raw_board: dict | None) -> dict:
         if raw_board is None:
@@ -202,8 +176,9 @@ def get_board_latest(user: dict = Depends(get_current_user)):
         if not isinstance(game_context, dict):
             game_context = None
 
-        straight = raw_board.get("straight_bets") if isinstance(raw_board.get("straight_bets"), dict) else None
-        player = raw_board.get("player_props") if isinstance(raw_board.get("player_props"), dict) else None
+        # Meta-only: do not return surfaces from board:latest.
+        straight = None
+        player = None
         return {
             "meta": meta,
             "game_context": game_context,
@@ -211,154 +186,11 @@ def get_board_latest(user: dict = Depends(get_current_user)):
             "player_props": player,
         }
 
-    if raw is None:
-        # No canonical board yet — try per-surface fallbacks before returning empty
-        from services.scan_cache import load_latest_scan_payload
-
-        try:
-            straight = load_latest_scan_payload(db=db, retry_supabase=_retry_supabase, surface="straight_bets")
-        except Exception as e:
-            _log_event(
-                "board.latest.fallback_surface_failed",
-                level="warning",
-                request_id=request_id,
-                surface="straight_bets",
-                error_class=type(e).__name__,
-                error=str(e),
-            )
-            straight = None
-
-        try:
-            player = load_latest_scan_payload(db=db, retry_supabase=_retry_supabase, surface="player_props")
-        except Exception as e:
-            _log_event(
-                "board.latest.fallback_surface_failed",
-                level="warning",
-                request_id=request_id,
-                surface="player_props",
-                error_class=type(e).__name__,
-                error=str(e),
-            )
-            player = None
-
-        # Build a synthetic meta without Pydantic parsing.
-        surfaces_included: list[str] = []
-        sports_included: list[str] = []
-        total_sides = 0
-        total_events = 0
-        scanned_at = utc_now_iso_z()
-        if isinstance(straight, dict):
-            surfaces_included.append("straight_bets")
-            sport = straight.get("sport") or "all"
-            if sport not in sports_included:
-                sports_included.append(sport)
-            sides_raw = straight.get("sides")
-            total_sides += len(sides_raw) if isinstance(sides_raw, list) else 0
-            total_events += int(straight.get("events_fetched") or 0)
-            if straight.get("scanned_at"):
-                scanned_at = straight["scanned_at"]
-        if isinstance(player, dict):
-            surfaces_included.append("player_props")
-            sport = player.get("sport") or "basketball_nba"
-            if sport not in sports_included:
-                sports_included.append(sport)
-            sides_raw = player.get("sides")
-            total_sides += len(sides_raw) if isinstance(sides_raw, list) else 0
-            total_events += int(player.get("events_fetched") or 0)
-            if player.get("scanned_at") and not (isinstance(straight, dict) and straight.get("scanned_at")):
-                scanned_at = player["scanned_at"]
-        meta = {
-            "snapshot_id": f"fallback_{abs(hash(scanned_at)) % 0xFFFFFF:06x}",
-            "snapshot_type": "manual",
-            "scanned_at": scanned_at,
-            "surfaces_included": surfaces_included,
-            "sports_included": sports_included,
-            "next_scheduled_drop": None,
-            "events_scanned": total_events,
-            "total_sides": total_sides,
-        }
-
-        payload = _build_response_payload(
-            raw_board={
-                "meta": meta,
-                "straight_bets": straight,
-                "player_props": player,
-                "game_context": None,
-            }
-        )
-
-        _log_event(
-            "board.latest.cache_loaded",
-            request_id=request_id,
-            source="surface_fallback",
-            rss_mb=rss_mb(),
-            top_keys=["meta", "straight_bets", "player_props"],
-            straight_sides=_count_sides(straight),
-            player_sides=_count_sides(player),
-            approx_bytes=_approx_payload_bytes(meta=meta, game_context=None),
-        )
-
-        # Degradation guard for very large caches.
-        straight_count = _count_sides(payload.get("straight_bets")) or 0
-        player_count = _count_sides(payload.get("player_props")) or 0
-        if (straight_count + player_count) > max_sides:
-            degraded_meta = dict(payload.get("meta") or {})
-            degraded_meta["degraded"] = True
-            degraded_meta["degraded_reason"] = "side_count_cap"
-            degraded_meta["degraded_max_sides"] = max_sides
-            degraded_meta["degraded_side_counts"] = {"straight_bets": straight_count, "player_props": player_count}
-
-            def _cap_surface(s: object) -> dict | None:
-                if not isinstance(s, dict):
-                    return None
-                sides_raw = s.get("sides")
-                sides_list = sides_raw if isinstance(sides_raw, list) else []
-                return {**s, "sides": sides_list[:cap_sides]}
-
-            degraded_payload = {
-                **payload,
-                "meta": degraded_meta,
-                "straight_bets": _cap_surface(payload.get("straight_bets")),
-                "player_props": _cap_surface(payload.get("player_props")),
-            }
-            _log_event(
-                "board.latest.pre_serialize",
-                request_id=request_id,
-                source="surface_fallback",
-                degraded=True,
-                rss_mb=rss_mb(),
-                straight_sides=straight_count,
-                player_sides=player_count,
-            )
-            _log_event(
-                "board.latest.response_ready",
-                request_id=request_id,
-                source="surface_fallback",
-                degraded=True,
-                rss_mb=rss_mb(),
-            )
-            return JSONResponse(status_code=200, content=degraded_payload)
-
-        _log_event(
-            "board.latest.completed",
-            request_id=request_id,
-            rss_mb_before=rss_before,
-            rss_mb_after=rss_mb(),
-            straight_sides=_count_sides(payload.get("straight_bets")),
-            player_sides=_count_sides(payload.get("player_props")),
-            source="surface_fallback",
-        )
-        return JSONResponse(status_code=200, content=payload)
-
     try:
         raw_board = raw if isinstance(raw, dict) else None
-        straight_raw = raw_board.get("straight_bets") if isinstance(raw_board, dict) else None
-        player_raw = raw_board.get("player_props") if isinstance(raw_board, dict) else None
         meta_raw = raw_board.get("meta") if isinstance(raw_board, dict) else None
         game_context_raw = raw_board.get("game_context") if isinstance(raw_board, dict) else None
 
-        straight_count = _count_sides(straight_raw) or 0
-        player_count = _count_sides(player_raw) or 0
         _log_event(
             "board.latest.cache_loaded",
             request_id=request_id,
@@ -367,80 +199,19 @@ def get_board_latest(user: dict = Depends(get_current_user)):
             top_keys=_safe_keys(raw_board),
             meta_keys=_safe_keys(meta_raw),
             game_context_keys=_safe_keys(game_context_raw),
-            straight_sides=straight_count,
-            player_sides=player_count,
-            approx_bytes=_approx_payload_bytes(meta=meta_raw, game_context=game_context_raw),
         )
-
-        # Degrade before building/serializing any big payload.
-        if (straight_count + player_count) > max_sides:
-            _log_event(
-                "board.latest.degraded",
-                level="warning",
-                request_id=request_id,
-                source="canonical_board",
-                rss_mb=rss_mb(),
-                reason="side_count_cap",
-                max_sides=max_sides,
-                straight_sides=straight_count,
-                player_sides=player_count,
-            )
-
-            meta = meta_raw if isinstance(meta_raw, dict) else _EMPTY_META.model_dump()
-            meta = dict(meta)
-            meta.setdefault("scanned_at", utc_now_iso_z())
-            meta["degraded"] = True
-            meta["degraded_reason"] = "side_count_cap"
-            meta["degraded_max_sides"] = max_sides
-            meta["degraded_side_counts"] = {"straight_bets": straight_count, "player_props": player_count}
-
-            def _cap_surface(s: object) -> dict | None:
-                if not isinstance(s, dict):
-                    return None
-                # Avoid copying huge dicts deeply: we keep existing keys but slice sides.
-                sides_raw = s.get("sides")
-                sides_list = sides_raw if isinstance(sides_raw, list) else []
-                return {**s, "sides": sides_list[:cap_sides]}
-
-            degraded_payload = {
-                "meta": meta,
-                "game_context": game_context_raw if isinstance(game_context_raw, dict) else None,
-                "straight_bets": _cap_surface(straight_raw),
-                "player_props": _cap_surface(player_raw),
-            }
-            _log_event(
-                "board.latest.pre_serialize",
-                request_id=request_id,
-                source="canonical_board",
-                degraded=True,
-                rss_mb=rss_mb(),
-                straight_sides=straight_count,
-                player_sides=player_count,
-            )
-            _log_event(
-                "board.latest.response_ready",
-                request_id=request_id,
-                source="canonical_board",
-                degraded=True,
-                rss_mb=rss_mb(),
-            )
-            return JSONResponse(status_code=200, content=degraded_payload)
 
         payload = _build_response_payload(raw_board=raw_board)
         _log_event(
             "board.latest.pre_serialize",
             request_id=request_id,
             source="canonical_board",
-            degraded=False,
             rss_mb=rss_mb(),
-            straight_sides=straight_count,
-            player_sides=player_count,
         )
         _log_event(
             "board.latest.response_ready",
             request_id=request_id,
             source="canonical_board",
-            degraded=False,
             rss_mb=rss_mb(),
         )
         _log_event(
@@ -448,8 +219,6 @@ def get_board_latest(user: dict = Depends(get_current_user)):
             request_id=request_id,
             rss_mb_before=rss_before,
             rss_mb_after=rss_mb(),
-            straight_sides=straight_count,
-            player_sides=player_count,
             source="canonical_board",
         )
         return JSONResponse(status_code=200, content=payload)
@@ -490,6 +259,140 @@ def get_board_latest(user: dict = Depends(get_current_user)):
                 "error_class": type(e).__name__,
             },
         )
+
+
+@router.get("/board/latest/surface", response_model=FullScanResponse | None)
+def get_board_latest_surface(
+    surface: str = Query(..., description="Surface to load: straight_bets or player_props"),
+    user: dict = Depends(get_current_user),
+):
+    """Load a per-surface latest payload from global_scan_cache (surface:latest)."""
+    from main import _log_event
+    from services.scan_cache import load_latest_scan_payload
+
+    request_id = f"board_surface_{uuid4().hex[:10]}"
+    rss_before = rss_mb()
+    _log_event(
+        "board.latest_surface.started",
+        request_id=request_id,
+        rss_mb=rss_before,
+        user_id=str(user.get("id") or ""),
+        surface=surface,
+    )
+
+    if surface not in ("straight_bets", "player_props"):
+        raise HTTPException(status_code=400, detail="surface must be straight_bets or player_props")
+
+    db = get_db()
+    try:
+        payload = load_latest_scan_payload(db=db, retry_supabase=_retry_supabase, surface=surface)
+    except Exception as e:
+        _log_event(
+            "board.latest_surface.load_failed",
+            level="warning",
+            request_id=request_id,
+            surface=surface,
+            rss_mb_after=rss_mb(),
+            error_class=type(e).__name__,
+            error=str(e),
+        )
+        raise HTTPException(status_code=502, detail="Failed to load board surface payload")
+
+    if payload is None:
+        _log_event(
+            "board.latest_surface.missing",
+            request_id=request_id,
+            surface=surface,
+            rss_mb_after=rss_mb(),
+        )
+        return None
+
+    sides_raw = payload.get("sides")
+    sides_count = len(sides_raw) if isinstance(sides_raw, list) else None
+    _log_event(
+        "board.latest_surface.completed",
+        request_id=request_id,
+        surface=surface,
+        rss_mb_after=rss_mb(),
+        sides_count=sides_count,
+        scanned_at=payload.get("scanned_at"),
+    )
+    return payload
+
+
+@router.get("/board/latest/promos")
+def get_board_latest_promos(
+    limit: int = Query(default=300, ge=20, le=1500),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Optional lightweight promos payload to avoid client-side merging of huge arrays.
+
+    Loads per-surface latest payloads and returns a capped combined sides list.
+    """
+    from main import _log_event
+    from services.scan_cache import load_latest_scan_payload
+
+    request_id = f"board_promos_{uuid4().hex[:10]}"
+    rss_before = rss_mb()
+    _log_event(
+        "board.latest_promos.started",
+        request_id=request_id,
+        rss_mb=rss_before,
+        user_id=str(user.get("id") or ""),
+        limit=limit,
+    )
+
+    db = get_db()
+    board = load_board_snapshot(db=db, retry_supabase=_retry_supabase)
+    meta = board.get("meta") if isinstance(board, dict) and isinstance(board.get("meta"), dict) else _EMPTY_META.model_dump()
+    game_context = board.get("game_context") if isinstance(board, dict) and isinstance(board.get("game_context"), dict) else None
+
+    straight = load_latest_scan_payload(db=db, retry_supabase=_retry_supabase, surface="straight_bets") or {}
+    props = load_latest_scan_payload(db=db, retry_supabase=_retry_supabase, surface="player_props") or {}
+
+    straight_sides = straight.get("sides") if isinstance(straight, dict) else None
+    props_sides = props.get("sides") if isinstance(props, dict) else None
+    straight_list = straight_sides if isinstance(straight_sides, list) else []
+    props_list = props_sides if isinstance(props_sides, list) else []
+
+    # Take a bounded slice from each surface first to avoid doubling memory.
+    take_each = max(10, int(limit / 2))
+    combined = [*props_list[:take_each], *straight_list[:take_each]]
+
+    def _ev(side: object) -> float:
+        if not isinstance(side, dict):
+            return -1e9
+        try:
+            return float(side.get("ev_percentage") or -1e9)
+        except Exception:
+            return -1e9
+
+    try:
+        combined.sort(key=_ev, reverse=True)
+    except Exception:
+        pass
+
+    combined = combined[:limit]
+    _log_event(
+        "board.latest_promos.completed",
+        request_id=request_id,
+        rss_mb_before=rss_before,
+        rss_mb_after=rss_mb(),
+        straight_sides=len(straight_list),
+        player_sides=len(props_list),
+        returned=len(combined),
+    )
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "meta": meta,
+            "game_context": game_context,
+            "limit": limit,
+            "sides": combined,
+        },
+    )
 
 
 @router.post("/board/refresh", response_model=ScopedRefreshResponse)
