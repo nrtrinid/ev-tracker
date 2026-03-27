@@ -102,9 +102,11 @@ def _new_run_id(prefix: str) -> str:
 
 
 def _log_event(event: str, level: str = "info", **fields):
+    from utils.time_utils import utc_now_iso_z
+
     payload = {
         "event": event,
-        "timestamp": datetime.now(UTC).isoformat() + "Z",
+        "timestamp": utc_now_iso_z(),
         **fields,
     }
     message = json.dumps(payload, default=str)
@@ -870,6 +872,10 @@ except Exception as e:
     print(f"[Scheduler] Failed to load America/Phoenix timezone: {e}")
 
 
+# In-process lock to prevent overlapping daily-board runs (scheduler + cron/ops triggers).
+_DAILY_BOARD_RUN_LOCK = asyncio.Lock()
+
+
 async def _run_jit_clv_snatcher_job():
     """JIT CLV Snatcher: capture closing Pinnacle lines for games starting in the next 20 min."""
     from services.odds_api import run_jit_clv_snatcher
@@ -905,7 +911,7 @@ async def _run_jit_clv_snatcher_job():
                             "title": "JIT CLV update",
                             "description": f"Captured closing lines for **{updated}** bet(s).",
                             "fields": [
-                                {"name": "Time (UTC)", "value": datetime.now(UTC).isoformat() + "Z", "inline": True},
+                                {"name": "Time (UTC)", "value": _utc_now_iso(), "inline": True},
                             ],
                         }
                     ]
@@ -934,14 +940,14 @@ async def _run_auto_settler_job():
     from services.odds_api import run_auto_settler, get_last_auto_settler_summary
 
     run_id = _new_run_id("auto_settler")
-    started = datetime.now(UTC).isoformat() + "Z"
+    started = _utc_now_iso()
     started_at = time.monotonic()
     _record_scheduler_heartbeat("auto_settler", run_id, "started")
     _log_event("scheduler.auto_settler.started", run_id=run_id)
     db = get_db()
     try:
         settled = await run_auto_settler(db, source="auto_settle_scheduler")
-        finished = datetime.now(UTC).isoformat() + "Z"
+        finished = _utc_now_iso()
         _log_event(
             "scheduler.auto_settler.completed",
             run_id=run_id,
@@ -1040,22 +1046,23 @@ async def _run_scheduled_scan_job():
     from services.daily_board import run_daily_board_drop
 
     run_id = _new_run_id("scheduled_scan")
-    started = datetime.now(UTC).isoformat()
+    started = _utc_now_iso()
     started_at = time.monotonic()
     _record_scheduler_heartbeat("scheduled_scan", run_id, "started")
-    _log_event("scheduler.daily_board.started", run_id=run_id, started_at=started + "Z")
+    _log_event("scheduler.daily_board.started", run_id=run_id, started_at=started)
 
     hard_errors = 0
     result: dict | None = None
     try:
-        result = await run_daily_board_drop(
-            db=get_db(),
-            source="scheduled_board_drop",
-            scan_label="Late-Afternoon / Final-Context Scan",
-            mst_anchor_time="15:30",
-            retry_supabase=_retry_supabase,
-            log_event=_log_event,
-        )
+        async with _DAILY_BOARD_RUN_LOCK:
+            result = await run_daily_board_drop(
+                db=get_db(),
+                source="scheduled_board_drop",
+                scan_label="Late-Afternoon / Final-Context Scan",
+                mst_anchor_time="15:30",
+                retry_supabase=_retry_supabase,
+                log_event=_log_event,
+            )
     except Exception as e:
         _log_event(
             "scheduler.daily_board.failed",
@@ -1066,11 +1073,11 @@ async def _run_scheduled_scan_job():
         )
         hard_errors = 1
 
-    finished = datetime.now(UTC).isoformat()
+    finished = _utc_now_iso()
     _log_event(
         "scheduler.daily_board.completed",
         run_id=run_id,
-        finished_at=finished + "Z",
+        finished_at=finished,
         result=result,
         duration_ms=round((time.monotonic() - started_at) * 1000, 2),
     )
@@ -1100,15 +1107,15 @@ async def _run_scheduled_scan_job():
                 "anchor_timezone": "America/Phoenix",
                 "anchor_time_mst": "15:30",
             },
-            "started_at": started + "Z",
-            "finished_at": finished + "Z",
+            "started_at": started,
+            "finished_at": finished,
             "duration_ms": duration_ms,
             "total_sides": (result or {}).get("props_sides") if isinstance(result, dict) else None,
             "props_events_scanned": (result or {}).get("props_events_scanned") if isinstance(result, dict) else None,
             "featured_games_count": (result or {}).get("featured_games_count") if isinstance(result, dict) else None,
             "alerts_scheduled": 0,
             "hard_errors": hard_errors,
-            "captured_at": finished + "Z",
+            "captured_at": finished,
             "board_drop": True,
             "result": result,
         },
@@ -1122,9 +1129,9 @@ async def _run_scheduled_scan_job():
         surface="board",
         scan_scope="daily_board",
         requested_sport="basketball_nba",
-        captured_at=finished + "Z",
-        started_at=started + "Z",
-        finished_at=finished + "Z",
+        captured_at=finished,
+        started_at=started,
+        finished_at=finished,
         duration_ms=duration_ms,
         events_fetched=None,
         events_with_both_books=None,
@@ -1151,8 +1158,8 @@ async def _run_scheduled_scan_job():
                     "title": "Daily board drop complete",
                     "description": "Late-Afternoon / Final-Context Scan ran successfully.",
                     "fields": [
-                        {"name": "Started (UTC)", "value": started + "Z", "inline": True},
-                        {"name": "Finished (UTC)", "value": finished + "Z", "inline": True},
+                        {"name": "Started (UTC)", "value": started, "inline": True},
+                        {"name": "Finished (UTC)", "value": finished, "inline": True},
                         {"name": "Props sides", "value": str(total_sides), "inline": True},
                     ],
                 }
@@ -1166,22 +1173,23 @@ async def _run_early_look_scan_job():
     from services.daily_board import run_daily_board_drop
 
     run_id = _new_run_id("scheduled_scan_early")
-    started = datetime.now(UTC).isoformat()
+    started = _utc_now_iso()
     started_at = time.monotonic()
     _record_scheduler_heartbeat("scheduled_scan", run_id, "started")
-    _log_event("scheduler.daily_board.early_look.started", run_id=run_id, started_at=started + "Z")
+    _log_event("scheduler.daily_board.early_look.started", run_id=run_id, started_at=started)
 
     hard_errors = 0
     result: dict | None = None
     try:
-        result = await run_daily_board_drop(
-            db=get_db(),
-            source="scheduled_board_drop_early_look",
-            scan_label="Early-Look / Injury-Watch Scan",
-            mst_anchor_time="10:30",
-            retry_supabase=_retry_supabase,
-            log_event=_log_event,
-        )
+        async with _DAILY_BOARD_RUN_LOCK:
+            result = await run_daily_board_drop(
+                db=get_db(),
+                source="scheduled_board_drop_early_look",
+                scan_label="Early-Look / Injury-Watch Scan",
+                mst_anchor_time="10:30",
+                retry_supabase=_retry_supabase,
+                log_event=_log_event,
+            )
     except Exception as e:
         _log_event(
             "scheduler.daily_board.early_look.failed",
@@ -1192,12 +1200,12 @@ async def _run_early_look_scan_job():
         )
         hard_errors = 1
 
-    finished = datetime.now(UTC).isoformat()
+    finished = _utc_now_iso()
     duration_ms = round((time.monotonic() - started_at) * 1000, 2)
     _log_event(
         "scheduler.daily_board.early_look.completed",
         run_id=run_id,
-        finished_at=finished + "Z",
+        finished_at=finished,
         result=result,
         duration_ms=duration_ms,
     )
@@ -1226,15 +1234,15 @@ async def _run_early_look_scan_job():
                 "anchor_timezone": "America/Phoenix",
                 "anchor_time_mst": "10:30",
             },
-            "started_at": started + "Z",
-            "finished_at": finished + "Z",
+            "started_at": started,
+            "finished_at": finished,
             "duration_ms": duration_ms,
             "total_sides": (result or {}).get("props_sides") if isinstance(result, dict) else None,
             "props_events_scanned": (result or {}).get("props_events_scanned") if isinstance(result, dict) else None,
             "featured_games_count": (result or {}).get("featured_games_count") if isinstance(result, dict) else None,
             "alerts_scheduled": 0,
             "hard_errors": hard_errors,
-            "captured_at": finished + "Z",
+            "captured_at": finished,
             "board_drop": True,
             "result": result,
         },
@@ -1248,9 +1256,9 @@ async def _run_early_look_scan_job():
         surface="board",
         scan_scope="daily_board",
         requested_sport="basketball_nba",
-        captured_at=finished + "Z",
-        started_at=started + "Z",
-        finished_at=finished + "Z",
+        captured_at=finished,
+        started_at=started,
+        finished_at=finished,
         duration_ms=duration_ms,
         events_fetched=None,
         events_with_both_books=None,
@@ -1357,6 +1365,12 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        try:
+            from services.http_client import close_async_client
+
+            await close_async_client()
+        except Exception:
+            pass
         await stop_scheduler()
 
 
@@ -1375,6 +1389,55 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Lightweight request timing + memory watermark logs for high-risk endpoints.
+_TELEMETRY_PATHS = {
+    "/balances",
+    "/api/board/latest",
+    "/api/ops/status",
+    "/ready",
+}
+
+
+@app.middleware("http")
+async def _timing_middleware(request, call_next):
+    import time as _time
+
+    from utils.telemetry import rss_mb as _rss_mb
+
+    path = request.url.path
+    should_log = path in _TELEMETRY_PATHS
+    started = _time.monotonic()
+    rss_before = _rss_mb() if should_log else None
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        if should_log:
+            _log_event(
+                "http.request.failed",
+                level="warning",
+                method=request.method,
+                path=path,
+                duration_ms=round((_time.monotonic() - started) * 1000, 2),
+                rss_mb_before=rss_before,
+                rss_mb_after=_rss_mb(),
+                error_class=type(exc).__name__,
+                error=str(exc),
+            )
+        raise
+
+    if should_log:
+        _log_event(
+            "http.request.completed",
+            method=request.method,
+            path=path,
+            status_code=getattr(response, "status_code", None),
+            duration_ms=round((_time.monotonic() - started) * 1000, 2),
+            rss_mb_before=rss_before,
+            rss_mb_after=_rss_mb(),
+        )
+    return response
 
 # Import database after app setup to avoid circular imports
 from database import get_db
@@ -1501,7 +1564,7 @@ def readiness_check():
 
     response = {
         "status": "ready" if ready else "not_ready",
-        "timestamp": datetime.now(UTC).isoformat() + "Z",
+        "timestamp": _utc_now_iso(),
         "checks": checks,
         "runtime": runtime,
         "scheduler_freshness": scheduler_freshness,
@@ -1695,67 +1758,31 @@ def get_balances(user: dict = Depends(get_current_user)):
     """Get computed balance for each sportsbook."""
     db = get_db()
     settings = get_user_settings(db, user["id"])
-    k_factor = settings["k_factor"]
+    # k_factor no longer needed for balances (profit uses stored bet fields)
+    _k_factor = settings["k_factor"]
 
     # Get all transactions for this user
     tx_result = _retry_supabase(lambda: (
         db.table("transactions")
-        .select("*")
+        .select("sportsbook,type,amount")
         .eq("user_id", user["id"])
         .execute()
     ))
     transactions = tx_result.data or []
 
     # Get all bets for profit calculation
-    bets_result = _retry_supabase(lambda: db.table("bets").select("*").eq("user_id", user["id"]).execute())
+    bets_result = _retry_supabase(lambda: (
+        db.table("bets")
+        .select("sportsbook,result,promo_type,stake,odds_american,boost_percent,winnings_cap,payout_override,win_payout_locked,true_prob_at_entry")
+        .eq("user_id", user["id"])
+        .execute()
+    ))
     bets = bets_result.data or []
 
-    # Aggregate by sportsbook
-    sportsbook_data = {}
+    from services.balance_stats import compute_balances_by_sportsbook_fast
 
-    # Process transactions
-    for tx in transactions:
-        book = tx["sportsbook"]
-        if book not in sportsbook_data:
-            sportsbook_data[book] = {"deposits": 0, "withdrawals": 0, "profit": 0, "pending": 0}
-
-        if tx["type"] == "deposit":
-            sportsbook_data[book]["deposits"] += float(tx["amount"])
-        else:
-            sportsbook_data[book]["withdrawals"] += float(tx["amount"])
-
-    # Process bets for profit and pending
-    for row in bets:
-        book = row["sportsbook"]
-        if book not in sportsbook_data:
-            sportsbook_data[book] = {"deposits": 0, "withdrawals": 0, "profit": 0, "pending": 0}
-
-        bet = build_bet_response(row, k_factor)
-
-        if bet.result == BetResult.PENDING:
-            # Pending cash exposure: bonus bet stake is not real cash.
-            if bet.promo_type != "bonus_bet":
-                sportsbook_data[book]["pending"] += bet.stake
-        elif bet.real_profit is not None:
-            sportsbook_data[book]["profit"] += bet.real_profit
-
-    # Build response
-    balances = []
-    for book, data in sorted(sportsbook_data.items()):
-        net_deposits = data["deposits"] - data["withdrawals"]
-        balance = net_deposits + data["profit"] - data["pending"]
-
-        balances.append(BalanceResponse(
-            sportsbook=book,
-            deposits=round(data["deposits"], 2),
-            withdrawals=round(data["withdrawals"], 2),
-            net_deposits=round(net_deposits, 2),
-            profit=round(data["profit"], 2),
-            pending=round(data["pending"], 2),
-            balance=round(balance, 2),
-        ))
-
-    return balances
+    out = compute_balances_by_sportsbook_fast(transactions=transactions, bets=bets)
+    return [BalanceResponse(**row) for row in out]
 
 
 # ============ Settings ============

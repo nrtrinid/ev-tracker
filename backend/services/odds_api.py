@@ -574,26 +574,27 @@ async def fetch_odds(
     endpoint_value = endpoint or f"/sports/{sport}/odds"
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url, params=params)
-            resp.raise_for_status()
-            duration_ms = (time.monotonic() - started) * 1000
-            remaining = resp.headers.get("x-requests-remaining") or resp.headers.get("x-request-remaining")
-            credits_used_last = _parse_credits_used_last(resp.headers.get("x-requests-last"))
-            _append_odds_api_activity(
-                source=source,
-                endpoint=endpoint_value,
-                sport=sport,
-                cache_hit=False,
-                outbound_call_made=True,
-                status_code=resp.status_code,
-                duration_ms=duration_ms,
-                api_requests_remaining=remaining,
-                credits_used_last=credits_used_last,
-                error_type=None,
-                error_message=None,
-            )
-            return resp.json(), resp
+        from services.http_client import request_with_retries
+
+        resp = await request_with_retries("GET", url, params=params, retries=2)
+        resp.raise_for_status()
+        duration_ms = (time.monotonic() - started) * 1000
+        remaining = resp.headers.get("x-requests-remaining") or resp.headers.get("x-request-remaining")
+        credits_used_last = _parse_credits_used_last(resp.headers.get("x-requests-last"))
+        _append_odds_api_activity(
+            source=source,
+            endpoint=endpoint_value,
+            sport=sport,
+            cache_hit=False,
+            outbound_call_made=True,
+            status_code=resp.status_code,
+            duration_ms=duration_ms,
+            api_requests_remaining=remaining,
+            credits_used_last=credits_used_last,
+            error_type=None,
+            error_message=None,
+        )
+        return resp.json(), resp
     except httpx.HTTPStatusError as e:
         duration_ms = (time.monotonic() - started) * 1000
         status_code = e.response.status_code if e.response is not None else None
@@ -862,27 +863,28 @@ async def fetch_events(
     endpoint_value = f"/sports/{sport}/events"
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url, params={"apiKey": ODDS_API_KEY})
-            resp.raise_for_status()
-            duration_ms = (time.monotonic() - started) * 1000
-            remaining = resp.headers.get("x-requests-remaining") or resp.headers.get("x-request-remaining")
-            credits_used_last = _parse_credits_used_last(resp.headers.get("x-requests-last"))
-            _append_odds_api_activity(
-                source=source,
-                endpoint=endpoint_value,
-                sport=sport,
-                cache_hit=False,
-                outbound_call_made=True,
-                status_code=resp.status_code,
-                duration_ms=duration_ms,
-                api_requests_remaining=remaining,
-                credits_used_last=credits_used_last,
-                error_type=None,
-                error_message=None,
-            )
-            data = resp.json()
-            return (data if isinstance(data, list) else []), resp
+        from services.http_client import request_with_retries
+
+        resp = await request_with_retries("GET", url, params={"apiKey": ODDS_API_KEY}, retries=2)
+        resp.raise_for_status()
+        duration_ms = (time.monotonic() - started) * 1000
+        remaining = resp.headers.get("x-requests-remaining") or resp.headers.get("x-request-remaining")
+        credits_used_last = _parse_credits_used_last(resp.headers.get("x-requests-last"))
+        _append_odds_api_activity(
+            source=source,
+            endpoint=endpoint_value,
+            sport=sport,
+            cache_hit=False,
+            outbound_call_made=True,
+            status_code=resp.status_code,
+            duration_ms=duration_ms,
+            api_requests_remaining=remaining,
+            credits_used_last=credits_used_last,
+            error_type=None,
+            error_message=None,
+        )
+        data = resp.json()
+        return (data if isinstance(data, list) else []), resp
     except httpx.HTTPStatusError as e:
         duration_ms = (time.monotonic() - started) * 1000
         status_code = e.response.status_code if e.response is not None else None
@@ -1333,27 +1335,28 @@ async def fetch_scores(sport: str, source: str = "auto_settle") -> list[dict]:
     }
     started = time.monotonic()
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url, params=params)
-            resp.raise_for_status()
-            duration_ms = (time.monotonic() - started) * 1000
-            remaining = resp.headers.get("x-requests-remaining") or resp.headers.get("x-request-remaining")
-            credits_used_last = _parse_credits_used_last(resp.headers.get("x-requests-last"))
-            _append_odds_api_activity(
-                source=source,
-                endpoint=f"/sports/{sport}/scores",
-                sport=sport,
-                cache_hit=False,
-                outbound_call_made=True,
-                status_code=resp.status_code,
-                duration_ms=duration_ms,
-                api_requests_remaining=remaining,
-                credits_used_last=credits_used_last,
-                error_type=None,
-                error_message=None,
-            )
-            data = resp.json()
-            return data if isinstance(data, list) else []
+        from services.http_client import request_with_retries
+
+        resp = await request_with_retries("GET", url, params=params, retries=2)
+        resp.raise_for_status()
+        duration_ms = (time.monotonic() - started) * 1000
+        remaining = resp.headers.get("x-requests-remaining") or resp.headers.get("x-request-remaining")
+        credits_used_last = _parse_credits_used_last(resp.headers.get("x-requests-last"))
+        _append_odds_api_activity(
+            source=source,
+            endpoint=f"/sports/{sport}/scores",
+            sport=sport,
+            cache_hit=False,
+            outbound_call_made=True,
+            status_code=resp.status_code,
+            duration_ms=duration_ms,
+            api_requests_remaining=remaining,
+            credits_used_last=credits_used_last,
+            error_type=None,
+            error_message=None,
+        )
+        data = resp.json()
+        return data if isinstance(data, list) else []
     except httpx.HTTPStatusError as e:
         duration_ms = (time.monotonic() - started) * 1000
         status_code = e.response.status_code if e.response is not None else None

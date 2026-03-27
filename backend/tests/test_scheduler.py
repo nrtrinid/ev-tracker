@@ -146,7 +146,7 @@ async def test_scheduled_scan_job_never_calls_player_props_scanner(monkeypatch):
 def test_scheduler_freshness_uses_startup_grace_when_no_success(monkeypatch):
     main = import_main_for_tests(monkeypatch)
     main._init_scheduler_heartbeats()
-    main.app.state.scheduler_started_at = datetime.now(UTC).isoformat() + "Z"
+    main.app.state.scheduler_started_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
     fresh, details = main._check_scheduler_freshness(True)
 
@@ -159,7 +159,7 @@ def test_scheduler_freshness_uses_startup_grace_when_no_success(monkeypatch):
 def test_scheduler_freshness_fails_if_no_success_past_stale_window(monkeypatch):
     main = import_main_for_tests(monkeypatch)
     main._init_scheduler_heartbeats()
-    main.app.state.scheduler_started_at = (datetime.now(UTC) - timedelta(hours=48)).isoformat() + "Z"
+    main.app.state.scheduler_started_at = (datetime.now(UTC) - timedelta(hours=48)).isoformat().replace("+00:00", "Z")
 
     fresh, details = main._check_scheduler_freshness(True)
 

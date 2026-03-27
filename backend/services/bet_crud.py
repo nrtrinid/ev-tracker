@@ -30,16 +30,22 @@ DEFAULT_SPORTSBOOKS = [
 
 
 def _retry_supabase(f, retries: int = 2):
-    """Retry a Supabase/PostgREST request on transient 'Server disconnected' errors."""
+    """Retry a Supabase/PostgREST request on transient transport errors."""
     last_err = None
     for attempt in range(retries):
         try:
             return f()
-        except httpx.RemoteProtocolError as e:
+        except (
+            httpx.RemoteProtocolError,
+            httpx.ReadError,
+            httpx.ConnectError,
+            httpx.PoolTimeout,
+            httpx.TimeoutException,
+        ) as e:
             last_err = e
             if attempt == retries - 1:
                 raise
-            time.sleep(0.4)
+            time.sleep(min(1.5, 0.25 * (2**attempt)))
     if last_err:
         raise last_err
 

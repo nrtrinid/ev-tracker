@@ -183,10 +183,11 @@ async def fetch_prizepicks_nba_board() -> list[dict[str, Any]]:
     last_error: Exception | None = None
     for attempt in range(2):
         try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                response = await client.get(PRIZEPICKS_API_URL, params=params)
-                response.raise_for_status()
-                payload = response.json()
+            from services.http_client import request_with_retries
+
+            response = await request_with_retries("GET", PRIZEPICKS_API_URL, params=params, timeout=20.0, retries=1)
+            response.raise_for_status()
+            payload = response.json()
             break
         except Exception as exc:
             last_error = exc

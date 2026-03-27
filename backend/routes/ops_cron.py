@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Header, Query
 
 from dependencies import require_ops_token
 from models import ResearchOpportunitySummaryResponse
+from utils.time_utils import utc_now_iso_z
 
 
 router = APIRouter()
@@ -38,20 +39,21 @@ async def cron_run_scan_impl(
     import main
     from services.daily_board import run_daily_board_drop
 
-    started = datetime.now(UTC).isoformat() + "Z"
+    started = utc_now_iso_z()
     errors: list[dict] = []
     result: dict | None = None
     try:
-        result = await run_daily_board_drop(
-            db=main.get_db(),
-            source="ops_trigger_board_drop" if ops_status_key == "last_ops_trigger_scan" else "cron_board_drop",
-            retry_supabase=main._retry_supabase,
-            log_event=main._log_event,
-        )
+        async with main._DAILY_BOARD_RUN_LOCK:
+            result = await run_daily_board_drop(
+                db=main.get_db(),
+                source="ops_trigger_board_drop" if ops_status_key == "last_ops_trigger_scan" else "cron_board_drop",
+                retry_supabase=main._retry_supabase,
+                log_event=main._log_event,
+            )
     except Exception as exc:
         errors.append({"error": f"{type(exc).__name__}: {exc}"})
 
-    finished = datetime.now(UTC).isoformat() + "Z"
+    finished = utc_now_iso_z()
     duration_ms = round((time.monotonic() - started_clock) * 1000, 2)
     log_event(
         f"{log_prefix}.completed",
@@ -140,7 +142,7 @@ async def cron_run_auto_settle_impl(
     from services.odds_api import get_last_auto_settler_summary
 
     db = get_db()
-    started = datetime.now(UTC).isoformat() + "Z"
+    started = utc_now_iso_z()
     try:
         from services.odds_api import run_auto_settler
 
@@ -157,7 +159,7 @@ async def cron_run_auto_settle_impl(
         )
         raise HTTPException(status_code=502, detail=f"Auto-settler error: {e}")
     finally:
-        finished = datetime.now(UTC).isoformat() + "Z"
+        finished = utc_now_iso_z()
 
     duration_ms = round((time.monotonic() - started_clock) * 1000, 2)
 
@@ -314,7 +316,7 @@ async def cron_test_discord_impl(
                 "title": "Webhook test",
                 "description": "If you can read this, DISCORD_WEBHOOK_URL is working.",
                 "fields": [
-                    {"name": "Server time (UTC)", "value": datetime.now(UTC).isoformat() + "Z", "inline": False},
+                    {"name": "Server time (UTC)", "value": utc_now_iso_z(), "inline": False},
                 ],
             }
         ]
@@ -384,7 +386,7 @@ async def cron_test_discord_alert_impl(
                 "title": "Alert Webhook Test",
                 "description": "If you can read this, DISCORD_ALERT_WEBHOOK_URL is working.",
                 "fields": [
-                    {"name": "Server time (UTC)", "value": datetime.now(UTC).isoformat() + "Z", "inline": False},
+                    {"name": "Server time (UTC)", "value": utc_now_iso_z(), "inline": False},
                 ],
             }
         ]

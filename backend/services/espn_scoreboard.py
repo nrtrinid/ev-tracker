@@ -20,19 +20,27 @@ _team_roster_cache: dict[str, dict[str, Any]] = {}
 
 
 async def fetch_nba_scoreboard() -> dict[str, Any]:
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(ESPN_NBA_SCOREBOARD_URL)
-        resp.raise_for_status()
-        payload = resp.json()
-        return payload if isinstance(payload, dict) else {}
+    from services.http_client import request_with_retries
+
+    resp = await request_with_retries("GET", ESPN_NBA_SCOREBOARD_URL, timeout=10.0, retries=2)
+    resp.raise_for_status()
+    payload = resp.json()
+    return payload if isinstance(payload, dict) else {}
 
 
 async def fetch_nba_scoreboard_for_date(date_value: str) -> dict[str, Any]:
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(ESPN_NBA_SCOREBOARD_URL, params={"dates": date_value})
-        resp.raise_for_status()
-        payload = resp.json()
-        return payload if isinstance(payload, dict) else {}
+    from services.http_client import request_with_retries
+
+    resp = await request_with_retries(
+        "GET",
+        ESPN_NBA_SCOREBOARD_URL,
+        params={"dates": date_value},
+        timeout=10.0,
+        retries=2,
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    return payload if isinstance(payload, dict) else {}
 
 
 def build_scoreboard_date_window(now: datetime | None = None) -> list[str]:
@@ -51,11 +59,12 @@ async def fetch_nba_game_summary(espn_event_id: str) -> dict[str, Any]:
     if not eid:
         return {}
     url = ESPN_NBA_GAME_SUMMARY_URL_TEMPLATE.format(event_id=eid)
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        payload = resp.json()
-        return payload if isinstance(payload, dict) else {}
+    from services.http_client import request_with_retries
+
+    resp = await request_with_retries("GET", url, timeout=15.0, retries=2)
+    resp.raise_for_status()
+    payload = resp.json()
+    return payload if isinstance(payload, dict) else {}
 
 
 async def fetch_nba_scoreboard_window(now: datetime | None = None) -> dict[str, Any]:
