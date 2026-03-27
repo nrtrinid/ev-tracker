@@ -15,6 +15,7 @@ RECENT_CALL_LIMIT = 50
 RECENT_SCAN_SESSION_LIMIT = 18
 RECENT_RAW_CALL_QUERY_LIMIT = 500
 RECENT_SCAN_DETAIL_QUERY_LIMIT = 300
+BOARD_DROP_SOURCES = {"scheduled_board_drop", "ops_trigger_board_drop", "cron_board_drop"}
 
 _PRUNE_LOCK = threading.Lock()
 _LAST_PRUNE_ATTEMPT_MONOTONIC = 0.0
@@ -228,6 +229,7 @@ def persist_odds_api_activity_event(
     events_with_both_books: int | None = None,
     sides_count: int | None = None,
     api_requests_remaining: str | int | None = None,
+    credits_used_last: int | None = None,
     status_code: int | None = None,
     error_type: str | None = None,
     error_message: str | None = None,
@@ -255,6 +257,7 @@ def persist_odds_api_activity_event(
         "events_with_both_books": events_with_both_books,
         "sides_count": sides_count,
         "api_requests_remaining": str(api_requests_remaining) if api_requests_remaining is not None else None,
+        "credits_used_last": credits_used_last,
         "status_code": status_code,
         "error_type": error_type,
         "error_message": error_message,
@@ -315,6 +318,7 @@ def _sanitize_raw_activity_row(row: dict[str, Any]) -> dict[str, Any]:
         "status_code": row.get("status_code"),
         "duration_ms": row.get("duration_ms"),
         "api_requests_remaining": row.get("api_requests_remaining"),
+        "credits_used_last": row.get("credits_used_last"),
         "error_type": row.get("error_type"),
         "error_message": row.get("error_message"),
     }
@@ -338,6 +342,7 @@ def _sanitize_scan_activity_row(row: dict[str, Any]) -> dict[str, Any]:
         "events_with_both_books": row.get("events_with_both_books"),
         "sides_count": row.get("sides_count"),
         "api_requests_remaining": row.get("api_requests_remaining"),
+        "credits_used_last": row.get("credits_used_last"),
         "status_code": row.get("status_code"),
         "error_type": row.get("error_type"),
         "error_message": row.get("error_message"),
@@ -566,6 +571,19 @@ def _load_durable_odds_api_activity(
         if last_success_at and last_error_at:
             break
 
+    board_drop_rows = [
+        row
+        for row in raw_rows
+        if str(row.get("source") or "").strip().lower() in BOARD_DROP_SOURCES
+    ]
+    board_drop_remaining_values = [
+        _try_parse_remaining(row.get("api_requests_remaining"))
+        for row in board_drop_rows
+    ]
+    board_drop_remaining_numeric = [value for value in board_drop_remaining_values if value is not None]
+    board_drop_errors = sum(1 for row in board_drop_rows if _is_activity_error(row))
+    board_drop_last_run_at = board_drop_rows[0].get("captured_at") if board_drop_rows else None
+
     return {
         "summary": {
             "calls_last_hour": len(last_hour_rows),
@@ -575,6 +593,14 @@ def _load_durable_odds_api_activity(
         },
         "recent_scans": _build_recent_scan_sessions(scan_rows),
         "recent_calls": [_sanitize_raw_activity_row(row) for row in raw_rows[:RECENT_CALL_LIMIT]],
+        "board_drop": {
+            "last_run_at": board_drop_last_run_at,
+            "calls_count": len(board_drop_rows),
+            "min_api_requests_remaining": (
+                min(board_drop_remaining_numeric) if board_drop_remaining_numeric else None
+            ),
+            "errors": board_drop_errors,
+        },
     }
 
 

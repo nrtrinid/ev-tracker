@@ -18,6 +18,7 @@ from services.odds_api import (
     ODDS_API_BASE,
     ODDS_API_KEY,
     _append_odds_api_activity,
+    _parse_credits_used_last,
     fetch_events,
 )
 from services.sportsbook_deeplinks import resolve_sportsbook_deeplink
@@ -187,6 +188,7 @@ async def _fetch_prop_market_for_event(*, sport: str, event_id: str, markets: li
             resp.raise_for_status()
             duration_ms = (time.monotonic() - started) * 1000
             remaining = resp.headers.get("x-requests-remaining") or resp.headers.get("x-request-remaining")
+            credits_used_last = _parse_credits_used_last(resp.headers.get("x-requests-last"))
             _append_odds_api_activity(
                 source=source,
                 endpoint=endpoint,
@@ -196,6 +198,7 @@ async def _fetch_prop_market_for_event(*, sport: str, event_id: str, markets: li
                 status_code=resp.status_code,
                 duration_ms=duration_ms,
                 api_requests_remaining=remaining,
+                credits_used_last=credits_used_last,
                 error_type=None,
                 error_message=None,
             )
@@ -204,8 +207,10 @@ async def _fetch_prop_market_for_event(*, sport: str, event_id: str, markets: li
         duration_ms = (time.monotonic() - started) * 1000
         status_code = e.response.status_code if e.response is not None else None
         remaining = None
+        credits_used_last = None
         if e.response is not None:
             remaining = e.response.headers.get("x-requests-remaining") or e.response.headers.get("x-request-remaining")
+            credits_used_last = _parse_credits_used_last(e.response.headers.get("x-requests-last"))
         _append_odds_api_activity(
             source=source,
             endpoint=endpoint,
@@ -215,6 +220,7 @@ async def _fetch_prop_market_for_event(*, sport: str, event_id: str, markets: li
             status_code=status_code,
             duration_ms=duration_ms,
             api_requests_remaining=remaining,
+            credits_used_last=credits_used_last,
             error_type=type(e).__name__,
             error_message=str(e),
         )
