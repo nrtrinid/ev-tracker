@@ -1034,7 +1034,7 @@ async def _run_scheduled_scan_job():
     """
     Daily board drop job (mobile-first board):
     - Broad NBA totals fetch for selection + context
-    - Props scan for selected event_ids × (points/rebounds/threes)
+    - Full-slate NBA props scan across 5 flagship markets
     - Persist board:latest snapshot with game_context
     """
     from services.daily_board import run_daily_board_drop
@@ -1051,6 +1051,8 @@ async def _run_scheduled_scan_job():
         result = await run_daily_board_drop(
             db=get_db(),
             source="scheduled_board_drop",
+            scan_label="Late-Afternoon / Final-Context Scan",
+            mst_anchor_time="15:30",
             retry_supabase=_retry_supabase,
             log_event=_log_event,
         )
@@ -1093,6 +1095,11 @@ async def _run_scheduled_scan_job():
         "last_scheduler_scan",
         {
             "run_id": run_id,
+            "scan_window": {
+                "label": "Late-Afternoon / Final-Context Scan",
+                "anchor_timezone": "America/Phoenix",
+                "anchor_time_mst": "15:30",
+            },
             "started_at": started + "Z",
             "finished_at": finished + "Z",
             "duration_ms": duration_ms,
@@ -1135,7 +1142,7 @@ async def _run_scheduled_scan_job():
             "embeds": [
                 {
                     "title": "Daily board drop complete",
-                    "description": "The daily board drop ran successfully.",
+                    "description": "Late-Afternoon / Final-Context Scan ran successfully.",
                     "fields": [
                         {"name": "Started (UTC)", "value": started + "Z", "inline": True},
                         {"name": "Finished (UTC)", "value": finished + "Z", "inline": True},
@@ -1145,6 +1152,113 @@ async def _run_scheduled_scan_job():
             ]
         }
         asyncio.create_task(send_discord_webhook(payload, message_type="heartbeat"))
+
+
+async def _run_early_look_scan_job():
+    """Early-Look board scan: pre-main-drop injury/context pulse."""
+    from services.daily_board import run_daily_board_drop
+
+    run_id = _new_run_id("scheduled_scan_early")
+    started = datetime.now(UTC).isoformat()
+    started_at = time.monotonic()
+    _record_scheduler_heartbeat("scheduled_scan", run_id, "started")
+    _log_event("scheduler.daily_board.early_look.started", run_id=run_id, started_at=started + "Z")
+
+    hard_errors = 0
+    result: dict | None = None
+    try:
+        result = await run_daily_board_drop(
+            db=get_db(),
+            source="scheduled_board_drop_early_look",
+            scan_label="Early-Look / Injury-Watch Scan",
+            mst_anchor_time="10:30",
+            retry_supabase=_retry_supabase,
+            log_event=_log_event,
+        )
+    except Exception as e:
+        _log_event(
+            "scheduler.daily_board.early_look.failed",
+            level="error",
+            run_id=run_id,
+            error_class=type(e).__name__,
+            error=str(e),
+        )
+        hard_errors = 1
+
+    finished = datetime.now(UTC).isoformat()
+    duration_ms = round((time.monotonic() - started_at) * 1000, 2)
+    _log_event(
+        "scheduler.daily_board.early_look.completed",
+        run_id=run_id,
+        finished_at=finished + "Z",
+        result=result,
+        duration_ms=duration_ms,
+    )
+    if hard_errors:
+        _record_scheduler_heartbeat(
+            "scheduled_scan",
+            run_id,
+            "failure",
+            duration_ms=duration_ms,
+            error=f"{hard_errors} run failed",
+        )
+    else:
+        _record_scheduler_heartbeat(
+            "scheduled_scan",
+            run_id,
+            "success",
+            duration_ms=duration_ms,
+        )
+
+    _set_ops_status(
+        "last_scheduler_scan",
+        {
+            "run_id": run_id,
+            "scan_window": {
+                "label": "Early-Look / Injury-Watch Scan",
+                "anchor_timezone": "America/Phoenix",
+                "anchor_time_mst": "10:30",
+            },
+            "started_at": started + "Z",
+            "finished_at": finished + "Z",
+            "duration_ms": duration_ms,
+            "total_sides": (result or {}).get("props_sides") if isinstance(result, dict) else None,
+            "alerts_scheduled": 0,
+            "hard_errors": hard_errors,
+            "captured_at": finished + "Z",
+            "board_drop": True,
+            "result": result,
+        },
+    )
+    _persist_ops_job_run(
+        job_kind="scheduled_scan",
+        source="scheduler",
+        status="completed" if hard_errors == 0 else "completed_with_errors",
+        run_id=run_id,
+        scan_session_id=run_id,
+        surface="board",
+        scan_scope="daily_board",
+        requested_sport="basketball_nba",
+        captured_at=finished + "Z",
+        started_at=started + "Z",
+        finished_at=finished + "Z",
+        duration_ms=duration_ms,
+        events_fetched=None,
+        events_with_both_books=None,
+        total_sides=(result or {}).get("props_sides") if isinstance(result, dict) else None,
+        alerts_scheduled=0,
+        hard_errors=hard_errors,
+        api_requests_remaining=None,
+        meta={
+            "board_drop": True,
+            "scan_window": {
+                "label": "Early-Look / Injury-Watch Scan",
+                "anchor_timezone": "America/Phoenix",
+                "anchor_time_mst": "10:30",
+            },
+            "result": result,
+        },
+    )
 
 
 async def _piggyback_clv(sides: list[dict]):
@@ -1191,6 +1305,10 @@ async def start_scheduler():
         coalesce=True,
     )
     if PHOENIX_TZ is not None:
+        scheduler.add_job(
+            _run_early_look_scan_job,
+            CronTrigger(hour=10, minute=30, timezone=PHOENIX_TZ),
+        )
         scheduler.add_job(
             _run_scheduled_scan_job,
             CronTrigger(hour=15, minute=30, timezone=PHOENIX_TZ),

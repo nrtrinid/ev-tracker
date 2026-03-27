@@ -430,6 +430,7 @@ async def get_cached_or_scan(sport: str, source: str = "unknown") -> dict:
 SUPPORTED_SPORTS = [
     "basketball_nba",
     "basketball_ncaab",
+    "baseball_mlb",
 ]
 
 SHARP_BOOK = "pinnacle"
@@ -666,6 +667,37 @@ def _extract_totals_market(bookmakers: list[dict], book_key: str) -> dict | None
     return None
 
 
+def _extract_spreads_market(bookmakers: list[dict], book_key: str, home_team: str, away_team: str) -> dict | None:
+    for bm in bookmakers:
+        if bm.get("key") != book_key:
+            continue
+        for market in bm.get("markets", []):
+            if market.get("key") != "spreads":
+                continue
+            outcomes = market.get("outcomes") or []
+            home = next((o for o in outcomes if str(o.get("name") or "").strip() == home_team), None)
+            away = next((o for o in outcomes if str(o.get("name") or "").strip() == away_team), None)
+            if not home or not away:
+                return None
+            try:
+                home_spread = float(home.get("point"))
+                away_spread = float(away.get("point"))
+                home_price = float(home.get("price"))
+                away_price = float(away.get("price"))
+            except Exception:
+                return None
+            # Typical spread market has mirrored points (+x / -x). Accept tiny float noise.
+            if abs(home_spread + away_spread) > 0.01:
+                return None
+            return {
+                "home_spread": home_spread,
+                "away_spread": away_spread,
+                "home_odds": home_price,
+                "away_odds": away_price,
+            }
+    return None
+
+
 async def fetch_nba_totals_slate(*, source: str) -> dict:
     """Broad NBA totals fetch used for daily-board event selection + context."""
     # Use the same book set as straight-bets scans (Pinnacle + target books).
@@ -721,6 +753,80 @@ async def fetch_nba_totals_slate(*, source: str) -> dict:
 
     return {
         "sport": "basketball_nba",
+        "games": games,
+        "events_fetched": len(events),
+        "api_requests_remaining": remaining,
+    }
+
+
+async def fetch_featured_lines_slate(*, sport: str, source: str) -> dict:
+    """Sport-level featured game lines fetch for board context."""
+    all_books = ",".join([SHARP_BOOK] + list(TARGET_BOOKS.keys()))
+    data, resp = await fetch_odds(
+        sport,
+        source=source,
+        markets="h2h,spreads,totals",
+        regions="us,us2",
+        bookmakers=all_books,
+        endpoint=f"/sports/{sport}/odds?markets=h2h,spreads,totals",
+    )
+    events = data if isinstance(data, list) else []
+    remaining = resp.headers.get("x-requests-remaining") or resp.headers.get("x-request-remaining")
+
+    games: list[dict] = []
+    for event in events:
+        event_id = str(event.get("id") or "").strip() or None
+        home = str(event.get("home_team") or "").strip()
+        away = str(event.get("away_team") or "").strip()
+        commence = str(event.get("commence_time") or "").strip()
+        if not home or not away or not commence:
+            continue
+
+        h2h_offers: list[dict] = []
+        spreads_offers: list[dict] = []
+        totals_offers: list[dict] = []
+        for book_key, book_display in {SHARP_BOOK: "Pinnacle", **TARGET_BOOKS}.items():
+            h2h_market = _extract_h2h_bookmaker_market(event.get("bookmakers", []), book_key)
+            if h2h_market:
+                h2h_outcomes = h2h_market.get("outcomes") or {}
+                home_ml = h2h_outcomes.get(home)
+                away_ml = h2h_outcomes.get(away)
+                if home_ml is not None and away_ml is not None:
+                    h2h_offers.append(
+                        {
+                            "sportsbook": book_display,
+                            "home_odds": float(home_ml),
+                            "away_odds": float(away_ml),
+                        }
+                    )
+
+            spreads_market = _extract_spreads_market(event.get("bookmakers", []), book_key, home, away)
+            if spreads_market:
+                spreads_offers.append({"sportsbook": book_display, **spreads_market})
+
+            totals_market = _extract_totals_market(event.get("bookmakers", []), book_key)
+            if totals_market:
+                totals_offers.append({"sportsbook": book_display, **totals_market})
+
+        if not h2h_offers and not spreads_offers and not totals_offers:
+            continue
+
+        games.append(
+            {
+                "event_id": event_id,
+                "sport": sport,
+                "event": f"{away} @ {home}",
+                "away_team": away,
+                "home_team": home,
+                "commence_time": commence,
+                "h2h_offers": h2h_offers,
+                "spreads_offers": spreads_offers,
+                "totals_offers": totals_offers,
+            }
+        )
+
+    return {
+        "sport": sport,
         "games": games,
         "events_fetched": len(events),
         "api_requests_remaining": remaining,
