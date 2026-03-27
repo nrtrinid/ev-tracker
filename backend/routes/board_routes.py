@@ -4,15 +4,21 @@ GET  /api/board/latest  — returns the canonical board snapshot (no outbound ca
 POST /api/board/refresh — scoped manual refresh (rate-limited, does NOT overwrite board:latest)
 """
 
+from __future__ import annotations
+
 from datetime import UTC, datetime
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 
 from auth import get_current_user
 from database import get_db
 from models import BoardResponse, BoardSnapshotMeta, FullScanResponse, ScopedRefreshResponse
 from services.board_snapshot import load_board_snapshot, persist_scoped_refresh
 from services.bet_crud import _retry_supabase
+from utils.telemetry import rss_mb
+from utils.time_utils import utc_now_iso_z
 
 router = APIRouter()
 
@@ -68,7 +74,7 @@ def _meta_from_fallback_surfaces(
     sports_included: list[str] = []
     total_sides = 0
     total_events = 0
-    scanned_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    scanned_at = utc_now_iso_z()
 
     if straight:
         surfaces_included.append("straight_bets")
@@ -111,58 +117,208 @@ def get_board_latest(user: dict = Depends(get_current_user)):
     when the canonical board is absent or missing a surface.
     Returns an empty board only if no data exists anywhere.
     """
+    from main import _log_event
+
+    request_id = f"board_latest_{uuid4().hex[:10]}"
+    rss_before = rss_mb()
+    _log_event(
+        "board.latest.started",
+        request_id=request_id,
+        rss_mb=rss_before,
+        user_id=str(user.get("id") or ""),
+    )
+
     db = get_db()
     try:
         raw = load_board_snapshot(db=db, retry_supabase=_retry_supabase)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to load board: {e}")
+        _log_event(
+            "board.latest.load_failed",
+            level="warning",
+            request_id=request_id,
+            rss_mb=rss_mb(),
+            error_class=type(e).__name__,
+            error=str(e),
+        )
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": "board_load_failed",
+                "request_id": request_id,
+                "message": "Failed to load board snapshot.",
+                "error_class": type(e).__name__,
+            },
+        )
+
+    # Helper: build a response dict and return as JSONResponse to avoid
+    # heavyweight Pydantic parsing/serialization on large cached payloads.
+    def _count_sides(surface_payload: object) -> int | None:
+        if not isinstance(surface_payload, dict):
+            return None
+        sides = surface_payload.get("sides")
+        return len(sides) if isinstance(sides, list) else None
+
+    def _build_response_payload(*, raw_board: dict | None) -> dict:
+        if raw_board is None:
+            return {
+                "meta": _EMPTY_META.model_dump(),
+                "game_context": None,
+                "straight_bets": None,
+                "player_props": None,
+            }
+
+        meta = raw_board.get("meta") if isinstance(raw_board.get("meta"), dict) else None
+        if not meta:
+            meta = _EMPTY_META.model_dump()
+            meta["scanned_at"] = utc_now_iso_z()
+        game_context = raw_board.get("game_context")
+        if not isinstance(game_context, dict):
+            game_context = None
+
+        straight = raw_board.get("straight_bets") if isinstance(raw_board.get("straight_bets"), dict) else None
+        player = raw_board.get("player_props") if isinstance(raw_board.get("player_props"), dict) else None
+        return {
+            "meta": meta,
+            "game_context": game_context,
+            "straight_bets": straight,
+            "player_props": player,
+        }
 
     if raw is None:
         # No canonical board yet — try per-surface fallbacks before returning empty
-        straight = _load_surface_fallback(db, "straight_bets")
-        player = _load_surface_fallback(db, "player_props")
-        if straight is None and player is None:
-            return BoardResponse(meta=_EMPTY_META, straight_bets=None, player_props=None)
-        return BoardResponse(
-            meta=_meta_from_fallback_surfaces(straight, player),
-            straight_bets=straight,
-            player_props=player,
-        )
+        from services.scan_cache import load_latest_scan_payload
 
-    meta_raw = raw.get("meta") or {}
-    try:
-        meta = BoardSnapshotMeta(**meta_raw)
-    except Exception:
-        meta = _EMPTY_META
-
-    game_context = raw.get("game_context") if isinstance(raw, dict) else None
-    if not isinstance(game_context, dict):
-        game_context = None
-
-    straight_raw = raw.get("straight_bets")
-    player_raw = raw.get("player_props")
-
-    straight = None
-    if isinstance(straight_raw, dict):
         try:
-            straight = FullScanResponse(**straight_raw)
-        except Exception:
+            straight = load_latest_scan_payload(db=db, retry_supabase=_retry_supabase, surface="straight_bets")
+        except Exception as e:
+            _log_event(
+                "board.latest.fallback_surface_failed",
+                level="warning",
+                request_id=request_id,
+                surface="straight_bets",
+                error_class=type(e).__name__,
+                error=str(e),
+            )
             straight = None
-    # If this surface is absent from the canonical board, check per-surface cache
-    if straight is None:
-        straight = _load_surface_fallback(db, "straight_bets")
 
-    player = None
-    if isinstance(player_raw, dict):
         try:
-            player = FullScanResponse(**player_raw)
-        except Exception:
+            player = load_latest_scan_payload(db=db, retry_supabase=_retry_supabase, surface="player_props")
+        except Exception as e:
+            _log_event(
+                "board.latest.fallback_surface_failed",
+                level="warning",
+                request_id=request_id,
+                surface="player_props",
+                error_class=type(e).__name__,
+                error=str(e),
+            )
             player = None
-    # If this surface is absent from the canonical board, check per-surface cache
-    if player is None:
-        player = _load_surface_fallback(db, "player_props")
 
-    return BoardResponse(meta=meta, game_context=game_context, straight_bets=straight, player_props=player)
+        # Build a synthetic meta without Pydantic parsing.
+        surfaces_included: list[str] = []
+        sports_included: list[str] = []
+        total_sides = 0
+        total_events = 0
+        scanned_at = utc_now_iso_z()
+        if isinstance(straight, dict):
+            surfaces_included.append("straight_bets")
+            sport = straight.get("sport") or "all"
+            if sport not in sports_included:
+                sports_included.append(sport)
+            sides_raw = straight.get("sides")
+            total_sides += len(sides_raw) if isinstance(sides_raw, list) else 0
+            total_events += int(straight.get("events_fetched") or 0)
+            if straight.get("scanned_at"):
+                scanned_at = straight["scanned_at"]
+        if isinstance(player, dict):
+            surfaces_included.append("player_props")
+            sport = player.get("sport") or "basketball_nba"
+            if sport not in sports_included:
+                sports_included.append(sport)
+            sides_raw = player.get("sides")
+            total_sides += len(sides_raw) if isinstance(sides_raw, list) else 0
+            total_events += int(player.get("events_fetched") or 0)
+            if player.get("scanned_at") and not (isinstance(straight, dict) and straight.get("scanned_at")):
+                scanned_at = player["scanned_at"]
+        meta = {
+            "snapshot_id": f"fallback_{abs(hash(scanned_at)) % 0xFFFFFF:06x}",
+            "snapshot_type": "manual",
+            "scanned_at": scanned_at,
+            "surfaces_included": surfaces_included,
+            "sports_included": sports_included,
+            "next_scheduled_drop": None,
+            "events_scanned": total_events,
+            "total_sides": total_sides,
+        }
+
+        payload = _build_response_payload(
+            raw_board={
+                "meta": meta,
+                "straight_bets": straight,
+                "player_props": player,
+                "game_context": None,
+            }
+        )
+        _log_event(
+            "board.latest.completed",
+            request_id=request_id,
+            rss_mb_before=rss_before,
+            rss_mb_after=rss_mb(),
+            straight_sides=_count_sides(payload.get("straight_bets")),
+            player_sides=_count_sides(payload.get("player_props")),
+            source="surface_fallback",
+        )
+        return JSONResponse(status_code=200, content=payload)
+
+    try:
+        payload = _build_response_payload(raw_board=raw if isinstance(raw, dict) else None)
+        _log_event(
+            "board.latest.completed",
+            request_id=request_id,
+            rss_mb_before=rss_before,
+            rss_mb_after=rss_mb(),
+            straight_sides=_count_sides(payload.get("straight_bets")),
+            player_sides=_count_sides(payload.get("player_props")),
+            source="canonical_board",
+        )
+        return JSONResponse(status_code=200, content=payload)
+    except MemoryError as e:
+        _log_event(
+            "board.latest.oom_guard",
+            level="error",
+            request_id=request_id,
+            rss_mb_before=rss_before,
+            rss_mb_after=rss_mb(),
+            error_class=type(e).__name__,
+            error=str(e),
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "board_too_large",
+                "request_id": request_id,
+                "message": "Board payload is too large to serve safely on this instance.",
+            },
+        )
+    except Exception as e:
+        _log_event(
+            "board.latest.failed",
+            level="error",
+            request_id=request_id,
+            rss_mb_before=rss_before,
+            rss_mb_after=rss_mb(),
+            error_class=type(e).__name__,
+            error=str(e),
+        )
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": "board_latest_failed",
+                "request_id": request_id,
+                "message": "Failed to build board response.",
+                "error_class": type(e).__name__,
+            },
+        )
 
 
 @router.post("/board/refresh", response_model=ScopedRefreshResponse)
