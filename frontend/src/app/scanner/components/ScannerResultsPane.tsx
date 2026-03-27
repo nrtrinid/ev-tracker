@@ -12,7 +12,7 @@ interface ScannerResultsPaneProps {
   playerPropsView?: "sportsbooks" | "pickem";
   activeLens: "standard" | "profit_boost" | "bonus_bet" | "qualifier";
   tutorialMode?: boolean;
-  results: Array<MarketSide & { _retention?: number; _boostedEV?: number }>;
+  results: Array<MarketSide & { _retention?: number; _boostedEV?: number; _qualifierHold?: number }>;
   pickemCards?: PickEmBoardCard[];
   sourceCount: number;
   rawSourceCount: number;
@@ -155,7 +155,9 @@ export function ScannerResultsPane({
           />
         ) : isPropsSurface ? (
           <PlayerPropList
-            results={results as Array<Extract<MarketSide, { surface: "player_props" }> & { _retention?: number; _boostedEV?: number }>}
+            results={results as Array<Extract<MarketSide, { surface: "player_props" }> & { _retention?: number; _boostedEV?: number; _qualifierHold?: number }>}
+            activeLens={activeLens}
+            boostPercent={boostPercent}
             kellyMultiplier={kellyMultiplier}
             bankroll={bankroll}
             canLoadMore={canLoadMore}

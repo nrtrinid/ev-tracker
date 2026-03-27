@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, HelpCircle, RefreshCcw, XCircle } from "lucide-react";
 
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -32,6 +32,72 @@ function formatTime(value?: string | null): string {
   const date = parseOpsTimestamp(value);
   if (!date) return "Unknown";
   return date.toLocaleString();
+}
+
+function getTimeZoneOffsetMs(date: Date, timeZone: string): number {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts = dtf.formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value;
+  const year = Number(get("year"));
+  const month = Number(get("month"));
+  const day = Number(get("day"));
+  const hour = Number(get("hour"));
+  const minute = Number(get("minute"));
+  const second = Number(get("second"));
+  return Date.UTC(year, month - 1, day, hour, minute, second) - date.getTime();
+}
+
+function zonedTimeToUtcMs(
+  year: number,
+  month1: number,
+  day: number,
+  hour: number,
+  minute: number,
+  timeZone: string,
+): number {
+  const utcGuess = Date.UTC(year, month1 - 1, day, hour, minute, 0);
+  return utcGuess - getTimeZoneOffsetMs(new Date(utcGuess), timeZone);
+}
+
+function formatLocalScanWindow(scanWindow?: {
+  label?: string;
+  anchor_timezone?: string;
+  anchor_time_mst?: string;
+} | null): string {
+  if (!scanWindow?.label) return "Unknown";
+  const anchor = scanWindow.anchor_time_mst;
+  if (!anchor) return scanWindow.label;
+  const [hRaw, mRaw] = anchor.split(":");
+  const h = Number(hRaw);
+  const m = Number(mRaw);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return scanWindow.label;
+  const now = new Date();
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Phoenix",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = fmt.formatToParts(now);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value;
+  const y = Number(get("year"));
+  const mo = Number(get("month"));
+  const d = Number(get("day"));
+  const utcMs = zonedTimeToUtcMs(y, mo, d, h, m, "America/Phoenix");
+  const local = new Date(utcMs).toLocaleString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `${scanWindow.label} • ${local} local`;
 }
 
 function ageMinutes(value?: string | null): number | null {
@@ -100,6 +166,19 @@ function scalarOrUnknown(value: number | string | null | undefined): string {
 function formatPercentValue(value: number | null | undefined, digits: number = 1): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "Unknown";
   return `${value.toFixed(digits)}%`;
+}
+
+function formatMaybePercentDash(value: number | null | undefined, digits: number = 1): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  return `${value.toFixed(digits)}%`;
+}
+
+function formatGatedPercentValue(value: number | null | undefined, validCloseCount: number): string {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    if (validCloseCount === 0) return "No valid closes";
+    return "Need more valid closes";
+  }
+  return formatPercentValue(value);
 }
 
 function yesNoUnknown(value: boolean | undefined): string {
@@ -199,7 +278,8 @@ function BreakdownChips({
         <div className="flex flex-wrap gap-1.5">
           {rows.map((row) => (
             <span key={`${title}-${row.key}`} className="rounded bg-muted px-2 py-1 text-[11px] font-mono">
-              {row.key}: {row.captured_count} captured | {formatPercentValue(row.beat_close_pct)}
+              {row.key}: {row.captured_count} cap / {row.valid_close_count} valid | BC {formatMaybePercentDash(row.beat_close_pct)} | CLV{" "}
+              {formatMaybePercentDash(row.avg_clv_percent)}
             </span>
           ))}
         </div>
@@ -235,10 +315,10 @@ function formatResearchPrimaryLabel(row: ResearchOpportunityRecentRow): string {
 }
 
 function formatResearchCloseLabel(row: ResearchOpportunityRecentRow): string {
-  if (row.reference_odds_at_close === null || row.reference_odds_at_close === undefined) {
-    return "pending";
-  }
-  return formatAmericanOdds(row.reference_odds_at_close);
+  const odds = row.reference_odds_at_close === null || row.reference_odds_at_close === undefined ? null : formatAmericanOdds(row.reference_odds_at_close);
+  if (row.close_status === "pending") return "Pending";
+  if (row.close_status === "invalid") return odds ? `Invalid close (${odds})` : "Invalid close";
+  return odds ? `Valid close (${odds})` : "Valid close";
 }
 
 function ResearchRecentList({
@@ -262,10 +342,14 @@ function ResearchRecentList({
               EV {formatPercentValue(row.first_ev_percentage)}
               {" • "}
               Odds {formatAmericanOdds(row.first_book_odds)}
-              {" • "}
-              Close {formatResearchCloseLabel(row)}
-              {" • "}
-              CLV {formatPercentValue(row.clv_ev_percent)}
+                    {" • "}
+                    Close {formatResearchCloseLabel(row)}
+                    {row.close_status === "valid" && (
+                      <>
+                        {" • "}
+                        CLV {formatPercentValue(row.clv_ev_percent)}
+                      </>
+                    )}
             </p>
             <p className="mt-1 text-[11px] text-muted-foreground">{row.event}</p>
           </div>
@@ -277,7 +361,15 @@ function ResearchRecentList({
 
 export function OpsDashboard() {
   const query = useOperatorStatus();
-  const researchQuery = useResearchOpportunitySummary();
+  const [modelVersion, setModelVersion] = useState<"current" | "legacy" | "all">("current");
+  const [captureClass, setCaptureClass] = useState<"live" | "experiment" | "all">("live");
+  const [cohortMode, setCohortMode] = useState<"latest" | "trailing_7">("latest");
+  const [showAdvancedBreakdowns, setShowAdvancedBreakdowns] = useState(false);
+  const researchQuery = useResearchOpportunitySummary({
+    model_version: modelVersion,
+    capture_class: captureClass,
+    cohort_mode: cohortMode,
+  });
   const queryErrorMessage = query.error instanceof Error ? query.error.message : null;
   const researchErrorMessage = researchQuery.error instanceof Error ? researchQuery.error.message : null;
 
@@ -357,7 +449,10 @@ export function OpsDashboard() {
                 label={schedulerScan?.board_drop ? "Last daily board drop" : "Last scheduler scan"}
                 value={formatTime(schedulerScan?.finished_at || schedulerScan?.captured_at)}
               />
+              <Row label="Last scan window" value={formatLocalScanWindow(schedulerScan?.scan_window)} />
               <Row label="Scheduler freshness" value={schedulerFreshnessLabel(query.data)} />
+              <Row label="Props events scanned" value={scalarOrUnknown(schedulerScan?.props_events_scanned)} />
+              <Row label="Featured games included" value={scalarOrUnknown(schedulerScan?.featured_games_count)} />
               <Row label="Last settle run" value={formatTime(autoSettle?.finished_at || autoSettle?.captured_at)} />
               <Row label="Last settle source" value={settleSource} />
 
@@ -480,43 +575,132 @@ export function OpsDashboard() {
                 </p>
               ) : (
                 <>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-xs text-muted-foreground">Tracker view</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-muted-foreground">Model</span>
+                        <select
+                          className="rounded-md border border-border/70 bg-background px-2 py-1 text-[11px]"
+                          value={modelVersion}
+                          onChange={(e) => setModelVersion(e.target.value as "current" | "legacy" | "all")}
+                        >
+                          <option value="current">Current Model</option>
+                          <option value="legacy">Legacy</option>
+                          <option value="all">All</option>
+                        </select>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-muted-foreground">Capture</span>
+                        <select
+                          className="rounded-md border border-border/70 bg-background px-2 py-1 text-[11px]"
+                          value={captureClass}
+                          onChange={(e) => setCaptureClass(e.target.value as "live" | "experiment" | "all")}
+                        >
+                          <option value="live">Live Captures</option>
+                          <option value="experiment">Experiment / QA</option>
+                          <option value="all">All</option>
+                        </select>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-muted-foreground">Cohort</span>
+                        <select
+                          className="rounded-md border border-border/70 bg-background px-2 py-1 text-[11px]"
+                          value={cohortMode}
+                          onChange={(e) => setCohortMode(e.target.value as "latest" | "trailing_7")}
+                        >
+                          <option value="latest">Latest Drop</option>
+                          <option value="trailing_7">Trailing 7 Drops</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                     <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
                       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Captured</p>
                       <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(research?.captured_count)}</p>
                     </div>
                     <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Open</p>
-                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(research?.open_count)}</p>
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Pending Close</p>
+                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(research?.pending_close_count)}</p>
                     </div>
                     <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Close Captured</p>
-                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(research?.close_captured_count)}</p>
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Valid Close</p>
+                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(research?.valid_close_count)}</p>
                     </div>
                     <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">CLV Ready</p>
-                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(research?.clv_ready_count)}</p>
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Invalid Close</p>
+                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(research?.invalid_close_count)}</p>
                     </div>
                     <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
                       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Beat Close</p>
-                      <p className="text-sm font-semibold mt-0.5">{formatPercentValue(research?.beat_close_pct)}</p>
+                      <p className="text-sm font-semibold mt-0.5">
+                        {formatGatedPercentValue(research?.beat_close_pct, research?.valid_close_count ?? 0)}
+                      </p>
                     </div>
                     <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
                       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Avg CLV</p>
-                      <p className="text-sm font-semibold mt-0.5">{formatPercentValue(research?.avg_clv_percent)}</p>
+                      <p className="text-sm font-semibold mt-0.5">
+                        {formatGatedPercentValue(research?.avg_clv_percent, research?.valid_close_count ?? 0)}
+                      </p>
                     </div>
                   </div>
 
+                  <div className="rounded-md border border-border/60 bg-muted/30 p-3 space-y-2">
+                    <Row
+                      label="Close coverage"
+                      value={formatPercentValue(research?.valid_close_coverage_pct ?? null, 1)}
+                    />
+                    <Row
+                      label="Invalid close rate"
+                      value={formatPercentValue(research?.invalid_close_rate_pct ?? null, 1)}
+                    />
+                  </div>
+
+                  {research?.cohort_trend && research.cohort_trend.length > 0 && (
+                    <div className="rounded-md border border-border/60 bg-muted/30 p-3 space-y-2">
+                      <p className="text-xs text-muted-foreground">Cohort trend (last {research.cohort_trend.length})</p>
+                      <div className="flex gap-2 overflow-x-auto pb-1">
+                        {research.cohort_trend.map((c) => (
+                          <div
+                            key={c.cohort_key}
+                            className="min-w-[190px] rounded border border-border/70 bg-background px-2 py-1.5 text-[11px] font-mono"
+                          >
+                            {c.cohort_key} • Valid {c.valid_close_count} • BC {formatMaybePercentDash(c.beat_close_pct)} • CLV{" "}
+                            {formatMaybePercentDash(c.avg_clv_percent)}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <BreakdownChips title="By Surface" rows={research?.by_surface ?? []} />
                   <BreakdownChips title="By Source" rows={research?.by_source ?? []} />
-                  <BreakdownChips title="By Sportsbook" rows={research?.by_sportsbook ?? []} />
                   <BreakdownChips title="By Edge Bucket" rows={research?.by_edge_bucket ?? []} />
-                  <BreakdownChips title="By Odds Bucket" rows={research?.by_odds_bucket ?? []} />
+
+                  <div className="pt-1 flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowAdvancedBreakdowns((v) => !v)}
+                    >
+                      {showAdvancedBreakdowns ? "Hide advanced breakdowns" : "Show advanced breakdowns"}
+                    </Button>
+                  </div>
+
+                  {showAdvancedBreakdowns && (
+                    <>
+                      <BreakdownChips title="By Sportsbook" rows={research?.by_sportsbook ?? []} />
+                      <BreakdownChips title="By Odds Bucket" rows={research?.by_odds_bucket ?? []} />
+                    </>
+                  )}
 
                   <div className="space-y-1.5">
                     <p className="text-xs text-muted-foreground">Recent opportunities</p>
                     <p className="text-[11px] text-muted-foreground">
-                      Close pending means the final reference is still waiting for the last 20-minute pregame window.
+                      Close statuses: Pending = reference at close not captured yet; Valid = captured inside the last 20-minute window; Invalid = captured/mapped but outside the valid window or missing CLV fields.
                     </p>
                     {recentResearch.length === 0 ? (
                       <p className="text-xs text-muted-foreground">No captured opportunities yet.</p>

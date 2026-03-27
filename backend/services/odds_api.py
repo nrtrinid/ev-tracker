@@ -9,7 +9,6 @@ surface +EV moneyline bets.
 import asyncio
 import os
 import time
-import re
 import httpx
 from collections import deque
 import threading
@@ -19,6 +18,7 @@ from dotenv import load_dotenv
 from calculations import american_to_decimal, kelly_fraction
 from services.sportsbook_deeplinks import resolve_sportsbook_deeplink
 from services.shared_state import get_scan_cache, set_scan_cache
+from services.team_aliases import build_short_event_label, canonical_short_name, canonical_team_token
 
 load_dotenv()
 
@@ -430,6 +430,7 @@ async def get_cached_or_scan(sport: str, source: str = "unknown") -> dict:
 SUPPORTED_SPORTS = [
     "basketball_nba",
     "basketball_ncaab",
+    "baseball_mlb",
 ]
 
 SHARP_BOOK = "pinnacle"
@@ -666,6 +667,37 @@ def _extract_totals_market(bookmakers: list[dict], book_key: str) -> dict | None
     return None
 
 
+def _extract_spreads_market(bookmakers: list[dict], book_key: str, home_team: str, away_team: str) -> dict | None:
+    for bm in bookmakers:
+        if bm.get("key") != book_key:
+            continue
+        for market in bm.get("markets", []):
+            if market.get("key") != "spreads":
+                continue
+            outcomes = market.get("outcomes") or []
+            home = next((o for o in outcomes if str(o.get("name") or "").strip() == home_team), None)
+            away = next((o for o in outcomes if str(o.get("name") or "").strip() == away_team), None)
+            if not home or not away:
+                return None
+            try:
+                home_spread = float(home.get("point"))
+                away_spread = float(away.get("point"))
+                home_price = float(home.get("price"))
+                away_price = float(away.get("price"))
+            except Exception:
+                return None
+            # Typical spread market has mirrored points (+x / -x). Accept tiny float noise.
+            if abs(home_spread + away_spread) > 0.01:
+                return None
+            return {
+                "home_spread": home_spread,
+                "away_spread": away_spread,
+                "home_odds": home_price,
+                "away_odds": away_price,
+            }
+    return None
+
+
 async def fetch_nba_totals_slate(*, source: str) -> dict:
     """Broad NBA totals fetch used for daily-board event selection + context."""
     # Use the same book set as straight-bets scans (Pinnacle + target books).
@@ -712,8 +744,11 @@ async def fetch_nba_totals_slate(*, source: str) -> dict:
                 "event_id": event_id,
                 "sport": "basketball_nba",
                 "event": f"{away} @ {home}",
+                "event_short": build_short_event_label("basketball_nba", away, home),
                 "away_team": away,
+                "away_team_short": canonical_short_name("basketball_nba", away),
                 "home_team": home,
+                "home_team_short": canonical_short_name("basketball_nba", home),
                 "commence_time": commence,
                 "totals_offers": offers,
             }
@@ -721,6 +756,87 @@ async def fetch_nba_totals_slate(*, source: str) -> dict:
 
     return {
         "sport": "basketball_nba",
+        "games": games,
+        "events_fetched": len(events),
+        "api_requests_remaining": remaining,
+    }
+
+
+async def fetch_featured_lines_slate(*, sport: str, source: str) -> dict:
+    """Sport-level featured game lines fetch for board context."""
+    all_books = ",".join([SHARP_BOOK] + list(TARGET_BOOKS.keys()))
+    data, resp = await fetch_odds(
+        sport,
+        source=source,
+        markets="h2h,spreads,totals",
+        regions="us,us2",
+        bookmakers=all_books,
+        endpoint=f"/sports/{sport}/odds?markets=h2h,spreads,totals",
+    )
+    events = data if isinstance(data, list) else []
+    remaining = resp.headers.get("x-requests-remaining") or resp.headers.get("x-request-remaining")
+
+    games: list[dict] = []
+    for event in events:
+        event_id = str(event.get("id") or "").strip() or None
+        home = str(event.get("home_team") or "").strip()
+        away = str(event.get("away_team") or "").strip()
+        commence = str(event.get("commence_time") or "").strip()
+        if not home or not away or not commence:
+            continue
+
+        h2h_offers: list[dict] = []
+        spreads_offers: list[dict] = []
+        totals_offers: list[dict] = []
+        for book_key, book_display in {SHARP_BOOK: "Pinnacle", **TARGET_BOOKS}.items():
+            h2h_market = _extract_h2h_bookmaker_market(event.get("bookmakers", []), book_key)
+            if h2h_market:
+                h2h_outcomes = h2h_market.get("outcomes") or {}
+                home_ml = h2h_outcomes.get(home)
+                away_ml = h2h_outcomes.get(away)
+                if home_ml is not None and away_ml is not None:
+                    try:
+                        h2h_offers.append(
+                            {
+                                "sportsbook": book_display,
+                                "home_odds": float(home_ml),
+                                "away_odds": float(away_ml),
+                            }
+                        )
+                    except Exception:
+                        # Skip malformed offers instead of failing the full sport-level slate.
+                        pass
+
+            spreads_market = _extract_spreads_market(event.get("bookmakers", []), book_key, home, away)
+            if spreads_market:
+                spreads_offers.append({"sportsbook": book_display, **spreads_market})
+
+            totals_market = _extract_totals_market(event.get("bookmakers", []), book_key)
+            if totals_market:
+                totals_offers.append({"sportsbook": book_display, **totals_market})
+
+        if not h2h_offers and not spreads_offers and not totals_offers:
+            continue
+
+        games.append(
+            {
+                "event_id": event_id,
+                "sport": sport,
+                "event": f"{away} @ {home}",
+                "event_short": build_short_event_label(sport, away, home),
+                "away_team": away,
+                "away_team_short": canonical_short_name(sport, away),
+                "home_team": home,
+                "home_team_short": canonical_short_name(sport, home),
+                "commence_time": commence,
+                "h2h_offers": h2h_offers,
+                "spreads_offers": spreads_offers,
+                "totals_offers": totals_offers,
+            }
+        )
+
+    return {
+        "sport": sport,
         "games": games,
         "events_fetched": len(events),
         "api_requests_remaining": remaining,
@@ -893,8 +1009,11 @@ async def scan_for_ev(sport: str = "basketball_nba") -> dict:
                     "sportsbook": book_display,
                     "sport": event.get("sport_key", sport),
                     "event": f"{away} @ {home}",
+                    "event_short": build_short_event_label(event.get("sport_key", sport), away, home),
                     "commence_time": commence,
                     "team": home,
+                    "team_short": canonical_short_name(event.get("sport_key", sport), home),
+                    "opponent_short": canonical_short_name(event.get("sport_key", sport), away),
                     "pinnacle_odds": pin_home,
                     "book_odds": book_home,
                     "true_prob": home_edge["true_prob"],
@@ -909,8 +1028,11 @@ async def scan_for_ev(sport: str = "basketball_nba") -> dict:
                     "sportsbook": book_display,
                     "sport": event.get("sport_key", sport),
                     "event": f"{away} @ {home}",
+                    "event_short": build_short_event_label(event.get("sport_key", sport), away, home),
                     "commence_time": commence,
                     "team": away,
+                    "team_short": canonical_short_name(event.get("sport_key", sport), away),
+                    "opponent_short": canonical_short_name(event.get("sport_key", sport), home),
                     "pinnacle_odds": pin_away,
                     "book_odds": book_away,
                     "true_prob": away_edge["true_prob"],
@@ -928,8 +1050,11 @@ async def scan_for_ev(sport: str = "basketball_nba") -> dict:
                             "sportsbook": book_display,
                             "sport": event.get("sport_key", sport),
                             "event": f"{away} @ {home}",
+                            "event_short": build_short_event_label(event.get("sport_key", sport), away, home),
                             "commence_time": commence,
                             "team": book_draw_key,
+                            "team_short": canonical_short_name(event.get("sport_key", sport), book_draw_key),
+                            "opponent_short": None,
                             "pinnacle_odds": pin_outcomes[draw_key],
                             "book_odds": book_outcomes[book_draw_key],
                             "true_prob": draw_edge["true_prob"],
@@ -1269,7 +1394,14 @@ async def fetch_scores(sport: str, source: str = "auto_settle") -> list[dict]:
         raise
 
 
-def _grade_ml(clv_team: str, home_team: str, away_team: str, scores: list[dict]) -> str | None:
+def _grade_ml(
+    clv_team: str,
+    home_team: str,
+    away_team: str,
+    scores: list[dict],
+    *,
+    sport_key: str | None = None,
+) -> str | None:
     """
     Grade a moneyline bet given the completed game scores.
 
@@ -1286,13 +1418,13 @@ def _grade_ml(clv_team: str, home_team: str, away_team: str, scores: list[dict])
             team_name = str(s["name"])
             score_val = float(s["score"])
             score_map[team_name] = score_val
-            score_map_norm[_canonical_team_name(team_name)] = score_val
+            score_map_norm[_canonical_team_name(team_name, sport_key=sport_key)] = score_val
         except (KeyError, ValueError, TypeError):
             pass
 
-    clv_team_norm = _canonical_team_name(clv_team)
-    home_norm = _canonical_team_name(home_team)
-    away_norm = _canonical_team_name(away_team)
+    clv_team_norm = _canonical_team_name(clv_team, sport_key=sport_key)
+    home_norm = _canonical_team_name(home_team, sport_key=sport_key)
+    away_norm = _canonical_team_name(away_team, sport_key=sport_key)
 
     if clv_team_norm == home_norm:
         opponent = away_team
@@ -1303,11 +1435,11 @@ def _grade_ml(clv_team: str, home_team: str, away_team: str, scores: list[dict])
 
     bet_score = score_map.get(clv_team)
     if bet_score is None:
-        bet_score = score_map_norm.get(_canonical_team_name(clv_team))
+        bet_score = score_map_norm.get(_canonical_team_name(clv_team, sport_key=sport_key))
 
     opp_score = score_map.get(opponent)
     if opp_score is None:
-        opp_score = score_map_norm.get(_canonical_team_name(opponent))
+        opp_score = score_map_norm.get(_canonical_team_name(opponent, sport_key=sport_key))
 
     if bet_score is None or opp_score is None:
         return None
@@ -1319,11 +1451,8 @@ def _grade_ml(clv_team: str, home_team: str, away_team: str, scores: list[dict])
     return "push"
 
 
-def _canonical_team_name(name: str | None) -> str:
-    if not name:
-        return ""
-    lowered = str(name).strip().lower()
-    return re.sub(r"[^a-z0-9]+", "", lowered)
+def _canonical_team_name(name: str | None, *, sport_key: str | None = None) -> str:
+    return canonical_team_token(sport_key, name)
 
 
 def _parse_utc_iso(timestamp: str | None) -> datetime | None:
@@ -1385,14 +1514,15 @@ def _select_completed_event_for_bet(bet: dict, completed_events: list[dict]) -> 
     if not commence_time:
         return None, "missing_commence_time"
 
-    target_team = _canonical_team_name(clv_team)
+    sport_key = str(bet.get("clv_sport_key") or bet.get("sport") or "").strip() or None
+    target_team = _canonical_team_name(clv_team, sport_key=sport_key)
     candidates: list[dict] = []
     for event in completed_events:
         if not _commence_times_match(event.get("commence_time"), commence_time):
             continue
 
-        home = _canonical_team_name(event.get("home_team"))
-        away = _canonical_team_name(event.get("away_team"))
+        home = _canonical_team_name(event.get("home_team"), sport_key=sport_key)
+        away = _canonical_team_name(event.get("away_team"), sport_key=sport_key)
         if target_team in (home, away):
             candidates.append(event)
 
@@ -1540,6 +1670,7 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
                     str(event.get("home_team", "")),
                     str(event.get("away_team", "")),
                     event.get("scores") or [],
+                    sport_key=sport_key,
                 )
 
                 if grade is None:
@@ -1715,8 +1846,11 @@ async def scan_all_sides(sport: str = "basketball_nba", source: str = "unknown")
                 "sportsbook_deeplink_level": home_link_level,
                 "sport": event.get("sport_key", sport),
                 "event": f"{away} @ {home}",
+                "event_short": build_short_event_label(event.get("sport_key", sport), away, home),
                 "commence_time": commence,
                 "team": home,
+                "team_short": canonical_short_name(event.get("sport_key", sport), home),
+                "opponent_short": canonical_short_name(event.get("sport_key", sport), away),
                 "pinnacle_odds": pin_home,
                 "book_odds": book_home,
                 "true_prob": home_edge["true_prob"],
@@ -1732,8 +1866,11 @@ async def scan_all_sides(sport: str = "basketball_nba", source: str = "unknown")
                 "sportsbook_deeplink_level": away_link_level,
                 "sport": event.get("sport_key", sport),
                 "event": f"{away} @ {home}",
+                "event_short": build_short_event_label(event.get("sport_key", sport), away, home),
                 "commence_time": commence,
                 "team": away,
+                "team_short": canonical_short_name(event.get("sport_key", sport), away),
+                "opponent_short": canonical_short_name(event.get("sport_key", sport), home),
                 "pinnacle_odds": pin_away,
                 "book_odds": book_away,
                 "true_prob": away_edge["true_prob"],
@@ -1759,8 +1896,11 @@ async def scan_all_sides(sport: str = "basketball_nba", source: str = "unknown")
                         "sportsbook_deeplink_level": draw_link_level,
                         "sport": event.get("sport_key", sport),
                         "event": f"{away} @ {home}",
+                        "event_short": build_short_event_label(event.get("sport_key", sport), away, home),
                         "commence_time": commence,
                         "team": book_draw_key,
+                        "team_short": canonical_short_name(event.get("sport_key", sport), book_draw_key),
+                        "opponent_short": None,
                         "pinnacle_odds": pin_outcomes[draw_key],
                         "book_odds": book_outcomes[book_draw_key],
                         "true_prob": draw_edge["true_prob"],

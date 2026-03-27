@@ -3,12 +3,10 @@ import type { PlayerPropMarketSide } from "@/lib/types";
 
 import { PlayerPropCard } from "./PlayerPropCard";
 
-function formatMarketLabel(value: string) {
-  return value.replaceAll("_", " ");
-}
-
 interface PlayerPropListProps {
-  results: Array<PlayerPropMarketSide & { _retention?: number; _boostedEV?: number }>;
+  results: Array<PlayerPropMarketSide & { _retention?: number; _boostedEV?: number; _qualifierHold?: number }>;
+  activeLens: "standard" | "profit_boost" | "bonus_bet" | "qualifier";
+  boostPercent: number;
   kellyMultiplier: number;
   bankroll: number;
   canLoadMore: boolean;
@@ -22,6 +20,8 @@ interface PlayerPropListProps {
 
 export function PlayerPropList({
   results,
+  activeLens,
+  boostPercent,
   kellyMultiplier,
   bankroll,
   canLoadMore,
@@ -32,40 +32,25 @@ export function PlayerPropList({
   bookColors,
   sportDisplayMap,
 }: PlayerPropListProps) {
-  const groupedResults = results.reduce<Record<string, PlayerPropListProps["results"]>>((groups, side) => {
-    const key = side.market_key;
-    groups[key] = groups[key] ? [...groups[key], side] : [side];
-    return groups;
-  }, {});
-
   return (
     <>
-      {Object.entries(groupedResults).map(([marketKey, marketResults]) => (
-        <section key={marketKey} className="space-y-2">
-          <div className="flex items-center justify-between px-1">
-            <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-              {formatMarketLabel(marketKey)}
-            </h3>
-            <span className="text-[10px] text-muted-foreground">
-              {marketResults.length} {marketResults.length === 1 ? "prop" : "props"}
-            </span>
-          </div>
-
-          {marketResults.map((side) => (
-            <PlayerPropCard
-              key={`${side.selection_key}-${side.sportsbook}`}
-              side={side}
-              kellyMultiplier={kellyMultiplier}
-              bankroll={bankroll}
-              onLogBet={onLogBet}
-              onAddToCart={onAddToCart}
-              onStartPlaceFlow={onStartPlaceFlow}
-              bookColors={bookColors}
-              sportDisplayMap={sportDisplayMap}
-            />
-          ))}
-        </section>
-      ))}
+      <div className="space-y-2">
+        {results.map((side) => (
+          <PlayerPropCard
+            key={`${side.selection_key}-${side.sportsbook}`}
+            side={side}
+            activeLens={activeLens}
+            boostPercent={boostPercent}
+            kellyMultiplier={kellyMultiplier}
+            bankroll={bankroll}
+            onLogBet={onLogBet}
+            onAddToCart={onAddToCart}
+            onStartPlaceFlow={onStartPlaceFlow}
+            bookColors={bookColors}
+            sportDisplayMap={sportDisplayMap}
+          />
+        ))}
+      </div>
 
       {canLoadMore && (
         <Button type="button" variant="secondary" className="w-full" onClick={onLoadMore}>

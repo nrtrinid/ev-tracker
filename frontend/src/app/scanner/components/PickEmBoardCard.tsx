@@ -82,7 +82,7 @@ export function PickEmBoardCard({
 
             <p className="text-sm font-semibold">{card.player_name}</p>
             <p className="line-clamp-1 text-xs text-muted-foreground">
-              {card.event}
+              {card.event_short || card.event}
               <span className="ml-2 whitespace-nowrap">&bull; {formatGameTime(card.commence_time)}</span>
             </p>
             <p className="text-[11px] text-muted-foreground">

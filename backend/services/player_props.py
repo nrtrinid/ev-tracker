@@ -23,6 +23,7 @@ from services.odds_api import (
 )
 from services.sportsbook_deeplinks import resolve_sportsbook_deeplink
 from services.shared_state import get_scan_cache, set_scan_cache
+from services.team_aliases import canonical_short_name, canonical_team_token, build_short_event_label
 
 
 PLAYER_PROPS_SURFACE = "player_props"
@@ -30,6 +31,7 @@ PLAYER_PROP_MARKETS = [
     "player_points",
     "player_rebounds",
     "player_assists",
+    "player_points_rebounds_assists",
     "player_threes",
 ]
 PLAYER_PROP_BOOKS = {
@@ -117,11 +119,8 @@ def _player_team_from_description(description: str | None) -> str | None:
     return None
 
 
-def _canonical_team_name(name: str | None) -> str:
-    if not name:
-        return ""
-    lowered = str(name).strip().lower().replace("los angeles", "la")
-    return "".join(ch for ch in lowered if ch.isalnum())
+def _canonical_team_name(name: str | None, *, sport: str | None = None) -> str:
+    return canonical_team_token(sport, name)
 
 
 def _canonical_player_name(name: str | None) -> str:
@@ -354,13 +353,13 @@ def _reference_american_from_true_prob(true_prob: float) -> int | None:
     return decimal_to_american(fair_decimal)
 
 
-def _normalize_player_team(token: str | None, *, home_team: str, away_team: str) -> str | None:
-    token_key = _canonical_team_name(token)
+def _normalize_player_team(token: str | None, *, home_team: str, away_team: str, sport: str | None) -> str | None:
+    token_key = _canonical_team_name(token, sport=sport)
     if not token_key:
         return None
 
     for team_name in (home_team, away_team):
-        team_key = _canonical_team_name(team_name)
+        team_key = _canonical_team_name(team_name, sport=sport)
         if token_key == team_key or token_key in team_key or team_key in token_key:
             return team_name
     return None
@@ -373,17 +372,20 @@ def _resolve_player_context(
     player_context_lookup: dict[str, dict[str, str | None]] | None,
     home_team: str,
     away_team: str,
+    sport: str | None,
 ) -> tuple[str | None, str | None]:
     explicit_team = _normalize_player_team(
         _player_team_from_description(description),
         home_team=home_team,
         away_team=away_team,
+        sport=sport,
     )
     player_context = (player_context_lookup or {}).get(_canonical_player_name(player_name)) or {}
     inferred_team = _normalize_player_team(
         player_context.get("team"),
         home_team=home_team,
         away_team=away_team,
+        sport=sport,
     )
     participant_id = player_context.get("participant_id")
     return explicit_team or inferred_team, participant_id
@@ -449,8 +451,8 @@ def _american_price_quality(american: float | int | None) -> float | None:
         return None
 
 
-def _canonical_matchup_key(away_team: str | None, home_team: str | None) -> str:
-    return f"{_canonical_team_name(away_team)}|{_canonical_team_name(home_team)}"
+def _canonical_matchup_key(away_team: str | None, home_team: str | None, *, sport: str | None = None) -> str:
+    return f"{_canonical_team_name(away_team, sport=sport)}|{_canonical_team_name(home_team, sport=sport)}"
 
 
 def _parse_commence_time(value: str | None) -> datetime | None:
@@ -488,13 +490,18 @@ def _build_curated_event_match_details(curated_games: list[dict], odds_events: l
     for event in odds_events:
         home_team = str(event.get("home_team") or "").strip()
         away_team = str(event.get("away_team") or "").strip()
-        key = (_canonical_team_name(away_team), _canonical_team_name(home_team))
+        key = (_canonical_team_name(away_team, sport="basketball_nba"), _canonical_team_name(home_team, sport="basketball_nba"))
         if all(key) and key not in odds_index:
             odds_index[key] = event
 
     details: list[dict] = []
     for game in curated_games:
-        key = (str(game.get("away_team_key") or ""), str(game.get("home_team_key") or ""))
+        away_key_raw = str(game.get("away_team_key") or game.get("away_team") or "")
+        home_key_raw = str(game.get("home_team_key") or game.get("home_team") or "")
+        key = (
+            _canonical_team_name(away_key_raw, sport="basketball_nba"),
+            _canonical_team_name(home_key_raw, sport="basketball_nba"),
+        )
         event = odds_index.get(key)
         details.append(
             {
@@ -662,6 +669,7 @@ def _build_prop_side_candidates(
                         player_context_lookup=player_context_lookup,
                         home_team=home,
                         away_team=away,
+                        sport=sport,
                     )
                     opponent = None
                     if player_team == home:
@@ -685,12 +693,15 @@ def _build_prop_side_candidates(
                             "sportsbook_deeplink_level": deeplink_level,
                             "sport": sport,
                             "event": event_name,
+                            "event_short": build_short_event_label(sport, away, home),
                             "commence_time": commence_time,
                             "market": market_key,
                             "player_name": player_name,
                             "participant_id": participant_id,
                             "team": player_team,
+                            "team_short": canonical_short_name(sport, player_team) if player_team else None,
                             "opponent": opponent,
+                            "opponent_short": canonical_short_name(sport, opponent) if opponent else None,
                             "selection_side": side,
                             "line_value": line_value,
                             "display_name": display_name,
@@ -757,6 +768,7 @@ def _build_exact_line_reference_index(
     player_context_lookup: dict[str, dict[str, str | None]] | None = None,
 ) -> tuple[dict[tuple[str, str, str, float | None], dict], dict[tuple[str, str, float | None], dict]]:
     bookmakers = event_payload.get("bookmakers") or []
+    sport = str(event_payload.get("sport_key") or "basketball_nba")
     home = str(event_payload.get("home_team") or "")
     away = str(event_payload.get("away_team") or "")
     event_id = str(event_payload.get("id") or "").strip() or None
@@ -785,6 +797,7 @@ def _build_exact_line_reference_index(
                     player_context_lookup=player_context_lookup,
                     home_team=home,
                     away_team=away,
+                    sport=sport,
                 )
                 opponent = None
                 if player_team == home:
@@ -793,19 +806,22 @@ def _build_exact_line_reference_index(
                     opponent = home
 
                 player_key = _canonical_player_name(player_name)
-                team_key = _canonical_team_name(player_team)
+                team_key = _canonical_team_name(player_team, sport=sport)
                 reference_key = (player_key, team_key, market_key, line_value)
                 entry = raw_index.setdefault(
                     reference_key,
                     {
                         "event_id": event_id,
-                        "sport": "basketball_nba",
+                        "sport": sport,
                         "event": event_name,
+                        "event_short": build_short_event_label(sport, away, home),
                         "commence_time": commence_time,
                         "player_name": player_name,
                         "participant_id": participant_id,
                         "team": player_team,
+                        "team_short": canonical_short_name(sport, player_team) if player_team else None,
                         "opponent": opponent,
+                        "opponent_short": canonical_short_name(sport, opponent) if opponent else None,
                         "player_key": player_key,
                         "team_key": team_key,
                         "market_key": market_key,

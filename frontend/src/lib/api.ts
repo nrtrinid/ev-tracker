@@ -285,8 +285,17 @@ export async function getOperatorStatus(): Promise<OperatorStatusResponse> {
   return fetchInternalAPI<OperatorStatusResponse>("/api/ops/status");
 }
 
-export async function getResearchOpportunitySummary(): Promise<ResearchOpportunitySummary> {
-  return fetchInternalAPI<ResearchOpportunitySummary>("/api/ops/research-opportunities/summary");
+export async function getResearchOpportunitySummary(params?: {
+  model_version?: string;
+  capture_class?: string;
+  cohort_mode?: string;
+}): Promise<ResearchOpportunitySummary> {
+  const qs = new URLSearchParams();
+  if (params?.model_version) qs.set("model_version", params.model_version);
+  if (params?.capture_class) qs.set("capture_class", params.capture_class);
+  if (params?.cohort_mode) qs.set("cohort_mode", params.cohort_mode);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return fetchInternalAPI<ResearchOpportunitySummary>(`/api/ops/research-opportunities/summary${suffix}`);
 }
 
 // ============ Parlay Slips API ============

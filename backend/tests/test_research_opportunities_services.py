@@ -327,6 +327,7 @@ def test_get_research_opportunities_summary_aggregates_breakdowns_and_recent_row
                 "best_book_odds": 150,
                 "latest_reference_odds": 120,
                 "reference_odds_at_close": 115,
+                "close_captured_at": "2026-03-23T19:45:00Z",
                 "clv_ev_percent": 1.2,
                 "beat_close": True,
             },
@@ -354,6 +355,7 @@ def test_get_research_opportunities_summary_aggregates_breakdowns_and_recent_row
                 "best_book_odds": 340,
                 "latest_reference_odds": 290,
                 "reference_odds_at_close": 300,
+                "close_captured_at": "2026-03-23T20:45:00Z",
                 "clv_ev_percent": -0.4,
                 "beat_close": False,
             },
@@ -377,6 +379,7 @@ def test_get_research_opportunities_summary_aggregates_breakdowns_and_recent_row
                 "best_book_odds": 550,
                 "latest_reference_odds": 500,
                 "reference_odds_at_close": None,
+                "close_captured_at": None,
                 "clv_ev_percent": None,
                 "beat_close": None,
             },
@@ -389,18 +392,25 @@ def test_get_research_opportunities_summary_aggregates_breakdowns_and_recent_row
     assert summary.open_count == 1
     assert summary.close_captured_count == 2
     assert summary.clv_ready_count == 2
-    assert summary.beat_close_pct == 50.0
-    assert summary.avg_clv_percent == 0.4
+    assert summary.pending_close_count == 1
+    assert summary.valid_close_count == 2
+    assert summary.invalid_close_count == 0
+    assert summary.beat_close_pct is None
+    assert summary.avg_clv_percent is None
 
     assert [item.key for item in summary.by_surface] == ["straight_bets", "player_props"]
     assert summary.by_surface[0].captured_count == 2
-    assert [item.key for item in summary.by_source] == ["manual_scan", "scheduled_scan", "ops_trigger_scan"]
+    assert [item.key for item in summary.by_source] == [
+        "Daily Drop (Scheduled)",
+        "Daily Drop (Ops Trigger)",
+        "Daily Drop (Manual QA)",
+    ]
     assert summary.by_source[0].captured_count == 1
     assert [item.key for item in summary.by_edge_bucket] == ["0.5-1%", "2-4%", "4%+"]
     assert [item.key for item in summary.by_odds_bucket] == ["<= +150", "+301 to +500", "+501+"]
 
     assert summary.recent_opportunities[0].opportunity_key == "opp-3"
-    assert summary.recent_opportunities[0].first_source == "ops_trigger_scan"
+    assert summary.recent_opportunities[0].first_source == "Daily Drop (Ops Trigger)"
     assert summary.recent_opportunities[1].surface == "player_props"
     assert summary.recent_opportunities[1].player_name == "Tyrese Haliburton"
     assert summary.recent_opportunities[1].selection_side == "over"
@@ -413,4 +423,7 @@ def test_get_research_opportunities_summary_returns_empty_when_table_missing():
     assert summary.captured_count == 0
     assert summary.open_count == 0
     assert summary.close_captured_count == 0
+    assert summary.pending_close_count == 0
+    assert summary.valid_close_count == 0
+    assert summary.invalid_close_count == 0
     assert summary.recent_opportunities == []

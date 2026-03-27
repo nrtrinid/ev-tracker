@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from datetime import datetime, timezone, timedelta
@@ -12,10 +13,14 @@ DAILY_BOARD_MAX_GAMES = 4
 DAILY_BOARD_PROP_MARKETS = [
     "player_points",
     "player_rebounds",
+    "player_assists",
+    "player_points_rebounds_assists",
     "player_threes",
 ]
 DAILY_BOARD_MIN_POST_DROP_LEAD_MINUTES = 30
 DAILY_BOARD_MIN_TOTALS_OFFERS = 2
+FEATURED_LINES_PER_SPORT_CAP = 6
+FEATURED_LINES_STALE_AFTER_SECONDS = 60 * 45
 
 
 def _parse_utc_iso(value: str | None) -> datetime | None:
@@ -72,6 +77,37 @@ def _has_pinnacle_offer(offers: list[dict]) -> bool:
         if str(offer.get("sportsbook") or "").strip().lower() == "pinnacle":
             return True
     return False
+
+
+def _rank_featured_games(games: list[dict], *, max_games: int) -> list[dict]:
+    now_dt = datetime.now(timezone.utc)
+    ranked: list[tuple[tuple[float, int, int, str], dict]] = []
+    for game in games or []:
+        if not isinstance(game, dict):
+            continue
+        event_id = str(game.get("event_id") or "").strip()
+        if not event_id:
+            continue
+        commence = _parse_utc_iso(game.get("commence_time"))
+        if commence is None:
+            continue
+        if commence <= now_dt:
+            continue
+        h2h_count = len(game.get("h2h_offers") or [])
+        spread_count = len(game.get("spreads_offers") or [])
+        totals_count = len(game.get("totals_offers") or [])
+        coverage = h2h_count + spread_count + totals_count
+        if coverage <= 0:
+            continue
+        rank = (
+            commence.timestamp(),
+            -coverage,
+            -(1 if _has_pinnacle_offer((game.get("totals_offers") or []) + (game.get("h2h_offers") or [])) else 0),
+            event_id,
+        )
+        ranked.append((rank, game))
+    ranked.sort(key=lambda item: item[0])
+    return [game for _rank, game in ranked[:max_games]]
 
 
 def _select_daily_games(
@@ -163,6 +199,8 @@ async def run_daily_board_drop(
     *,
     db,
     source: str,
+    scan_label: str = "Scheduled Board Drop",
+    mst_anchor_time: str | None = None,
     retry_supabase: Callable,
     log_event: Callable[..., None],
 ) -> dict[str, Any]:
@@ -172,21 +210,78 @@ async def run_daily_board_drop(
     Steps:
     1) Broad NBA totals fetch (slate-level) for selection + context.
     2) Select up to 4 games for the board.
-    3) Scan player props only for selected event_ids × 3 markets.
-    4) Capture research opportunities from prop sides (props-first).
-    5) Persist board:latest with game_context + player_props (keep straight_bets compat as empty for now).
+    3) Scan straight bets (multi-sport) for EV-ranked Game Lines cards.
+    4) Scan player props for the full NBA slate across 5 flagship markets.
+    5) Capture research opportunities from fresh board sides.
+    6) Persist board:latest with game_context + straight_bets + player_props.
     """
     from models import FullScanResponse as _FSR
     from services.board_snapshot import persist_board_snapshot
-    from services.odds_api import fetch_nba_totals_slate
+    from services.odds_api import SUPPORTED_SPORTS, fetch_events, fetch_featured_lines_slate, get_cached_or_scan
     from services.player_props import scan_player_props_for_event_ids
     from services.research_opportunities import capture_scan_opportunities
+    from services.scan_markets import (
+        aggregate_manual_scan_all_sports,
+        manual_scan_sports_for_env,
+        scanned_at_from_fetched_timestamp,
+    )
 
     started_at = time.monotonic()
     scanned_at = _utc_now_iso()
 
-    totals_payload = await fetch_nba_totals_slate(source=source)
-    totals_games = totals_payload.get("games") if isinstance(totals_payload, dict) else []
+    featured_nba_task = fetch_featured_lines_slate(sport="basketball_nba", source=source)
+    featured_cbb_task = fetch_featured_lines_slate(sport="basketball_ncaab", source=source)
+    featured_mlb_task = fetch_featured_lines_slate(sport="baseball_mlb", source=source)
+    nba_events_task = fetch_events(DAILY_BOARD_SPORT, source=f"{source}_props_events")
+
+    (
+        featured_nba_raw,
+        featured_cbb_raw,
+        featured_mlb_raw,
+        nba_events_resp_raw,
+    ) = await asyncio.gather(
+        featured_nba_task,
+        featured_cbb_task,
+        featured_mlb_task,
+        nba_events_task,
+        return_exceptions=True,
+    )
+
+    if isinstance(featured_nba_raw, Exception):
+        raise featured_nba_raw
+    featured_nba_payload = featured_nba_raw
+
+    if isinstance(featured_cbb_raw, Exception):
+        log_event(
+            "daily_board.featured_lines.failed",
+            level="warning",
+            source=source,
+            sport="basketball_ncaab",
+            error_class=type(featured_cbb_raw).__name__,
+            error=str(featured_cbb_raw),
+        )
+        featured_cbb_payload = {"sport": "basketball_ncaab", "games": [], "events_fetched": 0, "api_requests_remaining": None}
+    else:
+        featured_cbb_payload = featured_cbb_raw
+
+    if isinstance(featured_mlb_raw, Exception):
+        log_event(
+            "daily_board.featured_lines.failed",
+            level="warning",
+            source=source,
+            sport="baseball_mlb",
+            error_class=type(featured_mlb_raw).__name__,
+            error=str(featured_mlb_raw),
+        )
+        featured_mlb_payload = {"sport": "baseball_mlb", "games": [], "events_fetched": 0, "api_requests_remaining": None}
+    else:
+        featured_mlb_payload = featured_mlb_raw
+
+    if isinstance(nba_events_resp_raw, Exception):
+        raise nba_events_resp_raw
+    nba_events_resp = nba_events_resp_raw
+
+    totals_games = featured_nba_payload.get("games") if isinstance(featured_nba_payload, dict) else []
     totals_games = totals_games if isinstance(totals_games, list) else []
 
     selected_games = _select_daily_games(totals_games, max_games=DAILY_BOARD_MAX_GAMES)
@@ -196,20 +291,51 @@ async def run_daily_board_drop(
         if str(game.get("event_id") or "").strip()
     ]
 
+    nba_events_payload, nba_events_http = nba_events_resp
+    nba_events = nba_events_payload if isinstance(nba_events_payload, list) else []
+    full_slate_event_ids = [
+        str(event.get("id") or "").strip()
+        for event in nba_events
+        if str(event.get("id") or "").strip()
+    ]
+
+    sports_to_scan = manual_scan_sports_for_env(
+        environment=os.getenv("ENVIRONMENT", "production"),
+        supported_sports=SUPPORTED_SPORTS,
+    )
+    straight_aggregate = await aggregate_manual_scan_all_sports(
+        sports_to_scan=sports_to_scan,
+        get_cached_or_scan=lambda sport: get_cached_or_scan(sport, source=source),
+    )
+    straight_sides = [
+        side if isinstance(side, dict) and side.get("surface") else {"surface": "straight_bets", **side}
+        for side in (straight_aggregate.get("all_sides") or [])
+        if isinstance(side, dict)
+    ]
+    straight_scanned_at = scanned_at_from_fetched_timestamp(straight_aggregate.get("oldest_fetched")) or scanned_at
+
     props_result = await scan_player_props_for_event_ids(
         sport=DAILY_BOARD_SPORT,
-        event_ids=selected_event_ids,
+        event_ids=full_slate_event_ids,
         markets=DAILY_BOARD_PROP_MARKETS,
         source=source,
     )
     props_sides = props_result.get("sides") or []
 
-    # Props-first research capture: persist +EV prop sides into scan_opportunities.
+    # Persist +EV board sides into scan_opportunities for both surfaces.
     if db is not None:
         try:
+            straight_surface_sides = [
+                {**s, "surface": "straight_bets"} if isinstance(s, dict) else s
+                for s in straight_sides
+            ]
+            props_surface_sides = [
+                {**s, "surface": "player_props"} if isinstance(s, dict) else s
+                for s in props_sides
+            ]
             capture_scan_opportunities(
                 db,
-                sides=[{**s, "surface": "player_props"} if isinstance(s, dict) else s for s in props_sides],
+                sides=[*straight_surface_sides, *props_surface_sides],
                 source=source,
                 captured_at=scanned_at,
             )
@@ -221,16 +347,16 @@ async def run_daily_board_drop(
                 error=str(exc),
             )
 
-    # Keep straight_bets for compatibility, but the daily-board path no longer
-    # runs broad h2h scans.
     straight_payload = _FSR(
         surface="straight_bets",
         sport="all",
-        sides=[],
-        events_fetched=0,
-        events_with_both_books=0,
-        api_requests_remaining=None,
-        scanned_at=scanned_at,
+        sides=straight_sides,
+        events_fetched=int(straight_aggregate.get("total_events") or 0),
+        events_with_both_books=int(straight_aggregate.get("total_with_both") or 0),
+        api_requests_remaining=straight_aggregate.get("min_remaining"),
+        scanned_at=straight_scanned_at,
+        diagnostics=straight_aggregate.get("diagnostics"),
+        prizepicks_cards=straight_aggregate.get("prizepicks_cards"),
     ).model_dump()
 
     props_payload = _FSR(
@@ -245,6 +371,19 @@ async def run_daily_board_drop(
         prizepicks_cards=props_result.get("prizepicks_cards"),
     ).model_dump()
 
+    featured_nba_games = _rank_featured_games(
+        featured_nba_payload.get("games") if isinstance(featured_nba_payload, dict) else [],
+        max_games=FEATURED_LINES_PER_SPORT_CAP,
+    )
+    featured_cbb_games = _rank_featured_games(
+        featured_cbb_payload.get("games") if isinstance(featured_cbb_payload, dict) else [],
+        max_games=FEATURED_LINES_PER_SPORT_CAP,
+    )
+    featured_mlb_games = _rank_featured_games(
+        featured_mlb_payload.get("games") if isinstance(featured_mlb_payload, dict) else [],
+        max_games=FEATURED_LINES_PER_SPORT_CAP,
+    )
+
     game_context = {
         "sport": DAILY_BOARD_SPORT,
         "selection_mode": "totals_slate",
@@ -253,9 +392,43 @@ async def run_daily_board_drop(
             "min_totals_offers": DAILY_BOARD_MIN_TOTALS_OFFERS,
         },
         "selected_event_ids": selected_event_ids,
+        "props_scan_event_ids": full_slate_event_ids,
+        "props_scan_scope": "full_nba_slate",
+        "scan_label": scan_label,
+        "scan_anchor_timezone": "America/Phoenix",
+        "scan_anchor_time_mst": mst_anchor_time,
         "games": selected_games,
-        "events_fetched": int(totals_payload.get("events_fetched") or 0),
-        "api_requests_remaining": totals_payload.get("api_requests_remaining"),
+        "events_fetched": int(featured_nba_payload.get("events_fetched") or 0),
+        "api_requests_remaining": featured_nba_payload.get("api_requests_remaining"),
+        "featured_lines": {
+            "basketball_nba": featured_nba_games,
+            "basketball_ncaab": featured_cbb_games,
+            "baseball_mlb": featured_mlb_games,
+        },
+        "featured_lines_meta": {
+            "basketball_nba": {
+                "events_fetched": int(featured_nba_payload.get("events_fetched") or 0),
+                "api_requests_remaining": featured_nba_payload.get("api_requests_remaining"),
+                "games_included": len(featured_nba_games),
+            },
+            "basketball_ncaab": {
+                "events_fetched": int(featured_cbb_payload.get("events_fetched") or 0),
+                "api_requests_remaining": featured_cbb_payload.get("api_requests_remaining"),
+                "games_included": len(featured_cbb_games),
+            },
+            "baseball_mlb": {
+                "events_fetched": int(featured_mlb_payload.get("events_fetched") or 0),
+                "api_requests_remaining": featured_mlb_payload.get("api_requests_remaining"),
+                "games_included": len(featured_mlb_games),
+            },
+            "captured_at": scanned_at,
+            "stale_after_seconds": FEATURED_LINES_STALE_AFTER_SECONDS,
+        },
+        "nba_props_events_meta": {
+            "events_fetched": len(nba_events),
+            "api_requests_remaining": nba_events_http.headers.get("x-requests-remaining")
+            or nba_events_http.headers.get("x-request-remaining"),
+        },
         "captured_at": scanned_at,
     }
 
@@ -276,6 +449,8 @@ async def run_daily_board_drop(
     log_event(
         "daily_board.drop.completed",
         source=source,
+        scan_label=scan_label,
+        mst_anchor_time=mst_anchor_time,
         snapshot_id=snapshot_id,
         scanned_at=scanned_at,
         selected_games=len(selected_games),
@@ -287,9 +462,14 @@ async def run_daily_board_drop(
         "ok": True,
         "snapshot_id": snapshot_id,
         "scanned_at": scanned_at,
+        "scan_label": scan_label,
+        "mst_anchor_time": mst_anchor_time,
         "selected_event_ids": selected_event_ids,
+        "props_scan_event_ids": full_slate_event_ids,
         "selected_games": selected_games,
         "props_sides": len(props_sides),
+        "featured_games_count": len(featured_nba_games) + len(featured_cbb_games) + len(featured_mlb_games),
+        "props_events_scanned": len(full_slate_event_ids),
         "duration_ms": duration_ms,
     }
 

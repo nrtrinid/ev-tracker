@@ -167,10 +167,19 @@ export function useOperatorStatus() {
   });
 }
 
-export function useResearchOpportunitySummary() {
+export function useResearchOpportunitySummary(filters?: {
+  model_version?: string;
+  capture_class?: string;
+  cohort_mode?: string;
+}) {
   return useQuery({
-    queryKey: queryKeys.researchOpportunitySummary,
-    queryFn: api.getResearchOpportunitySummary,
+    queryKey: [
+      ...queryKeys.researchOpportunitySummary,
+      filters?.model_version ?? null,
+      filters?.capture_class ?? null,
+      filters?.cohort_mode ?? null,
+    ],
+    queryFn: () => api.getResearchOpportunitySummary(filters),
     refetchInterval: 60_000,
     staleTime: 30_000,
     retry: 1,

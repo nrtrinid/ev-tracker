@@ -1,14 +1,22 @@
-import { ChevronRight, ExternalLink, Info } from "lucide-react";
+import { Check, ChevronRight, ExternalLink, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import type { PlayerPropMarketSide } from "@/lib/types";
-import { calculateStealthStake, cn, formatCurrency, formatOdds } from "@/lib/utils";
+import { cn, formatOdds } from "@/lib/utils";
+import { useBettingPlatformStore } from "@/lib/betting-platform-store";
+import {
+  calculateLensBoostedEV,
+  calculateLensQualifierHold,
+  calculateLensRetention,
+} from "@/app/scanner/scanner-lenses";
 import { buildScannerActionModel } from "../scanner-ui-model";
 import { getStandardEdgeColorClass } from "./scanner-card-colors";
 
 interface PlayerPropCardProps {
-  side: PlayerPropMarketSide & { _retention?: number; _boostedEV?: number };
+  side: PlayerPropMarketSide & { _retention?: number; _boostedEV?: number; _qualifierHold?: number };
+  activeLens: "standard" | "profit_boost" | "bonus_bet" | "qualifier";
+  boostPercent: number;
   kellyMultiplier: number;
   bankroll: number;
   onLogBet: (side: PlayerPropMarketSide) => void;
@@ -26,15 +34,6 @@ function formatGameTime(isoString: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
-}
-
-function formatMarketLabel(value: string): string {
-  return value.replaceAll("_", " ");
-}
-
-function formatConfidenceLabel(label: string | null | undefined): string {
-  const normalized = (label || "thin").trim().toLowerCase();
-  return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : "Thin";
 }
 
 function bookAbbrev(name: string): string {
@@ -74,8 +73,24 @@ function getDuplicateBadge(duplicateState: PlayerPropMarketSide["scanner_duplica
   return null;
 }
 
+function formatPropMarketLabel(marketKey: string | undefined | null): string {
+  const key = (marketKey ?? "").trim();
+  const map: Record<string, string> = {
+    player_points: "PTS",
+    player_rebounds: "REB",
+    player_assists: "AST",
+    player_threes: "3PM",
+    player_points_rebounds_assists: "PTS/REB/AST",
+  };
+  if (map[key]) return map[key];
+  if (!key) return "Prop";
+  return key.replace(/^player_/, "").replaceAll("_", " ").toUpperCase();
+}
+
 export function PlayerPropCard({
   side,
+  activeLens,
+  boostPercent,
   kellyMultiplier,
   bankroll,
   onLogBet,
@@ -84,112 +99,115 @@ export function PlayerPropCard({
   bookColors,
   sportDisplayMap,
 }: PlayerPropCardProps) {
+  const { cart, isHydrated, removeCartLeg } = useBettingPlatformStore();
+
   const actionModel = buildScannerActionModel({
     sportsbook: side.sportsbook,
     sportsbookDeeplinkUrl: side.sportsbook_deeplink_url,
     sportsbookDeeplinkLevel: side.sportsbook_deeplink_level,
   });
+
   const duplicateState = side.scanner_duplicate_state ?? "new";
   const duplicateBadge = getDuplicateBadge(duplicateState);
   const referenceBookCount = side.reference_bookmaker_count ?? side.reference_bookmakers.length;
-  const confidenceLabel = side.confidence_label ?? (referenceBookCount >= 2 ? "solid" : "thin");
-  const confidenceDisplay = formatConfidenceLabel(confidenceLabel);
-  const rawKellyStake = Math.max(0, side.base_kelly_fraction * kellyMultiplier * bankroll);
-  const stealthKellyStake = calculateStealthStake(rawKellyStake);
-  const edgeColorClass = getStandardEdgeColorClass(side.ev_percentage);
+
+  const boostedEV = side._boostedEV ?? calculateLensBoostedEV(side, boostPercent);
+  const retention = side._retention ?? calculateLensRetention(side);
+  const hold = side._qualifierHold ?? calculateLensQualifierHold(side);
+
+  const metric =
+    activeLens === "bonus_bet"
+      ? { label: "Retention", value: `${(retention * 100).toFixed(1)}%` }
+      : activeLens === "profit_boost"
+        ? { label: "Boost Edge", value: `${boostedEV >= 0 ? "+" : ""}${boostedEV.toFixed(1)}%` }
+        : activeLens === "qualifier"
+          ? { label: "Hold", value: `${hold.toFixed(1)}%` }
+          : { label: "Edge", value: `${side.ev_percentage >= 0 ? "+" : ""}${side.ev_percentage.toFixed(1)}%` };
+
+  let metricColorClass = "text-foreground";
+  if (activeLens === "standard") {
+    metricColorClass = getStandardEdgeColorClass(side.ev_percentage);
+  } else if (activeLens === "profit_boost") {
+    metricColorClass = boostedEV > 0 ? "text-primary" : "text-muted-foreground";
+  } else if (activeLens === "bonus_bet") {
+    metricColorClass = "text-[#0EA5A4]";
+  } else if (activeLens === "qualifier") {
+    metricColorClass = hold <= 3 ? "text-profit" : hold <= 6 ? "text-foreground" : "text-muted-foreground";
+  }
+
+  void (kellyMultiplier * bankroll);
+
+  const legId = `${side.surface}:${side.selection_key}:${side.sportsbook}`;
+  const isInCart = isHydrated && cart.some((leg) => leg.id === legId);
 
   return (
-    <Card className="card-hover">
-      <CardContent className="space-y-2.5 p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0 flex-1">
-            <div className="mb-1.5 flex flex-wrap items-center gap-2">
-              <span
-                className={cn(
-                  "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white",
-                  bookColors[side.sportsbook] || "bg-foreground"
-                )}
-              >
-                {bookAbbrev(side.sportsbook)}
-              </span>
-              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                {sportDisplayMap[side.sport] || side.sport}
-              </span>
-              {duplicateBadge && (
-                <span className={duplicateBadge.className}>
-                  {duplicateBadge.label}
-                </span>
+    <Card
+      className="card-hover cursor-pointer"
+      onClick={() => onLogBet(side)}
+    >
+      <CardContent className="px-3 py-2.5">
+        {/* Row 0: badges left, EV stacked right */}
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span
+              className={cn(
+                "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white",
+                bookColors[side.sportsbook] || "bg-foreground"
               )}
-            </div>
-
-            <div className="mb-2 flex items-center gap-2">
-              <p className="line-clamp-2 text-sm font-semibold">{side.display_name}</p>
-              <span className="shrink-0 rounded bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                {formatMarketLabel(side.market)}
-              </span>
-            </div>
-
-            <p className="line-clamp-1 mt-0.5 text-xs text-muted-foreground">{side.event}</p>
-
-            <div className="mt-2 flex flex-col gap-1 text-xs">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono font-medium">
-                  <span className="text-[11px] text-muted-foreground">Book</span>
-                  <span className="text-foreground">{formatOdds(side.book_odds)}</span>
-                  <span className="text-[11px] text-muted-foreground">
-                    Fair {formatOdds(side.reference_odds)}
-                  </span>
-                  <span className="text-[11px] text-muted-foreground">
-                    Backed by {referenceBookCount} books
-                  </span>
-                </span>
-
-                {duplicateState === "better_now" && side.best_logged_odds_american != null && (
-                  <span className="text-[11px] text-profit">
-                    Logged at {formatOdds(side.best_logged_odds_american)} - now{" "}
-                    {formatOdds(side.current_odds_american ?? side.book_odds)}
-                  </span>
-                )}
-              </div>
-              <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
-                <span>{formatGameTime(side.commence_time)}</span>
-              </div>
-            </div>
+            >
+              {bookAbbrev(side.sportsbook)}
+            </span>
+            <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              {sportDisplayMap[side.sport] || side.sport}
+            </span>
+            <span className="rounded bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              {formatPropMarketLabel(side.market_key)}
+            </span>
+            {duplicateBadge && (
+              <span className={duplicateBadge.className}>{duplicateBadge.label}</span>
+            )}
           </div>
-
-          <div className="shrink-0 sm:min-w-[92px]">
-            <div className="flex items-start justify-between rounded-lg border border-border/60 bg-muted/30 px-3 py-2 sm:block sm:rounded-none sm:border-0 sm:bg-transparent sm:px-0 sm:py-0 sm:text-right">
-              <div>
-              <p className={cn("text-lg font-mono font-bold leading-tight", edgeColorClass)}>
-                {side.ev_percentage >= 0 ? "+" : ""}
-                {side.ev_percentage.toFixed(1)}%
-              </p>
-              <p className="text-[10px] text-muted-foreground">Edge</p>
-              </div>
-              <div className="sm:mt-0.5">
-                <p className="text-[10px] text-muted-foreground">
-                  Confidence: {confidenceDisplay}
-                </p>
-                <p className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground sm:justify-end">
-                  Suggested stake:
-                  <span className="font-mono font-semibold text-foreground">
-                    {formatCurrency(stealthKellyStake)}
-                  </span>
-                  <span title={`Raw Kelly: ${formatCurrency(rawKellyStake)}`} className="inline-flex">
-                    <Info
-                      className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70"
-                      aria-label="Raw Kelly amount"
-                    />
-                  </span>
-                </p>
-              </div>
-            </div>
+          <div className="shrink-0 text-right" data-testid="ev-display">
+            <p className={cn("font-mono text-base font-bold leading-none", metricColorClass)}>
+              {metric.value}
+            </p>
+            <p className="mt-0.5 text-[10px] tracking-wide text-muted-foreground">{metric.label}</p>
           </div>
         </div>
 
+        {/* Row 1: player name */}
+        <p className="line-clamp-1 text-sm font-semibold leading-snug">{side.display_name}</p>
+
+        {/* Row 2: matchup + game time */}
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {(side.event_short || side.event)} • {formatGameTime(side.commence_time)}
+        </p>
+
+        {/* Row 3: book odds, fair odds, trust signal */}
+        <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 font-mono text-[11px] font-medium">
+          <span className="text-muted-foreground">
+            Book <span className="text-foreground">{formatOdds(side.book_odds)}</span>
+          </span>
+          <span className="text-muted-foreground">
+            Fair <span className="text-foreground">{formatOdds(side.reference_odds)}</span>
+          </span>
+          <span className="text-muted-foreground">· {referenceBookCount} books</span>
+          {duplicateState === "better_now" && side.best_logged_odds_american != null && (
+            <span className="text-[11px] text-profit">
+              Logged at {formatOdds(side.best_logged_odds_american)} · now{" "}
+              {formatOdds(side.current_odds_american ?? side.book_odds)}
+            </span>
+          )}
+        </div>
+
+        {/* Row 4: action row — Place + toggle grouped left, Review > pinned right */}
         {actionModel.primary.kind === "open" && actionModel.primary.href ? (
-          <div className="space-y-2 border-t border-border/60 pt-2">
-            <Button asChild className="h-10 w-full text-xs font-semibold">
+          <div className="mt-1.5 flex items-center gap-1.5 border-t border-border/60 pt-1.5">
+            <Button
+              asChild
+              className="h-8 flex-[0.9] text-xs font-medium"
+              onClick={(e) => e.stopPropagation()}
+            >
               <a
                 href={actionModel.primary.href}
                 target="_blank"
@@ -197,47 +215,77 @@ export function PlayerPropCard({
                 onClick={() => onStartPlaceFlow(side)}
               >
                 {actionModel.primary.label}
-                <ExternalLink className="ml-1 h-3.5 w-3.5" />
+                <ExternalLink className="ml-1 h-3 w-3" />
               </a>
             </Button>
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Button
-                type="button"
-                variant="outline"
-                className="h-10 flex-1 text-xs font-medium"
-                onClick={() => onLogBet(side)}
-              >
-                {actionModel.secondary?.label ?? "Review & Log"}
-                <ChevronRight className="ml-1 h-3.5 w-3.5" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="h-10 flex-1 text-xs font-medium text-muted-foreground"
-                onClick={() => onAddToCart(side)}
-              >
-                Save to Cart
-              </Button>
-            </div>
+            <button
+              type="button"
+              aria-label={isInCart ? "Remove from cart" : "Add to cart"}
+              className={cn(
+                "flex h-8 w-8 shrink-0 items-center justify-center rounded border text-xs transition-colors",
+                isInCart
+                  ? "border-primary/30 bg-primary/15 text-primary"
+                  : "border-border bg-muted/40 text-muted-foreground hover:border-primary/30 hover:bg-primary/10 hover:text-primary"
+              )}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (isInCart) removeCartLeg(legId);
+                else onAddToCart(side);
+              }}
+            >
+              {isInCart ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+            </button>
+            <button
+              type="button"
+              className="ml-auto flex shrink-0 items-center whitespace-nowrap text-xs text-muted-foreground"
+              onClick={(e) => {
+                e.stopPropagation();
+                onLogBet(side);
+              }}
+            >
+              Review <ChevronRight className="ml-0.5 h-3 w-3" />
+            </button>
           </div>
         ) : (
-          <div className="space-y-2 border-t border-border/60 pt-2">
+          <div className="mt-1.5 flex items-center gap-1.5 border-t border-border/60 pt-1.5">
             <Button
               type="button"
-              className="h-10 w-full text-xs font-semibold"
-              onClick={() => onLogBet(side)}
+              className="h-8 flex-[0.9] text-xs font-medium"
+              onClick={(e) => {
+                e.stopPropagation();
+                onLogBet(side);
+              }}
             >
               {actionModel.primary.label}
-              <ChevronRight className="ml-1 h-3.5 w-3.5" />
+              <ChevronRight className="ml-1 h-3 w-3" />
             </Button>
-            <Button
+            <button
               type="button"
-              variant="ghost"
-              className="h-10 w-full text-xs font-medium text-muted-foreground"
-              onClick={() => onAddToCart(side)}
+              aria-label={isInCart ? "Remove from cart" : "Add to cart"}
+              className={cn(
+                "flex h-8 w-8 shrink-0 items-center justify-center rounded border text-xs transition-colors",
+                isInCart
+                  ? "border-primary/30 bg-primary/15 text-primary"
+                  : "border-border bg-muted/40 text-muted-foreground hover:border-primary/30 hover:bg-primary/10 hover:text-primary"
+              )}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (isInCart) removeCartLeg(legId);
+                else onAddToCart(side);
+              }}
             >
-              Save to Cart
-            </Button>
+              {isInCart ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+            </button>
+            <button
+              type="button"
+              className="ml-auto flex shrink-0 items-center whitespace-nowrap text-xs text-muted-foreground"
+              onClick={(e) => {
+                e.stopPropagation();
+                onLogBet(side);
+              }}
+            >
+              Review <ChevronRight className="ml-0.5 h-3 w-3" />
+            </button>
           </div>
         )}
       </CardContent>

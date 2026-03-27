@@ -331,6 +331,7 @@ type Props = {
 
 export function OddsApiActivityCard({ data }: Props) {
   const [showAllCalls, setShowAllCalls] = useState(false);
+  const [showBoardDropCalls, setShowBoardDropCalls] = useState(false);
   const [showScanSessions, setShowScanSessions] = useState(false);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
 
@@ -380,6 +381,11 @@ export function OddsApiActivityCard({ data }: Props) {
     [boardDropCalls],
   );
 
+  const boardDropDefaultVisibleCalls = 3;
+  const boardDropCallsVisible = showBoardDropCalls
+    ? boardDropCalls
+    : boardDropCalls.slice(0, boardDropDefaultVisibleCalls);
+
   // Attribution rows (exact + inferred)
   const usageByCategory = useMemo(
     () =>
@@ -419,7 +425,7 @@ export function OddsApiActivityCard({ data }: Props) {
     return oddsRecentCalls.filter((c) => mapToSourceFilter(getSourceCategory(c.source)) === sourceFilter);
   }, [oddsRecentCalls, sourceFilter]);
 
-  const callsDefaultVisible = 10;
+  const callsDefaultVisible = 6;
   const visibleCalls = showAllCalls ? filteredCalls : filteredCalls.slice(0, callsDefaultVisible);
 
   return (
@@ -481,6 +487,18 @@ export function OddsApiActivityCard({ data }: Props) {
                 value={schedulerScan?.duration_ms ? `${Math.round(schedulerScan.duration_ms)}ms` : "—"}
               />
               <Row
+                label="Scan window"
+                value={schedulerScan?.scan_window?.label || "Unknown"}
+              />
+              <Row
+                label="Props events scanned"
+                value={scalarOrUnknown(schedulerScan?.props_events_scanned)}
+              />
+              <Row
+                label="Featured games"
+                value={scalarOrUnknown(schedulerScan?.featured_games_count)}
+              />
+              <Row
                 label="Credit cost"
                 value={
                   boardDropExactCost !== null
@@ -496,7 +514,7 @@ export function OddsApiActivityCard({ data }: Props) {
               )}
               {boardDropCalls.length > 0 && (
                 <div className="mt-1 border-t border-border/50 pt-2 space-y-1">
-                  {boardDropCalls.map((call, idx) => {
+                  {boardDropCallsVisible.map((call, idx) => {
                     const failed = isFailedActivity(call);
                     return (
                       <div
@@ -518,6 +536,21 @@ export function OddsApiActivityCard({ data }: Props) {
                       </div>
                     );
                   })}
+                  {boardDropCalls.length > boardDropDefaultVisibleCalls && (
+                    <div className="pt-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="px-0 h-auto text-xs"
+                        onClick={() => setShowBoardDropCalls((v) => !v)}
+                      >
+                        {showBoardDropCalls
+                          ? "Hide board drop logs"
+                          : `Show ${boardDropCalls.length - boardDropDefaultVisibleCalls} more calls`}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
             </>

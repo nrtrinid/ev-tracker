@@ -5,7 +5,7 @@ from datetime import datetime, UTC
 from typing import Any, Callable
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 
 from dependencies import require_ops_token
 from models import ResearchOpportunitySummaryResponse
@@ -280,11 +280,14 @@ def ops_research_opportunities_summary_impl(
     *,
     require_valid_cron_token: Callable[[str | None], None],
     get_db: Callable[[], Any],
-    get_summary: Callable[[Any], ResearchOpportunitySummaryResponse],
+    get_summary: Callable[..., ResearchOpportunitySummaryResponse],
+    model_version: str | None = None,
+    capture_class: str | None = None,
+    cohort_mode: str | None = None,
 ) -> ResearchOpportunitySummaryResponse:
     """Protected research summary implementation used by the API route wrapper."""
     require_valid_cron_token(x_cron_token)
-    return get_summary(get_db())
+    return get_summary(get_db(), model_version=model_version, capture_class=capture_class, cohort_mode=cohort_mode)
 
 
 async def cron_test_discord_impl(
@@ -498,6 +501,9 @@ def ops_status(
 def ops_research_opportunities_summary(
     x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    model_version: str | None = Query(default=None),
+    capture_class: str | None = Query(default=None),
+    cohort_mode: str | None = Query(default=None),
     _auth: None = Depends(require_ops_token),
 ):
     import main
@@ -508,6 +514,9 @@ def ops_research_opportunities_summary(
         require_valid_cron_token=lambda token: main._require_ops_token(token, None),
         get_db=main.get_db,
         get_summary=get_research_opportunities_summary,
+        model_version=model_version,
+        capture_class=capture_class,
+        cohort_mode=cohort_mode,
     )
 
 

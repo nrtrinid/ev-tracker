@@ -759,10 +759,15 @@ def test_ops_research_opportunities_summary_contract_shape(auth_client, monkeypa
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
     monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
 
-    monkeypatch.setattr(research, "get_research_opportunities_summary", lambda _db: {
+    monkeypatch.setattr(research, "get_research_opportunities_summary", lambda _db, **_kwargs: {
         "captured_count": 4,
         "open_count": 2,
         "close_captured_count": 2,
+        "pending_close_count": 2,
+        "valid_close_count": 2,
+        "invalid_close_count": 0,
+        "valid_close_coverage_pct": None,
+        "invalid_close_rate_pct": None,
         "clv_ready_count": 2,
         "beat_close_pct": 50.0,
         "avg_clv_percent": 0.8,

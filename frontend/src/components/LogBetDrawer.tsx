@@ -292,6 +292,17 @@ export function LogBetDrawer({
 
   const bestLoggedOdds = initialValues?.best_logged_odds_american;
   const currentOdds = initialValues?.current_odds_american ?? initialValues?.odds_american;
+  const suggestedStake = (() => {
+    if (!isScannerFlow || !initialValues) return null;
+    const stealth =
+      initialValues.stealth_kelly_stake ??
+      (initialValues.raw_kelly_stake != null
+        ? calculateStealthStake(initialValues.raw_kelly_stake)
+        : undefined);
+    const fallback = initialValues.kelly_suggestion;
+    const stake = stealth ?? fallback;
+    return stake != null && stake > 0 ? stake : null;
+  })();
 
   const updateField = (field: keyof FormState, value: string) => {
     setFormState(prev => ({ ...prev, [field]: value }));
@@ -558,7 +569,7 @@ export function LogBetDrawer({
               value={formState.odds}
               onChange={(value) => updateField("odds", value)}
               placeholder="150"
-              defaultSign="+"
+              defaultSign={(initialValues?.odds_american ?? 0) < 0 ? "-" : "+"}
               americanOddsSeed={initialValues?.odds_american ?? null}
               label={isScannerFlow ? "Placed Odds" : "Odds"}
               className="[&_input]:h-12 [&_input]:text-lg"
@@ -575,6 +586,11 @@ export function LogBetDrawer({
                 onChange={(e) => updateField("stake", e.target.value)}
                 className="h-12 text-lg font-mono text-center"
               />
+              {suggestedStake != null && (
+                <p className="mt-1 text-[11px] text-muted-foreground text-center">
+                  Suggested stake: <span className="font-medium text-foreground">{formatCurrency(suggestedStake)}</span>
+                </p>
+              )}
               {/* Quick Stake Presets - directly under stake field */}
               <div className="flex gap-2 mt-2">
                 {[5, 10, 25].map((amount) => (

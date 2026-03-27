@@ -6,6 +6,8 @@ from typing import Any
 
 import httpx
 
+from services.team_aliases import canonical_short_name, canonical_team_token
+
 
 ESPN_NBA_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
 ESPN_NBA_TEAM_ROSTER_URL_TEMPLATE = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{team_id}/roster"
@@ -187,11 +189,8 @@ async def build_matchup_player_lookup(
     return {**home_lookup, **away_lookup}
 
 
-def _canonical_team_name(name: str | None) -> str:
-    if not name:
-        return ""
-    lowered = str(name).strip().lower().replace("los angeles", "la")
-    return "".join(ch for ch in lowered if ch.isalnum())
+def _canonical_team_name(name: str | None, *, sport: str | None = "basketball_nba") -> str:
+    return canonical_team_token(sport, name)
 
 
 def _extract_broadcast_names(event: dict[str, Any]) -> list[str]:
@@ -246,8 +245,10 @@ def _extract_matchup(event: dict[str, Any]) -> dict[str, str] | None:
         "home_team_id": home_team_id,
         "away_team": away_team,
         "away_team_id": away_team_id,
-        "home_team_key": _canonical_team_name(home_team),
-        "away_team_key": _canonical_team_name(away_team),
+        "home_team_key": _canonical_team_name(home_team, sport="basketball_nba"),
+        "away_team_key": _canonical_team_name(away_team, sport="basketball_nba"),
+        "home_team_short": canonical_short_name("basketball_nba", home_team),
+        "away_team_short": canonical_short_name("basketball_nba", away_team),
     }
 
 
