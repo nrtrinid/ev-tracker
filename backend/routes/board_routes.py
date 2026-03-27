@@ -124,27 +124,15 @@ def get_board_latest(user: dict = Depends(get_current_user)):
 
     request_id = f"board_latest_{uuid4().hex[:10]}"
     rss_before = rss_mb()
-    # With chunked board loading, /board/latest should be meta + game_context only.
-    # Sides are served via /board/latest/surface.
-    _log_event(
-        "board.latest.started",
-        request_id=request_id,
-        rss_mb=rss_before,
-        user_id=str(user.get("id") or ""),
-    )
+    mode = (os.getenv("BOARD_LATEST_MODE") or "full").strip().lower()
+    if mode not in {"meta_only", "minimal_game_context", "full"}:
+        mode = "full"
 
     db = get_db()
     try:
         raw = load_board_snapshot(db=db, retry_supabase=_retry_supabase)
     except Exception as e:
-        _log_event(
-            "board.latest.load_failed",
-            level="warning",
-            request_id=request_id,
-            rss_mb=rss_mb(),
-            error_class=type(e).__name__,
-            error=str(e),
-        )
+        _log_event("board.latest.mode", level="warning", request_id=request_id, mode=mode, status="load_failed")
         return JSONResponse(
             status_code=502,
             content={
@@ -166,6 +154,40 @@ def get_board_latest(user: dict = Depends(get_current_user)):
         except Exception:
             return "unknown"
 
+    def _minimal_game_context(value: object) -> tuple[dict[str, object] | None, bool]:
+        """
+        Return a stable, minimal game_context subset to avoid crashing on weird/stale cache rows.
+        Returns (game_context_or_none, degraded_flag).
+        """
+        if not isinstance(value, dict):
+            return (None, False)
+
+        keep_keys = {
+            "sport",
+            "scan_label",
+            "scan_anchor_timezone",
+            "scan_anchor_time_mst",
+            "selection_mode",
+            "selection_params",
+            "selected_event_ids",
+            "props_scan_scope",
+            "props_scan_event_ids",
+            "events_fetched",
+            "api_requests_remaining",
+            "featured_lines_meta",
+            "nba_props_events_meta",
+            "captured_at",
+        }
+        out: dict[str, object] = {}
+        degraded = False
+        for k in keep_keys:
+            if k in value:
+                out[k] = value.get(k)
+        # If we dropped anything, note degradation.
+        if set(value.keys()) - keep_keys:
+            degraded = True
+        return (out or None, degraded)
+
     def _build_response_payload(*, raw_board: dict | None) -> dict:
         if raw_board is None:
             return {
@@ -179,9 +201,21 @@ def get_board_latest(user: dict = Depends(get_current_user)):
         if not meta:
             meta = _EMPTY_META.model_dump()
             meta["scanned_at"] = utc_now_iso_z()
-        game_context = raw_board.get("game_context")
-        if not isinstance(game_context, dict):
+
+        game_context_obj = raw_board.get("game_context")
+        game_context: dict[str, object] | None
+        gc_degraded = False
+        if mode == "meta_only":
             game_context = None
+        elif mode == "minimal_game_context":
+            game_context, gc_degraded = _minimal_game_context(game_context_obj)
+        else:
+            # full
+            game_context = game_context_obj if isinstance(game_context_obj, dict) else None
+
+        if gc_degraded and isinstance(meta, dict):
+            meta = dict(meta)
+            meta["degraded"] = True
 
         # Meta-only: do not return surfaces from board:latest.
         straight = None
@@ -195,56 +229,25 @@ def get_board_latest(user: dict = Depends(get_current_user)):
 
     try:
         raw_board = raw if isinstance(raw, dict) else None
-        meta_raw = raw_board.get("meta") if isinstance(raw_board, dict) else None
-        game_context_raw = raw_board.get("game_context") if isinstance(raw_board, dict) else None
-
+        payload = _build_response_payload(raw_board=raw_board)
+        # Use jsonable_encoder to tolerate datetimes/UUIDs that may exist in older/stale cache rows.
+        encoded = jsonable_encoder(payload)
         _log_event(
-            "board.latest.meta_loaded",
+            "board.latest.mode",
             request_id=request_id,
-            rss_mb=rss_mb(),
+            mode=mode,
+            status="completed",
+            rss_mb_before=rss_before,
+            rss_mb_after=rss_mb(),
             raw_type=_safe_type(raw),
             raw_is_dict=isinstance(raw, dict),
-        )
-        _log_event(
-            "board.latest.meta_shape",
-            request_id=request_id,
-            source="canonical_board",
-            rss_mb=rss_mb(),
             top_keys=_safe_keys(raw_board),
-            meta_keys=_safe_keys(meta_raw),
-            game_context_keys=_safe_keys(game_context_raw),
-            meta_type=_safe_type(meta_raw),
-            game_context_type=_safe_type(game_context_raw),
+            meta_type=_safe_type((raw_board or {}).get("meta") if isinstance(raw_board, dict) else None),
+            game_context_type=_safe_type((raw_board or {}).get("game_context") if isinstance(raw_board, dict) else None),
         )
-
-        payload = _build_response_payload(raw_board=raw_board)
-        _log_event(
-            "board.latest.meta_returning",
-            request_id=request_id,
-            source="canonical_board",
-            rss_mb=rss_mb(),
-            meta_keys=_safe_keys(payload.get("meta")),
-            game_context_is_null=payload.get("game_context") is None,
-        )
-        _log_event(
-            "board.latest.completed",
-            request_id=request_id,
-            rss_mb_before=rss_before,
-            rss_mb_after=rss_mb(),
-            source="canonical_board",
-        )
-        # Use jsonable_encoder to tolerate datetimes/UUIDs that may exist in older/stale cache rows.
-        return JSONResponse(status_code=200, content=jsonable_encoder(payload))
+        return JSONResponse(status_code=200, content=encoded)
     except MemoryError as e:
-        _log_event(
-            "board.latest.oom_guard",
-            level="error",
-            request_id=request_id,
-            rss_mb_before=rss_before,
-            rss_mb_after=rss_mb(),
-            error_class=type(e).__name__,
-            error=str(e),
-        )
+        _log_event("board.latest.mode", level="error", request_id=request_id, mode=mode, status="oom_guard")
         return JSONResponse(
             status_code=503,
             content={
@@ -255,23 +258,21 @@ def get_board_latest(user: dict = Depends(get_current_user)):
         )
     except Exception as e:
         _log_event(
-            "board.latest.meta_failed",
+            "board.latest.mode",
             level="error",
             request_id=request_id,
-            rss_mb_before=rss_before,
-            rss_mb_after=rss_mb(),
+            mode=mode,
+            status="failed",
             error_class=type(e).__name__,
             error=str(e),
+            rss_mb_before=rss_before,
+            rss_mb_after=rss_mb(),
         )
-        return JSONResponse(
-            status_code=502,
-            content={
-                "error": "board_latest_failed",
-                "request_id": request_id,
-                "message": "Failed to build board response.",
-                "error_class": type(e).__name__,
-            },
-        )
+        # Keep behavior stable but controlled.
+        meta = _EMPTY_META.model_dump()
+        meta["scanned_at"] = utc_now_iso_z()
+        meta["degraded"] = True
+        return JSONResponse(status_code=200, content=jsonable_encoder({"meta": meta, "game_context": None, "straight_bets": None, "player_props": None}))
 
 
 @router.get("/board/latest/surface", response_model=FullScanResponse | None)
