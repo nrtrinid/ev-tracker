@@ -52,6 +52,15 @@ def _short_error_message(message: str | None) -> str | None:
     return cleaned[:180]
 
 
+def _parse_credits_used_last(value: str | None) -> int | None:
+    if not value:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _append_odds_api_activity(
     *,
     source: str,
@@ -62,6 +71,7 @@ def _append_odds_api_activity(
     status_code: int | None,
     duration_ms: float | None,
     api_requests_remaining: str | int | None,
+    credits_used_last: int | None = None,
     error_type: str | None,
     error_message: str | None,
 ) -> None:
@@ -76,6 +86,7 @@ def _append_odds_api_activity(
         "status_code": status_code,
         "duration_ms": round(duration_ms, 2) if isinstance(duration_ms, (int, float)) else None,
         "api_requests_remaining": api_requests_remaining,
+        "credits_used_last": credits_used_last,
         "error_type": error_type,
         "error_message": _short_error_message(error_message),
         "_ts_epoch": now.timestamp(),
@@ -96,6 +107,7 @@ def _append_odds_api_activity(
             status_code=status_code,
             duration_ms=event["duration_ms"],
             api_requests_remaining=api_requests_remaining,
+            credits_used_last=credits_used_last,
             error_type=error_type,
             error_message=event["error_message"],
         )
@@ -191,6 +203,7 @@ def _sanitize_activity_event(event: dict) -> dict:
         "status_code": event.get("status_code"),
         "duration_ms": event.get("duration_ms"),
         "api_requests_remaining": event.get("api_requests_remaining"),
+        "credits_used_last": event.get("credits_used_last"),
         "error_type": event.get("error_type"),
         "error_message": event.get("error_message"),
     }
@@ -565,6 +578,7 @@ async def fetch_odds(
             resp.raise_for_status()
             duration_ms = (time.monotonic() - started) * 1000
             remaining = resp.headers.get("x-requests-remaining") or resp.headers.get("x-request-remaining")
+            credits_used_last = _parse_credits_used_last(resp.headers.get("x-requests-last"))
             _append_odds_api_activity(
                 source=source,
                 endpoint=endpoint_value,
@@ -574,6 +588,7 @@ async def fetch_odds(
                 status_code=resp.status_code,
                 duration_ms=duration_ms,
                 api_requests_remaining=remaining,
+                credits_used_last=credits_used_last,
                 error_type=None,
                 error_message=None,
             )
@@ -582,8 +597,10 @@ async def fetch_odds(
         duration_ms = (time.monotonic() - started) * 1000
         status_code = e.response.status_code if e.response is not None else None
         remaining = None
+        credits_used_last = None
         if e.response is not None:
             remaining = e.response.headers.get("x-requests-remaining") or e.response.headers.get("x-request-remaining")
+            credits_used_last = _parse_credits_used_last(e.response.headers.get("x-requests-last"))
         _append_odds_api_activity(
             source=source,
             endpoint=endpoint_value,
@@ -593,6 +610,7 @@ async def fetch_odds(
             status_code=status_code,
             duration_ms=duration_ms,
             api_requests_remaining=remaining,
+            credits_used_last=credits_used_last,
             error_type=type(e).__name__,
             error_message=str(e),
         )
@@ -608,6 +626,7 @@ async def fetch_odds(
             status_code=None,
             duration_ms=duration_ms,
             api_requests_remaining=None,
+            credits_used_last=None,
             error_type=type(e).__name__,
             error_message=str(e),
         )
@@ -732,6 +751,7 @@ async def fetch_events(
             resp.raise_for_status()
             duration_ms = (time.monotonic() - started) * 1000
             remaining = resp.headers.get("x-requests-remaining") or resp.headers.get("x-request-remaining")
+            credits_used_last = _parse_credits_used_last(resp.headers.get("x-requests-last"))
             _append_odds_api_activity(
                 source=source,
                 endpoint=endpoint_value,
@@ -741,6 +761,7 @@ async def fetch_events(
                 status_code=resp.status_code,
                 duration_ms=duration_ms,
                 api_requests_remaining=remaining,
+                credits_used_last=credits_used_last,
                 error_type=None,
                 error_message=None,
             )
@@ -750,8 +771,10 @@ async def fetch_events(
         duration_ms = (time.monotonic() - started) * 1000
         status_code = e.response.status_code if e.response is not None else None
         remaining = None
+        credits_used_last = None
         if e.response is not None:
             remaining = e.response.headers.get("x-requests-remaining") or e.response.headers.get("x-request-remaining")
+            credits_used_last = _parse_credits_used_last(e.response.headers.get("x-requests-last"))
         _append_odds_api_activity(
             source=source,
             endpoint=endpoint_value,
@@ -761,6 +784,7 @@ async def fetch_events(
             status_code=status_code,
             duration_ms=duration_ms,
             api_requests_remaining=remaining,
+            credits_used_last=credits_used_last,
             error_type=type(e).__name__,
             error_message=str(e),
         )
@@ -776,6 +800,7 @@ async def fetch_events(
             status_code=None,
             duration_ms=duration_ms,
             api_requests_remaining=None,
+            credits_used_last=None,
             error_type=type(e).__name__,
             error_message=str(e),
         )
@@ -1188,6 +1213,7 @@ async def fetch_scores(sport: str, source: str = "auto_settle") -> list[dict]:
             resp.raise_for_status()
             duration_ms = (time.monotonic() - started) * 1000
             remaining = resp.headers.get("x-requests-remaining") or resp.headers.get("x-request-remaining")
+            credits_used_last = _parse_credits_used_last(resp.headers.get("x-requests-last"))
             _append_odds_api_activity(
                 source=source,
                 endpoint=f"/sports/{sport}/scores",
@@ -1197,6 +1223,7 @@ async def fetch_scores(sport: str, source: str = "auto_settle") -> list[dict]:
                 status_code=resp.status_code,
                 duration_ms=duration_ms,
                 api_requests_remaining=remaining,
+                credits_used_last=credits_used_last,
                 error_type=None,
                 error_message=None,
             )
@@ -1206,8 +1233,10 @@ async def fetch_scores(sport: str, source: str = "auto_settle") -> list[dict]:
         duration_ms = (time.monotonic() - started) * 1000
         status_code = e.response.status_code if e.response is not None else None
         remaining = None
+        credits_used_last = None
         if e.response is not None:
             remaining = e.response.headers.get("x-requests-remaining") or e.response.headers.get("x-request-remaining")
+            credits_used_last = _parse_credits_used_last(e.response.headers.get("x-requests-last"))
         _append_odds_api_activity(
             source=source,
             endpoint=f"/sports/{sport}/scores",
@@ -1217,6 +1246,7 @@ async def fetch_scores(sport: str, source: str = "auto_settle") -> list[dict]:
             status_code=status_code,
             duration_ms=duration_ms,
             api_requests_remaining=remaining,
+            credits_used_last=credits_used_last,
             error_type=type(e).__name__,
             error_message=str(e),
         )
@@ -1232,6 +1262,7 @@ async def fetch_scores(sport: str, source: str = "auto_settle") -> list[dict]:
             status_code=None,
             duration_ms=duration_ms,
             api_requests_remaining=None,
+            credits_used_last=None,
             error_type=type(e).__name__,
             error_message=str(e),
         )

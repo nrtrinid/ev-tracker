@@ -415,6 +415,7 @@ export interface OddsApiActivityCall {
   status_code?: number | null;
   duration_ms?: number | null;
   api_requests_remaining?: string | number | null;
+  credits_used_last?: number | null;
   error_type?: string | null;
   error_message?: string | null;
 }
@@ -436,6 +437,7 @@ export interface OddsApiActivityScanDetail {
   events_with_both_books?: number | null;
   sides_count?: number | null;
   api_requests_remaining?: string | number | null;
+  credits_used_last?: number | null;
   status_code?: number | null;
   error_type?: string | null;
   error_message?: string | null;
@@ -492,6 +494,13 @@ export interface OperatorStatusResponse {
       alerts_scheduled?: number;
       hard_errors?: number;
       captured_at?: string;
+      board_drop?: boolean;
+      result?: {
+        selected_event_ids?: string[];
+        selected_games?: Array<Record<string, unknown>>;
+        props_sides?: number;
+        duration_ms?: number;
+      } | null;
     } | null;
     last_ops_trigger_scan?: {
       run_id?: string;
@@ -536,6 +545,12 @@ export interface OperatorStatusResponse {
       summary?: OddsApiActivitySummary;
       recent_scans?: OddsApiActivityScanSession[];
       recent_calls?: OddsApiActivityCall[];
+      board_drop?: {
+        last_run_at?: string | null;
+        calls_count?: number;
+        min_api_requests_remaining?: string | number | null;
+        errors?: number;
+      } | null;
     } | null;
   };
 }
