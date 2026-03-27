@@ -1,20 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { AlertTriangle, CheckCircle2, HelpCircle, RefreshCcw, XCircle } from "lucide-react";
 
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useOperatorStatus, useResearchOpportunitySummary } from "@/lib/hooks";
 import type {
-  OddsApiActivityCall,
-  OddsApiActivityScanDetail,
-  OddsApiActivityScanSession,
-  OddsApiActivitySummary,
   OperatorStatusResponse,
   ResearchOpportunityBreakdownItem,
   ResearchOpportunityRecentRow,
 } from "@/lib/types";
+import { OddsApiActivityCard } from "./OddsApiActivityCard";
 
 type HealthState = "healthy" | "warning" | "degraded" | "unknown";
 
@@ -44,27 +41,15 @@ function ageMinutes(value?: string | null): number | null {
   return Math.max(0, Math.round((Date.now() - ts) / 60000));
 }
 
-function formatRelativeTime(value?: string | null): string {
-  const age = ageMinutes(value);
-  if (age === null) return "Unknown";
-  if (age < 1) return "just now";
-  if (age < 60) return `${age}m ago`;
-  if (age < 1440) return `${Math.floor(age / 60)}h ago`;
-  return `${Math.floor(age / 1440)}d ago`;
-}
-
-function formatTimeWithRelative(value?: string | null, fallback: string = "Unknown"): string {
-  if (!value) return fallback;
-  const full = formatTime(value);
-  const relative = formatRelativeTime(value);
-  if (full === "Unknown") return fallback;
-  return `${full} (${relative})`;
-}
-
 function formatCompactTime(value?: string | null): string {
   const parsed = parseOpsTimestamp(value);
   if (!parsed) return "Unknown";
-  return parsed.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return parsed.toLocaleString([], {
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function getStateStyle(state: HealthState): { label: string; className: string; icon: typeof CheckCircle2 } {
@@ -189,285 +174,6 @@ function deriveReadinessState(data: OperatorStatusResponse | undefined): HealthS
   return "healthy";
 }
 
-function deriveOddsApiState(data: OperatorStatusResponse | undefined): HealthState {
-  if (!data) return "unknown";
-  const keyConfigured = data.runtime?.odds_api_key_configured;
-  const backendSummary = data.ops?.odds_api_activity?.summary;
-  const fallback = buildFallbackOddsActivity(data);
-  const summary = backendSummary ?? fallback.summary;
-  const errorsLastHour = Number(summary?.errors_last_hour || 0);
-
-  if (keyConfigured === false) return "degraded";
-  if (!backendSummary && fallback.recentCalls.length === 0 && fallback.recentScans.length === 0) return "unknown";
-  if (errorsLastHour >= 3) return "degraded";
-  if (errorsLastHour > 0) return "warning";
-  return "healthy";
-}
-
-function formatSourceLabel(source?: string | null): string {
-  const normalized = source?.trim().toLowerCase();
-  if (normalized === "manual_scan") return "Manual";
-  if (normalized === "scheduled_scan") return "Scheduler";
-  if (normalized === "ops_trigger_scan" || normalized === "cron_scan") return "Ops trigger";
-  return source || "Unknown";
-}
-
-function formatSurfaceLabel(surface?: string | null): string {
-  if (surface === "player_props") return "Player props";
-  if (surface === "straight_bets") return "Straight bets";
-  return "Unknown surface";
-}
-
-function formatSportLabel(sport?: string | null): string {
-  if (!sport) return "Unknown sport";
-  if (sport === "all") return "All sports";
-  const parts = sport.split("_").filter(Boolean);
-  if (parts.length > 1) return parts[parts.length - 1].toUpperCase();
-  return sport.replace(/_/g, " ").toUpperCase();
-}
-
-function formatScanScopeLabel(scanScope?: string | null, requestedSport?: string | null): string {
-  if (scanScope === "all") return "All sports";
-  if (requestedSport) return formatSportLabel(requestedSport);
-  return "Single sport";
-}
-
-function formatModeLabel(cacheHit?: boolean, outboundCallMade?: boolean): string {
-  if (cacheHit) return "cache";
-  if (outboundCallMade) return "live";
-  return "local";
-}
-
-function formatQuotaLabel(value: string | number | null | undefined): string {
-  if (value === null || value === undefined) return "quota n/a";
-  return `${value} left`;
-}
-
-function formatLiveCacheMix(session: OddsApiActivityScanSession): string {
-  const parts: string[] = [];
-  const live = Number(session.live_call_count || 0);
-  const cache = Number(session.cache_hit_count || 0);
-  const other = Number(session.other_count || 0);
-  if (live > 0) parts.push(`${live} live`);
-  if (cache > 0) parts.push(`${cache} cache`);
-  if (other > 0) parts.push(`${other} local`);
-  return parts.join(" / ") || "No scan calls";
-}
-
-function isFailedActivity(call: { error_type?: string | null; status_code?: number | null }): boolean {
-  return Boolean(call.error_type) || (typeof call.status_code === "number" && call.status_code >= 400);
-}
-
-function buildFallbackScanSession({
-  timestamp,
-  source,
-  surface,
-  scanScope,
-  requestedSport,
-  actorLabel,
-  runId,
-  eventsFetched,
-  eventsWithBothBooks,
-  totalSides,
-  apiRequestsRemaining,
-  errorCount,
-  errorMessage,
-}: {
-  timestamp: string | null | undefined;
-  source: string;
-  surface: "straight_bets" | "player_props";
-  scanScope: "all" | "single_sport";
-  requestedSport: string | null;
-  actorLabel: string | null;
-  runId: string | null;
-  eventsFetched: number | null | undefined;
-  eventsWithBothBooks: number | null | undefined;
-  totalSides: number | null | undefined;
-  apiRequestsRemaining: string | number | null | undefined;
-  errorCount: number;
-  errorMessage: string | null;
-}): OddsApiActivityScanSession | null {
-  if (!timestamp) return null;
-  const detail: OddsApiActivityScanDetail = {
-    activity_kind: "scan_detail",
-    timestamp,
-    source,
-    surface,
-    scan_scope: scanScope,
-    requested_sport: requestedSport,
-    sport: requestedSport ?? (scanScope === "all" ? "all" : null),
-    actor_label: actorLabel,
-    run_id: runId,
-    cache_hit: false,
-    outbound_call_made: true,
-    duration_ms: null,
-    events_fetched: eventsFetched ?? null,
-    events_with_both_books: eventsWithBothBooks ?? null,
-    sides_count: totalSides ?? null,
-    api_requests_remaining: apiRequestsRemaining ?? null,
-    status_code: errorCount > 0 ? 500 : 200,
-    error_type: errorCount > 0 ? "ScanError" : null,
-    error_message: errorMessage,
-  };
-
-  return {
-    activity_kind: "scan_session",
-    scan_session_id: runId || `${source}-${timestamp}`,
-    timestamp,
-    source,
-    surface,
-    scan_scope: scanScope,
-    requested_sport: requestedSport,
-    actor_label: actorLabel,
-    run_id: runId,
-    detail_count: 1,
-    live_call_count: 1,
-    cache_hit_count: 0,
-    other_count: 0,
-    total_events_fetched: eventsFetched ?? 0,
-    total_events_with_both_books: eventsWithBothBooks ?? 0,
-    total_sides: totalSides ?? 0,
-    min_api_requests_remaining: apiRequestsRemaining ?? null,
-    error_count: errorCount,
-    has_errors: errorCount > 0,
-    details: [detail],
-  };
-}
-
-function buildFallbackOddsActivity(data: OperatorStatusResponse | undefined): {
-  summary: OddsApiActivitySummary;
-  recentScans: OddsApiActivityScanSession[];
-  recentCalls: OddsApiActivityCall[];
-} {
-  const scheduler = data?.ops?.last_scheduler_scan;
-  const cron = data?.ops?.last_ops_trigger_scan;
-  const manual = data?.ops?.last_manual_scan;
-
-  const candidates: OddsApiActivityCall[] = [
-    {
-      activity_kind: "raw_call" as const,
-      timestamp: manual?.captured_at,
-      source: "manual_scan",
-      endpoint: "/sports/{sport}/odds",
-      sport: manual?.sport || null,
-      cache_hit: undefined,
-      outbound_call_made: true,
-      status_code: 200,
-      duration_ms: null,
-      api_requests_remaining: manual?.api_requests_remaining ?? null,
-      error_type: null,
-      error_message: null,
-    },
-    {
-      activity_kind: "raw_call" as const,
-      timestamp: scheduler?.finished_at || scheduler?.captured_at,
-      source: "scheduled_scan",
-      endpoint: "/sports/{sport}/odds",
-      sport: null,
-      cache_hit: undefined,
-      outbound_call_made: true,
-      status_code: Number(scheduler?.hard_errors || 0) > 0 ? 500 : 200,
-      duration_ms: scheduler?.duration_ms ?? null,
-      api_requests_remaining: null,
-      error_type: Number(scheduler?.hard_errors || 0) > 0 ? "ScanError" : null,
-      error_message: Number(scheduler?.hard_errors || 0) > 0 ? `${scheduler?.hard_errors} sport scan error(s)` : null,
-    },
-    {
-      activity_kind: "raw_call" as const,
-      timestamp: cron?.finished_at || cron?.captured_at,
-      source: "ops_trigger_scan",
-      endpoint: "/sports/{sport}/odds",
-      sport: null,
-      cache_hit: undefined,
-      outbound_call_made: true,
-      status_code: Number(cron?.error_count || 0) > 0 ? 500 : 200,
-      duration_ms: cron?.duration_ms ?? null,
-      api_requests_remaining: null,
-      error_type: Number(cron?.error_count || 0) > 0 ? "ScanError" : null,
-      error_message: Number(cron?.error_count || 0) > 0 ? `${cron?.error_count} sport scan error(s)` : null,
-    },
-  ].filter((entry) => Boolean(entry.timestamp));
-
-  const sorted = [...candidates].sort((a, b) => {
-    const at = parseOpsTimestamp(a.timestamp || null)?.getTime() || 0;
-    const bt = parseOpsTimestamp(b.timestamp || null)?.getTime() || 0;
-    return bt - at;
-  });
-
-  const nowMs = Date.now();
-  const callsLastHour = sorted.filter((entry) => {
-    const ts = parseOpsTimestamp(entry.timestamp || null)?.getTime();
-    return typeof ts === "number" && nowMs - ts <= 3600 * 1000;
-  }).length;
-
-  const errorsLastHour = sorted.filter((entry) => {
-    const ts = parseOpsTimestamp(entry.timestamp || null)?.getTime();
-    if (typeof ts !== "number" || nowMs - ts > 3600 * 1000) return false;
-    return Boolean(entry.error_type) || (typeof entry.status_code === "number" && entry.status_code >= 400);
-  }).length;
-
-  const lastSuccessAt = sorted.find((entry) => !entry.error_type && (entry.status_code || 0) < 400)?.timestamp || null;
-  const lastErrorAt = sorted.find((entry) => Boolean(entry.error_type) || (typeof entry.status_code === "number" && entry.status_code >= 400))?.timestamp || null;
-  const fallbackScans = [
-    buildFallbackScanSession({
-      timestamp: manual?.captured_at,
-      source: "manual_scan",
-      surface: "straight_bets",
-      scanScope: manual?.sport && manual.sport !== "all" ? "single_sport" : "all",
-      requestedSport: manual?.sport && manual.sport !== "all" ? manual.sport : null,
-      actorLabel: null,
-      runId: null,
-      eventsFetched: manual?.events_fetched ?? null,
-      eventsWithBothBooks: manual?.events_with_both_books ?? null,
-      totalSides: manual?.total_sides ?? null,
-      apiRequestsRemaining: manual?.api_requests_remaining ?? null,
-      errorCount: 0,
-      errorMessage: null,
-    }),
-    buildFallbackScanSession({
-      timestamp: scheduler?.finished_at || scheduler?.captured_at,
-      source: "scheduled_scan",
-      surface: "straight_bets",
-      scanScope: "all",
-      requestedSport: null,
-      actorLabel: null,
-      runId: scheduler?.run_id ?? null,
-      eventsFetched: null,
-      eventsWithBothBooks: null,
-      totalSides: scheduler?.total_sides ?? null,
-      apiRequestsRemaining: null,
-      errorCount: Number(scheduler?.hard_errors || 0),
-      errorMessage: Number(scheduler?.hard_errors || 0) > 0 ? `${scheduler?.hard_errors} sport scan error(s)` : null,
-    }),
-    buildFallbackScanSession({
-      timestamp: cron?.finished_at || cron?.captured_at,
-      source: "ops_trigger_scan",
-      surface: "straight_bets",
-      scanScope: "all",
-      requestedSport: null,
-      actorLabel: null,
-      runId: cron?.run_id ?? null,
-      eventsFetched: null,
-      eventsWithBothBooks: null,
-      totalSides: cron?.total_sides ?? null,
-      apiRequestsRemaining: null,
-      errorCount: Number(cron?.error_count || 0),
-      errorMessage: Number(cron?.error_count || 0) > 0 ? `${cron?.error_count} sport scan error(s)` : null,
-    }),
-  ].filter((entry): entry is OddsApiActivityScanSession => Boolean(entry));
-
-  return {
-    summary: {
-      calls_last_hour: callsLastHour,
-      errors_last_hour: errorsLastHour,
-      last_success_at: lastSuccessAt,
-      last_error_at: lastErrorAt,
-    },
-    recentScans: fallbackScans,
-    recentCalls: sorted,
-  };
-}
-
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-3 text-sm">
@@ -572,15 +278,12 @@ function ResearchRecentList({
 export function OpsDashboard() {
   const query = useOperatorStatus();
   const researchQuery = useResearchOpportunitySummary();
-  const [showAllOddsScans, setShowAllOddsScans] = useState(false);
-  const [showAllOddsCalls, setShowAllOddsCalls] = useState(false);
   const queryErrorMessage = query.error instanceof Error ? query.error.message : null;
   const researchErrorMessage = researchQuery.error instanceof Error ? researchQuery.error.message : null;
 
   const automationState = useMemo(() => deriveScannerState(query.data), [query.data]);
   const settlementState = useMemo(() => deriveSettlementState(query.data), [query.data]);
   const readinessState = useMemo(() => deriveReadinessState(query.data), [query.data]);
-  const oddsApiState = useMemo(() => deriveOddsApiState(query.data), [query.data]);
 
   const schedulerScan = query.data?.ops?.last_scheduler_scan;
   const cronScan = query.data?.ops?.last_ops_trigger_scan;
@@ -588,19 +291,6 @@ export function OpsDashboard() {
   const autoSettle = query.data?.ops?.last_auto_settle;
   const readinessFailure = query.data?.ops?.last_readiness_failure;
   const settleSummary = query.data?.ops?.last_auto_settle_summary;
-  const oddsApiActivity = query.data?.ops?.odds_api_activity;
-  const oddsFallback = useMemo(() => buildFallbackOddsActivity(query.data), [query.data]);
-  const oddsSummary = oddsApiActivity?.summary ?? oddsFallback.summary;
-  const oddsRecentScans = Array.isArray(oddsApiActivity?.recent_scans) && oddsApiActivity.recent_scans.length > 0
-    ? oddsApiActivity.recent_scans
-    : oddsFallback.recentScans;
-  const oddsRecentCalls = Array.isArray(oddsApiActivity?.recent_calls) && oddsApiActivity.recent_calls.length > 0
-    ? oddsApiActivity.recent_calls
-    : oddsFallback.recentCalls;
-  const oddsScansDefaultVisible = 6;
-  const oddsCallsDefaultVisible = 4;
-  const oddsVisibleScans = showAllOddsScans ? oddsRecentScans : oddsRecentScans.slice(0, oddsScansDefaultVisible);
-  const oddsVisibleCalls = showAllOddsCalls ? oddsRecentCalls : oddsRecentCalls.slice(0, oddsCallsDefaultVisible);
   const schedulerExpected = query.data?.runtime?.scheduler_expected;
   const noScanRunsYet = !schedulerScan && !cronScan && !manualScan;
   const noSettlementRunsYet = !autoSettle && !settleSummary;
@@ -663,7 +353,10 @@ export function OpsDashboard() {
             </CardHeader>
             <CardContent className="space-y-2">
               <Row label="Primary mode" value="Scheduler" />
-              <Row label="Last scheduler scan" value={formatTime(schedulerScan?.finished_at || schedulerScan?.captured_at)} />
+              <Row
+                label={schedulerScan?.board_drop ? "Last daily board drop" : "Last scheduler scan"}
+                value={formatTime(schedulerScan?.finished_at || schedulerScan?.captured_at)}
+              />
               <Row label="Scheduler freshness" value={schedulerFreshnessLabel(query.data)} />
               <Row label="Last settle run" value={formatTime(autoSettle?.finished_at || autoSettle?.captured_at)} />
               <Row label="Last settle source" value={settleSource} />
@@ -750,174 +443,7 @@ export function OpsDashboard() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <h2 className="font-semibold">Odds API Activity</h2>
-                <StatusBadge state={oddsApiState} />
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid grid-cols-2 gap-2">
-                <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Calls (last hour)</p>
-                  <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(oddsSummary?.calls_last_hour)}</p>
-                </div>
-                <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Errors (last hour)</p>
-                  <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(oddsSummary?.errors_last_hour)}</p>
-                </div>
-                <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Last success</p>
-                  <p className="text-xs mt-0.5">{formatTimeWithRelative(oddsSummary?.last_success_at, "Unknown")}</p>
-                </div>
-                <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Last error</p>
-                  <p className="text-xs mt-0.5">{formatTimeWithRelative(oddsSummary?.last_error_at, "No recent errors")}</p>
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <p className="text-xs text-muted-foreground">Recent scans</p>
-                {oddsVisibleScans.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No grouped scan activity recorded yet.</p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {oddsVisibleScans.map((scan, index) => {
-                      const hasErrors = Boolean(scan.has_errors);
-                      const styleClass = hasErrors
-                        ? "border-[#B85C38]/25 bg-[#B85C38]/10"
-                        : Number(scan.cache_hit_count || 0) > 0 && Number(scan.live_call_count || 0) === 0
-                          ? "border-[#4A7C59]/25 bg-[#4A7C59]/10"
-                          : "border-border/70 bg-muted/20";
-                      const statusLabel = hasErrors
-                        ? `${scan.error_count || 1} issue${Number(scan.error_count || 0) === 1 ? "" : "s"}`
-                        : "OK";
-
-                      return (
-                        <details
-                          key={`${scan.scan_session_id || scan.timestamp || "scan"}-${index}`}
-                          className={`rounded border px-2 py-1.5 text-xs ${styleClass} [&_summary::-webkit-details-marker]:hidden`}
-                        >
-                          <summary className="cursor-pointer list-none">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <p className="leading-relaxed">
-                                  {formatCompactTime(scan.timestamp)} | {formatSourceLabel(scan.source)} | {formatSurfaceLabel(scan.surface)} | {formatScanScopeLabel(scan.scan_scope, scan.requested_sport)}
-                                  {scan.actor_label ? ` | ${scan.actor_label}` : ""}
-                                </p>
-                                <p className="mt-1 text-[11px] text-muted-foreground">
-                                  {formatLiveCacheMix(scan)} | {scalarOrUnknown(scan.total_events_fetched)} events | {scalarOrUnknown(scan.total_sides)} sides | {formatQuotaLabel(scan.min_api_requests_remaining)}
-                                </p>
-                              </div>
-                              <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${hasErrors ? "bg-[#B85C38]/15 text-[#8B3D20]" : "bg-[#4A7C59]/15 text-[#2C5235]"}`}>
-                                {statusLabel}
-                              </span>
-                            </div>
-                          </summary>
-
-                          <div className="mt-2 space-y-1.5 border-t border-border/50 pt-2">
-                            {(scan.details ?? []).map((detail, detailIndex) => {
-                              const detailFailed = isFailedActivity(detail);
-                              const detailStyle = detailFailed
-                                ? "border-[#B85C38]/25 bg-[#B85C38]/5"
-                                : detail.cache_hit
-                                  ? "border-[#4A7C59]/25 bg-[#4A7C59]/5"
-                                  : "border-border/60 bg-background/60";
-                              const detailStatus = detailFailed
-                                ? `${detail.status_code ?? "ERR"}${detail.error_type ? ` ${detail.error_type}` : ""}`
-                                : formatModeLabel(detail.cache_hit, detail.outbound_call_made);
-                              const latency = typeof detail.duration_ms === "number" ? `${Math.round(detail.duration_ms)}ms` : "time n/a";
-
-                              return (
-                                <div key={`${detail.sport || "sport"}-${detailIndex}`} className={`rounded border px-2 py-1.5 ${detailStyle}`}>
-                                  <p className="leading-relaxed">
-                                    {formatSportLabel(detail.sport)} | {detailStatus} | {latency} | {scalarOrUnknown(detail.events_fetched)} events | matched {scalarOrUnknown(detail.events_with_both_books)} | {scalarOrUnknown(detail.sides_count)} sides | {formatQuotaLabel(detail.api_requests_remaining)}
-                                  </p>
-                                  {detail.error_message && (
-                                    <p className="text-[11px] text-muted-foreground mt-1">{detail.error_message}</p>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </details>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {oddsRecentScans.length > oddsScansDefaultVisible && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="px-0 h-auto text-xs"
-                  onClick={() => setShowAllOddsScans((prev) => !prev)}
-                >
-                  {showAllOddsScans ? "Show fewer scans" : `Show more scans (${oddsRecentScans.length - oddsScansDefaultVisible} more)`}
-                </Button>
-              )}
-
-              <div className="space-y-1.5">
-                <p className="text-xs text-muted-foreground">Other calls</p>
-                {oddsVisibleCalls.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No non-scan Odds API calls recorded yet.</p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {oddsVisibleCalls.map((call, index) => {
-                      const isFailed = Boolean(call.error_type) || (typeof call.status_code === "number" && call.status_code >= 400);
-                      const styleClass = isFailed
-                        ? "border-[#B85C38]/25 bg-[#B85C38]/10"
-                        : call.cache_hit
-                          ? "border-[#4A7C59]/25 bg-[#4A7C59]/10"
-                          : "border-border/70 bg-muted/20";
-                      const source = call.source || "unknown_source";
-                      const endpoint = call.endpoint || "endpoint";
-                      const sport = call.sport || "-";
-                      const status = isFailed
-                        ? `${call.status_code ?? "ERR"}${call.error_type ? ` ${call.error_type}` : ""}`
-                        : typeof call.status_code === "number"
-                          ? String(call.status_code)
-                          : call.cache_hit
-                            ? "cache hit"
-                            : "status n/a";
-                      const latency = typeof call.duration_ms === "number" ? `${Math.round(call.duration_ms)}ms` : null;
-                      const mode = call.cache_hit ? "cache" : call.outbound_call_made ? "live" : "local";
-                      const quota = call.api_requests_remaining === null || call.api_requests_remaining === undefined
-                        ? "Quota remaining unavailable"
-                        : `${call.api_requests_remaining} remaining`;
-
-                      return (
-                        <div key={`${call.timestamp || "unknown"}-${source}-${index}`} className={`rounded border px-2 py-1.5 text-xs ${styleClass}`}>
-                          <p className="leading-relaxed">
-                            {formatCompactTime(call.timestamp)} • {source} • {endpoint} {sport !== "-" ? sport : ""} • {status}
-                            {latency ? ` • ${latency}` : ""} • {mode} • {quota}
-                          </p>
-                          {isFailed && call.error_message && (
-                            <p className="text-[11px] text-muted-foreground mt-1">{call.error_message}</p>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {oddsRecentCalls.length > oddsCallsDefaultVisible && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="px-0 h-auto text-xs"
-                  onClick={() => setShowAllOddsCalls((prev) => !prev)}
-                >
-                  {showAllOddsCalls ? "Show fewer calls" : `Show more calls (${oddsRecentCalls.length - oddsCallsDefaultVisible} more)`}
-                </Button>
-              )}
-            </CardContent>
-          </Card>
+          <OddsApiActivityCard data={query.data} />
 
           <Card>
             <CardHeader className="pb-3">
