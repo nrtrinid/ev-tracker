@@ -400,14 +400,6 @@ function getNextPhoenixDropUtcMs(now: Date): number {
 export default function MarketsPage() {
   const queryClient = useQueryClient();
   const { data: board, isLoading: isBoardLoading, error: boardError } = useBoard();
-  const propsSurface = useBoardSurface(
-    "player_props",
-    primaryMode === "player_props" || primaryMode === "promos",
-  );
-  const straightSurface = useBoardSurface(
-    "straight_bets",
-    primaryMode === "straight_bets" || primaryMode === "promos",
-  );
   const { data: balances } = useBalances();
   useSettings(); // ensure settings are warmed in cache for LogBetDrawer
 
@@ -418,6 +410,15 @@ export default function MarketsPage() {
   const [primaryMode, setPrimaryMode] = useState<PrimaryMode>("player_props");
   const [viewMode, setViewMode] = useState<MarketsViewMode>("opportunities");
   const [promosSubmode, setPromosSubmode] = useState<PromosSubmode>("all");
+
+  const propsSurface = useBoardSurface(
+    "player_props",
+    primaryMode === "player_props" || primaryMode === "promos",
+  );
+  const straightSurface = useBoardSurface(
+    "straight_bets",
+    primaryMode === "straight_bets" || primaryMode === "promos",
+  );
   // Per-surface book selections — persisted in localStorage (see hydrate / persist effects below)
   const [selectedPropBooks, setSelectedPropBooks] = useState<string[]>(DEFAULT_PLAYER_PROP_BOOKS);
   const [selectedGameLineBooks, setSelectedGameLineBooks] = useState<string[]>(DEFAULT_STRAIGHT_BET_BOOKS);
