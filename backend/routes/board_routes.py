@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from auth import get_current_user
@@ -159,6 +160,12 @@ def get_board_latest(user: dict = Depends(get_current_user)):
     def _safe_keys(value: object) -> list[str]:
         return sorted(list(value.keys())) if isinstance(value, dict) else []
 
+    def _safe_type(value: object) -> str:
+        try:
+            return type(value).__name__
+        except Exception:
+            return "unknown"
+
     def _build_response_payload(*, raw_board: dict | None) -> dict:
         if raw_board is None:
             return {
@@ -192,27 +199,32 @@ def get_board_latest(user: dict = Depends(get_current_user)):
         game_context_raw = raw_board.get("game_context") if isinstance(raw_board, dict) else None
 
         _log_event(
-            "board.latest.cache_loaded",
+            "board.latest.meta_loaded",
+            request_id=request_id,
+            rss_mb=rss_mb(),
+            raw_type=_safe_type(raw),
+            raw_is_dict=isinstance(raw, dict),
+        )
+        _log_event(
+            "board.latest.meta_shape",
             request_id=request_id,
             source="canonical_board",
             rss_mb=rss_mb(),
             top_keys=_safe_keys(raw_board),
             meta_keys=_safe_keys(meta_raw),
             game_context_keys=_safe_keys(game_context_raw),
+            meta_type=_safe_type(meta_raw),
+            game_context_type=_safe_type(game_context_raw),
         )
 
         payload = _build_response_payload(raw_board=raw_board)
         _log_event(
-            "board.latest.pre_serialize",
+            "board.latest.meta_returning",
             request_id=request_id,
             source="canonical_board",
             rss_mb=rss_mb(),
-        )
-        _log_event(
-            "board.latest.response_ready",
-            request_id=request_id,
-            source="canonical_board",
-            rss_mb=rss_mb(),
+            meta_keys=_safe_keys(payload.get("meta")),
+            game_context_is_null=payload.get("game_context") is None,
         )
         _log_event(
             "board.latest.completed",
@@ -221,7 +233,8 @@ def get_board_latest(user: dict = Depends(get_current_user)):
             rss_mb_after=rss_mb(),
             source="canonical_board",
         )
-        return JSONResponse(status_code=200, content=payload)
+        # Use jsonable_encoder to tolerate datetimes/UUIDs that may exist in older/stale cache rows.
+        return JSONResponse(status_code=200, content=jsonable_encoder(payload))
     except MemoryError as e:
         _log_event(
             "board.latest.oom_guard",
@@ -242,7 +255,7 @@ def get_board_latest(user: dict = Depends(get_current_user)):
         )
     except Exception as e:
         _log_event(
-            "board.latest.failed",
+            "board.latest.meta_failed",
             level="error",
             request_id=request_id,
             rss_mb_before=rss_before,

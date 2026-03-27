@@ -377,9 +377,10 @@ export function useBoard(enabled: boolean = true) {
     enabled: enabled && backendOk,
     staleTime: Infinity,
     gcTime: 60 * 60 * 1000,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
-    retry: 1,
+    retry: 0,
   });
 }
 
@@ -392,9 +393,10 @@ export function useBoardSurface(surface: ScannerSurface, enabled: boolean) {
     enabled: enabled && backendOk,
     staleTime: Infinity,
     gcTime: 60 * 60 * 1000,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
-    retry: 1,
+    retry: 0,
   });
 }
 
