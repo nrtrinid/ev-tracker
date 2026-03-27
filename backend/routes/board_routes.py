@@ -120,13 +120,22 @@ def get_board_latest(user: dict = Depends(get_current_user)):
     when the canonical board is absent or missing a surface.
     Returns an empty board only if no data exists anywhere.
     """
-    from main import _log_event
+    from main import _BOOT_ID, _log_event
 
     request_id = f"board_latest_{uuid4().hex[:10]}"
     rss_before = rss_mb()
     mode = (os.getenv("BOARD_LATEST_MODE") or "full").strip().lower()
     if mode not in {"meta_only", "minimal_game_context", "full"}:
         mode = "full"
+
+    _log_event(
+        "board.latest.entered",
+        request_id=request_id,
+        boot_id=_BOOT_ID,
+        pid=os.getpid(),
+        mode=mode,
+        rss_mb=rss_before,
+    )
 
     db = get_db()
     try:
@@ -244,6 +253,14 @@ def get_board_latest(user: dict = Depends(get_current_user)):
             top_keys=_safe_keys(raw_board),
             meta_type=_safe_type((raw_board or {}).get("meta") if isinstance(raw_board, dict) else None),
             game_context_type=_safe_type((raw_board or {}).get("game_context") if isinstance(raw_board, dict) else None),
+        )
+        _log_event(
+            "board.latest.completed",
+            request_id=request_id,
+            boot_id=_BOOT_ID,
+            pid=os.getpid(),
+            mode=mode,
+            rss_mb=rss_mb(),
         )
         return JSONResponse(status_code=200, content=encoded)
     except MemoryError as e:

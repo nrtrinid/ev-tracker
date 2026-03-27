@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Header, Query
 
 from dependencies import require_ops_token
 from models import ResearchOpportunitySummaryResponse
+from utils.telemetry import rss_mb
 from utils.time_utils import utc_now_iso_z
 
 
@@ -48,6 +49,9 @@ async def cron_run_scan_impl(
                 "board.drop.started_from_ops" if ops_status_key == "last_ops_trigger_scan" else "board.drop.started_from_cron",
                 run_id=run_id,
                 locked=main._DAILY_BOARD_RUN_LOCK.locked(),
+                boot_id=getattr(main, "_BOOT_ID", None),
+                pid=os.getpid(),
+                rss_mb=rss_mb(),
             )
             result = await run_daily_board_drop(
                 db=main.get_db(),

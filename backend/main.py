@@ -50,6 +50,19 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO), format="%(message)s")
 logger = logging.getLogger("ev_tracker")
 
+# Stable per-process identifier for correlating restarts in logs.
+_BOOT_ID = f"boot_{uuid4().hex[:12]}"
+
+
+def _boot_fields() -> dict:
+    from utils.telemetry import rss_mb as _rss_mb
+
+    return {
+        "boot_id": _BOOT_ID,
+        "pid": os.getpid(),
+        "rss_mb": _rss_mb(),
+    }
+
 SCHEDULER_STALE_WINDOWS = {
     "jit_clv": timedelta(minutes=45),
     "auto_settler": timedelta(hours=30),
@@ -1059,6 +1072,7 @@ async def _run_scheduled_scan_job():
             run_id=run_id,
             locked=_DAILY_BOARD_RUN_LOCK.locked(),
             scheduler_mode="main_drop",
+            **_boot_fields(),
         )
         if _DAILY_BOARD_RUN_LOCK.locked() and (os.getenv("BOARD_DROP_SKIP_IF_LOCKED") or "0") == "1":
             _log_event(
@@ -1201,6 +1215,7 @@ async def _run_early_look_scan_job():
             run_id=run_id,
             locked=_DAILY_BOARD_RUN_LOCK.locked(),
             scheduler_mode="early_look",
+            **_boot_fields(),
         )
         if _DAILY_BOARD_RUN_LOCK.locked() and (os.getenv("BOARD_DROP_SKIP_IF_LOCKED") or "0") == "1":
             _log_event(
@@ -1338,6 +1353,7 @@ async def start_scheduler():
     scheduler = AsyncIOScheduler()
     # Every 15 min: capture closing Pinnacle lines for games starting within 20 min
     scheduler.add_job(_run_jit_clv_snatcher_job, IntervalTrigger(minutes=15))
+    _log_event("scheduler.job_registered", job="jit_clv_snatcher", trigger="interval:15m", **_boot_fields())
     # 4:00 AM Phoenix daily: auto-grade completed ML bets via /scores.
     # Explicit timezone keeps scheduler behavior consistent across hosts.
     auto_settle_trigger = (
@@ -1351,15 +1367,18 @@ async def start_scheduler():
         misfire_grace_time=60 * 60,
         coalesce=True,
     )
+    _log_event("scheduler.job_registered", job="auto_settler", trigger="cron:04:00", **_boot_fields())
     if PHOENIX_TZ is not None:
         scheduler.add_job(
             _run_early_look_scan_job,
             CronTrigger(hour=10, minute=30, timezone=PHOENIX_TZ),
         )
+        _log_event("scheduler.job_registered", job="daily_board_early_look", trigger="cron:10:30", **_boot_fields())
         scheduler.add_job(
             _run_scheduled_scan_job,
             CronTrigger(hour=15, minute=30, timezone=PHOENIX_TZ),
         )
+        _log_event("scheduler.job_registered", job="daily_board_main_drop", trigger="cron:15:30", **_boot_fields())
     else:
         print("[Scheduler] Phoenix timezone unavailable; skipping scheduled scan jobs.")
     scheduler.start()
@@ -1389,6 +1408,7 @@ async def stop_scheduler():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _log_event("app.boot", **_boot_fields())
     _validate_environment()
     _init_ops_status()
     await start_scheduler()
@@ -1786,6 +1806,13 @@ def delete_transaction(
 @app.get("/balances", response_model=list[BalanceResponse])
 def get_balances(user: dict = Depends(get_current_user)):
     """Get computed balance for each sportsbook."""
+    request_id = f"balances_{uuid4().hex[:10]}"
+    _log_event(
+        "balances.entered",
+        request_id=request_id,
+        **_boot_fields(),
+        user_id=str(user.get("id") or ""),
+    )
     db = get_db()
     settings = get_user_settings(db, user["id"])
     # k_factor no longer needed for balances (profit uses stored bet fields)
@@ -1812,7 +1839,13 @@ def get_balances(user: dict = Depends(get_current_user)):
     from services.balance_stats import compute_balances_by_sportsbook_fast
 
     out = compute_balances_by_sportsbook_fast(transactions=transactions, bets=bets)
-    return [BalanceResponse(**row) for row in out]
+    resp = [BalanceResponse(**row) for row in out]
+    _log_event(
+        "balances.completed",
+        request_id=request_id,
+        **_boot_fields(),
+    )
+    return resp
 
 
 # ============ Settings ============
