@@ -38,7 +38,7 @@ export function StraightBetList({
     <>
       {results.map((side, idx) => (
         <StraightBetCard
-          key={`${side.sportsbook}-${side.team}-${side.event}-${idx}`}
+          key={`${side.surface}-${side.sportsbook}-${side.selection_key ?? side.team}-${side.market_key ?? ""}-${side.commence_time}-${idx}`}
           side={side}
           activeLens={activeLens}
           tutorialMode={tutorialMode}

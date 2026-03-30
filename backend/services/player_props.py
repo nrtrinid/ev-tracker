@@ -109,6 +109,37 @@ def _build_selection_key(*, event_id: str | None, market_key: str, player_name: 
     ) + line_token
 
 
+def _prop_market_display_suffix(market_key: str) -> str:
+    """Short market tag for display_name (e.g. PTS, REB, 3PM). Matches app prop chip labels."""
+    key = (market_key or "").strip().lower()
+    known: dict[str, str] = {
+        "player_points": "PTS",
+        "player_rebounds": "REB",
+        "player_assists": "AST",
+        "player_points_rebounds_assists": "PTS/REB/AST",
+        "player_threes": "3PM",
+    }
+    if key in known:
+        return known[key]
+    stripped = key.removeprefix("player_").replace("_", " ").strip()
+    return stripped.upper() if stripped else ""
+
+
+def _build_prop_display_name(
+    *,
+    player_name: str,
+    side: str,
+    line_value: float | None,
+    market_key: str,
+) -> str:
+    if line_value is not None:
+        base = f"{player_name} {side.title()} {line_value:g}"
+    else:
+        base = f"{player_name} {side.title()}"
+    suffix = _prop_market_display_suffix(market_key)
+    return f"{base} {suffix}".strip() if suffix else base
+
+
 def _player_team_from_description(description: str | None) -> str | None:
     if not description:
         return None
@@ -659,10 +690,11 @@ def _build_prop_side_candidates(
                         side=side,
                         line_value=line_value,
                     )
-                    display_name = (
-                        f"{player_name} {side.title()} {line_value:g}"
-                        if line_value is not None
-                        else f"{player_name} {side.title()}"
+                    display_name = _build_prop_display_name(
+                        player_name=player_name,
+                        side=side,
+                        line_value=line_value,
+                        market_key=market_key,
                     )
                     player_team, participant_id = _resolve_player_context(
                         player_name=player_name,

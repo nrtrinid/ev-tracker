@@ -237,6 +237,83 @@ async def cron_run_auto_settle_impl(
     }
 
 
+async def cron_run_jit_clv_impl(
+    x_cron_token: str | None,
+    *,
+    require_valid_cron_token: Callable[[str | None], None],
+    new_run_id: Callable[[str], str],
+    log_event: Callable[..., None],
+    set_ops_status: Callable[[str, dict], None],
+    persist_ops_job_run: Callable[..., None],
+    get_db: Callable[[], Any],
+    run_id_prefix: str = "cron_jit_clv",
+    log_prefix: str = "cron.jit_clv",
+    ops_status_source: str = "cron",
+) -> dict[str, Any]:
+    """Capture closing reference odds for opportunities starting within close window."""
+    require_valid_cron_token(x_cron_token)
+
+    run_id = new_run_id(run_id_prefix)
+    started_clock = time.monotonic()
+    log_event(f"{log_prefix}.started", run_id=run_id)
+
+    from services.odds_api import run_jit_clv_snatcher
+
+    db = get_db()
+    started = utc_now_iso_z()
+    updated = 0
+    try:
+        updated = await run_jit_clv_snatcher(db)
+        log_event(f"{log_prefix}.completed", run_id=run_id, updated=updated)
+    except Exception as e:
+        log_event(
+            f"{log_prefix}.failed",
+            level="error",
+            run_id=run_id,
+            error_class=type(e).__name__,
+            error=str(e),
+            duration_ms=round((time.monotonic() - started_clock) * 1000, 2),
+        )
+        raise HTTPException(status_code=502, detail=f"JIT CLV error: {e}")
+    finally:
+        finished = utc_now_iso_z()
+
+    duration_ms = round((time.monotonic() - started_clock) * 1000, 2)
+
+    set_ops_status(
+        "last_jit_clv",
+        {
+            "source": ops_status_source,
+            "run_id": run_id,
+            "started_at": started,
+            "finished_at": finished,
+            "duration_ms": duration_ms,
+            "updated": updated,
+            "captured_at": finished,
+        },
+    )
+    persist_ops_job_run(
+        job_kind="jit_clv",
+        source=ops_status_source,
+        status="completed",
+        run_id=run_id,
+        captured_at=finished,
+        started_at=started,
+        finished_at=finished,
+        duration_ms=duration_ms,
+        meta={"updated": updated},
+    )
+
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "started_at": started,
+        "finished_at": finished,
+        "duration_ms": duration_ms,
+        "updated": updated,
+    }
+
+
 def ops_status_impl(
     x_cron_token: str | None,
     *,
@@ -482,6 +559,28 @@ async def ops_trigger_auto_settle(
         run_id_prefix="ops_auto_settle",
         log_prefix="ops.trigger.auto_settle",
         auto_settle_source="auto_settle_ops_trigger",
+        ops_status_source="ops_trigger",
+    )
+
+
+@router.post("/api/ops/trigger/jit-clv")
+async def ops_trigger_jit_clv(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    import main
+
+    return await cron_run_jit_clv_impl(
+        x_cron_token=x_ops_token or x_cron_token,
+        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        new_run_id=main._new_run_id,
+        log_event=main._log_event,
+        set_ops_status=main._set_ops_status,
+        persist_ops_job_run=main._persist_ops_job_run,
+        get_db=main.get_db,
+        run_id_prefix="ops_jit_clv",
+        log_prefix="ops.trigger.jit_clv",
         ops_status_source="ops_trigger",
     )
 

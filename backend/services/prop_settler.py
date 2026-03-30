@@ -7,8 +7,10 @@ for per-player boxscore stats.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from typing import Any
 
 _ESPN_RESOLVE_LOG_CAP = 80
@@ -139,6 +141,115 @@ def _normalize_player_name(name: str | None) -> str:
     if not name:
         return ""
     return "".join(ch for ch in str(name).lower() if ch.isalnum())
+
+
+# Trailing tokens removed so "Robert Williams" matches ESPN "Robert Williams III".
+_GEN_SUFFIXES: tuple[str, ...] = (
+    "iii",
+    "ii",
+    "iv",
+    "viii",
+    "vii",
+    "vi",
+    "ix",
+    "xii",
+    "xi",
+    "jr",
+    "sr",
+    "sjr",
+)
+
+
+def _strip_generational_suffix(compact: str) -> str:
+    """Remove Jr / Sr / II / III / … from alphanumeric compact names (longest first)."""
+    s = (compact or "").lower()
+    if not s:
+        return ""
+    while True:
+        stripped = False
+        for p in _GEN_SUFFIXES:
+            lp = len(p)
+            if len(s) > lp + 2 and s.endswith(p):
+                s = s[:-lp]
+                stripped = True
+                break
+        if not stripped:
+            break
+    return s
+
+
+def _token_parts(raw: str | None) -> list[str]:
+    """Split a display name into alphanumeric tokens (drops generational noise)."""
+    if not raw:
+        return []
+    parts = re.split(r"[\s.\-\',]+", str(raw).strip())
+    noise = {"jr", "sr", "ii", "iii", "iv", "v", "vi"}
+    out: list[str] = []
+    for p in parts:
+        t = "".join(c for c in p.lower() if c.isalnum())
+        if t and t not in noise:
+            out.append(t)
+    return out
+
+
+def _string_similarity(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+    return SequenceMatcher(None, a, b).ratio()
+
+
+def _match_player_stat_key(
+    norm: str,
+    raw_name: str | None,
+    stat_map: dict[str, dict[str, float]],
+) -> tuple[dict[str, float] | None, str]:
+    """
+    Map bet participant string to ESPN boxscore row.
+
+    Returns (player_stats, match_kind) where match_kind is exact|fuzzy|none.
+    """
+    if norm in stat_map:
+        return stat_map[norm], "exact"
+
+    ns = _strip_generational_suffix(norm)
+
+    for k, v in stat_map.items():
+        if _strip_generational_suffix(k) == ns and len(ns) >= 4:
+            return v, "fuzzy"
+
+    for k, v in stat_map.items():
+        if k.endswith(norm) or norm.endswith(k):
+            if len(k) >= 4 and len(norm) >= 4:
+                return v, "fuzzy"
+
+    parts = _token_parts(raw_name)
+    if len(parts) >= 2 and len(parts[0]) == 1 and len(parts[-1]) >= 4:
+        initial = parts[0][0]
+        last = parts[-1]
+        matches = [
+            k
+            for k in stat_map
+            if k.endswith(last) and len(k) >= len(last) + 1 and k.startswith(initial)
+        ]
+        if len(matches) == 1:
+            return stat_map[matches[0]], "fuzzy"
+
+    candidates: list[tuple[float, str, dict[str, float]]] = []
+    for k, v in stat_map.items():
+        ks = _strip_generational_suffix(k)
+        r = _string_similarity(ns, ks)
+        if r >= 0.91 and min(len(ns), len(ks)) >= 6:
+            candidates.append((r, k, v))
+    if len(candidates) == 1:
+        return candidates[0][2], "fuzzy"
+    if len(candidates) > 1:
+        candidates.sort(key=lambda x: -x[0])
+        best_r, _, best_v = candidates[0]
+        second_r = candidates[1][0]
+        if best_r - second_r >= 0.02:
+            return best_v, "fuzzy"
+
+    return None, "none"
 
 
 def _parse_utc_iso(timestamp: str | None) -> datetime | None:
@@ -273,7 +384,8 @@ def _stat_label_to_key(label: str) -> str | None:
         return "REB"
     if u in ("AST", "ASSISTS"):
         return "AST"
-    if u in ("3PM", "3PTM", "3FGM", "3-PT MADE", "3 POINTERS MADE"):
+    # ESPN NBA player boxscore uses "3PT" for made-attempted (e.g. "5-12"), not "3PM".
+    if u in ("3PM", "3PTM", "3FGM", "3PT", "3-PT MADE", "3 POINTERS MADE"):
         return "3PM"
     if "3" in u and ("POINT" in u or "PT" in u) and "FREE" not in u and "FIELD" not in u:
         if "MADE" in u or u.endswith("3PM") or "3PM" in u:
@@ -569,19 +681,11 @@ def grade_prop(
     if side not in ("over", "under"):
         return None, detail
 
-    player_stats = stat_map.get(norm)
-    if player_stats:
-        detail["player_match"] = "exact"
-    else:
-        for k, v in stat_map.items():
-            if k.endswith(norm) or norm.endswith(k):
-                if len(k) >= 4 and len(norm) >= 4:
-                    player_stats = v
-                    detail["player_match"] = "fuzzy"
-                    break
+    player_stats, match_kind = _match_player_stat_key(norm, player_name, stat_map)
     if not player_stats:
         detail["player_match"] = "none"
         return None, detail
+    detail["player_match"] = match_kind
 
     actual = player_stats.get(stat_col)
     if actual is None:
@@ -906,7 +1010,12 @@ async def settle_standalone_props(
         _record_prop_grade_telemetry(telemetry, grade, g_detail)
         if grade is None:
             skipped["ungraded_prop"] += 1
-            print(f"[Auto-Settler:props] bet {bet.get('id')} could not grade prop")
+            print(
+                f"[Auto-Settler:props] bet {bet.get('id')} could not grade prop "
+                f"market={mk!r} participant={bet.get('participant_name')!r} "
+                f"line={bet.get('line_value')!r} side={bet.get('selection_side')!r} "
+                f"detail={g_detail!r}"
+            )
             continue
 
         try:

@@ -1,0 +1,3 @@
+{$API_DOMAIN:localhost} {
+	reverse_proxy backend:8000
+}

@@ -242,6 +242,12 @@ def build_parlay_selection_meta(
     pricing_preview: dict[str, Any] | None,
     logged_at_iso: str,
 ) -> dict[str, Any]:
+    """Builds `bets.selection_meta` for a logged parlay.
+
+    Per-leg CLV (optional, merged later by `clv_tracking.update_bet_reference_snapshots`):
+    `latest_reference_odds`, `latest_reference_updated_at`, `pinnacle_odds_at_close`,
+    `reference_updated_at`, `clv_ev_percent`, `beat_close`.
+    """
     return {
         "type": "parlay",
         "slip_id": slip_id,

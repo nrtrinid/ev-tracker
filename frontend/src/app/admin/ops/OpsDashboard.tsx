@@ -1,9 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, HelpCircle, RefreshCcw, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, HelpCircle, RefreshCcw, Scale, ScanLine, XCircle } from "lucide-react";
+import { toast } from "sonner";
 
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { adminRefreshMarkets, adminTriggerAutoSettle } from "@/lib/api";
+
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useOperatorStatus, useResearchOpportunitySummary } from "@/lib/hooks";
 import type {
@@ -365,6 +368,8 @@ export function OpsDashboard() {
   const [captureClass, setCaptureClass] = useState<"live" | "experiment" | "all">("live");
   const [cohortMode, setCohortMode] = useState<"latest" | "trailing_7">("latest");
   const [showAdvancedBreakdowns, setShowAdvancedBreakdowns] = useState(false);
+  const [isRefreshingMarkets, setIsRefreshingMarkets] = useState(false);
+  const [isRunningAutoSettle, setIsRunningAutoSettle] = useState(false);
   const researchQuery = useResearchOpportunitySummary({
     model_version: modelVersion,
     capture_class: captureClass,
@@ -396,11 +401,49 @@ export function OpsDashboard() {
   const recentStraightResearch = recentResearch.filter((row) => row.surface !== "player_props");
   const recentPropResearch = recentResearch.filter((row) => row.surface === "player_props");
 
+  const runFullMarketScan = async () => {
+    if (isRefreshingMarkets) return;
+    setIsRefreshingMarkets(true);
+    try {
+      const out = await adminRefreshMarkets();
+      const parts = out.results.map(
+        (r) =>
+          `${r.surface.replace(/_/g, " ")}: ${r.total_sides} sides, ${r.events_fetched} events`,
+      );
+      toast("Markets refreshed", {
+        description: parts.join(" · "),
+      });
+      await Promise.all([query.refetch(), researchQuery.refetch()]);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Refresh failed";
+      toast.error("Full market scan failed", { description: msg });
+    } finally {
+      setIsRefreshingMarkets(false);
+    }
+  };
+
+  const runAutoSettle = async () => {
+    if (isRunningAutoSettle) return;
+    setIsRunningAutoSettle(true);
+    try {
+      const out = await adminTriggerAutoSettle();
+      toast("Auto-settle finished", {
+        description: `Graded ${out.settled} bet(s) · ${Math.round(out.duration_ms)} ms`,
+      });
+      await query.refetch();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Auto-settle failed";
+      toast.error("Auto-settle failed", { description: msg });
+    } finally {
+      setIsRunningAutoSettle(false);
+    }
+  };
+
   return (
     <main className="min-h-screen bg-background">
       <div className="container mx-auto max-w-4xl px-4 py-6 space-y-4 pb-20">
-        <div className="flex items-start justify-between gap-4">
-          <div>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
             <h1 className="text-xl font-semibold">Operator Status</h1>
             <p className="text-sm text-muted-foreground mt-0.5">
               Internal runtime and automation visibility for scanner and settlement health.
@@ -409,19 +452,68 @@ export function OpsDashboard() {
               Last snapshot: {formatTime(query.data?.timestamp)}
             </p>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              query.refetch();
-              researchQuery.refetch();
-            }}
-            disabled={query.isFetching || researchQuery.isFetching}
-          >
-            <RefreshCcw className={`h-4 w-4 mr-1.5 ${(query.isFetching || researchQuery.isFetching) ? "animate-spin" : ""}`} />
-            Refresh
-          </Button>
+          <div className="flex shrink-0 flex-wrap items-stretch gap-2 sm:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full sm:w-auto"
+              onClick={() => {
+                query.refetch();
+                researchQuery.refetch();
+              }}
+              disabled={query.isFetching || researchQuery.isFetching || isRefreshingMarkets || isRunningAutoSettle}
+            >
+              <RefreshCcw className={`h-4 w-4 mr-1.5 ${(query.isFetching || researchQuery.isFetching) ? "animate-spin" : ""}`} />
+              Refresh status
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Card className="border-primary/30 bg-primary/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg">Full market scan</CardTitle>
+              <CardDescription>
+                Re-fetch all sports for straight bets and player props (same work as the scanner &quot;scan&quot;, without the per-user rate limit).
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button
+                type="button"
+                variant="default"
+                size="touch"
+                className="w-full sm:w-auto"
+                onClick={() => void runFullMarketScan()}
+                disabled={isRefreshingMarkets || isRunningAutoSettle}
+              >
+                <ScanLine className={`h-5 w-5 mr-2 ${isRefreshingMarkets ? "animate-pulse" : ""}`} />
+                {isRefreshingMarkets ? "Scanning…" : "Run full scan"}
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="border-border bg-muted/20">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg">Auto-settle</CardTitle>
+              <CardDescription>
+                Run the pending-bet grader (same as cron/ops trigger). Use when you want results updated without waiting for the scheduler.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button
+                type="button"
+                variant="secondary"
+                size="touch"
+                className="w-full sm:w-auto"
+                onClick={() => void runAutoSettle()}
+                disabled={isRunningAutoSettle || isRefreshingMarkets}
+              >
+                <Scale className={`h-5 w-5 mr-2 ${isRunningAutoSettle ? "animate-pulse" : ""}`} />
+                {isRunningAutoSettle ? "Settling…" : "Run auto-settle"}
+              </Button>
+            </CardContent>
+          </Card>
         </div>
 
         {query.isError && (

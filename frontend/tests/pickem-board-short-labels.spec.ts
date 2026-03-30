@@ -24,7 +24,7 @@ function makeSide(partial: Partial<PlayerPropMarketSide>): PlayerPropMarketSide 
     opponent_short: "PHX",
     selection_side: "over",
     line_value: 24.5,
-    display_name: "Nikola Jokic Over 24.5",
+    display_name: "Nikola Jokic Over 24.5 PTS",
     reference_odds: -110,
     reference_source: "market_weighted_consensus",
     reference_bookmakers: ["bovada", "betmgm"],

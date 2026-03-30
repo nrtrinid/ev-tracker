@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -177,6 +179,173 @@ def lookup_prop_reference_odds(
     return None
 
 
+def _coerce_selection_meta_dict(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return copy.deepcopy(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return None
+        return copy.deepcopy(parsed) if isinstance(parsed, dict) else None
+    return None
+
+
+def _parlay_leg_sport_key(leg: dict[str, Any]) -> str:
+    return str(leg.get("sport") or "").strip()
+
+
+def _parlay_meta_has_leg_in_sports(meta: dict[str, Any], sports_set: set[str]) -> bool:
+    legs = meta.get("legs")
+    if not isinstance(legs, list):
+        return False
+    for leg in legs:
+        if isinstance(leg, dict) and _parlay_leg_sport_key(leg) in sports_set:
+            return True
+    return False
+
+
+def lookup_parlay_leg_reference_odds(
+    leg: dict[str, Any],
+    *,
+    straight_snapshot_by_event: dict[tuple[str, str], float],
+    straight_snapshot_by_time: dict[tuple[str, str], float],
+    prop_snapshot_by_event: dict[tuple[str, str, str, str, float], float],
+    prop_snapshot_by_time: dict[tuple[str, str, str, str, float], float],
+) -> float | None:
+    surface = str(leg.get("surface") or "straight_bets").strip().lower()
+    commence = str(leg.get("commenceTime") or leg.get("commence_time") or "").strip()
+    event_id = str(
+        leg.get("sourceEventId")
+        or leg.get("source_event_id")
+        or leg.get("eventId")
+        or leg.get("event_id")
+        or ""
+    ).strip()
+    if surface == "player_props":
+        return lookup_prop_reference_odds(
+            player_name=leg.get("participantName") or leg.get("participant_name"),
+            source_market_key=leg.get("sourceMarketKey") or leg.get("source_market_key"),
+            selection_side=leg.get("selectionSide") or leg.get("selection_side"),
+            line_value=_normalize_line_value(
+                leg.get("lineValue") if leg.get("lineValue") is not None else leg.get("line_value")
+            ),
+            commence_time=commence or None,
+            event_id=event_id or None,
+            snapshot_by_event=prop_snapshot_by_event,
+            snapshot_by_time=prop_snapshot_by_time,
+        )
+    team = leg.get("team")
+    if not team:
+        return None
+    return lookup_reference_odds(
+        team=team,
+        commence_time=commence or None,
+        event_id=event_id or None,
+        snapshot_by_event=straight_snapshot_by_event,
+        snapshot_by_time=straight_snapshot_by_time,
+    )
+
+
+def _update_parlay_bet_leg_snapshots(
+    db,
+    *,
+    sports_set: set[str],
+    straight_snapshot_by_event: dict[tuple[str, str], float],
+    straight_snapshot_by_time: dict[tuple[str, str], float],
+    prop_snapshot_by_event: dict[tuple[str, str, str, str, float], float],
+    prop_snapshot_by_time: dict[tuple[str, str, str, str, float], float],
+    allow_close: bool,
+    current: datetime,
+    updated_at: str,
+) -> tuple[int, int]:
+    """Merge per-leg reference / close CLV into bets.selection_meta.legs (parlay rows only)."""
+    if not sports_set:
+        return (0, 0)
+
+    parlay_result = (
+        db.table("bets")
+        .select("id,result,surface,selection_meta")
+        .eq("result", "pending")
+        .eq("surface", "parlay")
+        .execute()
+    )
+
+    latest_updated = 0
+    close_updated = 0
+
+    for row in parlay_result.data or []:
+        meta = _coerce_selection_meta_dict(row.get("selection_meta"))
+        if meta is None or str(meta.get("type") or "").strip().lower() != "parlay":
+            continue
+        if not _parlay_meta_has_leg_in_sports(meta, sports_set):
+            continue
+        legs = meta.get("legs")
+        if not isinstance(legs, list):
+            continue
+
+        new_legs: list[Any] = []
+        row_touched = False
+
+        for leg in legs:
+            if not isinstance(leg, dict):
+                new_legs.append(leg)
+                continue
+            if _parlay_leg_sport_key(leg) not in sports_set:
+                new_legs.append(leg)
+                continue
+
+            leg_out = dict(leg)
+            reference_odds = lookup_parlay_leg_reference_odds(
+                leg_out,
+                straight_snapshot_by_event=straight_snapshot_by_event,
+                straight_snapshot_by_time=straight_snapshot_by_time,
+                prop_snapshot_by_event=prop_snapshot_by_event,
+                prop_snapshot_by_time=prop_snapshot_by_time,
+            )
+            if reference_odds is None:
+                new_legs.append(leg_out)
+                continue
+
+            row_touched = True
+            leg_out["latest_reference_odds"] = reference_odds
+            leg_out["latest_reference_updated_at"] = updated_at
+
+            book_raw = (
+                leg_out.get("oddsAmerican")
+                if leg_out.get("oddsAmerican") is not None
+                else leg_out.get("odds_american")
+            )
+            try:
+                book_am = float(book_raw) if book_raw is not None else None
+            except (TypeError, ValueError):
+                book_am = None
+
+            leg_commence = str(leg_out.get("commenceTime") or leg_out.get("commence_time") or "").strip() or None
+
+            if allow_close and book_am is not None and should_capture_close_snapshot(
+                leg_commence,
+                existing_close=leg_out.get("pinnacle_odds_at_close"),
+                captured_at=leg_out.get("reference_updated_at"),
+                now=current,
+            ):
+                clv_result = calculate_clv(book_am, float(reference_odds))
+                leg_out["pinnacle_odds_at_close"] = reference_odds
+                leg_out["reference_updated_at"] = updated_at
+                leg_out["clv_ev_percent"] = clv_result["clv_ev_percent"]
+                leg_out["beat_close"] = clv_result["beat_close"]
+                close_updated += 1
+
+            new_legs.append(leg_out)
+
+        if row_touched:
+            meta["legs"] = new_legs
+            latest_updated += 1
+            db.table("bets").update({"selection_meta": meta}).eq("id", row["id"]).execute()
+
+    return latest_updated, close_updated
+
+
 def update_bet_reference_snapshots(
     db,
     *,
@@ -199,6 +368,7 @@ def update_bet_reference_snapshots(
         return {"latest_updated": 0, "close_updated": 0}
 
     sports = sorted({str(side.get("sport") or "").strip() for side in sides if side.get("sport")})
+    sports_set = {s for s in sports if s}
     query = (
         db.table("bets")
         .select(
@@ -268,6 +438,20 @@ def update_bet_reference_snapshots(
             close_updated += 1
 
         db.table("bets").update(payload).eq("id", row["id"]).execute()
+
+    p_latest, p_close = _update_parlay_bet_leg_snapshots(
+        db,
+        sports_set=sports_set,
+        straight_snapshot_by_event=straight_snapshot_by_event,
+        straight_snapshot_by_time=straight_snapshot_by_time,
+        prop_snapshot_by_event=prop_snapshot_by_event,
+        prop_snapshot_by_time=prop_snapshot_by_time,
+        allow_close=allow_close,
+        current=current,
+        updated_at=updated_at,
+    )
+    latest_updated += p_latest
+    close_updated += p_close
 
     return {"latest_updated": latest_updated, "close_updated": close_updated}
 

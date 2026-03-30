@@ -14,6 +14,7 @@ import {
   buildParlayCartLeg,
   buildParlayCartLegFromPickEmCard,
   buildScannerLogBetInitialValues,
+  parseScannerCustomBoostInput,
 } from "@/app/scanner/scanner-state-utils";
 import { canAddScannerLensToParlayCart } from "@/app/scanner/scanner-ui-model";
 import { classifyScannerNullState } from "@/lib/scanner-contract";
@@ -22,6 +23,13 @@ import { useBettingPlatformStore } from "@/lib/betting-platform-store";
 import { useKellySettings } from "@/lib/kelly-context";
 import { createClient } from "@/lib/supabase";
 import { LogBetDrawer } from "@/components/LogBetDrawer";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import type { MarketSide, PlayerPropMarketSide, ScanResult, ScannedBetData } from "@/lib/types";
 
@@ -120,6 +128,8 @@ const BOOK_COLORS: Record<string, string> = {
 };
 
 const SCANNER_BOOKS_STORAGE_KEY = "ev-tracker-scanner-books";
+const MARKETS_BOOST_PERCENT_STORAGE_KEY = "ev-tracker-markets-boost-percent";
+const BOOST_PRESETS = [25, 30, 50] as const;
 
 type StoredScannerBooks = {
   player_props?: unknown;
@@ -423,6 +433,17 @@ export default function MarketsPage() {
   const [selectedPropBooks, setSelectedPropBooks] = useState<string[]>(DEFAULT_PLAYER_PROP_BOOKS);
   const [selectedGameLineBooks, setSelectedGameLineBooks] = useState<string[]>(DEFAULT_STRAIGHT_BET_BOOKS);
   const [booksHydrated, setBooksHydrated] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(10);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showMoreFeaturedLines, setShowMoreFeaturedLines] = useState(false);
+  const [timeFilter, setTimeFilter] = useState<BoardTimeFilter>("today");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [propMarketFilter, setPropMarketFilter] = useState<string>("all");
+  const [boostPercent, setBoostPercent] = useState(30);
+  const [customBoostInput, setCustomBoostInput] = useState("");
+  const [boostSheetOpen, setBoostSheetOpen] = useState(false);
+  const [boostHydrated, setBoostHydrated] = useState(false);
+
   const selectedBooks = primaryMode === "straight_bets" ? selectedGameLineBooks : selectedPropBooks;
   const setSelectedBooks = primaryMode === "straight_bets" ? setSelectedGameLineBooks : setSelectedPropBooks;
 
@@ -455,12 +476,35 @@ export default function MarketsPage() {
       // ignore quota / private mode
     }
   }, [booksHydrated, selectedPropBooks, selectedGameLineBooks]);
-  const [visibleCount, setVisibleCount] = useState(10);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [showMoreFeaturedLines, setShowMoreFeaturedLines] = useState(false);
-  const [timeFilter, setTimeFilter] = useState<BoardTimeFilter>("today");
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [propMarketFilter, setPropMarketFilter] = useState<string>("all");
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(MARKETS_BOOST_PERCENT_STORAGE_KEY);
+      if (raw) {
+        const n = Number(raw);
+        if (Number.isFinite(n) && n >= 1 && n <= 200) {
+          setBoostPercent(Math.round(n));
+        }
+      }
+    } catch {
+      // ignore
+    }
+    setBoostHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!boostHydrated) return;
+    try {
+      localStorage.setItem(MARKETS_BOOST_PERCENT_STORAGE_KEY, String(boostPercent));
+    } catch {
+      // ignore
+    }
+  }, [boostHydrated, boostPercent]);
+
+  useEffect(() => {
+    if (!boostHydrated) return;
+    setVisibleCount(10);
+  }, [boostPercent, boostHydrated]);
 
   // ── Board freshness: realtime invalidation ───────────────────────────────
   // Subscribe to Supabase realtime for canonical board changes (surface=board)
@@ -625,7 +669,7 @@ export default function MarketsPage() {
       sides: sidesForRanking,
       selectedBooks,
       activeLens,
-      boostPercent: 30,
+      boostPercent,
     });
     // Opportunities view guardrail: keep board quality high by hiding very small edges.
     // This is display-only and does not alter backend scan/research capture.
@@ -633,7 +677,7 @@ export default function MarketsPage() {
       return ranked.filter((s) => Number(s.ev_percentage || 0) > 1);
     }
     return ranked;
-  }, [allSides, selectedBooks, viewMode, activeLens, primaryMode]);
+  }, [allSides, selectedBooks, viewMode, activeLens, primaryMode, boostPercent]);
 
   const filteredSides = useMemo(() => {
     const timeFiltered = rankedSides.filter((s) => matchesBoardTimeFilter(s.commence_time, timeFilter));
@@ -802,7 +846,7 @@ export default function MarketsPage() {
     const betData = buildScannerLogBetInitialValues({
       side,
       activeLens,
-      boostPercent: 30,
+      boostPercent,
       sportDisplayMap: SPORT_KEY_TO_DISPLAY,
       kellyMultiplier,
       bankroll,
@@ -1157,7 +1201,17 @@ export default function MarketsPage() {
 
       {!filtersOpen && activeFilterChips.length > 0 && (
         <div className="flex items-center justify-between gap-2">
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {activeLens === "profit_boost" && (
+              <button
+                type="button"
+                onClick={() => setBoostSheetOpen(true)}
+                className="rounded-full border border-[#C4A35A]/35 bg-[#C4A35A]/12 px-2 py-0.5 text-[10px] font-medium text-[#5C4D2E] transition-colors hover:bg-[#C4A35A]/20 dark:border-[#6D5A2A]/60 dark:bg-[#2B2417]/80 dark:text-[#E5CF94]"
+                aria-label="Set profit boost percentage"
+              >
+                Boost: {boostPercent}%
+              </button>
+            )}
             {activeFilterChips.map((chip) => (
               <span
                 key={chip}
@@ -1176,6 +1230,60 @@ export default function MarketsPage() {
           </button>
         </div>
       )}
+
+      <Sheet open={boostSheetOpen} onOpenChange={setBoostSheetOpen}>
+        <SheetContent side="bottom" className="pb-5">
+          <SheetHeader>
+            <SheetTitle>Profit Boost</SheetTitle>
+            <SheetDescription>Set your boost percentage.</SheetDescription>
+          </SheetHeader>
+          <div className="space-y-3 px-6 pt-3">
+            <div className="grid grid-cols-3 gap-2">
+              {BOOST_PRESETS.map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => {
+                    setBoostPercent(preset);
+                    setCustomBoostInput("");
+                    setBoostSheetOpen(false);
+                  }}
+                  className={cn(
+                    "rounded-md border px-2 py-1.5 text-xs font-medium transition-colors",
+                    boostPercent === preset && customBoostInput === ""
+                      ? "border-[#C4A35A]/40 bg-[#C4A35A]/25 text-[#5C4D2E] dark:text-[#E5CF94]"
+                      : "border-border bg-background text-foreground",
+                  )}
+                >
+                  {preset}%
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Custom</span>
+              <input
+                type="number"
+                min={1}
+                max={200}
+                placeholder="1-200"
+                value={customBoostInput}
+                onChange={(e) => {
+                  setCustomBoostInput(e.target.value);
+                  const n = parseScannerCustomBoostInput(e.target.value);
+                  if (n !== null) {
+                    setBoostPercent(n);
+                  }
+                }}
+                className={cn(
+                  "h-8 w-20 rounded-md border bg-background px-2 text-xs font-medium text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-[#C4A35A]/50",
+                  customBoostInput !== "" ? "border-[#C4A35A]/40" : "border-border",
+                )}
+              />
+              <span className="text-xs text-muted-foreground">%</span>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
 
       {/* ── Board error ───────────────────────────────────────────── */}
       {boardError && (
@@ -1236,7 +1344,7 @@ export default function MarketsPage() {
               activeResultFilterSummary=""
               kellyMultiplier={kellyMultiplier}
               bankroll={bankroll}
-              boostPercent={30}
+              boostPercent={boostPercent}
               addedPickEmComparisonKeys={pickEmSlipKeys}
               canLoadMore={canLoadMore}
               onLoadMore={() => setVisibleCount((v) => v + 10)}

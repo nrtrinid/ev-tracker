@@ -146,7 +146,7 @@ def test_parse_prop_sides_builds_consensus_reference_payload():
     assert first_draftkings["surface"] == "player_props"
     assert first_draftkings["market_key"] == "player_points"
     assert first_draftkings["selection_key"].startswith("evt-1|player_points|nikola jokic")
-    assert first_draftkings["display_name"].startswith("Nikola Jokic")
+    assert first_draftkings["display_name"] == "Nikola Jokic Over 24.5 PTS"
     assert first_draftkings["reference_source"] == PLAYER_PROP_REFERENCE_SOURCE
     assert first_draftkings["reference_bookmakers"] == ["bovada", "betmgm"]
     assert first_draftkings["reference_bookmaker_count"] == 2

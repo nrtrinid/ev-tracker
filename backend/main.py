@@ -1345,6 +1345,7 @@ async def start_scheduler():
     if os.getenv("TESTING") == "1":
         return  # Skip scheduler in integration tests so we don't hit Odds API or cron
     if os.getenv("ENABLE_SCHEDULER") != "1":
+        _log_event("scheduler.disabled", **_boot_fields())
         return  # Only one instance should run background jobs (Render scaling/workers)
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger

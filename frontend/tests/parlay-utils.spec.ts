@@ -47,7 +47,7 @@ const PROP_LEG: ParlayCartLeg = {
   referenceOddsAmerican: -110,
   referenceTrueProbability: 0.52,
   referenceSource: "market_median",
-  display: "Nikola Jokic Over 24.5",
+  display: "Nikola Jokic Over 24.5 PTS",
   event: "Nuggets @ Suns",
   sport: "basketball_nba",
   commenceTime: "2026-03-21T03:00:00Z",
@@ -67,7 +67,7 @@ const PROP_LEG: ParlayCartLeg = {
 test.describe("parlay utils", () => {
   test("builds a readable parlay summary from the selected leg labels", async () => {
     expect(buildParlayEventSummary([STRAIGHT_LEG, PROP_LEG], "DraftKings")).toBe(
-      "Lakers ML + Nikola Jokic Over 24.5"
+      "Lakers ML + Nikola Jokic Over 24.5 PTS"
     );
   });
 
@@ -78,7 +78,7 @@ test.describe("parlay utils", () => {
       eventId: "evt-3",
       selectionKey: "evt-3|player_points|lebron|over|27.5",
       sourceSelectionKey: "evt-3|player_points|lebron|over|27.5",
-      display: "LeBron James Over 27.5",
+      display: "LeBron James Over 27.5 PTS",
       event: "Lakers @ Celtics",
       participantName: "LeBron James",
       lineValue: 27.5,
@@ -98,7 +98,7 @@ test.describe("parlay utils", () => {
     };
 
     expect(buildParlayEventSummary([STRAIGHT_LEG, PROP_LEG, extraProp, extraStraight], "DraftKings")).toBe(
-      "Lakers ML + Nikola Jokic Over 24.5 + 2 more"
+      "Lakers ML + Nikola Jokic Over 24.... + 2 more"
     );
   });
 
@@ -209,7 +209,7 @@ test.describe("parlay utils", () => {
       eventId: "evt-b",
       event: "Lakers @ Warriors",
       participantName: "LeBron James",
-      display: "LeBron James Over 24.5",
+      display: "LeBron James Over 24.5 PTS",
       selectionKey: "evt-b|player_points|lebron|over|24.5",
       sourceSelectionKey: "evt-b|player_points|lebron|over|24.5",
       correlationTags: ["evt-b", "LeBron James", "player_points"],

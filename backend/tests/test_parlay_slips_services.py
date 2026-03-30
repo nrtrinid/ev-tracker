@@ -190,7 +190,7 @@ def test_build_parlay_logged_bet_payload_compacts_multi_leg_summary_after_two_la
         "eventId": "evt-2",
         "marketKey": "player_points",
         "selectionKey": "evt-2|player_points|jokic|over|24.5",
-        "display": "Nikola Jokic Over 24.5",
+        "display": "Nikola Jokic Over 24.5 PTS",
         "event": "Nuggets @ Suns",
         "commenceTime": "2026-03-24T03:00:00Z",
         "correlationTags": ["evt-2", "Nikola Jokic", "player_points"],
@@ -208,7 +208,7 @@ def test_build_parlay_logged_bet_payload_compacts_multi_leg_summary_after_two_la
         "id": "props:2",
         "eventId": "evt-3",
         "selectionKey": "evt-3|player_points|lebron|over|27.5",
-        "display": "LeBron James Over 27.5",
+        "display": "LeBron James Over 27.5 PTS",
         "event": "Lakers @ Celtics",
         "commenceTime": "2026-03-24T05:00:00Z",
         "correlationTags": ["evt-3", "LeBron James", "player_points"],
@@ -245,5 +245,5 @@ def test_build_parlay_logged_bet_payload_compacts_multi_leg_summary_after_two_la
         utc_now_iso=lambda: "2026-03-23T02:30:00Z",
     )
 
-    assert payload["event"] == "Lakers ML + Nikola Jokic Over 24.5 + 2 more"
+    assert payload["event"] == "Lakers ML + Nikola Jokic Over 24.... + 2 more"
     assert payload["event_date"] == "2026-03-24"

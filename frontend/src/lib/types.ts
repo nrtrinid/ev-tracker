@@ -66,7 +66,7 @@ export interface Bet {
   participant_id: string | null;
   selection_side: string | null;
   line_value: number | null;
-  selection_meta: Record<string, unknown> | null;
+  selection_meta: LoggedParlaySelectionMeta | Record<string, unknown> | null;
 }
 
 export interface BetCreate {
@@ -98,7 +98,7 @@ export interface BetCreate {
   participant_id?: string;
   selection_side?: string;
   line_value?: number;
-  selection_meta?: Record<string, unknown>;
+  selection_meta?: LoggedParlaySelectionMeta | Record<string, unknown>;
 }
 
 export interface BetUpdate {
@@ -611,6 +611,30 @@ export interface ResearchOpportunityRecentRow {
   close_status: "pending" | "valid" | "invalid";
 }
 
+export interface AdminMarketRefreshSurfaceSummary {
+  surface: ScannerSurface;
+  sport: string;
+  events_fetched: number;
+  events_with_both_books: number;
+  total_sides: number;
+  scanned_at: string | null;
+  api_requests_remaining: string | null;
+}
+
+export interface AdminMarketRefreshResponse {
+  results: AdminMarketRefreshSurfaceSummary[];
+}
+
+/** Response from POST /api/ops/trigger/auto-settle (proxied via admin). */
+export interface OpsTriggerAutoSettleResponse {
+  ok: boolean;
+  run_id: string;
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  settled: number;
+}
+
 export interface ResearchOpportunitySummary {
   captured_count: number;
   open_count: number;
@@ -807,6 +831,28 @@ export interface ParlayCartLeg {
   sourceMarketKey?: string | null;
   sourceSelectionKey?: string | null;
   selectionMeta?: Record<string, unknown> | null;
+}
+
+/** Optional per-leg CLV fields merged by the backend into `selection_meta.legs[]`. */
+export interface LoggedParlayLegClv {
+  latest_reference_odds?: number | null;
+  latest_reference_updated_at?: string | null;
+  pinnacle_odds_at_close?: number | null;
+  reference_updated_at?: string | null;
+  clv_ev_percent?: number | null;
+  beat_close?: boolean | null;
+}
+
+export interface LoggedParlayLeg extends ParlayCartLeg, LoggedParlayLegClv {}
+
+export interface LoggedParlaySelectionMeta {
+  type: "parlay";
+  slip_id?: string;
+  sportsbook?: string;
+  logged_at?: string;
+  legs: LoggedParlayLeg[];
+  warnings?: unknown[];
+  pricingPreview?: unknown;
 }
 
 // Constants

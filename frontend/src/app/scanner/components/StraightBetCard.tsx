@@ -43,7 +43,37 @@ function bookAbbrev(name: string): string {
   return map[name] || name;
 }
 
+/** Promos mode merges player_props into the straight-bets card; use prop-style labels + titles. */
+function formatPlayerPropMarketTag(marketKey: string | undefined | null): string {
+  const key = (marketKey ?? "").trim();
+  const map: Record<string, string> = {
+    player_points: "PTS",
+    player_rebounds: "REB",
+    player_assists: "AST",
+    player_threes: "3PM",
+    player_points_rebounds_assists: "PTS/REB/AST",
+  };
+  if (map[key]) return map[key];
+  if (!key) return "Prop";
+  return key.replace(/^player_/, "").replaceAll("_", " ").toUpperCase();
+}
+
+function primarySelectionTitle(side: MarketSide): string {
+  if (side.surface === "player_props") {
+    return (
+      side.display_name.trim() ||
+      side.player_name.trim() ||
+      side.team?.trim() ||
+      ""
+    );
+  }
+  return (side.team_short?.trim() || side.team?.trim() || "").trim();
+}
+
 function formatStraightMarketLabel(side: MarketSide): string {
+  if (side.surface === "player_props") {
+    return formatPlayerPropMarketTag(side.market_key);
+  }
   const key = String(side.market_key || "").toLowerCase();
   if (key.includes("totals")) return "Total";
   if (key.includes("spreads")) return "Spread";
@@ -189,9 +219,9 @@ export function StraightBetCard({
           </div>
         </div>
 
-        {/* Row 1: team/selection name */}
+        {/* Row 1: team / player prop display name (promos merges props into this card) */}
         <p className="line-clamp-1 text-sm font-semibold leading-snug">
-          {side.team_short || side.team}
+          {primarySelectionTitle(side)}
         </p>
 
         {/* Row 2: matchup + formatted game time */}

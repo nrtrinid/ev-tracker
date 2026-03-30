@@ -449,6 +449,24 @@ class FullScanResponse(BaseModel):
         return data
 
 
+class AdminMarketRefreshSurfaceSummary(BaseModel):
+    """Compact result from an admin-triggered full market scan (one surface)."""
+
+    surface: ScannerSurface
+    sport: str
+    events_fetched: int
+    events_with_both_books: int
+    total_sides: int
+    scanned_at: str | None = None
+    api_requests_remaining: str | None = None
+
+
+class AdminMarketRefreshResponse(BaseModel):
+    """Admin full refresh across one or both scanner surfaces."""
+
+    results: list[AdminMarketRefreshSurfaceSummary]
+
+
 # ── Board snapshot models ─────────────────────────────────────────────────────
 
 class BoardSnapshotMeta(BaseModel):

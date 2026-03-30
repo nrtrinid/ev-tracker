@@ -20,6 +20,8 @@ import type {
   ParlaySlipLogRequest,
   ParlaySlipUpdate,
   ResearchOpportunitySummary,
+  AdminMarketRefreshResponse,
+  OpsTriggerAutoSettleResponse,
   ScannerSurface,
 } from "./types";
 import { createClient } from "./supabase";
@@ -294,6 +296,58 @@ export async function getBackendReadiness(): Promise<BackendReadiness> {
 
 export async function getOperatorStatus(): Promise<OperatorStatusResponse> {
   return fetchInternalAPI<OperatorStatusResponse>("/api/ops/status");
+}
+
+function formatFetchErrorDetail(error: { detail?: unknown }, status: number): string {
+  const d = error.detail;
+  if (typeof d === "string") return d;
+  if (Array.isArray(d)) {
+    return d
+      .map((item: { msg?: string }) => item?.msg)
+      .filter(Boolean)
+      .join(", ");
+  }
+  return `API error: ${status}`;
+}
+
+/** Admin-only: full manual scan for straight bets and player props (no per-user scan rate limit). */
+export async function adminRefreshMarkets(): Promise<AdminMarketRefreshResponse> {
+  const supabase = createClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  const res = await fetch("/api/admin/refresh-markets", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(session?.access_token && {
+        Authorization: `Bearer ${session.access_token}`,
+      }),
+    },
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Unknown error" }));
+    throw new Error(formatFetchErrorDetail(error, res.status));
+  }
+
+  return res.json();
+}
+
+/** Admin-only: run the same auto-settle job as the ops/cron trigger (grades pending bets). */
+export async function adminTriggerAutoSettle(): Promise<OpsTriggerAutoSettleResponse> {
+  const res = await fetch("/api/admin/trigger-auto-settle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Unknown error" }));
+    throw new Error(formatFetchErrorDetail(error, res.status));
+  }
+
+  return res.json();
 }
 
 export async function getResearchOpportunitySummary(params?: {

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { Calculator, Settings, Shield, ScanLine } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 
@@ -36,8 +37,26 @@ const adminLinks = [
 
 export default function MorePage() {
   const { user } = useAuth();
-  const adminEmails = (process.env.NEXT_PUBLIC_OPS_ADMIN_EMAILS || "").split(",").map((e) => e.trim().toLowerCase());
-  const isAdmin = !!user?.email && adminEmails.includes(user.email.toLowerCase());
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    if (!user) {
+      setIsAdmin(false);
+      return;
+    }
+    let cancelled = false;
+    fetch("/api/admin/access", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((data: { ok?: boolean }) => {
+        if (!cancelled) setIsAdmin(!!data?.ok);
+      })
+      .catch(() => {
+        if (!cancelled) setIsAdmin(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   return (
     <div className="container mx-auto px-4 py-6 max-w-2xl space-y-6">

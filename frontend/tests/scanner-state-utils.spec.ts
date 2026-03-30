@@ -46,7 +46,7 @@ const BASE_PROP_SIDE: MarketSide = {
   opponent: "Suns",
   selection_side: "over",
   line_value: 24.5,
-  display_name: "Nikola Jokic Over 24.5",
+  display_name: "Nikola Jokic Over 24.5 PTS",
   reference_odds: -110,
   reference_source: "market_median",
   reference_bookmakers: ["bovada", "betmgm"],
@@ -133,7 +133,7 @@ test.describe("scanner state utils", () => {
     expect(out.surface).toBe("player_props");
     expect(out.marketKey).toBe("player_points");
     expect(out.selectionKey).toBe("evt-2|player_points|jokic|over|24.5");
-    expect(out.display).toBe("Nikola Jokic Over 24.5");
+    expect(out.display).toBe("Nikola Jokic Over 24.5 PTS");
     expect(out.referenceOddsAmerican).toBe(-110);
     expect(out.referenceSource).toBe("market_median");
     expect(out.participantName).toBe("Nikola Jokic");

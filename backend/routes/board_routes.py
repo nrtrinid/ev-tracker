@@ -125,7 +125,7 @@ def get_board_latest(user: dict = Depends(get_current_user)):
     request_id = f"board_latest_{uuid4().hex[:10]}"
     rss_before = rss_mb()
     mode = (os.getenv("BOARD_LATEST_MODE") or "full").strip().lower()
-    if mode not in {"meta_only", "minimal_game_context", "full"}:
+    if mode not in {"hardcoded_minimal", "meta_only", "minimal_game_context", "full"}:
         mode = "full"
 
     _log_event(
@@ -136,6 +136,45 @@ def get_board_latest(user: dict = Depends(get_current_user)):
         mode=mode,
         rss_mb=rss_before,
     )
+
+    # Ultra-safe isolation mode: prove request-path stability without touching cache data.
+    if mode == "hardcoded_minimal":
+        payload = {
+            "meta": {
+                "snapshot_id": "hardcoded_minimal",
+                "snapshot_type": "manual",
+                "scanned_at": utc_now_iso_z(),
+                "surfaces_included": [],
+                "sports_included": [],
+                "next_scheduled_drop": None,
+                "events_scanned": 0,
+                "total_sides": 0,
+                "degraded": True,
+            },
+            "game_context": None,
+            "straight_bets": None,
+            "player_props": None,
+        }
+        encoded = jsonable_encoder(payload)
+        _log_event(
+            "board.latest.mode",
+            request_id=request_id,
+            boot_id=_BOOT_ID,
+            pid=os.getpid(),
+            mode=mode,
+            status="completed",
+            rss_mb_before=rss_before,
+            rss_mb_after=rss_mb(),
+        )
+        _log_event(
+            "board.latest.completed",
+            request_id=request_id,
+            boot_id=_BOOT_ID,
+            pid=os.getpid(),
+            mode=mode,
+            rss_mb=rss_mb(),
+        )
+        return JSONResponse(status_code=200, content=encoded)
 
     db = get_db()
     try:

@@ -296,6 +296,163 @@ def test_update_clv_snapshots_repairs_invalid_early_close_inside_window():
     assert db.tables["bets"][0]["clv_updated_at"] == now.isoformat()
 
 
+def test_update_bet_reference_snapshots_merges_parlay_leg_close_inside_window():
+    mod = _reload_clv_tracking()
+    now = datetime(2026, 3, 23, 14, 50, tzinfo=timezone.utc)
+    commence_time = "2026-03-23T15:00:00Z"
+    selection_meta = {
+        "type": "parlay",
+        "legs": [
+            {
+                "id": "l1",
+                "surface": "straight_bets",
+                "sport": "basketball_nba",
+                "team": "Team Par",
+                "commenceTime": commence_time,
+                "sourceEventId": "evt_par",
+                "sportsbook": "DK",
+                "display": "Team Par ML",
+                "oddsAmerican": -110,
+            }
+        ],
+    }
+    db = _DB(
+        bets=[
+            {
+                "id": 99,
+                "result": "pending",
+                "surface": "parlay",
+                "selection_meta": selection_meta,
+            }
+        ]
+    )
+
+    counts = mod.update_bet_reference_snapshots(
+        db,
+        sides=[
+            {
+                "sport": "basketball_nba",
+                "surface": "straight_bets",
+                "event_id": "evt_par",
+                "commence_time": commence_time,
+                "team": "Team Par",
+                "pinnacle_odds": -108,
+            }
+        ],
+        allow_close=True,
+        now=now,
+    )
+
+    assert counts == {"latest_updated": 1, "close_updated": 1}
+    leg0 = db.tables["bets"][0]["selection_meta"]["legs"][0]
+    assert leg0["latest_reference_odds"] == -108
+    assert leg0["pinnacle_odds_at_close"] == -108
+    assert leg0["clv_ev_percent"] is not None
+    assert leg0["beat_close"] is not None
+
+
+def test_update_bet_reference_snapshots_parlay_leg_latest_only_outside_close_window():
+    mod = _reload_clv_tracking()
+    now = datetime(2026, 3, 23, 12, 0, tzinfo=timezone.utc)
+    commence_time = "2026-03-23T18:00:00Z"
+    selection_meta = {
+        "type": "parlay",
+        "legs": [
+            {
+                "id": "l1",
+                "surface": "straight_bets",
+                "sport": "basketball_nba",
+                "team": "Team Away",
+                "commenceTime": commence_time,
+                "sourceEventId": "evt_far",
+                "sportsbook": "DK",
+                "display": "Away ML",
+                "oddsAmerican": 150,
+            }
+        ],
+    }
+    db = _DB(
+        bets=[
+            {
+                "id": 100,
+                "result": "pending",
+                "surface": "parlay",
+                "selection_meta": selection_meta,
+            }
+        ]
+    )
+
+    counts = mod.update_bet_reference_snapshots(
+        db,
+        sides=[
+            {
+                "sport": "basketball_nba",
+                "surface": "straight_bets",
+                "event_id": "evt_far",
+                "commence_time": commence_time,
+                "team": "Team Away",
+                "pinnacle_odds": 145,
+            }
+        ],
+        allow_close=True,
+        now=now,
+    )
+
+    assert counts == {"latest_updated": 1, "close_updated": 0}
+    leg0 = db.tables["bets"][0]["selection_meta"]["legs"][0]
+    assert leg0["latest_reference_odds"] == 145
+    assert leg0.get("pinnacle_odds_at_close") is None
+
+
+def test_update_bet_reference_snapshots_skips_parlay_when_leg_sport_not_in_scan():
+    mod = _reload_clv_tracking()
+    commence_time = "2026-03-23T15:00:00Z"
+    selection_meta = {
+        "type": "parlay",
+        "legs": [
+            {
+                "id": "l1",
+                "surface": "straight_bets",
+                "sport": "americanfootball_nfl",
+                "team": "Team NFL",
+                "commenceTime": commence_time,
+                "sourceEventId": "evt_nfl",
+                "sportsbook": "DK",
+                "display": "NFL ML",
+                "oddsAmerican": -110,
+            }
+        ],
+    }
+    db = _DB(
+        bets=[
+            {
+                "id": 101,
+                "result": "pending",
+                "surface": "parlay",
+                "selection_meta": selection_meta,
+            }
+        ]
+    )
+
+    counts = mod.update_bet_reference_snapshots(
+        db,
+        sides=[
+            {
+                "sport": "basketball_nba",
+                "surface": "straight_bets",
+                "event_id": "evt_nba",
+                "commence_time": commence_time,
+                "team": "Team NBA",
+                "pinnacle_odds": -105,
+            }
+        ],
+        allow_close=True,
+    )
+
+    assert counts == {"latest_updated": 0, "close_updated": 0}
+    assert db.tables["bets"][0]["selection_meta"]["legs"][0].get("latest_reference_odds") is None
+
+
 def test_update_scan_opportunity_reference_snapshots_updates_latest_without_close_outside_window():
     mod = _reload_clv_tracking()
     now = datetime(2026, 3, 23, 12, 0, tzinfo=timezone.utc)

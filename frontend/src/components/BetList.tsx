@@ -25,6 +25,7 @@ import { useBets, useUpdateBetResult, useDeleteBet, useCreateBet, useBalances, u
 import { Skeleton } from "@/components/ui/skeleton";
 import { EditBetModal } from "@/components/EditBetModal";
 import type { Bet, BetResult, ParlaySlip, TutorialPracticeBet } from "@/lib/types";
+import { parseParlayLegsFromBet, type ParlayLegForDisplay } from "@/lib/parlay-bet-meta";
 import { PROMO_TYPE_CONFIG } from "@/lib/types";
 import { formatCurrency, formatOdds, cn, formatRelativeTime, formatShortDate, formatFullDateTime, americanToDecimal, decimalToAmerican, calculateImpliedProb } from "@/lib/utils";
 import {
@@ -154,6 +155,26 @@ function BetCardBase({ bet, headerRight, footer, mode, parlaySlip }: BetCardBase
   const borderColor = SPORTSBOOK_BADGE_COLORS[bet.sportsbook] || "bg-gray-400";
   const textColor = SPORTSBOOK_TEXT_COLORS[bet.sportsbook] || "text-gray-600";
   const promoConfig = PROMO_TYPE_CONFIG[bet.promo_type] || PROMO_TYPE_CONFIG.standard;
+
+  const parlayLegsFromMeta = useMemo(
+    () => (bet.surface === "parlay" ? parseParlayLegsFromBet(bet) : null),
+    [bet],
+  );
+  const parlayLegsForDisplay: ParlayLegForDisplay[] = useMemo(() => {
+    if (bet.surface !== "parlay") return [];
+    if (parlayLegsFromMeta?.length) return parlayLegsFromMeta;
+    return parlaySlip?.legs?.length ? parlaySlip.legs : [];
+  }, [bet.surface, parlayLegsFromMeta, parlaySlip?.legs]);
+
+  const parlayLegCountSubtitle = useMemo(() => {
+    if (bet.surface !== "parlay") return 0;
+    const n = parlayLegsFromMeta?.length ?? parlaySlip?.legs?.length ?? 0;
+    return n;
+  }, [bet.surface, parlayLegsFromMeta?.length, parlaySlip?.legs?.length]);
+
+  const showTicketClvDetails =
+    bet.pinnacle_odds_at_entry != null &&
+    !(bet.surface === "parlay" && parlayLegsForDisplay.length > 0);
   
   // Short promo label (BB, 30%, etc.)
   const promoLabel = bet.promo_type === "boost_custom" && bet.boost_percent 
@@ -184,6 +205,11 @@ function BetCardBase({ bet, headerRight, footer, mode, parlaySlip }: BetCardBase
           <div className="flex-1 min-w-0">
             {/* Primary: Event name */}
             <p className="font-semibold text-sm leading-tight">{bet.event}</p>
+            {parlayLegCountSubtitle > 0 && (
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                Parlay · {parlayLegCountSubtitle} leg{parlayLegCountSubtitle === 1 ? "" : "s"}
+              </p>
+            )}
             {/* Secondary: Sportsbook [Badge] Sport Market */}
             <div className="flex items-center gap-1.5 mt-1 flex-wrap">
               <span className={cn("w-2 h-2 rounded-full shrink-0", borderColor)} />
@@ -297,39 +323,82 @@ function BetCardBase({ bet, headerRight, footer, mode, parlaySlip }: BetCardBase
         {expanded && (
           <div className="pt-3 border-t border-border space-y-4">
 
-            {/* ── Parlay legs (parlay bets only) ── */}
-            {bet.surface === "parlay" && parlaySlip && parlaySlip.legs.length > 0 && (
+            {/* ── Parlay legs (source: bet.selection_meta first, then linked slip) ── */}
+            {bet.surface === "parlay" && parlayLegsForDisplay.length > 0 && (
               <div>
-                <p className="text-xs font-medium text-muted-foreground mb-2">
-                  Parlay Legs ({parlaySlip.legs.length})
+                <p className="text-xs font-medium text-muted-foreground mb-1">
+                  Legs ({parlayLegsForDisplay.length})
+                </p>
+                <p className="text-[10px] text-muted-foreground/90 mb-2 leading-snug">
+                  Closing line value is shown per leg when kickoff is near—sharp line vs. the price you logged.
                 </p>
                 <div className="space-y-1.5">
-                  {parlaySlip.legs.map((leg) => (
-                    <div
-                      key={leg.id}
-                      className="flex items-center justify-between rounded-md bg-muted/40 px-2.5 py-2"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-medium">{leg.display}</p>
-                        <p className="truncate text-[11px] text-muted-foreground">
-                          {leg.marketDisplay ?? leg.marketKey}
-                          {leg.lineValue != null ? ` ${leg.lineValue}` : ""}
-                          {leg.selectionSide
-                            ? ` · ${leg.selectionSide.charAt(0).toUpperCase() + leg.selectionSide.slice(1)}`
-                            : ""}
-                        </p>
+                  {parlayLegsForDisplay.map((leg) => {
+                    const legMeta = leg as ParlayLegForDisplay;
+                    const kickoff =
+                      leg.commenceTime && leg.event
+                        ? `${leg.event} · ${formatGameStartCompact(leg.commenceTime)}`
+                        : leg.commenceTime
+                          ? formatGameStartCompact(leg.commenceTime)
+                          : leg.event;
+                    return (
+                      <div
+                        key={leg.id}
+                        className="flex items-start justify-between gap-2 rounded-md bg-muted/40 px-2.5 py-2"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-medium">{leg.display}</p>
+                          <p className="truncate text-[11px] text-muted-foreground">
+                            {leg.marketDisplay ?? leg.marketKey}
+                            {leg.lineValue != null ? ` ${leg.lineValue}` : ""}
+                            {leg.selectionSide
+                              ? ` · ${leg.selectionSide.charAt(0).toUpperCase() + leg.selectionSide.slice(1)}`
+                              : ""}
+                          </p>
+                          {kickoff ? (
+                            <p className="mt-0.5 truncate text-[10px] text-muted-foreground/80">{kickoff}</p>
+                          ) : null}
+                          {legMeta.clv_ev_percent != null ? (
+                            <p className="mt-1 text-[10px] font-semibold text-muted-foreground">
+                              <span
+                                className={cn(
+                                  "rounded px-1 py-0.5",
+                                  legMeta.beat_close
+                                    ? "bg-profit/15 text-profit"
+                                    : "bg-loss/15 text-loss",
+                                )}
+                              >
+                                Leg CLV {legMeta.clv_ev_percent >= 0 ? "+" : ""}
+                                {legMeta.clv_ev_percent.toFixed(1)}%
+                              </span>
+                            </p>
+                          ) : bet.result === "pending" &&
+                            (legMeta.latest_reference_odds != null || legMeta.pinnacle_odds_at_close != null) ? (
+                            <p className="mt-1 text-[10px] text-muted-foreground italic">Leg CLV updating…</p>
+                          ) : null}
+                        </div>
+                        <div className="flex shrink-0 flex-col items-end gap-0.5">
+                          <span className="font-mono text-xs font-semibold">{formatOdds(leg.oddsAmerican)}</span>
+                          {legMeta.pinnacle_odds_at_close != null ? (
+                            <span className="font-mono text-[10px] text-muted-foreground">
+                              Close {formatOdds(legMeta.pinnacle_odds_at_close)}
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
-                      <span className="ml-3 shrink-0 font-mono text-xs font-semibold">
-                        {formatOdds(leg.oddsAmerican)}
-                      </span>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
+            {bet.surface === "parlay" && parlayLegsForDisplay.length === 0 && (
+              <p className="text-xs text-muted-foreground">
+                Leg details weren&apos;t saved for this ticket.
+              </p>
+            )}
 
-            {/* ── Row 1: CLV (all bets with a Pinnacle entry snapshot) ── */}
-            {bet.pinnacle_odds_at_entry != null && (
+            {/* ── Row 1: CLV (single-selection bets; parlays use per-leg CLV above) ── */}
+            {showTicketClvDetails && (
               <div>
                 <div className="grid grid-cols-3 gap-x-3">
                   {/* Col 1: Entry odds — always the raw (unboosted) market line */}
@@ -385,7 +454,7 @@ function BetCardBase({ bet, headerRight, footer, mode, parlaySlip }: BetCardBase
             {/* ── Row 2: Metadata footer ── */}
             <div className={cn(
               "grid grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-2 pt-3",
-              bet.pinnacle_odds_at_entry != null ? "border-t border-border" : ""
+              showTicketClvDetails || bet.surface === "parlay" ? "border-t border-border" : ""
             )}>
               <div>
                 <p className="text-muted-foreground/60 text-xs mb-0.5">Req. Win %</p>
