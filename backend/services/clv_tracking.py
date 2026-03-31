@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from calculations import calculate_clv
+from services.model_calibration import update_scan_opportunity_model_evaluations_close_snapshot
 
 CLOSE_WINDOW_MINUTES = 20
 
@@ -103,6 +104,27 @@ def build_reference_snapshots(sides: list[dict[str, Any]]) -> tuple[dict[tuple[s
     return snapshot_by_event, snapshot_by_time
 
 
+def build_reference_pair_snapshots(
+    sides: list[dict[str, Any]],
+) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, float]]]:
+    snapshot_by_event: dict[str, dict[str, float]] = {}
+    snapshot_by_time: dict[str, dict[str, float]] = {}
+    for side in sides:
+        if str(side.get("surface") or "straight_bets").strip().lower() != "straight_bets":
+            continue
+        event_id = str(side.get("event_id") or "").strip()
+        commence_time = str(side.get("commence_time") or "")
+        team = str(side.get("team") or "")
+        pinnacle_odds = side.get("pinnacle_odds")
+        if pinnacle_odds is None or not team:
+            continue
+        if event_id:
+            snapshot_by_event.setdefault(event_id, {})[team] = float(pinnacle_odds)
+        if commence_time:
+            snapshot_by_time.setdefault(commence_time, {})[team] = float(pinnacle_odds)
+    return snapshot_by_event, snapshot_by_time
+
+
 def build_prop_reference_snapshots(
     sides: list[dict[str, Any]],
 ) -> tuple[dict[tuple[str, str, str, str, float], float], dict[tuple[str, str, str, str, float], float]]:
@@ -127,6 +149,30 @@ def build_prop_reference_snapshots(
     return snapshot_by_event, snapshot_by_time
 
 
+def build_prop_reference_pair_snapshots(
+    sides: list[dict[str, Any]],
+) -> tuple[dict[tuple[str, str, str, float], dict[str, float]], dict[tuple[str, str, str, float], dict[str, float]]]:
+    snapshot_by_event: dict[tuple[str, str, str, float], dict[str, float]] = {}
+    snapshot_by_time: dict[tuple[str, str, str, float], dict[str, float]] = {}
+    for side in sides:
+        if str(side.get("surface") or "").strip().lower() != "player_props":
+            continue
+        player_name = _normalize_text(side.get("player_name"))
+        market_key = _normalize_text(side.get("market_key"))
+        selection_side = _normalize_text(side.get("selection_side"))
+        line_value = _normalize_line_value(side.get("line_value"))
+        reference_odds = side.get("reference_odds")
+        if reference_odds is None or not player_name or not market_key or not selection_side or line_value is None:
+            continue
+        event_id = str(side.get("event_id") or "").strip()
+        commence_time = str(side.get("commence_time") or "")
+        if event_id:
+            snapshot_by_event.setdefault((event_id, player_name, market_key, line_value), {})[selection_side] = float(reference_odds)
+        if commence_time:
+            snapshot_by_time.setdefault((commence_time, player_name, market_key, line_value), {})[selection_side] = float(reference_odds)
+    return snapshot_by_event, snapshot_by_time
+
+
 def lookup_reference_odds(
     *,
     team: str | None,
@@ -144,6 +190,28 @@ def lookup_reference_odds(
             return match
     if normalized_commence and normalized_team:
         return snapshot_by_time.get((normalized_commence, normalized_team))
+    return None
+
+
+def lookup_opposing_reference_odds(
+    *,
+    team: str | None,
+    commence_time: str | None,
+    event_id: str | None,
+    pair_snapshot_by_event: dict[str, dict[str, float]],
+    pair_snapshot_by_time: dict[str, dict[str, float]],
+) -> float | None:
+    normalized_team = str(team or "")
+    normalized_event_id = str(event_id or "").strip()
+    normalized_commence = str(commence_time or "")
+    market = pair_snapshot_by_event.get(normalized_event_id) if normalized_event_id else None
+    if not market and normalized_commence:
+        market = pair_snapshot_by_time.get(normalized_commence)
+    if not isinstance(market, dict) or len(market) < 2:
+        return None
+    for candidate_team, candidate_odds in market.items():
+        if candidate_team != normalized_team:
+            return float(candidate_odds)
     return None
 
 
@@ -177,6 +245,35 @@ def lookup_prop_reference_odds(
             (normalized_commence, normalized_player, normalized_market, normalized_side, normalized_line)
         )
     return None
+
+
+def lookup_prop_opposing_reference_odds(
+    *,
+    player_name: str | None,
+    source_market_key: str | None,
+    selection_side: str | None,
+    line_value: float | None,
+    commence_time: str | None,
+    event_id: str | None,
+    pair_snapshot_by_event: dict[tuple[str, str, str, float], dict[str, float]],
+    pair_snapshot_by_time: dict[tuple[str, str, str, float], dict[str, float]],
+) -> float | None:
+    normalized_player = _normalize_text(player_name)
+    normalized_market = _normalize_text(source_market_key)
+    normalized_side = _normalize_text(selection_side)
+    normalized_line = _normalize_line_value(line_value)
+    if not normalized_player or not normalized_market or not normalized_side or normalized_line is None:
+        return None
+    normalized_event_id = str(event_id or "").strip()
+    normalized_commence = str(commence_time or "")
+    pair = pair_snapshot_by_event.get((normalized_event_id, normalized_player, normalized_market, normalized_line)) if normalized_event_id else None
+    if not pair and normalized_commence:
+        pair = pair_snapshot_by_time.get((normalized_commence, normalized_player, normalized_market, normalized_line))
+    if not isinstance(pair, dict):
+        return None
+    opposing_side = "under" if normalized_side == "over" else "over"
+    opposing_odds = pair.get(opposing_side)
+    return float(opposing_odds) if opposing_odds is not None else None
 
 
 def _coerce_selection_meta_dict(value: Any) -> dict[str, Any] | None:
@@ -358,6 +455,8 @@ def update_bet_reference_snapshots(
 
     straight_snapshot_by_event, straight_snapshot_by_time = build_reference_snapshots(sides)
     prop_snapshot_by_event, prop_snapshot_by_time = build_prop_reference_snapshots(sides)
+    straight_pair_by_event, straight_pair_by_time = build_reference_pair_snapshots(sides)
+    prop_pair_by_event, prop_pair_by_time = build_prop_reference_pair_snapshots(sides)
 
     if (
         not straight_snapshot_by_event
@@ -402,6 +501,16 @@ def update_bet_reference_snapshots(
                 snapshot_by_event=prop_snapshot_by_event,
                 snapshot_by_time=prop_snapshot_by_time,
             )
+            opposing_reference_odds = lookup_prop_opposing_reference_odds(
+                player_name=row.get("participant_name"),
+                source_market_key=row.get("source_market_key"),
+                selection_side=row.get("selection_side"),
+                line_value=_normalize_line_value(row.get("line_value")),
+                commence_time=row.get("commence_time"),
+                event_id=row.get("source_event_id") or row.get("clv_event_id"),
+                pair_snapshot_by_event=prop_pair_by_event,
+                pair_snapshot_by_time=prop_pair_by_time,
+            )
         else:
             if not row.get("clv_team"):
                 continue
@@ -412,6 +521,13 @@ def update_bet_reference_snapshots(
                 event_id=row.get("clv_event_id"),
                 snapshot_by_event=straight_snapshot_by_event,
                 snapshot_by_time=straight_snapshot_by_time,
+            )
+            opposing_reference_odds = lookup_opposing_reference_odds(
+                team=row.get("clv_team"),
+                commence_time=row.get("commence_time"),
+                event_id=row.get("clv_event_id"),
+                pair_snapshot_by_event=straight_pair_by_event,
+                pair_snapshot_by_time=straight_pair_by_time,
             )
 
         if reference_odds is None:
@@ -429,10 +545,17 @@ def update_bet_reference_snapshots(
             captured_at=row.get("clv_updated_at"),
             now=current,
         ):
+            clv_result = calculate_clv(
+                float(row.get("odds_american")),
+                float(reference_odds),
+                opposing_reference_odds,
+            ) if row.get("odds_american") is not None else None
             payload.update(
                 {
                     "pinnacle_odds_at_close": reference_odds,
                     "clv_updated_at": updated_at,
+                    "clv_ev_percent": clv_result["clv_ev_percent"] if isinstance(clv_result, dict) else None,
+                    "beat_close": clv_result["beat_close"] if isinstance(clv_result, dict) else None,
                 }
             )
             close_updated += 1
@@ -467,6 +590,8 @@ def update_scan_opportunity_reference_snapshots(
 
     straight_snapshot_by_event, straight_snapshot_by_time = build_reference_snapshots(sides)
     prop_snapshot_by_event, prop_snapshot_by_time = build_prop_reference_snapshots(sides)
+    straight_pair_by_event, straight_pair_by_time = build_reference_pair_snapshots(sides)
+    prop_pair_by_event, prop_pair_by_time = build_prop_reference_pair_snapshots(sides)
     if not straight_snapshot_by_event and not straight_snapshot_by_time and not prop_snapshot_by_event and not prop_snapshot_by_time:
         return {"latest_updated": 0, "close_updated": 0}
 
@@ -477,7 +602,7 @@ def update_scan_opportunity_reference_snapshots(
         query = (
             db.table("scan_opportunities")
             .select(
-                "id,surface,sport,team,commence_time,event_id,player_name,source_market_key,selection_side,line_value,"
+                "id,opportunity_key,surface,sport,team,commence_time,event_id,player_name,source_market_key,selection_side,line_value,"
                 "first_book_odds,latest_reference_odds,"
                 "latest_reference_updated_at,reference_odds_at_close,close_captured_at,clv_ev_percent,beat_close"
             )
@@ -507,6 +632,16 @@ def update_scan_opportunity_reference_snapshots(
                 snapshot_by_event=prop_snapshot_by_event,
                 snapshot_by_time=prop_snapshot_by_time,
             )
+            opposing_reference_odds = lookup_prop_opposing_reference_odds(
+                player_name=row.get("player_name"),
+                source_market_key=row.get("source_market_key"),
+                selection_side=row.get("selection_side"),
+                line_value=_normalize_line_value(row.get("line_value")),
+                commence_time=row.get("commence_time"),
+                event_id=row.get("event_id"),
+                pair_snapshot_by_event=prop_pair_by_event,
+                pair_snapshot_by_time=prop_pair_by_time,
+            )
         else:
             reference_odds = lookup_reference_odds(
                 team=row.get("team"),
@@ -514,6 +649,13 @@ def update_scan_opportunity_reference_snapshots(
                 event_id=row.get("event_id"),
                 snapshot_by_event=straight_snapshot_by_event,
                 snapshot_by_time=straight_snapshot_by_time,
+            )
+            opposing_reference_odds = lookup_opposing_reference_odds(
+                team=row.get("team"),
+                commence_time=row.get("commence_time"),
+                event_id=row.get("event_id"),
+                pair_snapshot_by_event=straight_pair_by_event,
+                pair_snapshot_by_time=straight_pair_by_time,
             )
         if reference_odds is None:
             continue
@@ -530,15 +672,26 @@ def update_scan_opportunity_reference_snapshots(
             captured_at=row.get("close_captured_at"),
             now=current,
         ):
-            clv_result = calculate_clv(float(row.get("first_book_odds")), reference_odds)
+            clv_result = calculate_clv(float(row.get("first_book_odds")), reference_odds, opposing_reference_odds)
             payload.update(
                 {
                     "reference_odds_at_close": reference_odds,
                     "close_captured_at": updated_at,
                     "clv_ev_percent": clv_result["clv_ev_percent"],
                     "beat_close": clv_result["beat_close"],
+                    "close_true_prob": clv_result.get("close_true_prob"),
+                    "close_quality": clv_result.get("close_quality"),
+                    "close_opposing_reference_odds": opposing_reference_odds,
                 }
             )
+            if row.get("opportunity_key"):
+                update_scan_opportunity_model_evaluations_close_snapshot(
+                    db,
+                    opportunity_key=str(row.get("opportunity_key")),
+                    close_reference_odds=float(reference_odds),
+                    close_opposing_reference_odds=opposing_reference_odds,
+                    close_captured_at=updated_at,
+                )
             close_updated += 1
 
         db.table("scan_opportunities").update(payload).eq("id", row["id"]).execute()

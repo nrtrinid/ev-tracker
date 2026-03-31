@@ -137,8 +137,8 @@ def maybe_send_scheduled_scan_no_alert_heartbeat(
                 "title": "Scheduled scan complete (no alerts)",
                 "description": "The scheduled scan ran successfully but found no qualifying lines to alert on.",
                 "fields": [
-                    {"name": "Started (UTC)", "value": started, "inline": True},
-                    {"name": "Finished (UTC)", "value": finished, "inline": True},
+                    {"name": "Started (UTC)", "value": started + "Z", "inline": True},
+                    {"name": "Finished (UTC)", "value": finished + "Z", "inline": True},
                     {"name": "Total sides", "value": str(total_sides), "inline": True},
                     {"name": "Alerts scheduled", "value": str(alerts_scheduled), "inline": True},
                 ],
@@ -189,7 +189,7 @@ def finalize_scheduled_scan_run(
     log_event(
         "scheduler.scan.completed",
         run_id=run_id,
-        finished_at=finished,
+        finished_at=finished + "Z",
         total_sides=total_sides,
         alerts_scheduled=alerts_scheduled,
         autolog_summary=autolog_summary,
@@ -215,8 +215,8 @@ def finalize_scheduled_scan_run(
         "last_scheduler_scan",
         {
             "run_id": run_id,
-            "started_at": started,
-            "finished_at": finished,
+            "started_at": started + "Z",
+            "finished_at": finished + "Z",
             "duration_ms": duration_ms,
             "total_sides": total_sides,
             "alerts_scheduled": alerts_scheduled,

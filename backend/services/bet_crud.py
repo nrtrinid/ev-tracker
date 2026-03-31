@@ -90,7 +90,7 @@ def compute_k_user(db, user_id: str) -> dict:
     try:
         res = _retry_supabase(lambda: (
             db.table("bets")
-            .select("*")
+            .select("promo_type,result,created_at,stake,payout_override,win_payout")
             .eq("user_id", user_id)
             .execute()
         ))
@@ -160,16 +160,16 @@ EV_LOCK_PROMO_TYPES: frozenset[str] = frozenset({
 })
 
 
-def _lock_ev_for_row(db, bet_id: str, user_id: str, row: dict, settings: dict) -> None:
+def _lock_ev_for_row(db, bet_id: str, user_id: str, row: dict, settings: dict) -> dict:
     """
     Compute EV once using the current effective k and write locked fields to DB.
     Only runs for promo types where k has a meaningful effect.
     Does NOT update bets that already have a valid lock (ev_locked_at is set).
     """
     if row.get("ev_locked_at") is not None:
-        return
+        return row
     if row.get("promo_type") not in EV_LOCK_PROMO_TYPES:
-        return
+        return row
 
     k_data = compute_k_user(db, user_id)
     k_derived = build_effective_k(settings, k_data["k_obs"], k_data["bonus_stake_settled"])
@@ -207,16 +207,27 @@ def _lock_ev_for_row(db, bet_id: str, user_id: str, row: dict, settings: dict) -
         true_prob=row.get("true_prob_at_entry"),
     )
     win_payout = payout_override or ev_result["win_payout"]
+    locked_updates = {
+        "ev_per_dollar_locked": ev_result["ev_per_dollar"],
+        "ev_total_locked": ev_result["ev_total"],
+        "win_payout_locked": win_payout,
+        "ev_locked_at": datetime.now(UTC).isoformat(),
+    }
 
     try:
-        db.table("bets").update({
-            "ev_per_dollar_locked": ev_result["ev_per_dollar"],
-            "ev_total_locked": ev_result["ev_total"],
-            "win_payout_locked": win_payout,
-            "ev_locked_at": datetime.now(UTC).isoformat(),
-        }).eq("id", bet_id).eq("user_id", user_id).execute()
+        _retry_supabase(lambda: (
+            db.table("bets")
+            .update(locked_updates)
+            .eq("id", bet_id)
+            .eq("user_id", user_id)
+            .execute()
+        ))
     except Exception as e:
         logger.warning("ev_lock.write_failed bet_id=%s err=%s", bet_id, e)
+        return row
+
+    row.update(locked_updates)
+    return row
 
 
 # ── Bet response builder ──────────────────────────────────────────────────────
@@ -395,9 +406,8 @@ def create_bet_impl(db, user: dict, bet: BetCreate) -> BetResponse:
         raise HTTPException(status_code=500, detail="Failed to create bet")
 
     row = result.data[0]
-    _lock_ev_for_row(db, row["id"], user["id"], row, settings)
-    fresh = db.table("bets").select("*").eq("id", row["id"]).execute()
-    return build_bet_response(fresh.data[0] if fresh.data else row, settings["k_factor"])
+    row = _lock_ev_for_row(db, row["id"], user["id"], row, settings)
+    return build_bet_response(row, settings["k_factor"])
 
 
 def get_bets_impl(
@@ -514,9 +524,8 @@ def update_bet_impl(db, user: dict, bet_id: str, bet: BetUpdate) -> BetResponse:
         raise HTTPException(status_code=404, detail="Bet not found")
 
     row = result.data[0]
-    _lock_ev_for_row(db, bet_id, user["id"], row, settings)
-    fresh = db.table("bets").select("*").eq("id", bet_id).execute()
-    return build_bet_response(fresh.data[0] if fresh.data else row, settings["k_factor"])
+    row = _lock_ev_for_row(db, bet_id, user["id"], row, settings)
+    return build_bet_response(row, settings["k_factor"])
 
 
 def update_bet_result_impl(db, user: dict, bet_id: str, result: BetResult) -> BetResponse:

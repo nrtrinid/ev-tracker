@@ -8,7 +8,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 
 from dependencies import require_ops_token
-from models import ResearchOpportunitySummaryResponse
+from models import ModelCalibrationSummaryResponse, ResearchOpportunitySummaryResponse
 from utils.telemetry import rss_mb
 from utils.time_utils import utc_now_iso_z
 
@@ -152,10 +152,32 @@ async def cron_run_auto_settle_impl(
 
     db = get_db()
     started = utc_now_iso_z()
+    weight_training_summary = None
     try:
         from services.odds_api import run_auto_settler
+        from services.player_prop_weights import train_player_prop_model_weights
 
         settled = await run_auto_settler(db, source=auto_settle_source)
+        try:
+            weight_training_summary = train_player_prop_model_weights(db)
+            log_event(
+                f"{log_prefix}.weight_training.completed",
+                run_id=run_id,
+                **(weight_training_summary or {}),
+            )
+        except Exception as weight_exc:
+            weight_training_summary = {
+                "ok": False,
+                "error_class": type(weight_exc).__name__,
+                "error": str(weight_exc),
+            }
+            log_event(
+                f"{log_prefix}.weight_training.failed",
+                level="warning",
+                run_id=run_id,
+                error_class=type(weight_exc).__name__,
+                error=str(weight_exc),
+            )
         log_event(f"{log_prefix}.completed", run_id=run_id, settled=settled)
     except Exception as e:
         log_event(
@@ -194,6 +216,8 @@ async def cron_run_auto_settle_impl(
             auto_meta["sports"] = summary["sports"]
         if isinstance(summary.get("prop_settle_telemetry"), dict):
             auto_meta["prop_settle_telemetry"] = summary["prop_settle_telemetry"]
+        if isinstance(weight_training_summary, dict):
+            auto_meta["player_prop_weight_training"] = weight_training_summary
         if not auto_meta:
             auto_meta = None
     persist_ops_job_run(
@@ -376,6 +400,18 @@ def ops_research_opportunities_summary_impl(
     """Protected research summary implementation used by the API route wrapper."""
     require_valid_cron_token(x_cron_token)
     return get_summary(get_db(), model_version=model_version, capture_class=capture_class, cohort_mode=cohort_mode)
+
+
+def ops_model_calibration_summary_impl(
+    x_cron_token: str | None,
+    *,
+    require_valid_cron_token: Callable[[str | None], None],
+    get_db: Callable[[], Any],
+    get_summary: Callable[[Any], ModelCalibrationSummaryResponse],
+) -> ModelCalibrationSummaryResponse:
+    """Protected calibration summary implementation used by the API route wrapper."""
+    require_valid_cron_token(x_cron_token)
+    return get_summary(get_db())
 
 
 async def cron_test_discord_impl(
@@ -627,6 +663,23 @@ def ops_research_opportunities_summary(
         model_version=model_version,
         capture_class=capture_class,
         cohort_mode=cohort_mode,
+    )
+
+
+@router.get("/api/ops/model-calibration/summary", response_model=ModelCalibrationSummaryResponse)
+def ops_model_calibration_summary(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    import main
+    from services.model_calibration import get_model_calibration_summary
+
+    return ops_model_calibration_summary_impl(
+        x_cron_token=x_ops_token or x_cron_token,
+        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        get_db=main.get_db,
+        get_summary=get_model_calibration_summary,
     )
 
 

@@ -20,6 +20,7 @@ import type {
   ParlaySlipLogRequest,
   ParlaySlipUpdate,
   ResearchOpportunitySummary,
+  ModelCalibrationSummary,
   AdminMarketRefreshResponse,
   OpsTriggerAutoSettleResponse,
   ScannerSurface,
@@ -361,6 +362,10 @@ export async function getResearchOpportunitySummary(params?: {
   if (params?.cohort_mode) qs.set("cohort_mode", params.cohort_mode);
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return fetchInternalAPI<ResearchOpportunitySummary>(`/api/ops/research-opportunities/summary${suffix}`);
+}
+
+export async function getModelCalibrationSummary(): Promise<ModelCalibrationSummary> {
+  return fetchInternalAPI<ModelCalibrationSummary>("/api/ops/model-calibration/summary");
 }
 
 // ============ Parlay Slips API ============

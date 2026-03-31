@@ -951,6 +951,7 @@ async def _run_jit_clv_snatcher_job():
 async def _run_auto_settler_job():
     """Auto-Settler: grade completed ML bets using The Odds API /scores endpoint."""
     from services.odds_api import run_auto_settler, get_last_auto_settler_summary
+    from services.player_prop_weights import train_player_prop_model_weights
 
     run_id = _new_run_id("auto_settler")
     started = _utc_now_iso()
@@ -958,8 +959,29 @@ async def _run_auto_settler_job():
     _record_scheduler_heartbeat("auto_settler", run_id, "started")
     _log_event("scheduler.auto_settler.started", run_id=run_id)
     db = get_db()
+    weight_training_summary = None
     try:
         settled = await run_auto_settler(db, source="auto_settle_scheduler")
+        try:
+            weight_training_summary = train_player_prop_model_weights(db)
+            _log_event(
+                "scheduler.auto_settler.weight_training.completed",
+                run_id=run_id,
+                **(weight_training_summary or {}),
+            )
+        except Exception as weight_exc:
+            weight_training_summary = {
+                "ok": False,
+                "error_class": type(weight_exc).__name__,
+                "error": str(weight_exc),
+            }
+            _log_event(
+                "scheduler.auto_settler.weight_training.failed",
+                level="warning",
+                run_id=run_id,
+                error_class=type(weight_exc).__name__,
+                error=str(weight_exc),
+            )
         finished = _utc_now_iso()
         _log_event(
             "scheduler.auto_settler.completed",
@@ -995,6 +1017,8 @@ async def _run_auto_settler_job():
                 _auto_meta["sports"] = summary["sports"]
             if isinstance(summary.get("prop_settle_telemetry"), dict):
                 _auto_meta["prop_settle_telemetry"] = summary["prop_settle_telemetry"]
+            if isinstance(weight_training_summary, dict):
+                _auto_meta["player_prop_weight_training"] = weight_training_summary
             if not _auto_meta:
                 _auto_meta = None
         _persist_ops_job_run(

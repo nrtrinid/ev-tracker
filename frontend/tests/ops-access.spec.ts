@@ -32,4 +32,12 @@ test.describe("operator access control", () => {
     const body = await response.json().catch(() => ({}));
     expect(String(body.error || "").length).toBeGreaterThan(0);
   });
+
+  test("non-admin cannot call /api/ops/model-calibration/summary bridge directly", async ({ page }) => {
+    const response = await page.request.get("/api/ops/model-calibration/summary");
+
+    expect([401, 403]).toContain(response.status());
+    const body = await response.json().catch(() => ({}));
+    expect(String(body.error || "").length).toBeGreaterThan(0);
+  });
 });

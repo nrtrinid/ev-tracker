@@ -520,16 +520,6 @@ export function ScannerResultFilters({
         <div className="flex items-center justify-between gap-2 pt-0.5">
           <div className="flex flex-1 flex-wrap items-center gap-1.5">
             <span className="text-[10px] font-medium text-muted-foreground">Filters:</span>
-            {shouldShowProfitBoostContextControls(activeLens) && (
-              <button
-                type="button"
-                onClick={() => setMobileBoostOpen(true)}
-                className="rounded-full border border-[#C4A35A]/35 bg-[#C4A35A]/12 px-2 py-0.5 text-[10px] font-medium text-[#5C4D2E] transition-colors hover:bg-[#C4A35A]/20"
-                aria-label="Set profit boost percentage"
-              >
-                Boost: {boostPercent}%
-              </button>
-            )}
             {activeFilterChips.slice(0, 3).map((chip) => (
               <span
                 key={chip}

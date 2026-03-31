@@ -21,8 +21,6 @@ import { toast } from "sonner";
 // Map sportsbook names to button variants
 type SportsbookButtonVariant = NonNullable<ButtonProps["variant"]>;
 
-const BOOST_PROMO_TYPES: PromoType[] = ["boost_30", "boost_50", "boost_100", "boost_custom"];
-
 const sportsbookVariants: Record<string, SportsbookButtonVariant> = {
   DraftKings: "draftkings",
   FanDuel: "fanduel",
@@ -55,7 +53,6 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
     odds: "",
     stake: "",
     boost_percent: "",
-    payout_override: "",
     winnings_cap: "",
     opposing_odds: "",
     notes: "",
@@ -74,9 +71,7 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
         odds: String(Math.abs(bet.odds_american)),
         stake: String(bet.stake),
         boost_percent: bet.boost_percent ? String(bet.boost_percent) : "",
-        payout_override:
-          bet.payout_override != null ? String(bet.payout_override) : "",
-        winnings_cap: bet.winnings_cap != null ? String(bet.winnings_cap) : "",
+        winnings_cap: bet.winnings_cap ? String(bet.winnings_cap) : "",
         opposing_odds: bet.opposing_odds ? String(Math.abs(bet.opposing_odds)) : "",
         notes: bet.notes || "",
         event_date: bet.event_date || "",
@@ -109,10 +104,7 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
       toast.error("Boost percent must be between 0 and 300");
       return;
     }
-    const payoutOverrideRaw = parseFloat(formData.payout_override);
-    const payoutOverrideNum = Number.isFinite(payoutOverrideRaw) ? payoutOverrideRaw : 0;
-    const winningsCapRaw = parseFloat(formData.winnings_cap);
-    const winningsCapNum = Number.isFinite(winningsCapRaw) ? winningsCapRaw : 0;
+    const winningsCapNum = parseFloat(formData.winnings_cap) || 0;
 
     try {
       await updateBet.mutateAsync({
@@ -129,11 +121,7 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
             formData.promo_type === "boost_custom"
               ? Math.max(0, Math.min(300, boostPercentNum)) || undefined
               : undefined,
-          payout_override: payoutOverrideNum > 0 ? payoutOverrideNum : undefined,
-          winnings_cap:
-            BOOST_PROMO_TYPES.includes(formData.promo_type) && winningsCapNum > 0
-              ? winningsCapNum
-              : undefined,
+          winnings_cap: winningsCapNum || undefined,
           notes: formData.notes || undefined,
           event_date: formData.event_date || undefined,
         },
@@ -264,7 +252,6 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
               onChange={(value) => updateField("odds", value)}
               placeholder="150"
               defaultSign="+"
-              americanOddsSeed={bet?.odds_american}
               label="Odds (American)"
               className="[&_input]:text-lg"
             />
@@ -327,7 +314,6 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
                   onChange={(value) => updateField("opposing_odds", value)}
                   placeholder="180"
                   defaultSign="-"
-                  americanOddsSeed={bet?.opposing_odds ?? null}
                   label="Opposing Line (optional)"
                   className="[&_input]:font-mono"
                 />
@@ -345,39 +331,18 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
                 />
               </div>
 
+              {/* Winnings Cap */}
               <div>
                 <label className="text-sm font-medium mb-2 block">
-                  Payout override ($) <span className="text-muted-foreground font-normal">(optional)</span>
+                  Winnings Cap ($) <span className="text-muted-foreground font-normal">(optional)</span>
                 </label>
                 <Input
                   type="number"
-                  step="0.01"
-                  placeholder="e.g. 225.50 if the book differs from calculated"
-                  value={formData.payout_override}
-                  onChange={(e) => updateField("payout_override", e.target.value)}
+                  placeholder="Optional max bonus winnings"
+                  value={formData.winnings_cap}
+                  onChange={(e) => updateField("winnings_cap", e.target.value)}
                 />
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Total cash back if you win. Use when the book&apos;s payout differs from the calculated line.
-                </p>
               </div>
-
-              {BOOST_PROMO_TYPES.includes(formData.promo_type) && (
-                <div>
-                  <label className="text-sm font-medium mb-2 block">
-                    Boost winnings cap ($) <span className="text-muted-foreground font-normal">(optional)</span>
-                  </label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    placeholder="Max extra $ from boost (token cap)"
-                    value={formData.winnings_cap}
-                    onChange={(e) => updateField("winnings_cap", e.target.value)}
-                  />
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Only affects boosted promos: limits the extra payout on top of a normal win.
-                  </p>
-                </div>
-              )}
 
               {/* Notes */}
               <div>

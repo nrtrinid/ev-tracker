@@ -5,13 +5,17 @@ import httpx
 
 from services.player_props import (
     PLAYER_PROP_REFERENCE_SOURCE,
+    _aggregate_reference_estimates,
+    _book_weight_for_model,
     _build_prizepicks_comparison_cards,
     _build_prop_side_candidates,
     _compute_confidence,
+    _interpolate_logit_probability,
     _prop_cache_slot,
     _match_curated_events,
     _normalize_prop_outcomes,
     _parse_prop_sides,
+    _shrink_probability_toward_even,
     _weighted_consensus_prob,
     get_cached_or_scan_player_props,
     get_player_prop_markets,
@@ -1381,6 +1385,75 @@ async def test_scan_player_props_disables_external_prizepicks_provider(monkeypat
 
 
 # ── Weighted consensus probability tests ──────────────────────────────────────
+
+
+def test_interpolate_logit_probability_is_monotonic_between_brackets():
+    lower = _interpolate_logit_probability(
+        lower_line=24.5,
+        lower_prob=0.58,
+        upper_line=25.5,
+        upper_prob=0.42,
+        target_line=24.75,
+    )
+    midpoint = _interpolate_logit_probability(
+        lower_line=24.5,
+        lower_prob=0.58,
+        upper_line=25.5,
+        upper_prob=0.42,
+        target_line=25.0,
+    )
+    upper = _interpolate_logit_probability(
+        lower_line=24.5,
+        lower_prob=0.58,
+        upper_line=25.5,
+        upper_prob=0.42,
+        target_line=25.25,
+    )
+
+    assert lower is not None and midpoint is not None and upper is not None
+    assert 0.42 < upper < midpoint < lower < 0.58
+
+
+def test_aggregate_reference_estimates_v2_filters_logit_outlier_and_marks_mixed_inputs():
+    aggregation = _aggregate_reference_estimates(
+        reference_estimates=[
+            {"book_key": "betonlineag", "prob": 0.52, "input_mode": "exact"},
+            {"book_key": "bovada", "prob": 0.53, "input_mode": "interpolated"},
+            {"book_key": "betmgm", "prob": 0.51, "input_mode": "exact"},
+            {"book_key": "draftkings", "prob": 0.82, "input_mode": "exact"},
+        ],
+        model_key="props_v2_shadow",
+        market_key="player_points",
+        weight_overrides=None,
+    )
+
+    assert aggregation is not None
+    assert aggregation["filtered_reference_count"] == 3
+    assert aggregation["interpolation_mode"] == "mixed"
+    assert 0.51 <= aggregation["raw_true_prob"] <= 0.54
+
+
+def test_shrink_probability_toward_even_is_smaller_for_higher_confidence():
+    low_conf_prob, low_conf_shrink = _shrink_probability_toward_even(0.60, confidence_score=0.20)
+    high_conf_prob, high_conf_shrink = _shrink_probability_toward_even(0.60, confidence_score=0.80)
+
+    assert low_conf_shrink > high_conf_shrink
+    assert abs(0.60 - low_conf_prob) > abs(0.60 - high_conf_prob)
+
+
+def test_book_weight_for_model_falls_back_to_static_defaults_when_no_override_exists():
+    assert _book_weight_for_model(
+        book_key="betonlineag",
+        market_key="player_points",
+        model_key="props_v2_shadow",
+        weight_overrides=None,
+    ) == 3.0
+    assert _book_weight_for_model(
+        book_key="bovada",
+        market_key="player_points",
+        model_key="props_v2_shadow",
+        weight_overrides={},
+    ) == 1.5
 
 
 def test_weighted_consensus_prob_single_book_returns_its_own_prob():

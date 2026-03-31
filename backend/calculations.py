@@ -3,6 +3,8 @@ EV Calculation Engine
 Ports the Excel spreadsheet formulas to Python.
 """
 
+import math
+
 # Default vig to account for book edge when we only have one side of the market
 DEFAULT_VIG = 0.045
 
@@ -72,6 +74,73 @@ def calculate_hold_from_odds(odds1: float, odds2: float) -> float | None:
     
     hold = (implied_prob1 + implied_prob2) - 1
     return hold if hold > 0 else None
+
+
+def devig_two_way_american(
+    side_american: float,
+    opposing_american: float,
+) -> dict[str, float] | None:
+    """
+    Remove vig from a two-way market represented by American odds.
+
+    Returns:
+        {
+            "side_prob": <fair probability for side_american>,
+            "opposing_prob": <fair probability for opposing_american>,
+        }
+        or None when the inputs are invalid.
+    """
+    try:
+        side_decimal = american_to_decimal(float(side_american))
+        opposing_decimal = american_to_decimal(float(opposing_american))
+    except Exception:
+        return None
+
+    implied_side = 1 / side_decimal
+    implied_opposing = 1 / opposing_decimal
+    implied_total = implied_side + implied_opposing
+    if implied_total <= 0:
+        return None
+
+    return {
+        "side_prob": implied_side / implied_total,
+        "opposing_prob": implied_opposing / implied_total,
+    }
+
+
+def calculate_close_calibration_metrics(
+    predicted_prob: float,
+    target_prob: float,
+) -> dict[str, float] | None:
+    """
+    Compare a model's predicted probability to a proxy target probability.
+
+    This uses the de-vigged close probability as the calibration target rather
+    than a binary settled result. The metrics are still useful for comparing
+    model versions during shadow rollout.
+    """
+    try:
+        pred = float(predicted_prob)
+        target = float(target_prob)
+    except Exception:
+        return None
+
+    if not (0 < pred < 1 and 0 < target < 1):
+        return None
+
+    clipped_pred = min(max(pred, 1e-6), 1 - 1e-6)
+    clipped_target = min(max(target, 1e-6), 1 - 1e-6)
+
+    brier = (clipped_pred - clipped_target) ** 2
+    log_loss = -(
+        clipped_target * math.log(clipped_pred)
+        + (1 - clipped_target) * math.log(1 - clipped_pred)
+    )
+
+    return {
+        "brier_score": round(brier, 6),
+        "log_loss": round(log_loss, 6),
+    }
 
 
 def calculate_ev(
@@ -180,6 +249,7 @@ def calculate_ev(
 def calculate_clv(
     book_american: float,
     close_pinnacle_american: float,
+    close_opposing_american: float | None = None,
 ) -> dict:
     """
     Closing Line Value: measures edge of the logged bet against Pinnacle's
@@ -195,14 +265,21 @@ def calculate_clv(
 
     Returns:
         clv_ev_percent:  Edge vs. close (positive = beat the close).
-        close_true_prob: Pinnacle's closing implied probability (single-side, no full de-vig).
+        close_true_prob: Pinnacle's closing implied probability.
         book_decimal:    Your book's decimal odds.
         beat_close:      True when clv_ev_percent > 0.
     """
     book_decimal = american_to_decimal(book_american)
-    close_decimal = american_to_decimal(close_pinnacle_american)
-
-    close_true_prob = 1.0 / close_decimal
+    close_quality = "single"
+    paired_probs = None
+    if close_opposing_american is not None:
+        paired_probs = devig_two_way_american(close_pinnacle_american, close_opposing_american)
+    if paired_probs:
+        close_true_prob = paired_probs["side_prob"]
+        close_quality = "paired"
+    else:
+        close_decimal = american_to_decimal(close_pinnacle_american)
+        close_true_prob = 1.0 / close_decimal
     ev_raw = (close_true_prob * book_decimal) - 1.0
 
     return {
@@ -210,6 +287,8 @@ def calculate_clv(
         "close_true_prob": round(close_true_prob, 4),
         "book_decimal": round(book_decimal, 4),
         "beat_close": ev_raw > 0,
+        "close_quality": close_quality,
+        "close_opposing_american": round(float(close_opposing_american), 4) if close_opposing_american is not None else None,
     }
 
 

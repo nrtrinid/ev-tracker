@@ -574,6 +574,93 @@ class ResearchOpportunitySummaryResponse(BaseModel):
     recent_opportunities: list[ResearchOpportunityRecentRow]
 
 
+class ModelCalibrationBreakdownItem(BaseModel):
+    """Aggregate calibration metrics for a grouping dimension."""
+
+    key: str
+    captured_count: int
+    valid_close_count: int
+    paired_close_count: int
+    avg_brier_score: float | None = None
+    avg_log_loss: float | None = None
+    avg_clv_percent: float | None = None
+    beat_close_pct: float | None = None
+
+
+class ModelCalibrationCohortTrendRow(BaseModel):
+    """Daily calibration trend row for the props model tracker."""
+
+    cohort_key: str
+    captured_count: int
+    valid_close_count: int
+    avg_brier_score: float | None = None
+    avg_log_loss: float | None = None
+    avg_clv_percent: float | None = None
+    beat_close_pct: float | None = None
+
+
+class ModelCalibrationRecentComparisonRow(BaseModel):
+    """Side-by-side baseline vs candidate model snapshot for a recent opportunity."""
+
+    opportunity_key: str
+    surface: ScannerSurface = "player_props"
+    first_seen_at: datetime
+    sport: str
+    event: str
+    sportsbook: str
+    market: str
+    player_name: str | None = None
+    selection_side: str | None = None
+    line_value: float | None = None
+    close_quality: str | None = None
+    close_true_prob: float | None = None
+    baseline_model_key: str | None = None
+    baseline_true_prob: float | None = None
+    baseline_ev_percentage: float | None = None
+    baseline_clv_ev_percent: float | None = None
+    candidate_model_key: str | None = None
+    candidate_true_prob: float | None = None
+    candidate_ev_percentage: float | None = None
+    candidate_clv_ev_percent: float | None = None
+
+
+class ModelCalibrationReleaseGate(BaseModel):
+    """Promotion gate summary for the shadow props model."""
+
+    candidate_model_key: str
+    baseline_model_key: str
+    candidate_valid_close_count: int
+    baseline_valid_close_count: int
+    candidate_avg_brier_score: float | None = None
+    baseline_avg_brier_score: float | None = None
+    candidate_avg_log_loss: float | None = None
+    baseline_avg_log_loss: float | None = None
+    candidate_avg_clv_percent: float | None = None
+    baseline_avg_clv_percent: float | None = None
+    candidate_beat_close_pct: float | None = None
+    baseline_beat_close_pct: float | None = None
+    eligible: bool
+    passes: bool
+    reasons: list[str] = Field(default_factory=list)
+
+
+class ModelCalibrationSummaryResponse(BaseModel):
+    """Operator summary for live/shadow props model calibration."""
+
+    captured_count: int
+    valid_close_count: int
+    paired_close_count: int
+    fallback_close_count: int
+    paired_close_pct: float | None = None
+    by_model: list[ModelCalibrationBreakdownItem] = Field(default_factory=list)
+    by_market: list[ModelCalibrationBreakdownItem] = Field(default_factory=list)
+    by_sportsbook: list[ModelCalibrationBreakdownItem] = Field(default_factory=list)
+    by_interpolation_mode: list[ModelCalibrationBreakdownItem] = Field(default_factory=list)
+    cohort_trend: list[ModelCalibrationCohortTrendRow] = Field(default_factory=list)
+    recent_comparisons: list[ModelCalibrationRecentComparisonRow] = Field(default_factory=list)
+    release_gate: ModelCalibrationReleaseGate
+
+
 class ParlayWarning(BaseModel):
     """A correlation or pricing warning attached to a parlay slip."""
 

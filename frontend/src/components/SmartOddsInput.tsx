@@ -9,8 +9,6 @@ interface SmartOddsInputProps {
   onChange: (value: string) => void;
   placeholder?: string;
   defaultSign?: "+" | "-";
-  /** Authoritative American odds (e.g. bet.odds_american). Syncs +/- when this reference changes; parent `value` is still abs-only. */
-  americanOddsSeed?: number | null;
   inputRef?: React.RefObject<HTMLInputElement>;
   className?: string;
   label?: string;
@@ -28,7 +26,6 @@ export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>
       onChange,
       placeholder = "150",
       defaultSign = "+",
-      americanOddsSeed,
       inputRef,
       className,
       label,
@@ -48,26 +45,22 @@ export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>
       isPositive,
     }));
 
-    // Edit / scanner: parent keeps magnitude-only in `value`; sign comes from real American odds
+    // Parse current value to extract sign and number on mount or when value changes from outside
     useEffect(() => {
-      if (americanOddsSeed == null || americanOddsSeed === 0 || Number.isNaN(americanOddsSeed)) {
-        return;
-      }
-      setIsPositive(americanOddsSeed > 0);
-    }, [americanOddsSeed]);
-
-    // Strip embedded minus into toggle; never infer "+" from abs-only values (that was forcing favorites to +)
-    useEffect(() => {
-      if (!value?.trim()) {
+      if (value) {
+        // If value already has sign, parse it
+        const num = parseFloat(value);
+        if (!isNaN(num) && num !== 0) {
+          setIsPositive(num >= 0);
+          // Store absolute value
+          if (num < 0) {
+            onChange(Math.abs(num).toString());
+          }
+        }
+      } else {
         setIsPositive(defaultSign === "+");
-        return;
       }
-      const num = parseFloat(value);
-      if (!Number.isNaN(num) && num < 0) {
-        setIsPositive(false);
-        onChange(Math.abs(num).toString());
-      }
-    }, [defaultSign, onChange, value]);
+    }, [defaultSign, onChange, value]); // Add missing dependencies
 
     const handleToggleSign = () => {
       setIsPositive(!isPositive);
@@ -111,10 +104,10 @@ export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>
             type="button"
             onClick={handleToggleSign}
             className={cn(
-              "h-12 w-10 flex items-center justify-center rounded-l-md border-r border-border bg-background font-mono text-base font-medium transition-all shrink-0",
+              "h-12 w-10 flex items-center justify-center rounded-l-md border-r border-input bg-background font-mono text-base font-medium transition-all shrink-0",
               isPositive
-                ? "text-profit hover:bg-profit/10"
-                : "text-loss hover:bg-loss/10"
+                ? "text-[#4A7C59] hover:bg-[#4A7C59]/5 hover:border-[#4A7C59]/20"
+                : "text-[#B85C38] hover:bg-[#B85C38]/5 hover:border-[#B85C38]/20"
             )}
             tabIndex={-1}
           >

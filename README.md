@@ -253,6 +253,7 @@ A small but meaningful test suite protects EV math, settlement/profit logic, sch
 | [docs/testing.md](./docs/testing.md) | Unit/integration/e2e strategy and hardening coverage |
 | [docs/workflow.md](./docs/workflow.md) | Lightweight stable-vs-dev workflow for solo shipping and beta testers |
 | [PROJECT.md](./PROJECT.md) | Architecture, conventions, key decisions |
+| [DEPLOY.md](./DEPLOY.md) | VPS deploy, env reload, health check |
 
 ---
 

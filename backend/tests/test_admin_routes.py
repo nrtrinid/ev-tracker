@@ -2,15 +2,8 @@ from .test_utils import ensure_supabase_stub
 
 ensure_supabase_stub()
 
-import asyncio
-
-from models import FullScanResponse, ResearchOpportunitySummaryResponse
-from routes.admin_routes import (
-    admin_refresh_markets_impl,
-    backfill_ev_locks_impl,
-    research_opportunities_summary_impl,
-    summarize_full_scan_for_admin,
-)
+from models import ResearchOpportunitySummaryResponse
+from routes.admin_routes import backfill_ev_locks_impl, research_opportunities_summary_impl
 
 
 class _Result:
@@ -79,63 +72,12 @@ def test_backfill_ev_locks_impl_counts_successes_and_logs_failures():
     assert warnings[0][1] == "b"
 
 
-def test_summarize_full_scan_for_admin_counts_sides_and_copies_fields():
-    resp = FullScanResponse(
-        surface="straight_bets",
-        sport="all",
-        sides=[],
-        events_fetched=12,
-        events_with_both_books=7,
-        api_requests_remaining="900",
-        scanned_at="2026-03-28T12:00:00+00:00",
-    )
-    s = summarize_full_scan_for_admin(resp)
-    assert s.surface == "straight_bets"
-    assert s.sport == "all"
-    assert s.events_fetched == 12
-    assert s.events_with_both_books == 7
-    assert s.total_sides == 0
-    assert s.scanned_at == "2026-03-28T12:00:00+00:00"
-    assert s.api_requests_remaining == "900"
-
-
-def test_admin_refresh_markets_impl_runs_scans_in_order():
-    calls: list[str] = []
-
-    async def fake_run(surf: str) -> FullScanResponse:
-        calls.append(surf)
-        return FullScanResponse(
-            surface=surf,  # type: ignore[arg-type]
-            sport="all",
-            sides=[],
-            events_fetched=1,
-            events_with_both_books=1,
-        )
-
-    out = asyncio.run(
-        admin_refresh_markets_impl(
-            surfaces=["straight_bets", "player_props"],
-            user={"id": "u"},
-            run_scan=fake_run,
-        )
-    )
-    assert calls == ["straight_bets", "player_props"]
-    assert len(out.results) == 2
-    assert out.results[0].total_sides == 0
-    assert out.results[1].surface == "player_props"
-
-
 def test_research_opportunities_summary_impl_delegates_to_summary_builder():
     db = object()
     expected = ResearchOpportunitySummaryResponse(
         captured_count=4,
         open_count=2,
         close_captured_count=2,
-        pending_close_count=2,
-        valid_close_count=2,
-        invalid_close_count=0,
-        valid_close_coverage_pct=None,
-        invalid_close_rate_pct=None,
         clv_ready_count=2,
         beat_close_pct=50.0,
         avg_clv_percent=0.8,

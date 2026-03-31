@@ -1,31 +1,7 @@
 import type { MarketSide, ParlayCartLeg, PromoType, ScannedBetData } from "@/lib/types";
 import { calculateStealthStake, decimalToAmerican } from "@/lib/utils";
 
-import type { PickEmBoardCard } from "./pickem-board";
 import type { ScannerLens } from "./scanner-ui-model";
-
-function formatPickEmLineValue(value: number): string {
-  if (Number.isInteger(value)) {
-    return `${value}`;
-  }
-  return `${Number.parseFloat(value.toFixed(2))}`;
-}
-
-function buildPlayerPropSelectionKeyParts(
-  eventId: string | null | undefined,
-  marketKey: string,
-  playerName: string,
-  side: string,
-  lineValue: number | null | undefined,
-): string {
-  const lineToken = lineValue == null ? "" : `:${lineValue}`;
-  return [
-    String(eventId ?? "").trim().toLowerCase(),
-    marketKey.trim().toLowerCase(),
-    playerName.trim().toLowerCase(),
-    side.trim().toLowerCase(),
-  ].join("|") + lineToken;
-}
 
 export function toggleScannerBookSelection(current: string[], book: string): string[] {
   if (current.includes(book)) {
@@ -210,66 +186,6 @@ export function buildParlayCartLeg(side: MarketSide): ParlayCartLeg {
       rawPinnacleOdds: side.pinnacle_odds,
       sportsbookDeeplinkUrl: side.sportsbook_deeplink_url,
       sportsbookDeeplinkLevel: side.sportsbook_deeplink_level,
-    },
-  };
-}
-
-/** Builds a parlay cart leg from a Pick'em consensus card (best book for the consensus side). */
-export function buildParlayCartLegFromPickEmCard(card: PickEmBoardCard): ParlayCartLeg | null {
-  const side = card.consensus_side;
-  const sportsbook = side === "over" ? card.best_over_sportsbook : card.best_under_sportsbook;
-  const bookOdds = side === "over" ? card.best_over_odds : card.best_under_odds;
-  const deeplink = side === "over" ? card.best_over_deeplink_url : card.best_under_deeplink_url;
-  const trueProb = side === "over" ? card.consensus_over_prob : card.consensus_under_prob;
-
-  if (!sportsbook?.trim() || bookOdds == null || !Number.isFinite(bookOdds)) {
-    return null;
-  }
-
-  const selectionKey = buildPlayerPropSelectionKeyParts(
-    card.event_id,
-    card.market_key,
-    card.player_name,
-    side,
-    card.line_value,
-  );
-
-  const sideLabel = side === "over" ? "Over" : "Under";
-  const display = `${card.player_name} ${sideLabel} ${formatPickEmLineValue(card.line_value)}`;
-  const referenceOddsAmerican = fairAmericanFromTrueProbability(trueProb);
-
-  return {
-    id: `player_props:${selectionKey}:${sportsbook}`,
-    surface: "player_props",
-    eventId: card.event_id ?? undefined,
-    marketKey: card.market_key,
-    selectionKey,
-    sportsbook,
-    oddsAmerican: bookOdds,
-    referenceOddsAmerican,
-    referenceTrueProbability: trueProb,
-    referenceSource: "pickem_consensus",
-    display,
-    event: card.event,
-    sport: card.sport,
-    commenceTime: card.commence_time,
-    correlationTags: [card.event_id ?? card.event, card.player_name, card.market_key],
-    team: card.team ?? undefined,
-    participantName: card.player_name,
-    participantId: card.participant_id ?? undefined,
-    selectionSide: side,
-    lineValue: card.line_value,
-    marketDisplay: card.market,
-    sourceEventId: card.event_id ?? undefined,
-    sourceMarketKey: card.market_key,
-    sourceSelectionKey: selectionKey,
-    selectionMeta: {
-      opponent: card.opponent,
-      referenceBookmakers: card.exact_line_bookmakers,
-      referenceBookmakerCount: card.exact_line_bookmaker_count,
-      confidenceLabel: card.confidence_label,
-      sportsbookDeeplinkUrl: deeplink,
-      pickEmComparisonKey: card.comparison_key,
     },
   };
 }

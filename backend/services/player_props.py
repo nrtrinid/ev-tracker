@@ -1,13 +1,17 @@
 import asyncio
+import json
 import logging
+import math
 import os
 import time
 from statistics import median
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import httpx
 
 from calculations import american_to_decimal, decimal_to_american, kelly_fraction
+from services.player_prop_weights import get_player_prop_weight_overrides
 from services.espn_scoreboard import (
     build_matchup_player_lookup,
     extract_national_tv_matchups,
@@ -43,6 +47,13 @@ PLAYER_PROP_BOOKS = {
     "fanduel": "FanDuel",
 }
 PLAYER_PROP_REFERENCE_SOURCE = "market_weighted_consensus"
+PLAYER_PROP_V2_REFERENCE_SOURCE = "market_logit_consensus_v2"
+PLAYER_PROP_MODEL_V1_LIVE = "props_v1_live"
+PLAYER_PROP_MODEL_V2_LIVE = "props_v2_live"
+PLAYER_PROP_MODEL_V2_SHADOW = "props_v2_shadow"
+PLAYER_PROP_ACTIVE_MODEL_ENV = "PLAYER_PROP_ACTIVE_MODEL"
+PLAYER_PROP_SHADOW_MODEL_ENV = "PLAYER_PROP_SHADOW_MODEL"
+PLAYER_PROP_DEFAULT_STRAIGHT_MODEL = "straight_h2h_live"
 
 # Trust weights for weighted consensus probability estimation.
 # Higher weight = sharper / more trusted for true-probability anchoring.
@@ -61,6 +72,25 @@ PLAYER_PROP_CACHE_VERSION = "v2"
 _props_cache: dict[str, dict] = {}
 _props_locks: dict[str, asyncio.Lock] = {}
 logger = logging.getLogger("ev_tracker")
+
+
+def get_player_prop_active_model_key() -> str:
+    raw = str(os.getenv(PLAYER_PROP_ACTIVE_MODEL_ENV) or "").strip().lower()
+    if raw in {PLAYER_PROP_MODEL_V1_LIVE, PLAYER_PROP_MODEL_V2_LIVE}:
+        return raw
+    return PLAYER_PROP_MODEL_V1_LIVE
+
+
+def get_player_prop_shadow_model_key(active_model_key: str | None = None) -> str | None:
+    normalized_active = (active_model_key or get_player_prop_active_model_key()).strip().lower()
+    raw = str(os.getenv(PLAYER_PROP_SHADOW_MODEL_ENV) or "").strip().lower()
+    if raw in {"", "off", "none", "disabled"}:
+        return PLAYER_PROP_MODEL_V2_SHADOW if normalized_active == PLAYER_PROP_MODEL_V1_LIVE else None
+    if raw == normalized_active:
+        return None
+    if raw == PLAYER_PROP_MODEL_V2_SHADOW:
+        return raw
+    return None
 
 
 def get_player_prop_markets() -> list[str]:
@@ -385,6 +415,304 @@ def _reference_american_from_true_prob(true_prob: float) -> int | None:
     return decimal_to_american(fair_decimal)
 
 
+def _reference_source_for_model_key(model_key: str) -> str:
+    normalized = str(model_key or "").strip().lower()
+    if normalized in {PLAYER_PROP_MODEL_V2_LIVE, PLAYER_PROP_MODEL_V2_SHADOW}:
+        return PLAYER_PROP_V2_REFERENCE_SOURCE
+    return PLAYER_PROP_REFERENCE_SOURCE
+
+
+def _is_v2_player_prop_model(model_key: str) -> bool:
+    normalized = str(model_key or "").strip().lower()
+    return normalized in {PLAYER_PROP_MODEL_V2_LIVE, PLAYER_PROP_MODEL_V2_SHADOW}
+
+
+def _clip_probability(value: float, *, epsilon: float = 1e-6) -> float:
+    return min(max(float(value), epsilon), 1 - epsilon)
+
+
+def _logit_probability(value: float) -> float:
+    clipped = _clip_probability(value)
+    return math.log(clipped / (1 - clipped))
+
+
+def _inv_logit(value: float) -> float:
+    if value >= 0:
+        z = math.exp(-value)
+        return 1 / (1 + z)
+    z = math.exp(value)
+    return z / (1 + z)
+
+
+def _median_absolute_deviation(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    anchor = float(median(values))
+    deviations = [abs(value - anchor) for value in values]
+    return float(median(deviations)) if deviations else 0.0
+
+
+def _player_probabilities_for_pair(pair: dict[str, dict], *, side: str) -> dict[str, float] | None:
+    true_probs = _devig_pair_probabilities(pair["over"], pair["under"])
+    if not true_probs:
+        return None
+    if side == "under":
+        return {"side_prob": true_probs["under"], "over_prob": true_probs["over"]}
+    return {"side_prob": true_probs["over"], "over_prob": true_probs["over"]}
+
+
+def _book_line_pairs_for_player(
+    selection_pairs_by_book: dict[str, dict[tuple[str, float | None], dict[str, dict]]],
+    *,
+    reference_book_key: str,
+    player_name: str,
+) -> list[tuple[float, dict[str, dict]]]:
+    pairs = selection_pairs_by_book.get(reference_book_key) or {}
+    values: list[tuple[float, dict[str, dict]]] = []
+    for (candidate_player, line_value), pair in pairs.items():
+        if candidate_player != player_name or line_value is None:
+            continue
+        values.append((float(line_value), pair))
+    values.sort(key=lambda item: item[0])
+    return values
+
+
+def _interpolate_logit_probability(
+    *,
+    lower_line: float,
+    lower_prob: float,
+    upper_line: float,
+    upper_prob: float,
+    target_line: float,
+) -> float | None:
+    if upper_line <= lower_line:
+        return None
+    if target_line < lower_line or target_line > upper_line:
+        return None
+    if abs(target_line - lower_line) < 1e-9:
+        return lower_prob
+    if abs(target_line - upper_line) < 1e-9:
+        return upper_prob
+    lower_logit = _logit_probability(lower_prob)
+    upper_logit = _logit_probability(upper_prob)
+    ratio = (target_line - lower_line) / (upper_line - lower_line)
+    return _inv_logit(lower_logit + (upper_logit - lower_logit) * ratio)
+
+
+def _build_reference_estimates_for_side(
+    *,
+    selection_pairs_by_book: dict[str, dict[tuple[str, float | None], dict[str, dict]]],
+    current_book_key: str,
+    player_name: str,
+    line_value: float | None,
+    side: str,
+    model_key: str,
+) -> list[dict[str, Any]]:
+    estimates: list[dict[str, Any]] = []
+    allow_interpolation = _is_v2_player_prop_model(model_key) and line_value is not None
+
+    for reference_book_key, reference_pairs in selection_pairs_by_book.items():
+        if reference_book_key == current_book_key:
+            continue
+        exact_pair = reference_pairs.get((player_name, line_value))
+        if exact_pair:
+            probs = _player_probabilities_for_pair(exact_pair, side=side)
+            if probs:
+                estimates.append(
+                    {
+                        "book_key": reference_book_key,
+                        "prob": probs["side_prob"],
+                        "input_mode": "exact",
+                        "source_line_value": line_value,
+                        "lower_line_value": line_value,
+                        "upper_line_value": line_value,
+                    }
+                )
+            continue
+
+        if not allow_interpolation:
+            continue
+
+        line_pairs = _book_line_pairs_for_player(
+            selection_pairs_by_book,
+            reference_book_key=reference_book_key,
+            player_name=player_name,
+        )
+        if len(line_pairs) < 2:
+            continue
+
+        lower: tuple[float, dict[str, dict]] | None = None
+        upper: tuple[float, dict[str, dict]] | None = None
+        for candidate_line, pair in line_pairs:
+            if candidate_line <= float(line_value):
+                lower = (candidate_line, pair)
+            if candidate_line >= float(line_value) and upper is None:
+                upper = (candidate_line, pair)
+        if lower is None or upper is None or abs(lower[0] - upper[0]) < 1e-9:
+            continue
+
+        lower_probs = _player_probabilities_for_pair(lower[1], side=side)
+        upper_probs = _player_probabilities_for_pair(upper[1], side=side)
+        if not lower_probs or not upper_probs:
+            continue
+
+        interpolated_prob = _interpolate_logit_probability(
+            lower_line=lower[0],
+            lower_prob=lower_probs["side_prob"],
+            upper_line=upper[0],
+            upper_prob=upper_probs["side_prob"],
+            target_line=float(line_value),
+        )
+        if interpolated_prob is None:
+            continue
+
+        estimates.append(
+            {
+                "book_key": reference_book_key,
+                "prob": interpolated_prob,
+                "input_mode": "interpolated",
+                "source_line_value": line_value,
+                "lower_line_value": lower[0],
+                "upper_line_value": upper[0],
+            }
+        )
+
+    return estimates
+
+
+def _book_weight_for_model(
+    *,
+    book_key: str,
+    market_key: str,
+    model_key: str,
+    weight_overrides: dict[str, dict[str, float]] | None,
+) -> float:
+    if _is_v2_player_prop_model(model_key):
+        override = None
+        if isinstance(weight_overrides, dict):
+            override = (
+                (weight_overrides.get(str(market_key or "").strip()) or {}).get(book_key)
+                if isinstance(weight_overrides.get(str(market_key or "").strip()), dict)
+                else None
+            )
+        if override is not None:
+            try:
+                return max(float(override), 0.1)
+            except Exception:
+                pass
+    return PLAYER_PROP_REFERENCE_BOOK_WEIGHTS.get(book_key, 1.0)
+
+
+def _shrink_probability_toward_even(
+    raw_prob: float,
+    *,
+    confidence_score: float | None,
+) -> tuple[float, float]:
+    score = confidence_score if confidence_score is not None else 0.0
+    shrink_factor = max(0.0, min(0.30, (1.0 - score) * 0.30))
+    shrunk_prob = 0.5 + ((raw_prob - 0.5) * (1.0 - shrink_factor))
+    return _clip_probability(shrunk_prob), round(shrink_factor, 4)
+
+
+def _reference_inputs_json(reference_estimates: list[dict[str, Any]]) -> str:
+    payload = [
+        {
+            "book_key": str(estimate.get("book_key") or ""),
+            "prob": round(float(estimate.get("prob") or 0.0), 6),
+            "input_mode": str(estimate.get("input_mode") or "exact"),
+            "source_line_value": estimate.get("source_line_value"),
+            "lower_line_value": estimate.get("lower_line_value"),
+            "upper_line_value": estimate.get("upper_line_value"),
+        }
+        for estimate in reference_estimates
+    ]
+    return json.dumps(payload, sort_keys=True)
+
+
+def _aggregate_reference_estimates(
+    *,
+    reference_estimates: list[dict[str, Any]],
+    model_key: str,
+    market_key: str,
+    weight_overrides: dict[str, dict[str, float]] | None = None,
+) -> dict[str, Any] | None:
+    if not reference_estimates:
+        return None
+
+    reference_probs = [float(estimate["prob"]) for estimate in reference_estimates]
+    reference_bookmakers = [str(estimate["book_key"]) for estimate in reference_estimates]
+    exact_reference_count = sum(1 for estimate in reference_estimates if estimate.get("input_mode") == "exact")
+    interpolated_reference_count = sum(1 for estimate in reference_estimates if estimate.get("input_mode") == "interpolated")
+
+    if not _is_v2_player_prop_model(model_key):
+        anchor = float(median(reference_probs))
+        in_band_estimates = [
+            estimate
+            for estimate in reference_estimates
+            if abs(float(estimate["prob"]) - anchor) <= 0.12
+        ]
+        true_prob = _weighted_consensus_prob(reference_probs, reference_bookmakers)
+        return {
+            "raw_true_prob": true_prob,
+            "true_prob": true_prob,
+            "shrink_factor": 0.0,
+            "reference_probs": reference_probs,
+            "reference_bookmakers": reference_bookmakers,
+            "filtered_reference_count": len(in_band_estimates) if in_band_estimates else len(reference_estimates),
+            "exact_reference_count": exact_reference_count,
+            "interpolated_reference_count": interpolated_reference_count,
+            "interpolation_mode": "exact",
+            "reference_inputs_json": _reference_inputs_json(reference_estimates),
+        }
+
+    logits = [_logit_probability(prob) for prob in reference_probs]
+    anchor = float(median(logits))
+    mad = _median_absolute_deviation(logits)
+    outlier_band = max(0.25, mad * 3.0)
+    in_band_estimates = [
+        estimate
+        for estimate, logit_value in zip(reference_estimates, logits)
+        if abs(logit_value - anchor) <= outlier_band
+    ]
+    if not in_band_estimates:
+        in_band_estimates = list(reference_estimates)
+
+    total_weight = 0.0
+    weighted_logit_sum = 0.0
+    for estimate in in_band_estimates:
+        prob = _clip_probability(float(estimate["prob"]))
+        weight = _book_weight_for_model(
+            book_key=str(estimate.get("book_key") or ""),
+            market_key=market_key,
+            model_key=model_key,
+            weight_overrides=weight_overrides,
+        )
+        total_weight += weight
+        weighted_logit_sum += _logit_probability(prob) * weight
+    if total_weight <= 0:
+        return None
+
+    raw_true_prob = _inv_logit(weighted_logit_sum / total_weight)
+    interpolation_mode = "exact"
+    if interpolated_reference_count > 0 and exact_reference_count > 0:
+        interpolation_mode = "mixed"
+    elif interpolated_reference_count > 0:
+        interpolation_mode = "interpolated"
+
+    return {
+        "raw_true_prob": raw_true_prob,
+        "true_prob": raw_true_prob,
+        "shrink_factor": 0.0,
+        "reference_probs": reference_probs,
+        "reference_bookmakers": reference_bookmakers,
+        "filtered_reference_count": len(in_band_estimates),
+        "exact_reference_count": exact_reference_count,
+        "interpolated_reference_count": interpolated_reference_count,
+        "interpolation_mode": interpolation_mode,
+        "reference_inputs_json": _reference_inputs_json(reference_estimates),
+    }
+
+
 def _normalize_player_team(token: str | None, *, home_team: str, away_team: str, sport: str | None) -> str | None:
     token_key = _canonical_team_name(token, sport=sport)
     if not token_key:
@@ -472,6 +800,97 @@ def _compute_confidence(
         label = "thin"
 
     return label, confidence_score, round(prob_std, 4)
+
+
+def _build_prop_model_evaluations_for_candidate(
+    *,
+    selection_pairs_by_book: dict[str, dict[tuple[str, float | None], dict[str, dict]]],
+    current_book_key: str,
+    market_key: str,
+    player_name: str,
+    line_value: float | None,
+    side: str,
+    book_odds: float,
+    weight_overrides: dict[str, dict[str, float]] | None = None,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    book_decimal = american_to_decimal(book_odds)
+    active_model_key = get_player_prop_active_model_key()
+    shadow_model_key = get_player_prop_shadow_model_key(active_model_key)
+    model_keys = [active_model_key]
+    if shadow_model_key and shadow_model_key not in model_keys:
+        model_keys.append(shadow_model_key)
+
+    evaluations: list[dict[str, Any]] = []
+    active_evaluation: dict[str, Any] | None = None
+
+    for model_key in model_keys:
+        reference_estimates = _build_reference_estimates_for_side(
+            selection_pairs_by_book=selection_pairs_by_book,
+            current_book_key=current_book_key,
+            player_name=player_name,
+            line_value=line_value,
+            side=side,
+            model_key=model_key,
+        )
+        if not reference_estimates:
+            continue
+
+        aggregation = _aggregate_reference_estimates(
+            reference_estimates=reference_estimates,
+            model_key=model_key,
+            market_key=market_key,
+            weight_overrides=weight_overrides,
+        )
+        if not aggregation:
+            continue
+
+        confidence_label, confidence_score, prob_std = _compute_confidence(
+            reference_bookmakers=list(aggregation["reference_bookmakers"]),
+            reference_probs=list(aggregation["reference_probs"]),
+        )
+
+        true_prob = float(aggregation["true_prob"])
+        raw_true_prob = float(aggregation["raw_true_prob"])
+        shrink_factor = 0.0
+        if _is_v2_player_prop_model(model_key):
+            true_prob, shrink_factor = _shrink_probability_toward_even(
+                raw_true_prob,
+                confidence_score=confidence_score,
+            )
+
+        reference_odds = _reference_american_from_true_prob(true_prob)
+        if reference_odds is None:
+            continue
+
+        evaluation = {
+            "model_key": model_key,
+            "reference_source": _reference_source_for_model_key(model_key),
+            "reference_odds": float(reference_odds),
+            "true_prob": round(true_prob, 6),
+            "raw_true_prob": round(raw_true_prob, 6),
+            "reference_bookmakers": list(aggregation["reference_bookmakers"]),
+            "reference_bookmaker_count": len(aggregation["reference_bookmakers"]),
+            "filtered_reference_count": int(aggregation["filtered_reference_count"]),
+            "exact_reference_count": int(aggregation["exact_reference_count"]),
+            "interpolated_reference_count": int(aggregation["interpolated_reference_count"]),
+            "interpolation_mode": str(aggregation["interpolation_mode"] or "exact"),
+            "reference_inputs_json": aggregation["reference_inputs_json"],
+            "confidence_label": confidence_label,
+            "confidence_score": confidence_score,
+            "prob_std": prob_std,
+            "book_odds": float(book_odds),
+            "book_decimal": round(book_decimal, 4),
+            "ev_percentage": round((true_prob * book_decimal - 1) * 100, 2),
+            "base_kelly_fraction": round(kelly_fraction(true_prob, book_decimal), 6),
+            "shrink_factor": shrink_factor,
+            "sportsbook_key": current_book_key,
+            "market_key": market_key,
+        }
+        evaluations.append(evaluation)
+        if model_key == active_model_key:
+            active_evaluation = evaluation
+
+    return active_evaluation, evaluations
 
 
 def _american_price_quality(american: float | int | None) -> float | None:
@@ -619,6 +1038,7 @@ def _build_prop_side_candidates(
     event_payload: dict,
     target_markets: list[str],
     player_context_lookup: dict[str, dict[str, str | None]] | None = None,
+    weight_overrides: dict[str, dict[str, float]] | None = None,
 ) -> list[dict]:
     bookmakers = event_payload.get("bookmakers") or []
     home = str(event_payload.get("home_team") or "")
@@ -648,41 +1068,24 @@ def _build_prop_side_candidates(
                     if not outcome:
                         continue
 
-                    reference_probs: list[float] = []
-                    reference_bookmakers: list[str] = []
-                    for reference_book_key, reference_pairs in selection_pairs_by_book.items():
-                        if reference_book_key == book_key:
-                            continue
-                        reference_pair = reference_pairs.get((player_name, line_value))
-                        if not reference_pair:
-                            continue
-                        true_probs = _devig_pair_probabilities(reference_pair["over"], reference_pair["under"])
-                        if not true_probs:
-                            continue
-                        reference_probs.append(true_probs[side])
-                        reference_bookmakers.append(reference_book_key)
-
-                    if not reference_probs:
-                        continue
-
-                    reference_count = len(reference_bookmakers)
-                    true_prob = _weighted_consensus_prob(reference_probs, reference_bookmakers)
-                    reference_odds = _reference_american_from_true_prob(true_prob)
-                    if reference_odds is None:
-                        continue
-
                     try:
                         book_odds = float(outcome["price"])
                     except Exception:
                         continue
 
-                    confidence_label, confidence_score, prob_std = _compute_confidence(
-                        reference_bookmakers=reference_bookmakers,
-                        reference_probs=reference_probs,
+                    active_evaluation, model_evaluations = _build_prop_model_evaluations_for_candidate(
+                        selection_pairs_by_book=selection_pairs_by_book,
+                        current_book_key=book_key,
+                        market_key=market_key,
+                        player_name=player_name,
+                        line_value=line_value,
+                        side=side,
+                        book_odds=book_odds,
+                        weight_overrides=weight_overrides,
                     )
+                    if not active_evaluation:
+                        continue
 
-                    book_decimal = american_to_decimal(book_odds)
-                    ev_percentage = round((true_prob * book_decimal - 1) * 100, 2)
                     selection_key = _build_selection_key(
                         event_id=str(event_id or ""),
                         market_key=market_key,
@@ -738,18 +1141,30 @@ def _build_prop_side_candidates(
                             "selection_side": side,
                             "line_value": line_value,
                             "display_name": display_name,
-                            "reference_odds": float(reference_odds),
-                            "reference_source": PLAYER_PROP_REFERENCE_SOURCE,
-                            "reference_bookmakers": reference_bookmakers,
-                            "reference_bookmaker_count": reference_count,
-                            "confidence_label": confidence_label,
-                            "confidence_score": confidence_score,
-                            "prob_std": prob_std,
+                            "reference_odds": float(active_evaluation["reference_odds"]),
+                            "reference_source": str(active_evaluation["reference_source"]),
+                            "reference_bookmakers": list(active_evaluation["reference_bookmakers"]),
+                            "reference_bookmaker_count": int(active_evaluation["reference_bookmaker_count"]),
+                            "confidence_label": active_evaluation["confidence_label"],
+                            "confidence_score": active_evaluation["confidence_score"],
+                            "prob_std": active_evaluation["prob_std"],
                             "book_odds": book_odds,
-                            "true_prob": round(true_prob, 4),
-                            "base_kelly_fraction": round(kelly_fraction(true_prob, book_decimal), 6),
-                            "book_decimal": round(book_decimal, 4),
-                            "ev_percentage": ev_percentage,
+                            "true_prob": round(float(active_evaluation["true_prob"]), 4),
+                            "base_kelly_fraction": float(active_evaluation["base_kelly_fraction"]),
+                            "book_decimal": float(active_evaluation["book_decimal"]),
+                            "ev_percentage": float(active_evaluation["ev_percentage"]),
+                            "active_model_key": str(active_evaluation["model_key"]),
+                            "shadow_model_key": next(
+                                (
+                                    str(evaluation["model_key"])
+                                    for evaluation in model_evaluations
+                                    if str(evaluation.get("model_key") or "") != str(active_evaluation["model_key"])
+                                ),
+                                None,
+                            ),
+                            "interpolation_mode": str(active_evaluation.get("interpolation_mode") or "exact"),
+                            "reference_inputs_json": active_evaluation.get("reference_inputs_json"),
+                            "model_evaluations": model_evaluations,
                         }
                     )
     return candidates
@@ -781,12 +1196,14 @@ def _parse_prop_sides(
     target_markets: list[str],
     player_context_lookup: dict[str, dict[str, str | None]] | None = None,
     min_reference_bookmakers: int | None = None,
+    weight_overrides: dict[str, dict[str, float]] | None = None,
 ) -> list[dict]:
     candidates = _build_prop_side_candidates(
         sport=sport,
         event_payload=event_payload,
         target_markets=target_markets,
         player_context_lookup=player_context_lookup,
+        weight_overrides=weight_overrides,
     )
     return _apply_reference_quality_gate(
         candidates,
@@ -1040,6 +1457,7 @@ def _build_prizepicks_comparison_cards(
 async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
     target_markets = get_player_prop_markets()
     min_reference_bookmakers = get_player_prop_min_reference_bookmakers()
+    weight_overrides = get_player_prop_weight_overrides()
     scoreboard_payload = await fetch_nba_scoreboard_window()
     scoreboard_events = scoreboard_payload.get("events") if isinstance(scoreboard_payload, dict) else []
     scoreboard_count = len(scoreboard_events) if isinstance(scoreboard_events, list) else 0
@@ -1197,6 +1615,7 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
             event_payload=event_payload,
             target_markets=target_markets,
             player_context_lookup=player_context_lookup,
+            weight_overrides=weight_overrides,
         )
         candidate_sides_count += len(event_candidates)
         event_sides = _apply_reference_quality_gate(
@@ -1322,6 +1741,7 @@ async def scan_player_props_for_event_ids(
 
     target_markets = markets or get_player_prop_markets()
     min_reference_bookmakers = get_player_prop_min_reference_bookmakers()
+    weight_overrides = get_player_prop_weight_overrides()
     pregame_cutoff = datetime.now(timezone.utc) + timedelta(minutes=1)
 
     all_sides: list[dict] = []
@@ -1362,6 +1782,7 @@ async def scan_player_props_for_event_ids(
             event_payload=event_payload,
             target_markets=target_markets,
             player_context_lookup=None,
+            weight_overrides=weight_overrides,
         )
         candidate_sides_count += len(event_candidates)
         event_sides = _apply_reference_quality_gate(

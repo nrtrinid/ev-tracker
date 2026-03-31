@@ -47,7 +47,7 @@ const BASE_PROP_SIDE: MarketSide = {
   opponent: "Suns",
   selection_side: "over",
   line_value: 24.5,
-  display_name: "Nikola Jokic Over 24.5 PTS",
+  display_name: "Nikola Jokic Over 24.5",
   reference_odds: -110,
   reference_source: "market_median",
   reference_bookmakers: ["bovada", "betmgm"],
@@ -346,7 +346,7 @@ test.describe("scanner filters", () => {
     const filtered = applyScannerResultFilters({
       sides: [
         BASE_PROP_SIDE,
-        { ...BASE_PROP_SIDE, selection_side: "under", selection_key: "under", display_name: "Nikola Jokic Under 24.5 PTS" },
+        { ...BASE_PROP_SIDE, selection_side: "under", selection_key: "under", display_name: "Nikola Jokic Under 24.5" },
         { ...BASE_PROP_SIDE, market_key: "player_assists", market: "player_assists", selection_key: "assists", line_value: 8.5 },
       ],
       activeLens: "standard",

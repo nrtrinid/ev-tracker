@@ -665,6 +665,83 @@ export interface ResearchOpportunityCohortTrendRow {
   avg_clv_percent: number | null;
 }
 
+export interface ModelCalibrationBreakdownItem {
+  key: string;
+  captured_count: number;
+  valid_close_count: number;
+  paired_close_count: number;
+  avg_brier_score: number | null;
+  avg_log_loss: number | null;
+  avg_clv_percent: number | null;
+  beat_close_pct: number | null;
+}
+
+export interface ModelCalibrationCohortTrendRow {
+  cohort_key: string;
+  captured_count: number;
+  valid_close_count: number;
+  avg_brier_score: number | null;
+  avg_log_loss: number | null;
+  avg_clv_percent: number | null;
+  beat_close_pct: number | null;
+}
+
+export interface ModelCalibrationRecentComparisonRow {
+  opportunity_key: string;
+  surface: ScannerSurface;
+  first_seen_at: string;
+  sport: string;
+  event: string;
+  sportsbook: string;
+  market: string;
+  player_name: string | null;
+  selection_side: string | null;
+  line_value: number | null;
+  close_quality: string | null;
+  close_true_prob: number | null;
+  baseline_model_key: string | null;
+  baseline_true_prob: number | null;
+  baseline_ev_percentage: number | null;
+  baseline_clv_ev_percent: number | null;
+  candidate_model_key: string | null;
+  candidate_true_prob: number | null;
+  candidate_ev_percentage: number | null;
+  candidate_clv_ev_percent: number | null;
+}
+
+export interface ModelCalibrationReleaseGate {
+  candidate_model_key: string;
+  baseline_model_key: string;
+  candidate_valid_close_count: number;
+  baseline_valid_close_count: number;
+  candidate_avg_brier_score: number | null;
+  baseline_avg_brier_score: number | null;
+  candidate_avg_log_loss: number | null;
+  baseline_avg_log_loss: number | null;
+  candidate_avg_clv_percent: number | null;
+  baseline_avg_clv_percent: number | null;
+  candidate_beat_close_pct: number | null;
+  baseline_beat_close_pct: number | null;
+  eligible: boolean;
+  passes: boolean;
+  reasons: string[];
+}
+
+export interface ModelCalibrationSummary {
+  captured_count: number;
+  valid_close_count: number;
+  paired_close_count: number;
+  fallback_close_count: number;
+  paired_close_pct: number | null;
+  by_model: ModelCalibrationBreakdownItem[];
+  by_market: ModelCalibrationBreakdownItem[];
+  by_sportsbook: ModelCalibrationBreakdownItem[];
+  by_interpolation_mode: ModelCalibrationBreakdownItem[];
+  cohort_trend: ModelCalibrationCohortTrendRow[];
+  recent_comparisons: ModelCalibrationRecentComparisonRow[];
+  release_gate: ModelCalibrationReleaseGate;
+}
+
 export interface ParlayWarning {
   code: string;
   severity: "warning" | "blocking";

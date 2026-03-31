@@ -58,7 +58,7 @@ class _Query:
         for item in payload:
             row = dict(item)
             if "id" not in row:
-                row["id"] = f"opp-{self._db._next_id}"
+                row["id"] = f"{self._table_name}-{self._db._next_id}"
                 self._db._next_id += 1
             rows.append(row)
             inserted.append(row)
@@ -67,13 +67,16 @@ class _Query:
 
 class _DB:
     def __init__(self, rows=None, *, missing_table=False):
-        self.tables = {"scan_opportunities": list(rows or [])}
+        self.tables = {
+            "scan_opportunities": list(rows or []),
+            "scan_opportunity_model_evaluations": [],
+        }
         self._next_id = len(self.tables["scan_opportunities"]) + 1
         self._missing_table = missing_table
 
     def table(self, name):
-        assert name == "scan_opportunities"
-        if self._missing_table:
+        assert name in {"scan_opportunities", "scan_opportunity_model_evaluations"}
+        if self._missing_table and name == "scan_opportunities":
             raise RuntimeError("PGRST205 scan_opportunities schema cache stale")
         return _Query(self, name)
 
@@ -122,6 +125,7 @@ def _prop_side(
     line_value=24.5,
     reference_odds=-108,
     book_odds=105,
+    true_prob=0.5192,
     ev_percentage=6.6,
 ):
     return {
@@ -139,6 +143,7 @@ def _prop_side(
         "line_value": line_value,
         "reference_odds": reference_odds,
         "book_odds": book_odds,
+        "true_prob": true_prob,
         "ev_percentage": ev_percentage,
     }
 
@@ -165,6 +170,7 @@ def test_capture_scan_opportunities_inserts_positive_ev_straight_and_prop_sides(
     assert straight_row["opportunity_key"] == "straight_bets|basketball_nba|id:evt-1|ml|home|draftkings"
     assert straight_row["market"] == "ML"
     assert straight_row["first_source"] == "manual_scan"
+    assert straight_row["first_model_key"] == "straight_h2h_live"
     assert straight_row["seen_count"] == 1
     assert straight_row["latest_reference_odds"] == -120.0
 
@@ -175,7 +181,14 @@ def test_capture_scan_opportunities_inserts_positive_ev_straight_and_prop_sides(
     assert prop_row["source_market_key"] == "player_points"
     assert prop_row["selection_side"] == "over"
     assert prop_row["line_value"] == 24.5
+    assert prop_row["first_model_key"] == "props_v1_live"
     assert prop_row["latest_reference_odds"] == -108.0
+    assert len(db.tables["scan_opportunity_model_evaluations"]) == 1
+    evaluation_row = db.tables["scan_opportunity_model_evaluations"][0]
+    assert evaluation_row["opportunity_key"] == prop_row["opportunity_key"]
+    assert evaluation_row["model_key"] == "props_v1_live"
+    assert evaluation_row["capture_role"] == "live"
+    assert evaluation_row["first_interpolation_mode"] == "exact"
 
 
 def test_capture_scan_opportunities_updates_last_and_best_without_overwriting_first_fields():
@@ -208,6 +221,8 @@ def test_capture_scan_opportunities_updates_last_and_best_without_overwriting_fi
     assert row["first_source"] == "manual_scan"
     assert row["first_seen_at"] == "2026-03-23T18:00:00Z"
     assert row["first_book_odds"] == 150.0
+    assert row["first_model_key"] == "straight_h2h_live"
+    assert row["last_model_key"] == "straight_h2h_live"
     assert row["last_source"] == "ops_trigger_scan"
     assert row["last_seen_at"] == "2026-03-23T18:20:00Z"
     assert row["last_book_odds"] == 140.0
@@ -218,6 +233,81 @@ def test_capture_scan_opportunities_updates_last_and_best_without_overwriting_fi
     assert row["best_ev_percentage"] == 3.25
     assert row["best_seen_at"] == "2026-03-23T18:10:00Z"
     assert row["latest_reference_odds"] == 120.0
+
+
+def test_capture_scan_opportunities_writes_live_and_shadow_prop_model_evaluations():
+    db = _DB()
+    side = _prop_side()
+    side["active_model_key"] = "props_v1_live"
+    side["model_evaluations"] = [
+        {
+            "model_key": "props_v1_live",
+            "reference_source": "market_weighted_consensus",
+            "reference_odds": -108,
+            "true_prob": 0.5192,
+            "raw_true_prob": 0.5192,
+            "reference_bookmakers": ["bovada", "betonlineag"],
+            "reference_bookmaker_count": 2,
+            "filtered_reference_count": 2,
+            "exact_reference_count": 2,
+            "interpolated_reference_count": 0,
+            "interpolation_mode": "exact",
+            "reference_inputs_json": "[]",
+            "confidence_label": "solid",
+            "confidence_score": 0.54,
+            "prob_std": 0.011,
+            "book_odds": 105,
+            "book_decimal": 2.05,
+            "ev_percentage": 6.6,
+            "base_kelly_fraction": 0.03,
+            "shrink_factor": 0.0,
+            "sportsbook_key": "fanduel",
+            "market_key": "player_points",
+        },
+        {
+            "model_key": "props_v2_shadow",
+            "reference_source": "market_logit_consensus_v2",
+            "reference_odds": -111,
+            "true_prob": 0.5263,
+            "raw_true_prob": 0.5321,
+            "reference_bookmakers": ["bovada", "betonlineag", "betmgm"],
+            "reference_bookmaker_count": 3,
+            "filtered_reference_count": 3,
+            "exact_reference_count": 2,
+            "interpolated_reference_count": 1,
+            "interpolation_mode": "mixed",
+            "reference_inputs_json": "[{}]",
+            "confidence_label": "high",
+            "confidence_score": 0.71,
+            "prob_std": 0.008,
+            "book_odds": 105,
+            "book_decimal": 2.05,
+            "ev_percentage": 8.1,
+            "base_kelly_fraction": 0.04,
+            "shrink_factor": 0.12,
+            "sportsbook_key": "fanduel",
+            "market_key": "player_points",
+        },
+    ]
+
+    out = capture_scan_opportunities(
+        db,
+        sides=[side],
+        source="manual_scan",
+        captured_at="2026-03-23T18:00:00Z",
+    )
+
+    assert out == {"eligible_seen": 1, "inserted": 1, "updated": 0}
+    assert len(db.tables["scan_opportunity_model_evaluations"]) == 2
+    roles = {row["model_key"]: row["capture_role"] for row in db.tables["scan_opportunity_model_evaluations"]}
+    assert roles == {
+        "props_v1_live": "live",
+        "props_v2_shadow": "shadow",
+    }
+    shadow = next(row for row in db.tables["scan_opportunity_model_evaluations"] if row["model_key"] == "props_v2_shadow")
+    assert shadow["first_interpolation_mode"] == "mixed"
+    assert shadow["first_shrink_factor"] == 0.12
+    assert shadow["first_reference_bookmaker_count"] == 3
 
 
 def test_capture_scan_opportunities_uses_commence_time_fallback_when_event_id_missing():

@@ -8,12 +8,14 @@ import pytest
 from calculations import (
     DEFAULT_VIG,
     american_to_decimal,
-    decimal_to_american,
-    calculate_hold_from_odds,
-    kelly_fraction,
-    calculate_ev,
     calculate_clv,
+    calculate_close_calibration_metrics,
+    calculate_ev,
+    calculate_hold_from_odds,
     calculate_real_profit,
+    decimal_to_american,
+    devig_two_way_american,
+    kelly_fraction,
 )
 
 
@@ -258,6 +260,28 @@ def test_calculate_clv_neutral():
     assert out["clv_ev_percent"] == 0.0
     # Implementation: beat_close is ev_raw > 0, so False when exactly 0
     assert out["beat_close"] is False
+
+
+def test_devig_two_way_american_returns_paired_probabilities():
+    result = devig_two_way_american(-110, -110)
+    assert result is not None
+    assert result["side_prob"] == pytest.approx(0.5, abs=0.0001)
+    assert result["opposing_prob"] == pytest.approx(0.5, abs=0.0001)
+
+
+def test_calculate_clv_uses_paired_close_when_opposing_side_is_available():
+    out = calculate_clv(book_american=105, close_pinnacle_american=-112, close_opposing_american=-108)
+    assert out["close_quality"] == "paired"
+    assert out["close_opposing_american"] == -108
+    assert out["close_true_prob"] == pytest.approx(0.5043, abs=0.0002)
+    assert out["clv_ev_percent"] == pytest.approx(3.39, abs=0.02)
+
+
+def test_calculate_close_calibration_metrics_matches_hand_math():
+    metrics = calculate_close_calibration_metrics(0.55, 0.52)
+    assert metrics is not None
+    assert metrics["brier_score"] == pytest.approx(0.0009, abs=0.000001)
+    assert metrics["log_loss"] == pytest.approx(0.694159, abs=0.000001)
 
 
 # --- calculate_real_profit ---

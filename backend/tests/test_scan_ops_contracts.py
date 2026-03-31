@@ -102,6 +102,7 @@ def test_scan_endpoints_require_auth(public_client):
 def test_ops_endpoints_require_ops_token(public_client):
     assert public_client.get("/api/ops/status").status_code == 401
     assert public_client.get("/api/ops/research-opportunities/summary").status_code == 401
+    assert public_client.get("/api/ops/model-calibration/summary").status_code == 401
     assert public_client.post("/api/ops/trigger/scan").status_code == 401
     assert public_client.post("/api/ops/trigger/auto-settle").status_code == 401
     assert public_client.post("/api/ops/trigger/test-discord").status_code == 401
@@ -818,6 +819,104 @@ def test_ops_research_opportunities_summary_contract_shape(auth_client, monkeypa
     assert isinstance(body.get("by_source"), list)
     assert isinstance(body.get("recent_opportunities"), list)
     assert body["recent_opportunities"][0]["surface"] == "player_props"
+
+
+@pytest.mark.integration
+def test_ops_model_calibration_summary_contract_shape(auth_client, monkeypatch):
+    import main
+    import services.model_calibration as calibration
+
+    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
+    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+
+    monkeypatch.setattr(calibration, "get_model_calibration_summary", lambda _db: {
+        "captured_count": 8,
+        "valid_close_count": 4,
+        "paired_close_count": 3,
+        "fallback_close_count": 1,
+        "paired_close_pct": 75.0,
+        "by_model": [
+            {
+                "key": "props_v1_live",
+                "captured_count": 4,
+                "valid_close_count": 2,
+                "paired_close_count": 2,
+                "avg_brier_score": 0.024,
+                "avg_log_loss": 0.137,
+                "avg_clv_percent": 0.8,
+                "beat_close_pct": 50.0,
+            }
+        ],
+        "by_market": [],
+        "by_sportsbook": [],
+        "by_interpolation_mode": [],
+        "cohort_trend": [
+            {
+                "cohort_key": "2026-03-30",
+                "captured_count": 8,
+                "valid_close_count": 4,
+                "avg_brier_score": 0.022,
+                "avg_log_loss": 0.131,
+                "avg_clv_percent": 0.7,
+                "beat_close_pct": 50.0,
+            }
+        ],
+        "recent_comparisons": [
+            {
+                "opportunity_key": "prop-compare-1",
+                "surface": "player_props",
+                "first_seen_at": "2026-03-30T12:00:00Z",
+                "sport": "basketball_nba",
+                "event": "Nuggets @ Suns",
+                "sportsbook": "FanDuel",
+                "market": "player_points",
+                "player_name": "Nikola Jokic",
+                "selection_side": "over",
+                "line_value": 24.5,
+                "close_quality": "paired",
+                "close_true_prob": 0.534,
+                "baseline_model_key": "props_v1_live",
+                "baseline_true_prob": 0.522,
+                "baseline_ev_percentage": 6.1,
+                "baseline_clv_ev_percent": 0.5,
+                "candidate_model_key": "props_v2_shadow",
+                "candidate_true_prob": 0.531,
+                "candidate_ev_percentage": 7.0,
+                "candidate_clv_ev_percent": 0.8,
+            }
+        ],
+        "release_gate": {
+            "candidate_model_key": "props_v2_shadow",
+            "baseline_model_key": "props_v1_live",
+            "candidate_valid_close_count": 120,
+            "baseline_valid_close_count": 120,
+            "candidate_avg_brier_score": 0.021,
+            "baseline_avg_brier_score": 0.024,
+            "candidate_avg_log_loss": 0.129,
+            "baseline_avg_log_loss": 0.137,
+            "candidate_avg_clv_percent": 0.82,
+            "baseline_avg_clv_percent": 0.8,
+            "candidate_beat_close_pct": 51.0,
+            "baseline_beat_close_pct": 50.0,
+            "eligible": False,
+            "passes": False,
+            "reasons": ["Need at least 200 valid closes for both baseline and shadow models."],
+        },
+    }, raising=True)
+
+    resp = auth_client.get("/api/ops/model-calibration/summary", headers={"X-Ops-Token": "ops-secret"})
+    assert resp.status_code == 200
+
+    body = resp.json()
+    assert isinstance(body.get("captured_count"), int)
+    assert isinstance(body.get("valid_close_count"), int)
+    assert isinstance(body.get("paired_close_count"), int)
+    assert isinstance(body.get("fallback_close_count"), int)
+    assert isinstance(body.get("by_model"), list)
+    assert isinstance(body.get("cohort_trend"), list)
+    assert isinstance(body.get("recent_comparisons"), list)
+    assert isinstance(body.get("release_gate"), dict)
+    assert body["recent_comparisons"][0]["candidate_model_key"] == "props_v2_shadow"
 
 
 @pytest.mark.integration

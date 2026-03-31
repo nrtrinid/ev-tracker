@@ -4,6 +4,7 @@ Validates Supabase JWT via supabase.auth.get_user(token).
 """
 
 from fastapi import HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
 from database import get_db
 
@@ -21,9 +22,9 @@ async def get_current_user(request: Request) -> dict:
 
     try:
         supabase = get_db()
-        response = supabase.auth.get_user(token)
+        response = await run_in_threadpool(supabase.auth.get_user, token)
         user = response.user
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
     if not user or not user.id:

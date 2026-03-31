@@ -153,13 +153,13 @@ async def send_discord_webhook(payload: dict[str, Any], message_type: str = "ale
             print("[Discord] DISCORD_WEBHOOK_URL not set; alerts disabled.")
         return
 
+    timeout = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
     try:
         payload = _with_role_mention(payload, role_id)
-        from services.http_client import request_with_retries
-
-        resp = await request_with_retries("POST", webhook_url, json=payload, timeout=10.0, retries=1)
-        print(f"[Discord] Webhook response: {resp.status_code} {resp.text}")
-        resp.raise_for_status()
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(webhook_url, json=payload)
+            print(f"[Discord] Webhook response: {resp.status_code} {resp.text}")
+            resp.raise_for_status()
     except httpx.HTTPStatusError as exc:
         response_text = (exc.response.text or "").strip()
         message = (
