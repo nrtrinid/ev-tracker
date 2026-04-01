@@ -542,31 +542,32 @@ def get_bet_impl(db, user: dict, bet_id: str) -> BetResponse:
 def update_bet_impl(db, user: dict, bet_id: str, bet: BetUpdate) -> BetResponse:
     settings = get_user_settings(db, user["id"])
 
+    payload = bet.model_dump(exclude_unset=True)
     data: dict = {}
-    if bet.sport is not None:
-        data["sport"] = bet.sport
-    if bet.event is not None:
-        data["event"] = bet.event
-    if bet.market is not None:
-        data["market"] = bet.market
-    if bet.surface is not None:
-        data["surface"] = bet.surface
-    if bet.sportsbook is not None:
-        data["sportsbook"] = bet.sportsbook
-    if bet.promo_type is not None:
-        data["promo_type"] = bet.promo_type.value
-    if bet.odds_american is not None:
-        data["odds_american"] = bet.odds_american
-    if bet.stake is not None:
-        data["stake"] = bet.stake
-    if bet.boost_percent is not None:
-        data["boost_percent"] = bet.boost_percent
-    if bet.winnings_cap is not None:
-        data["winnings_cap"] = bet.winnings_cap
-    if bet.notes is not None:
-        data["notes"] = bet.notes
-    if bet.result is not None:
-        data["result"] = bet.result.value
+    if payload.get("sport") is not None:
+        data["sport"] = payload["sport"]
+    if payload.get("event") is not None:
+        data["event"] = payload["event"]
+    if payload.get("market") is not None:
+        data["market"] = payload["market"]
+    if payload.get("surface") is not None:
+        data["surface"] = payload["surface"]
+    if payload.get("sportsbook") is not None:
+        data["sportsbook"] = payload["sportsbook"]
+    if payload.get("promo_type") is not None:
+        data["promo_type"] = payload["promo_type"].value
+    if payload.get("odds_american") is not None:
+        data["odds_american"] = payload["odds_american"]
+    if payload.get("stake") is not None:
+        data["stake"] = payload["stake"]
+    if "boost_percent" in payload:
+        data["boost_percent"] = payload["boost_percent"]
+    if "winnings_cap" in payload:
+        data["winnings_cap"] = payload["winnings_cap"]
+    if "notes" in payload:
+        data["notes"] = payload["notes"]
+    if payload.get("result") is not None:
+        data["result"] = payload["result"].value
         current = _retry_supabase(
             lambda: (
                 db.table("bets")
@@ -577,14 +578,14 @@ def update_bet_impl(db, user: dict, bet_id: str, bet: BetUpdate) -> BetResponse:
             ),
             label="bets.select_result_before_update",
         )
-        if current.data and current.data[0]["result"] == "pending" and bet.result.value != "pending":
+        if current.data and current.data[0]["result"] == "pending" and payload["result"].value != "pending":
             data["settled_at"] = datetime.now(UTC).isoformat()
-    if bet.payout_override is not None:
-        data["payout_override"] = bet.payout_override
-    if bet.opposing_odds is not None:
-        data["opposing_odds"] = bet.opposing_odds
-    if bet.event_date is not None:
-        data["event_date"] = bet.event_date.isoformat()
+    if "payout_override" in payload:
+        data["payout_override"] = payload["payout_override"]
+    if "opposing_odds" in payload:
+        data["opposing_odds"] = payload["opposing_odds"]
+    if payload.get("event_date") is not None:
+        data["event_date"] = payload["event_date"].isoformat()
 
     EV_RELEVANT = {"odds_american", "stake", "promo_type", "boost_percent",
                    "winnings_cap", "payout_override", "opposing_odds"}

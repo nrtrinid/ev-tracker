@@ -1,6 +1,24 @@
 # Production deploy (VPS)
 
+## SSH into the server
+
+From your local machine:
+
+```bash
+ssh root@5.78.192.196
+```
+
+If the SSH host is not trusted yet, accept it when prompted.
+
+After you are done on the server:
+
+```bash
+exit
+```
+
 ## Normal deploy
+
+After SSH'ing into the VPS:
 
 ```bash
 cd ~/ev-tracker
@@ -16,11 +34,36 @@ Recommended env:
 - `APP_ROLE=api`, `ENABLE_SCHEDULER=1`, `UVICORN_WORKERS=2` for the API service
 - `APP_ROLE=scheduler`, `ENABLE_SCHEDULER=1` for the scheduler service
 
+## One-line deploy from your local machine
+
+If your local machine already has SSH access configured for the VPS, you can run:
+
+```bash
+ssh root@5.78.192.196 "cd ~/ev-tracker && git pull origin main && docker compose up -d --build"
+```
+
 ## Env var change
+
+After SSH'ing into the VPS:
 
 ```bash
 cd ~/ev-tracker
 docker compose up -d --force-recreate backend_api backend_scheduler caddy
+```
+
+Or from your local machine:
+
+```bash
+ssh root@5.78.192.196 "cd ~/ev-tracker && docker compose up -d --force-recreate backend_api backend_scheduler caddy"
+```
+
+## Remove old/orphaned containers
+
+If services were renamed and Docker reports orphans, run:
+
+```bash
+cd ~/ev-tracker
+docker compose up -d --build --remove-orphans
 ```
 
 ## Health check
@@ -36,3 +79,13 @@ curl -i http://5.78.192.196/ready
 curl -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/status
 curl -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/clv-debug
 ```
+
+## Security note
+
+Including the server IP and SSH username in this file is fine.
+
+Do not commit:
+- private SSH keys
+- passwords
+- `.env` secrets
+- raw ops tokens or cron tokens

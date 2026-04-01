@@ -18,6 +18,7 @@ interface SmartOddsInputProps {
 export interface SmartOddsInputRef {
   getSignedValue: () => number;
   isPositive: boolean;
+  focus: () => void;
 }
 
 export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>(
@@ -45,20 +46,17 @@ export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>
         return isPositive ? Math.abs(num) : -Math.abs(num);
       },
       isPositive,
+      focus: () => {
+        inputElementRef.current?.focus();
+      },
     }));
 
-    // Parse current value to extract sign and number on mount or when value changes from outside
+    // Only infer sign when the parent gives us an explicitly signed value or when the field resets.
     useEffect(() => {
-      if (value) {
-        // If value already has sign, parse it
-        const num = parseFloat(value);
-        if (!isNaN(num) && num !== 0) {
-          setIsPositive(num >= 0);
-          // Store absolute value
-          if (num < 0) {
-            onChange(Math.abs(num).toString());
-          }
-        }
+      const trimmedValue = value.trim();
+      if (trimmedValue.startsWith("-") || trimmedValue.startsWith("+")) {
+        setIsPositive(!trimmedValue.startsWith("-"));
+        onChange(trimmedValue.replace(/^[+-]/, ""));
       } else {
         if (typeof americanOddsSeed === "number" && americanOddsSeed !== 0) {
           setIsPositive(americanOddsSeed >= 0);
@@ -98,7 +96,7 @@ export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>
     };
 
     return (
-      <div className={cn("space-y-1.5", className)}>
+      <div className={cn("min-w-0 space-y-1.5", className)}>
         {label && (
           <label className="text-xs font-medium text-muted-foreground block">
             {label}
@@ -129,7 +127,7 @@ export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>
             value={value}
             onChange={handleInputChange}
             className={cn(
-              "h-12 text-lg font-mono text-center rounded-l-none border-l-0",
+              "min-w-0 h-12 text-lg font-mono text-center rounded-l-none border-l-0",
               className
             )}
           />

@@ -235,8 +235,7 @@ export function LogBetDrawer({
       setFormState(buildInitialFormState(initialValues));
       setShowManualSetup((initialValues?.promo_type ?? getStickyPromoType()) !== "standard");
       setTimeout(() => {
-        const input = document.querySelector('[data-odds-input]') as HTMLInputElement;
-        input?.focus();
+        oddsInputRef.current?.focus();
       }, 300);
     }
   }, [open, initialValues]);
@@ -401,8 +400,7 @@ export function LogBetDrawer({
           notes: "",
         }));
         setTimeout(() => {
-          const input = document.querySelector('[data-odds-input]') as HTMLInputElement;
-          input?.focus();
+          oddsInputRef.current?.focus();
         }, 50);
       } else {
         // Single mode: Close drawer and reset

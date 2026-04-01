@@ -45,9 +45,11 @@ class _UpdateBetsQuery:
     def __init__(self, row: dict):
         self._row = row
         self._operation = None
+        self.last_payload = None
 
-    def update(self, _payload):
+    def update(self, payload):
         self._operation = "update"
+        self.last_payload = payload
         return self
 
     def select(self, _fields):
@@ -120,3 +122,32 @@ def test_update_bet_impl_avoids_fresh_select_after_lock_update(monkeypatch):
 
     assert out["id"] == "bet-2"
     assert out["ev_total_locked"] == 12.34
+
+
+def test_update_bet_impl_allows_explicit_null_for_clearable_fields(monkeypatch):
+    updated_row = {"id": "bet-3", "promo_type": PromoType.STANDARD.value}
+    db = _UpdateDB(updated_row)
+
+    monkeypatch.setattr(bet_crud, "get_user_settings", lambda *_args: {"k_factor": 0.78})
+    monkeypatch.setattr(bet_crud, "_lock_ev_for_row", lambda *_args: updated_row)
+    monkeypatch.setattr(bet_crud, "build_bet_response", lambda row, _k_factor: row)
+
+    out = bet_crud.update_bet_impl(
+        db,
+        {"id": "user-1"},
+        "bet-3",
+        BetUpdate(
+            payout_override=None,
+            opposing_odds=None,
+            notes=None,
+            boost_percent=None,
+            winnings_cap=None,
+        ),
+    )
+
+    assert out["id"] == "bet-3"
+    assert db.bets.last_payload["payout_override"] is None
+    assert db.bets.last_payload["opposing_odds"] is None
+    assert db.bets.last_payload["notes"] is None
+    assert db.bets.last_payload["boost_percent"] is None
+    assert db.bets.last_payload["winnings_cap"] is None

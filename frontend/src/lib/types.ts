@@ -110,13 +110,13 @@ export interface BetUpdate {
   promo_type?: PromoType;
   odds_american?: number;
   stake?: number;
-  boost_percent?: number;
-  winnings_cap?: number;
-  notes?: string;
+  boost_percent?: number | null;
+  winnings_cap?: number | null;
+  notes?: string | null;
   result?: BetResult;
-  payout_override?: number;
-  opposing_odds?: number;
-  event_date?: string;
+  payout_override?: number | null;
+  opposing_odds?: number | null;
+  event_date?: string | null;
 }
 
 export interface Settings {

@@ -55,6 +55,7 @@
     --profit: 134 40% 50%;         /* Forest green, brighter */
     --loss: 18 58% 52%;            /* Terracotta */
     --pending: 43 49% 56%;
+    color-scheme: dark;
   }
 }
 
@@ -89,6 +90,18 @@
   }
 
   html.dark *::-moz-selection {
+    background-color: hsl(var(--primary) / 0.42);
+    color: hsl(var(--foreground));
+  }
+
+  html.dark input::selection,
+  html.dark textarea::selection {
+    background-color: hsl(var(--primary) / 0.42);
+    color: hsl(var(--foreground));
+  }
+
+  html.dark input::-moz-selection,
+  html.dark textarea::-moz-selection {
     background-color: hsl(var(--primary) / 0.42);
     color: hsl(var(--foreground));
   }
@@ -279,6 +292,20 @@
 /* Soft shadow adapted for dark */
 .dark .shadow-soft {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* Prevent browser autofill from reintroducing light input styling in dark mode */
+.dark input:-webkit-autofill,
+.dark input:-webkit-autofill:hover,
+.dark input:-webkit-autofill:focus,
+.dark textarea:-webkit-autofill,
+.dark textarea:-webkit-autofill:hover,
+.dark textarea:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px hsl(var(--background)) inset;
+  -webkit-text-fill-color: hsl(var(--foreground));
+  caret-color: hsl(var(--foreground));
+  border-bottom-color: hsl(var(--primary));
+  transition: background-color 9999s ease-in-out 0s;
 }
 
 /* Smooth transitions */
