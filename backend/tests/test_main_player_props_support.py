@@ -88,7 +88,10 @@ def test_compute_k_user_filters_bonus_bets_in_python(monkeypatch):
 
     out = main.compute_k_user(db, "user-1")
 
-    assert db.query.selected_fields == "*"
+    assert (
+        db.query.selected_fields
+        == "promo_type,result,created_at,stake,payout_override,win_payout"
+    )
     assert db.query.eq_calls == [("user_id", "user-1")]
     assert out["bonus_stake_settled"] == pytest.approx(150.0, abs=0.01)
     assert out["k_obs"] == pytest.approx(80.0 / 150.0, abs=1e-6)
