@@ -64,7 +64,10 @@ PLAYER_PROP_REFERENCE_BOOK_WEIGHTS: dict[str, float] = {
     "betonlineag": 3.0,
     "bovada": 1.5,
 }
-PLAYER_PROP_MIN_SOLID_REFERENCE_BOOKMAKERS = 2
+# Default surfaced-prop trust gate:
+# 3 reference books gives us enough market confirmation to avoid thin two-book
+# consensus artifacts without starving the slate as aggressively as a 4-book gate.
+PLAYER_PROP_MIN_SOLID_REFERENCE_BOOKMAKERS = 3
 PLAYER_PROP_MIN_REFERENCE_BOOKMAKERS_ENV = "PLAYER_PROP_MIN_REFERENCE_BOOKMAKERS"
 PLAYER_PROP_FALLBACK_MAX_EVENTS = 3
 PLAYER_PROP_CACHE_VERSION = "v2"

@@ -143,6 +143,7 @@ def test_parse_prop_sides_builds_consensus_reference_payload():
         sport="basketball_nba",
         event_payload=event_payload,
         target_markets=["player_points"],
+        min_reference_bookmakers=2,
     )
 
     assert len(sides) == 6
@@ -219,6 +220,7 @@ def test_parse_prop_sides_falls_back_to_homepage_when_provider_links_are_unusabl
         sport="basketball_nba",
         event_payload=event_payload,
         target_markets=["player_points"],
+        min_reference_bookmakers=2,
     )
 
     betmgm_over = next(side for side in sides if side["sportsbook"] == "BetMGM" and side["selection_side"] == "over")
@@ -279,6 +281,7 @@ def test_parse_prop_sides_uses_lookup_for_team_and_participant_context():
         player_context_lookup={
             "jamalmurray": {"team": "Nuggets", "participant_id": "player-27"},
         },
+        min_reference_bookmakers=2,
     )
 
     draftkings_over = next(side for side in sides if side["sportsbook"] == "DraftKings" and side["selection_side"] == "over")
@@ -1620,6 +1623,7 @@ def test_parse_prop_sides_exposes_confidence_score_field():
         sport="basketball_nba",
         event_payload=event_payload,
         target_markets=["player_points"],
+        min_reference_bookmakers=2,
     )
     assert len(sides) > 0
     for side in sides:
@@ -1692,9 +1696,9 @@ def test_parse_prop_sides_betonline_reference_boosts_confidence_vs_follower_only
     )
 
     base_sides = _parse_prop_sides(sport="basketball_nba", event_payload=base_payload,
-                                   target_markets=["player_points"])
+                                   target_markets=["player_points"], min_reference_bookmakers=2)
     bol_sides = _parse_prop_sides(sport="basketball_nba", event_payload=betonline_payload,
-                                  target_markets=["player_points"])
+                                  target_markets=["player_points"], min_reference_bookmakers=2)
 
     base_score = dk_side(base_sides)["confidence_score"]
     bol_score = dk_side(bol_sides)["confidence_score"]
@@ -1735,9 +1739,9 @@ def test_parse_prop_sides_high_dispersion_reduces_confidence_score():
     )
 
     tight_sides = _parse_prop_sides(sport="basketball_nba", event_payload=tight_payload,
-                                    target_markets=["player_points"])
+                                    target_markets=["player_points"], min_reference_bookmakers=2)
     wide_sides  = _parse_prop_sides(sport="basketball_nba", event_payload=wide_payload,
-                                    target_markets=["player_points"])
+                                    target_markets=["player_points"], min_reference_bookmakers=2)
 
     tight_score = dk(tight_sides)["confidence_score"]
     wide_score  = dk(wide_sides)["confidence_score"]
