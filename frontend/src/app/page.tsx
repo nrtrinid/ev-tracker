@@ -222,11 +222,18 @@ type TotalsOffer = {
   under_odds: number;
 };
 
-type GameContextGame = {
-  event: string;
-  event_short?: string;
-  commence_time: string;
-  totals_offers: TotalsOffer[];
+type H2HOffer = {
+  sportsbook: string;
+  home_odds: number;
+  away_odds: number;
+};
+
+type SpreadOffer = {
+  sportsbook: string;
+  home_spread: number;
+  away_spread: number;
+  home_odds: number;
+  away_odds: number;
 };
 
 type FeaturedLineGame = {
@@ -234,14 +241,8 @@ type FeaturedLineGame = {
   event_short?: string;
   sport: string;
   commence_time: string;
-  h2h_offers: Array<{ sportsbook: string; home_odds: number; away_odds: number }>;
-  spreads_offers: Array<{
-    sportsbook: string;
-    home_spread: number;
-    away_spread: number;
-    home_odds: number;
-    away_odds: number;
-  }>;
+  h2h_offers: H2HOffer[];
+  spreads_offers: SpreadOffer[];
   totals_offers: TotalsOffer[];
 };
 
@@ -249,34 +250,6 @@ type FeaturedSportBucket = {
   sport: string;
   games: FeaturedLineGame[];
 };
-
-function parseGameContextGames(gameContext: unknown): GameContextGame[] {
-  if (!gameContext || typeof gameContext !== "object") return [];
-  const gc = gameContext as { games?: unknown };
-  if (!Array.isArray(gc.games)) return [];
-
-  const out: GameContextGame[] = [];
-  for (const rawGame of gc.games) {
-    if (!rawGame || typeof rawGame !== "object") continue;
-    const g = rawGame as Partial<GameContextGame> & { totals_offers?: unknown };
-    if (typeof g.event !== "string" || typeof g.commence_time !== "string") continue;
-    if (!Array.isArray(g.totals_offers)) continue;
-    const offers: TotalsOffer[] = [];
-    for (const rawOffer of g.totals_offers) {
-      if (!rawOffer || typeof rawOffer !== "object") continue;
-      const o = rawOffer as Partial<TotalsOffer>;
-      if (typeof o.sportsbook !== "string") continue;
-      if (typeof o.total !== "number") continue;
-      if (typeof o.over_odds !== "number") continue;
-      if (typeof o.under_odds !== "number") continue;
-      offers.push({ sportsbook: o.sportsbook, total: o.total, over_odds: o.over_odds, under_odds: o.under_odds });
-    }
-    if (offers.length === 0) continue;
-    out.push({ event: g.event, event_short: typeof g.event_short === "string" ? g.event_short : undefined, commence_time: g.commence_time, totals_offers: offers });
-  }
-
-  return out;
-}
 
 function matchesBoardTimeFilter(commenceTime: string, filter: BoardTimeFilter, now: Date = new Date()): boolean {
   const start = new Date(commenceTime);
@@ -811,7 +784,6 @@ export default function MarketsPage() {
     viewMode,
   ]);
   const activeContentIsLoading = !boardError && activeScanData === null && (isBoardLoading || activeSurfaceIsLoading);
-  const gameContextGames = useMemo(() => parseGameContextGames(board?.game_context), [board?.game_context]);
   const featuredLineBuckets = useMemo(() => parseFeaturedLines(board?.game_context), [board?.game_context]);
 
   const boardAgeMinutes = useMemo(() => {
@@ -961,17 +933,21 @@ export default function MarketsPage() {
     [primaryMode, rankedSides],
   );
 
-  const filteredGameContextGames = useMemo(
-    () => gameContextGames.filter((g) => matchesBoardTimeFilter(g.commence_time, timeFilter)),
-    [gameContextGames, timeFilter],
-  );
+  const filteredFeaturedGames = useMemo(() => {
+    return featuredGames.filter((game) => {
+      if (straightBetMarketFilter === "h2h") return game.h2h_offers.length > 0;
+      if (straightBetMarketFilter === "spreads") return game.spreads_offers.length > 0;
+      if (straightBetMarketFilter === "totals") return game.totals_offers.length > 0;
+      return game.h2h_offers.length > 0 || game.spreads_offers.length > 0 || game.totals_offers.length > 0;
+    });
+  }, [featuredGames, straightBetMarketFilter]);
   const gameTodayOpenCount = useMemo(
-    () => gameContextGames.filter((g) => matchesBoardTimeFilter(g.commence_time, "today")).length,
-    [gameContextGames],
+    () => featuredLineBuckets.flatMap((bucket) => bucket.games).filter((g) => matchesBoardTimeFilter(g.commence_time, "today")).length,
+    [featuredLineBuckets],
   );
   const gameTodayClosedCount = useMemo(
-    () => gameContextGames.filter((g) => matchesBoardTimeFilter(g.commence_time, "today_closed")).length,
-    [gameContextGames],
+    () => featuredLineBuckets.flatMap((bucket) => bucket.games).filter((g) => matchesBoardTimeFilter(g.commence_time, "today_closed")).length,
+    [featuredLineBuckets],
   );
 
   const pickEmCards = useMemo(() => {
@@ -1824,14 +1800,14 @@ export default function MarketsPage() {
         </>
       )}
 
-      {/* 3b. Game Lines — rendered from board.game_context (totals context) */}
+      {/* 3b. Game Lines fallback — rendered from board featured lines */}
       {primaryMode === "straight_bets" && !activeContentIsLoading && !isBoardLoading && !boardError && allSides.length === 0 && (
         <div className="space-y-2">
-          {filteredGameContextGames.length === 0 ? (
+          {filteredFeaturedGames.length === 0 ? (
             <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
               <p className="text-sm font-medium text-foreground">No Game Lines in today&apos;s board</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                The daily drop did not include totals context yet. Check back after the next daily drop.
+                The daily drop did not include any featured moneylines, spreads, or totals for this filter yet.
               </p>
               {timeFilter === "today" && gameTodayOpenCount === 0 && gameTodayClosedCount > 0 && (
                 <button
@@ -1844,7 +1820,7 @@ export default function MarketsPage() {
               )}
             </div>
           ) : (
-            filteredGameContextGames
+            filteredFeaturedGames
               .slice()
               .sort((a, b) => new Date(a.commence_time).getTime() - new Date(b.commence_time).getTime())
               .map((game) => {
@@ -1853,44 +1829,79 @@ export default function MarketsPage() {
                   ? kickoff.toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })
                   : "";
 
-                const offersByBook = new Map(game.totals_offers.map((o) => [o.sportsbook, o] as const));
-                const pinnacle = offersByBook.get("Pinnacle") ?? null;
-                const visibleOffers = selectedGameLineBooks
-                  .map((book) => offersByBook.get(book))
+                const title = game.event_short || game.event;
+                const [homeTeam = "Home", awayTeam = "Away"] = title.split(/\s+vs\s+/i);
+                const h2hByBook = new Map(game.h2h_offers.map((o) => [o.sportsbook, o] as const));
+                const spreadByBook = new Map(game.spreads_offers.map((o) => [o.sportsbook, o] as const));
+                const totalsByBook = new Map(game.totals_offers.map((o) => [o.sportsbook, o] as const));
+                const visibleH2HOffers = selectedGameLineBooks
+                  .map((book) => h2hByBook.get(book))
+                  .filter((o): o is H2HOffer => Boolean(o));
+                const visibleSpreadOffers = selectedGameLineBooks
+                  .map((book) => spreadByBook.get(book))
+                  .filter((o): o is SpreadOffer => Boolean(o));
+                const visibleTotalsOffers = selectedGameLineBooks
+                  .map((book) => totalsByBook.get(book))
                   .filter((o): o is TotalsOffer => Boolean(o));
-
-                const totalLabel = (o: TotalsOffer | null) =>
-                  o ? `${o.total}` : (pinnacle ? `${pinnacle.total}` : "");
+                const showMoneyline = straightBetMarketFilter === "all" || straightBetMarketFilter === "h2h";
+                const showSpreads = straightBetMarketFilter === "all" || straightBetMarketFilter === "spreads";
+                const showTotals = straightBetMarketFilter === "all" || straightBetMarketFilter === "totals";
 
                 return (
-                  <div key={`${game.event}|${game.commence_time}`} className="rounded-lg border border-border bg-card px-4 py-3">
+                  <div key={`${game.sport}|${game.event}|${game.commence_time}`} className="rounded-lg border border-border bg-card px-4 py-3">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-foreground">{game.event_short || game.event}</p>
+                        <p className="truncate text-sm font-medium text-foreground">{title}</p>
                         {kickoffLabel ? (
-                          <p className="mt-0.5 text-[11px] text-muted-foreground">{kickoffLabel}</p>
+                          <p className="mt-0.5 text-[11px] text-muted-foreground">
+                            {SPORT_KEY_TO_DISPLAY[game.sport] ?? game.sport}
+                            {kickoffLabel ? ` • ${kickoffLabel}` : ""}
+                          </p>
                         ) : null}
                       </div>
-                      <div className="shrink-0 text-right">
-                        <p className="text-[11px] text-muted-foreground">Total</p>
-                        <p className="text-sm font-semibold text-foreground">{totalLabel(pinnacle)}</p>
+                      <div className="shrink-0 text-right text-[11px] text-muted-foreground">
+                        {game.h2h_offers.length > 0 && <p>ML {game.h2h_offers.length}</p>}
+                        {game.spreads_offers.length > 0 && <p>Spr {game.spreads_offers.length}</p>}
+                        {game.totals_offers.length > 0 && <p>Tot {game.totals_offers.length}</p>}
                       </div>
                     </div>
 
-                    <div className="mt-3 space-y-2">
-                      {pinnacle ? (
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-muted-foreground">Pinnacle</span>
-                          <span className="text-muted-foreground">O {pinnacle.over_odds} · U {pinnacle.under_odds}</span>
+                    <div className="mt-3 space-y-3">
+                      {showMoneyline && visibleH2HOffers.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Moneyline</p>
+                          {visibleH2HOffers.map((o) => (
+                            <div key={`h2h-${o.sportsbook}`} className="flex items-center justify-between text-xs">
+                              <span className="text-foreground">{o.sportsbook}</span>
+                              <span className="text-muted-foreground">{homeTeam} {o.home_odds} • {awayTeam} {o.away_odds}</span>
+                            </div>
+                          ))}
                         </div>
-                      ) : null}
-
-                      {visibleOffers.map((o) => (
-                        <div key={o.sportsbook} className="flex items-center justify-between text-xs">
-                          <span className="text-foreground">{o.sportsbook}</span>
-                          <span className="text-muted-foreground">O {o.over_odds} · U {o.under_odds}</span>
+                      )}
+                      {showSpreads && visibleSpreadOffers.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Spreads</p>
+                          {visibleSpreadOffers.map((o) => (
+                            <div key={`spreads-${o.sportsbook}`} className="flex items-center justify-between text-xs">
+                              <span className="text-foreground">{o.sportsbook}</span>
+                              <span className="text-muted-foreground">
+                                {homeTeam} {o.home_spread > 0 ? `+${o.home_spread}` : o.home_spread} ({o.home_odds}) • {awayTeam} {o.away_spread > 0 ? `+${o.away_spread}` : o.away_spread} ({o.away_odds})
+                              </span>
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      )}
+                      {showTotals && visibleTotalsOffers.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Totals</p>
+                          {visibleTotalsOffers.map((o) => (
+                            <div key={`totals-${o.sportsbook}`} className="flex items-center justify-between text-xs">
+                              <span className="text-foreground">{o.sportsbook}</span>
+                              <span className="text-muted-foreground">Total {o.total} • O {o.over_odds} • U {o.under_odds}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -1898,7 +1909,6 @@ export default function MarketsPage() {
           )}
         </div>
       )}
-
       <LogBetDrawer
         key={drawerKey}
         open={drawerOpen}
