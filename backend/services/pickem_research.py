@@ -137,7 +137,11 @@ def is_missing_pickem_research_observations_error(error: Exception) -> bool:
     message = str(getattr(error, "message", "") or "")
     combined = f"{msg} {message}".lower()
     code = str(getattr(error, "code", "") or "").strip().upper()
-    return code == "PGRST205" or ("pickem_research_observations" in combined and "schema cache" in combined)
+    return (
+        code == "PGRST205"
+        or ("pickem_research_observations" in combined and "schema cache" in combined)
+        or "unexpected table: pickem_research_observations" in combined
+    )
 
 
 def _binary_calibration_metrics(predicted_prob: float | None, actual_result: str | None) -> tuple[float | None, float | None]:

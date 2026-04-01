@@ -749,7 +749,7 @@ function PickEmRecentList({
 }: {
   rows: PickEmResearchRecentRow[];
 }) {
-  if (rows.length === 0) return <p className="text-xs text-muted-foreground">No pick'em observations settled yet.</p>;
+  if (rows.length === 0) return <p className="text-xs text-muted-foreground">No pick&apos;em observations settled yet.</p>;
 
   return (
     <div className="space-y-1.5">
@@ -967,7 +967,7 @@ function PickEmResearchPanel({
   if (isError) {
     return (
       <p className="text-sm text-muted-foreground">
-        Pick'em research summary unavailable{errorMessage ? `: ${errorMessage}` : "."}
+        Pick&apos;em research summary unavailable{errorMessage ? `: ${errorMessage}` : "."}
       </p>
     );
   }
@@ -989,7 +989,7 @@ function PickEmResearchPanel({
 
       <div className="rounded border border-border/70 bg-muted/10 px-3 py-2">
         <p className="text-xs text-muted-foreground">
-          This view tells us whether surfaced pick'em reads are calibrated. Probability buckets compare displayed hit rate to actual settled outcomes, while close drift shows whether the market moved toward or away from the board read.
+          This view tells us whether surfaced pick&apos;em reads are calibrated. Probability buckets compare displayed hit rate to actual settled outcomes, while close drift shows whether the market moved toward or away from the board read.
         </p>
       </div>
 
@@ -999,7 +999,7 @@ function PickEmResearchPanel({
       <PickEmBreakdownChips title="By EV Basis" rows={pickemResearch?.by_ev_basis ?? []} />
 
       <div className="space-y-1.5">
-        <p className="text-xs text-muted-foreground">Recent pick'em observations</p>
+        <p className="text-xs text-muted-foreground">Recent pick&apos;em observations</p>
         <p className="text-[11px] text-muted-foreground">
           Displayed probability comes from the surfaced board card. Actual hit rate only counts settled win/loss outcomes; pushes stay visible but do not enter the calibration denominator.
         </p>
