@@ -623,11 +623,6 @@ def get_board_latest_promos(
     straight_list = straight_sides if isinstance(straight_sides, list) else []
     props_list = props_items if isinstance(props_items, list) else []
 
-    # Take a bounded slice from each surface first to avoid doubling memory.
-    take_each = max(10, int(limit / 2))
-    combined = [*props_list[:take_each], *straight_list[:take_each]]
-    combined = annotate_sides_with_duplicate_state(db, str(user.get("id") or ""), combined)
-
     def _ev(side: object) -> float:
         if not isinstance(side, dict):
             return -1e9
@@ -635,6 +630,21 @@ def get_board_latest_promos(
             return float(side.get("ev_percentage") or -1e9)
         except Exception:
             return -1e9
+
+    # Rank within each surface before slicing so late-arriving sports/markets are not
+    # dropped just because they appear later in the cached payload order.
+    candidate_window = min(max(limit * 3, 120), 600)
+    try:
+        props_candidates = sorted(props_list, key=_ev, reverse=True)[:candidate_window]
+    except Exception:
+        props_candidates = props_list[:candidate_window]
+    try:
+        straight_candidates = sorted(straight_list, key=_ev, reverse=True)[:candidate_window]
+    except Exception:
+        straight_candidates = straight_list[:candidate_window]
+
+    combined = [*props_candidates, *straight_candidates]
+    combined = annotate_sides_with_duplicate_state(db, str(user.get("id") or ""), combined)
 
     try:
         combined.sort(key=_ev, reverse=True)
@@ -649,6 +659,8 @@ def get_board_latest_promos(
         rss_mb_after=rss_mb(),
         straight_sides=len(straight_list),
         player_sides=len(props_list),
+        straight_candidates=len(straight_candidates),
+        player_candidates=len(props_candidates),
         returned=len(combined),
     )
 

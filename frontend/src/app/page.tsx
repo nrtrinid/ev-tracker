@@ -6,8 +6,9 @@ import { toast } from "sonner";
 import { Clock, Gift, Layers, ShieldCheck, TrendingUp, Zap } from "lucide-react";
 
 import { ScannerResultsPane } from "@/app/scanner/components/ScannerResultsPane";
+import { StraightBetList } from "@/app/scanner/components/StraightBetList";
 import type { PickEmBoardCard } from "@/app/scanner/pickem-board";
-import { rankScannerSidesByLens } from "@/app/scanner/scanner-lenses";
+import { rankScannerSidesByLens, type RankedScannerSide } from "@/app/scanner/scanner-lenses";
 import { getBoardPlayerPropDetail } from "@/lib/api";
 import {
   buildParlayCartLeg,
@@ -191,6 +192,48 @@ function dedupePromoSidesByDuplicateState(sides: MarketSide[]): MarketSide[] {
     }
   }
   return Array.from(byKey.values());
+}
+
+function compareRankedSidesByLens(
+  left: RankedScannerSide,
+  right: RankedScannerSide,
+  activeLens: "standard" | "profit_boost" | "bonus_bet" | "qualifier",
+): number {
+  if (activeLens === "profit_boost") {
+    return (right._boostedEV ?? 0) - (left._boostedEV ?? 0);
+  }
+  if (activeLens === "bonus_bet") {
+    return (right._retention ?? 0) - (left._retention ?? 0);
+  }
+  if (activeLens === "qualifier") {
+    const holdDiff = (left._qualifierHold ?? Number.POSITIVE_INFINITY) - (right._qualifierHold ?? Number.POSITIVE_INFINITY);
+    if (holdDiff !== 0) return holdDiff;
+  }
+  return (right.ev_percentage ?? 0) - (left.ev_percentage ?? 0);
+}
+
+function selectDiversePromoGameLineCandidates(
+  sides: Array<RankedScannerSide>,
+  maxItems: number,
+): Array<RankedScannerSide> {
+  const picked: RankedScannerSide[] = [];
+  const seenBuckets = new Set<string>();
+
+  for (const side of sides) {
+    const bucket = `${side.sport}|${String(side.market_key ?? "").toLowerCase()}`;
+    if (seenBuckets.has(bucket)) continue;
+    seenBuckets.add(bucket);
+    picked.push(side);
+    if (picked.length >= maxItems) return picked;
+  }
+
+  for (const side of sides) {
+    if (picked.includes(side)) continue;
+    picked.push(side);
+    if (picked.length >= maxItems) return picked;
+  }
+
+  return picked;
 }
 
 function sanitizeStoredBooks(stored: unknown, allowed: readonly string[], fallback: string[]): string[] {
@@ -880,6 +923,26 @@ export default function MarketsPage() {
     }
 
     const sidesForRanking = primaryMode === "promos" ? dedupePromoSidesByDuplicateState(allSides) : allSides;
+    if (primaryMode === "promos") {
+      const promoProps = rankScannerSidesByLens({
+        sides: sidesForRanking.filter((side) => side.surface === "player_props"),
+        selectedBooks: selectedPropBooks,
+        activeLens,
+        boostPercent,
+      });
+      const promoStraight = rankScannerSidesByLens({
+        sides: sidesForRanking.filter((side) => side.surface !== "player_props"),
+        selectedBooks: selectedGameLineBooks,
+        activeLens,
+        boostPercent,
+      });
+      const ranked = [...promoProps, ...promoStraight].sort((left, right) => compareRankedSidesByLens(left, right, activeLens));
+      if (activeLens === "standard") {
+        return ranked.filter((s) => Number(s.ev_percentage || 0) > 1);
+      }
+      return ranked;
+    }
+
     const ranked = rankScannerSidesByLens({
       sides: sidesForRanking,
       selectedBooks,
@@ -892,7 +955,17 @@ export default function MarketsPage() {
       return ranked.filter((s) => Number(s.ev_percentage || 0) > 1);
     }
     return ranked;
-  }, [activePlayerPropsListPage?.items, allSides, selectedBooks, viewMode, activeLens, primaryMode, boostPercent]);
+  }, [
+    activePlayerPropsListPage?.items,
+    allSides,
+    selectedBooks,
+    selectedPropBooks,
+    selectedGameLineBooks,
+    viewMode,
+    activeLens,
+    primaryMode,
+    boostPercent,
+  ]);
 
   const filteredSides = useMemo(() => {
     if (primaryMode === "player_props") {
@@ -923,6 +996,13 @@ export default function MarketsPage() {
       return haystack.includes(q);
     });
   }, [activePlayerPropsListPage?.items, rankedSides, searchQuery, straightBetMarketFilter, timeFilter, primaryMode]);
+  const promoGameLineResults = useMemo(() => {
+    if (primaryMode !== "promos") return [];
+    return selectDiversePromoGameLineCandidates(
+      filteredSides.filter((side): side is RankedScannerSide => side.surface === "straight_bets"),
+      6,
+    );
+  }, [filteredSides, primaryMode]);
 
   const todayOpenCount = useMemo(
     () => (primaryMode === "player_props" ? 0 : rankedSides.filter((s) => matchesBoardTimeFilter(s.commence_time, "today")).length),
@@ -1744,6 +1824,32 @@ export default function MarketsPage() {
               sportDisplayMap={SPORT_KEY_TO_DISPLAY}
             />
           )}
+          {primaryMode === "promos" && promoGameLineResults.length > 0 && (
+            <div className="rounded-lg border border-border bg-card px-4 py-3">
+              <div className="mb-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Game-Line Promos
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Straight-bet promo candidates pulled from the current board across moneylines, spreads, and totals.
+                </p>
+              </div>
+              <StraightBetList
+                activeLens={activeLens}
+                results={promoGameLineResults}
+                kellyMultiplier={kellyMultiplier}
+                bankroll={bankroll}
+                boostPercent={boostPercent}
+                canLoadMore={false}
+                onLoadMore={() => {}}
+                onLogBet={handleLogBet}
+                onAddToCart={handleAddToCart}
+                onStartPlaceFlow={handleLogBet}
+                bookColors={BOOK_COLORS}
+                sportDisplayMap={SPORT_KEY_TO_DISPLAY}
+              />
+            </div>
+          )}
           {timeFilter === "today" && todayOpenCount === 0 && todayClosedCount > 0 && (
             <div className="rounded-md border border-border bg-card px-3 py-2 text-center">
               <p className="text-xs text-muted-foreground">No still-open markets today.</p>
@@ -1800,8 +1906,8 @@ export default function MarketsPage() {
         </>
       )}
 
-      {/* 3b. Game Lines fallback — rendered from board featured lines */}
-      {primaryMode === "straight_bets" && !activeContentIsLoading && !isBoardLoading && !boardError && allSides.length === 0 && (
+      {/* 3b. Featured Game Lines */}
+      {primaryMode === "straight_bets" && !activeContentIsLoading && !isBoardLoading && !boardError && (filteredFeaturedGames.length > 0 || allSides.length === 0) && (
         <div className="space-y-2">
           {filteredFeaturedGames.length === 0 ? (
             <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
@@ -1820,10 +1926,20 @@ export default function MarketsPage() {
               )}
             </div>
           ) : (
-            filteredFeaturedGames
-              .slice()
-              .sort((a, b) => new Date(a.commence_time).getTime() - new Date(b.commence_time).getTime())
-              .map((game) => {
+            <div className="rounded-lg border border-border bg-card px-4 py-3">
+              <div className="mb-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Featured Game Lines
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Board context across NBA, NCAAB, and MLB, including moneylines, spreads, and totals.
+                </p>
+              </div>
+              <div className="space-y-2">
+                {filteredFeaturedGames
+                  .slice()
+                  .sort((a, b) => new Date(a.commence_time).getTime() - new Date(b.commence_time).getTime())
+                  .map((game) => {
                 const kickoff = game.commence_time ? new Date(game.commence_time) : null;
                 const kickoffLabel = kickoff && !Number.isNaN(kickoff.getTime())
                   ? kickoff.toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })
@@ -1905,7 +2021,9 @@ export default function MarketsPage() {
                     </div>
                   </div>
                 );
-              })
+                })}
+              </div>
+            </div>
           )}
         </div>
       )}

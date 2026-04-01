@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from fastapi import HTTPException
 
@@ -6,6 +8,7 @@ from .test_utils import ensure_supabase_stub
 ensure_supabase_stub()
 
 from routes.board_routes import (
+    get_board_latest_promos,
     get_board_latest_player_prop_detail,
     get_board_latest_player_props_opportunities,
 )
@@ -91,3 +94,55 @@ def test_get_board_latest_player_prop_detail_raises_404_when_missing(monkeypatch
         )
 
     assert exc_info.value.status_code == 404
+
+
+def test_get_board_latest_promos_sorts_within_surface_before_slicing(monkeypatch):
+    monkeypatch.setattr("routes.board_routes.get_db", lambda: object())
+    monkeypatch.setattr(
+        "routes.board_routes.load_board_snapshot",
+        lambda **_kwargs: {
+            "meta": {"snapshot_id": "snap-1", "scanned_at": "2026-04-02T00:00:00Z"},
+            "game_context": {"featured_lines": {}},
+        },
+    )
+
+    straight_sides = [
+        {
+            "surface": "straight_bets",
+            "event": f"Game {idx}",
+            "sportsbook": "DraftKings",
+            "sport": "basketball_nba",
+            "market_key": "h2h",
+            "ev_percentage": float(idx),
+        }
+        for idx in range(40)
+    ]
+    straight_sides.append(
+        {
+            "surface": "straight_bets",
+            "event": "Late MLB Total",
+            "sportsbook": "FanDuel",
+            "sport": "baseball_mlb",
+            "market_key": "totals",
+            "ev_percentage": 99.0,
+        }
+    )
+
+    monkeypatch.setattr(
+        "services.scan_cache.load_latest_scan_payload",
+        lambda **_kwargs: {"sides": straight_sides},
+    )
+    monkeypatch.setattr(
+        "routes.board_routes.load_player_prop_board_artifact",
+        lambda **_kwargs: ({}, []),
+    )
+    monkeypatch.setattr(
+        "routes.board_routes.annotate_sides_with_duplicate_state",
+        lambda _db, _user_id, sides: sides,
+    )
+
+    response = get_board_latest_promos(limit=20, user={"id": "user-1"})
+    payload = json.loads(response.body)
+
+    assert payload["sides"][0]["event"] == "Late MLB Total"
+    assert payload["sides"][0]["sport"] == "baseball_mlb"
