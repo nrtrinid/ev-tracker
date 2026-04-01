@@ -10,6 +10,7 @@ interface PlayerPropListProps {
   kellyMultiplier: number;
   bankroll: number;
   canLoadMore: boolean;
+  isLoadingMore?: boolean;
   onLoadMore: () => void;
   onLogBet: (side: PlayerPropMarketSide) => void;
   onAddToCart: (side: PlayerPropMarketSide) => void;
@@ -25,6 +26,7 @@ export function PlayerPropList({
   kellyMultiplier,
   bankroll,
   canLoadMore,
+  isLoadingMore = false,
   onLoadMore,
   onLogBet,
   onAddToCart,
@@ -53,8 +55,8 @@ export function PlayerPropList({
       </div>
 
       {canLoadMore && (
-        <Button type="button" variant="secondary" className="w-full" onClick={onLoadMore}>
-          Load more
+        <Button type="button" variant="secondary" className="w-full" onClick={onLoadMore} disabled={isLoadingMore}>
+          {isLoadingMore ? "Loading more..." : "Load more"}
         </Button>
       )}
     </>

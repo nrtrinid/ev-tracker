@@ -1192,6 +1192,10 @@ async def run_jit_clv_snatcher(db) -> int:
         update_bet_reference_snapshots,
         update_scan_opportunity_reference_snapshots,
     )
+    from services.pickem_research import (
+        is_missing_pickem_research_observations_error,
+        update_pickem_research_close_snapshots,
+    )
     from services.research_opportunities import is_missing_scan_opportunities_error
     from services.player_props import (
         _fetch_prop_market_for_event,
@@ -1227,6 +1231,19 @@ async def run_jit_clv_snatcher(db) -> int:
             opportunity_result = type("EmptyResult", (), {"data": []})()
         else:
             raise
+    try:
+        pickem_result = (
+            db.table("pickem_research_observations")
+            .select("id,sport,event_id,market_key,commence_time,close_reference_odds,close_captured_at")
+            .gt("commence_time", now_iso)
+            .lte("commence_time", window_end_iso)
+            .execute()
+        )
+    except Exception as e:
+        if is_missing_pickem_research_observations_error(e):
+            pickem_result = type("EmptyResult", (), {"data": []})()
+        else:
+            raise
 
     bet_candidates = [
         row for row in (bet_result.data or [])
@@ -1238,16 +1255,22 @@ async def run_jit_clv_snatcher(db) -> int:
         if row.get("reference_odds_at_close") is None
         or not has_valid_close_snapshot(row.get("commence_time"), row.get("close_captured_at"))
     ]
+    pickem_candidates = [
+        row for row in (pickem_result.data or [])
+        if row.get("close_reference_odds") is None
+        or not has_valid_close_snapshot(row.get("commence_time"), row.get("close_captured_at"))
+    ]
 
     _log_event(
         "jit_clv.snapshot_candidates",
         bet_candidates=len(bet_candidates),
         research_candidates=len(opportunity_candidates),
+        pickem_candidates=len(pickem_candidates),
         window_start=now_iso,
         window_end=window_end_iso,
     )
 
-    if not bet_candidates and not opportunity_candidates:
+    if not bet_candidates and not opportunity_candidates and not pickem_candidates:
         return 0
 
     straight_sport_keys = {
@@ -1269,6 +1292,13 @@ async def run_jit_clv_snatcher(db) -> int:
             prop_fetch_plan.setdefault(sport, {}).setdefault(event_id, set()).add(market_key)
             continue
         straight_sport_keys.add(sport)
+    for row in pickem_candidates:
+        sport = str(row.get("sport") or "").strip()
+        event_id = str(row.get("event_id") or "").strip()
+        market_key = str(row.get("market_key") or "").strip()
+        if not sport or not event_id or not market_key:
+            continue
+        prop_fetch_plan.setdefault(sport, {}).setdefault(event_id, set()).add(market_key)
 
     sport_keys = sorted(straight_sport_keys | set(prop_fetch_plan.keys()))
 
@@ -1332,13 +1362,24 @@ async def run_jit_clv_snatcher(db) -> int:
                 allow_close=True,
                 now=now,
             )
-            total_close_updated += bet_updates["close_updated"] + opportunity_updates["close_updated"]
+            pickem_updates = update_pickem_research_close_snapshots(
+                db,
+                sides=sides,
+                allow_close=True,
+                now=now,
+            )
+            total_close_updated += (
+                bet_updates["close_updated"]
+                + opportunity_updates["close_updated"]
+                + pickem_updates["close_updated"]
+            )
             _log_event(
                 "jit_clv.sport_completed",
                 sport=sport_key,
                 fetched_sides=len(sides),
                 bet_close_updated=bet_updates["close_updated"],
                 research_close_updated=opportunity_updates["close_updated"],
+                pickem_close_updated=pickem_updates["close_updated"],
             )
 
         except Exception as e:
@@ -1595,6 +1636,10 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
         settle_parlays,
         settle_standalone_props,
     )
+    from services.pickem_research import (
+        is_missing_pickem_research_observations_error,
+        settle_pickem_research_observations,
+    )
 
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
@@ -1639,7 +1684,25 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
     except Exception:
         parlay_bets = []
 
-    if not standalone_bets and not parlay_bets:
+    try:
+        pickem_result = (
+            db.table("pickem_research_observations")
+            .select("sport,commence_time,actual_result")
+            .execute()
+        )
+        pickem_pending_rows = [
+            row
+            for row in (pickem_result.data or [])
+            if str(row.get("actual_result") or "").strip().lower() not in {"win", "loss", "push"}
+            and (_parse_utc_iso(row.get("commence_time")) or now) < now
+        ]
+    except Exception as e:
+        if is_missing_pickem_research_observations_error(e):
+            pickem_pending_rows = []
+        else:
+            raise
+
+    if not standalone_bets and not parlay_bets and not pickem_pending_rows:
         return 0
 
     sport_keys: set[str] = set()
@@ -1648,6 +1711,11 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
         if sk:
             sport_keys.add(str(sk))
     sport_keys.update(collect_sport_keys_from_parlays(parlay_bets))
+    sport_keys.update(
+        str(row.get("sport") or "").strip()
+        for row in pickem_pending_rows
+        if str(row.get("sport") or "").strip()
+    )
 
     completed_by_sport: dict[str, list[dict]] = {}
     fetch_errors: list[dict] = []
@@ -1783,6 +1851,13 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
         source=source,
         telemetry=prop_telemetry,
     )
+    pickem_research_settled, pickem_research_skipped = await settle_pickem_research_observations(
+        db,
+        completed_by_sport,
+        settled_at,
+        source=source,
+        now=now,
+    )
 
     combined_total = total_settled + props_settled + parlays_settled
 
@@ -1794,9 +1869,11 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
         "ml_settled": total_settled,
         "props_settled": props_settled,
         "parlays_settled": parlays_settled,
+        "pickem_research_settled": pickem_research_settled,
         "skipped_totals": aggregate_skipped,
         "props_skipped": props_skipped,
         "parlay_skipped": parlay_skipped,
+        "pickem_research_skipped": pickem_research_skipped,
         "score_fetch_errors": fetch_errors,
         "prop_settle_telemetry": prop_telemetry,
     }

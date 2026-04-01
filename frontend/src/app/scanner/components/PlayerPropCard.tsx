@@ -109,7 +109,7 @@ export function PlayerPropCard({
 
   const duplicateState = side.scanner_duplicate_state ?? "new";
   const duplicateBadge = getDuplicateBadge(duplicateState);
-  const referenceBookCount = side.reference_bookmaker_count ?? side.reference_bookmakers.length;
+  const referenceBookCount = side.reference_bookmaker_count ?? side.reference_bookmakers?.length ?? 0;
 
   const boostedEV = side._boostedEV ?? calculateLensBoostedEV(side, boostPercent);
   const retention = side._retention ?? calculateLensRetention(side);
@@ -180,7 +180,7 @@ export function PlayerPropCard({
 
         {/* Row 2: matchup + game time */}
         <p className="mt-0.5 text-xs text-muted-foreground">
-          {(side.event_short || side.event)} • {formatGameTime(side.commence_time)}
+          {side.event} • {formatGameTime(side.commence_time)}
         </p>
 
         {/* Row 3: book odds, fair odds, trust signal */}

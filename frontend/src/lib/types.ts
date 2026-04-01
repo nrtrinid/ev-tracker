@@ -253,7 +253,7 @@ export interface PlayerPropMarketSide {
   display_name: string;
   reference_odds: number;
   reference_source: string;
-  reference_bookmakers: string[];
+  reference_bookmakers?: string[];
   reference_bookmaker_count?: number | null;
   confidence_label?: string | null;
   confidence_score?: number | null;
@@ -300,6 +300,99 @@ export interface PrizePicksComparisonCard {
 }
 
 export type MarketSide = StraightBetMarketSide | PlayerPropMarketSide;
+
+export interface PlayerPropBoardItem {
+  surface: "player_props";
+  event_id?: string | null;
+  market_key: string;
+  selection_key: string;
+  sportsbook: string;
+  sportsbook_deeplink_url?: string | null;
+  sportsbook_deeplink_level?: SportsbookDeeplinkLevel | null;
+  sport: string;
+  event: string;
+  event_short?: string | null;
+  commence_time: string;
+  market: string;
+  player_name: string;
+  participant_id?: string | null;
+  team?: string | null;
+  team_short?: string | null;
+  opponent?: string | null;
+  opponent_short?: string | null;
+  selection_side: string;
+  line_value?: number | null;
+  display_name: string;
+  reference_odds: number;
+  reference_source: string;
+  reference_bookmaker_count?: number | null;
+  confidence_label?: string | null;
+  book_odds: number;
+  true_prob: number;
+  base_kelly_fraction: number;
+  book_decimal: number;
+  ev_percentage: number;
+  scanner_duplicate_state?: "new" | "logged_elsewhere" | "already_logged" | "better_now";
+  best_logged_odds_american?: number | null;
+  current_odds_american?: number | null;
+  matched_pending_bet_id?: string | null;
+}
+
+export interface PlayerPropBoardDetail {
+  selection_key: string;
+  sportsbook: string;
+  reference_bookmakers: string[];
+  reference_bookmaker_count?: number | null;
+}
+
+export interface PlayerPropBoardPickEmCard {
+  comparison_key: string;
+  event_id?: string | null;
+  sport: string;
+  event: string;
+  event_short?: string | null;
+  commence_time: string;
+  player_name: string;
+  participant_id?: string | null;
+  team?: string | null;
+  team_short?: string | null;
+  opponent?: string | null;
+  opponent_short?: string | null;
+  market_key: string;
+  market: string;
+  line_value: number;
+  exact_line_bookmakers: string[];
+  exact_line_bookmaker_count: number;
+  consensus_over_prob: number;
+  consensus_under_prob: number;
+  consensus_side: "over" | "under";
+  confidence_label: string;
+  best_over_sportsbook?: string | null;
+  best_over_odds?: number | null;
+  best_over_deeplink_url?: string | null;
+  best_under_sportsbook?: string | null;
+  best_under_odds?: number | null;
+  best_under_deeplink_url?: string | null;
+}
+
+export interface PlayerPropBoardPageResponse<TItem> {
+  items: TItem[];
+  page: number;
+  page_size: number;
+  total: number;
+  source_total: number;
+  has_more: boolean;
+  scanned_at?: string | null;
+  available_books: string[];
+  available_markets: string[];
+}
+
+export interface BoardPromosResponse {
+  meta: BoardSnapshotMeta;
+  game_context?: Record<string, unknown> | null;
+  limit: number;
+  sides: MarketSide[];
+}
 
 export interface PlayerPropDiagnosticGame {
   event_id?: string | null;
@@ -800,6 +893,76 @@ export interface ModelCalibrationSummary {
   cohort_trend: ModelCalibrationCohortTrendRow[];
   recent_comparisons: ModelCalibrationRecentComparisonRow[];
   release_gate: ModelCalibrationReleaseGate;
+}
+
+export interface PickEmResearchBreakdownItem {
+  key: string;
+  captured_count: number;
+  close_ready_count: number;
+  settled_count: number;
+  decisive_count: number;
+  push_count: number;
+  expected_hit_rate_pct: number | null;
+  actual_hit_rate_pct: number | null;
+  hit_rate_delta_pct_points: number | null;
+  avg_close_drift_pct_points: number | null;
+  avg_close_edge_pct: number | null;
+  avg_brier_score: number | null;
+  avg_log_loss: number | null;
+}
+
+export interface PickEmResearchRecentRow {
+  observation_key: string;
+  comparison_key: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  sport: string;
+  event: string;
+  commence_time: string;
+  market: string;
+  player_name: string;
+  selection_side: string;
+  line_value: number;
+  displayed_probability: number;
+  fair_odds_american: number | null;
+  books_matched_count: number;
+  confidence_label: string | null;
+  ev_basis: string;
+  selected_sportsbook: string | null;
+  selected_market_odds: number | null;
+  projected_edge_pct: number | null;
+  close_true_prob: number | null;
+  close_quality: string | null;
+  close_edge_pct: number | null;
+  close_drift_pct_points: number | null;
+  actual_result: "win" | "loss" | "push" | null;
+  settled_at: string | null;
+  calibration_bucket: string;
+  first_source: string;
+  surfaced_count: number;
+}
+
+export interface PickEmResearchSummary {
+  captured_count: number;
+  close_ready_count: number;
+  settled_count: number;
+  decisive_count: number;
+  push_count: number;
+  pending_result_count: number;
+  avg_display_probability_pct: number | null;
+  expected_hit_rate_pct: number | null;
+  actual_hit_rate_pct: number | null;
+  hit_rate_delta_pct_points: number | null;
+  avg_close_probability_pct: number | null;
+  avg_close_drift_pct_points: number | null;
+  avg_close_edge_pct: number | null;
+  avg_brier_score: number | null;
+  avg_log_loss: number | null;
+  by_probability_bucket: PickEmResearchBreakdownItem[];
+  by_market: PickEmResearchBreakdownItem[];
+  by_books_matched: PickEmResearchBreakdownItem[];
+  by_ev_basis: PickEmResearchBreakdownItem[];
+  recent_observations: PickEmResearchRecentRow[];
 }
 
 export interface ParlayWarning {

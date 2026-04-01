@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api";
 import {
   markParlaySlipLoggedInCache,
@@ -11,10 +11,15 @@ import type {
   BetCreate,
   BetResult,
   BetUpdate,
+  BoardPromosResponse,
   ParlaySlip,
   ParlaySlipCreate,
   ParlaySlipLogRequest,
   ParlaySlipUpdate,
+  PlayerPropBoardDetail,
+  PlayerPropBoardItem,
+  PlayerPropBoardPageResponse,
+  PlayerPropBoardPickEmCard,
   PromoType,
   ScannerSurface,
   Summary,
@@ -31,12 +36,28 @@ export const queryKeys = {
   operatorStatus: ["operator-status"] as const,
   researchOpportunitySummary: ["research-opportunity-summary"] as const,
   modelCalibrationSummary: ["model-calibration-summary"] as const,
+  pickEmResearchSummary: ["pickem-research-summary"] as const,
   parlaySlips: ["parlay-slips"] as const,
   settings: ["settings"] as const,
   transactions: ["transactions"] as const,
   balances: ["balances"] as const,
   scanMarkets: (surface: ScannerSurface) => ["scan-markets", surface] as const,
   board: ["board"] as const,
+  boardSurface: (surface: ScannerSurface) => ["board_surface", surface] as const,
+  boardPlayerProps: (
+    view: "opportunities" | "browse" | "pickem",
+    params: {
+      pageSize: number;
+      books: string[];
+      timeFilter: string;
+      market: string;
+      search: string;
+      tzOffsetMinutes: number;
+    },
+  ) => ["board_player_props", view, params] as const,
+  boardPlayerPropDetail: (selectionKey: string, sportsbook: string) =>
+    ["board_player_prop_detail", selectionKey, sportsbook] as const,
+  boardPromos: (limit: number) => ["board_promos", limit] as const,
 };
 
 function invalidateBetDerivedQueries(queryClient: QueryClient, betId?: string) {
@@ -333,6 +354,16 @@ export function useModelCalibrationSummary() {
   });
 }
 
+export function usePickEmResearchSummary() {
+  return useQuery({
+    queryKey: queryKeys.pickEmResearchSummary,
+    queryFn: api.getPickEmResearchSummary,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    retry: 1,
+  });
+}
+
 export function useParlaySlips() {
   return useQuery({
     queryKey: queryKeys.parlaySlips,
@@ -535,7 +566,7 @@ export function useBoardSurface(surface: ScannerSurface, enabled: boolean) {
   const readiness = useBackendReadiness();
   const backendOk = readiness.data?.status === "ready";
   return useQuery({
-    queryKey: ["board_surface", surface],
+    queryKey: queryKeys.boardSurface(surface),
     queryFn: () => api.getBoardSurface(surface),
     enabled: enabled && backendOk,
     staleTime: Infinity,
@@ -547,7 +578,96 @@ export function useBoardSurface(surface: ScannerSurface, enabled: boolean) {
   });
 }
 
-/** Scoped manual refresh — does NOT overwrite the canonical board:latest. */
+export function useInfiniteBoardPlayerPropsView(params: {
+  view: "opportunities" | "browse" | "pickem";
+  pageSize: number;
+  books: string[];
+  timeFilter: string;
+  market: string;
+  search: string;
+  tzOffsetMinutes: number;
+  enabled: boolean;
+}) {
+  const readiness = useBackendReadiness();
+  const backendOk = readiness.data?.status === "ready";
+  const queryParams = {
+    pageSize: params.pageSize,
+    books: [...params.books].sort(),
+    timeFilter: params.timeFilter,
+    market: params.market,
+    search: params.search,
+    tzOffsetMinutes: params.tzOffsetMinutes,
+  };
+  return useInfiniteQuery<
+    PlayerPropBoardPageResponse<PlayerPropBoardItem> | PlayerPropBoardPageResponse<PlayerPropBoardPickEmCard> | null
+  >({
+    queryKey: queryKeys.boardPlayerProps(params.view, queryParams),
+    queryFn: ({ pageParam }) => {
+      const requestParams = {
+        ...queryParams,
+        page: Number(pageParam),
+      };
+      if (params.view === "opportunities") {
+        return api.getBoardPlayerPropOpportunities(requestParams);
+      }
+      if (params.view === "browse") {
+        return api.getBoardPlayerPropBrowse(requestParams);
+      }
+      return api.getBoardPlayerPropPickem(requestParams);
+    },
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, allPages) => {
+      if (!lastPage?.has_more) return undefined;
+      return allPages.length + 1;
+    },
+    enabled: params.enabled && backendOk,
+    staleTime: Infinity,
+    gcTime: 60 * 60 * 1000,
+    placeholderData: (previousData) => previousData,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 0,
+  });
+}
+
+export function useBoardPromos(limit: number, enabled: boolean = true) {
+  const readiness = useBackendReadiness();
+  const backendOk = readiness.data?.status === "ready";
+  return useQuery<BoardPromosResponse>({
+    queryKey: queryKeys.boardPromos(limit),
+    queryFn: () => api.getBoardPromos(limit),
+    enabled: enabled && backendOk,
+    staleTime: Infinity,
+    gcTime: 60 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 0,
+  });
+}
+
+export function useBoardPlayerPropDetail(
+  selectionKey: string,
+  sportsbook: string,
+  enabled: boolean = true,
+) {
+  const readiness = useBackendReadiness();
+  const backendOk = readiness.data?.status === "ready";
+  return useQuery<PlayerPropBoardDetail>({
+    queryKey: queryKeys.boardPlayerPropDetail(selectionKey, sportsbook),
+    queryFn: () => api.getBoardPlayerPropDetail({ selectionKey, sportsbook }),
+    enabled: enabled && backendOk && !!selectionKey && !!sportsbook,
+    staleTime: Infinity,
+    gcTime: 60 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 0,
+  });
+}
+
+/** Scoped manual refresh – does NOT overwrite the canonical board:latest. */
 export function useRefreshBoard() {
   return useMutation({
     mutationFn: (scope: ScannerSurface) => api.refreshBoard(scope),

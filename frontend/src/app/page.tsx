@@ -1,15 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Clock, Gift, Layers, ShieldCheck, TrendingUp, Zap } from "lucide-react";
 
 import { ScannerResultsPane } from "@/app/scanner/components/ScannerResultsPane";
-import { buildPickEmBoardCards } from "@/app/scanner/pickem-board";
 import type { PickEmBoardCard } from "@/app/scanner/pickem-board";
 import { rankScannerSidesByLens } from "@/app/scanner/scanner-lenses";
-import { getLatestScan } from "@/lib/api";
+import { getBoardPlayerPropDetail } from "@/lib/api";
 import {
   buildParlayCartLeg,
   buildParlayCartLegFromPickEmCard,
@@ -18,11 +17,12 @@ import {
 } from "@/app/scanner/scanner-state-utils";
 import { canAddScannerLensToParlayCart } from "@/app/scanner/scanner-ui-model";
 import { classifyScannerNullState } from "@/lib/scanner-contract";
-import { useBoard, useBoardSurface, useBalances, useSettings, queryKeys } from "@/lib/hooks";
+import { useBoard, useBoardPromos, useBoardSurface, useBalances, useSettings, queryKeys, useInfiniteBoardPlayerPropsView } from "@/lib/hooks";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
 import { useKellySettings } from "@/lib/kelly-context";
 import { createClient } from "@/lib/supabase";
 import { LogBetDrawer } from "@/components/LogBetDrawer";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Sheet,
   SheetContent,
@@ -31,7 +31,15 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
-import type { MarketSide, PlayerPropMarketSide, ScanResult, ScannedBetData } from "@/lib/types";
+import type {
+  MarketSide,
+  PlayerPropBoardItem,
+  PlayerPropBoardPageResponse,
+  PlayerPropBoardPickEmCard,
+  PlayerPropMarketSide,
+  ScanResult,
+  ScannedBetData,
+} from "@/lib/types";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -39,6 +47,7 @@ type MarketsViewMode = "opportunities" | "browse" | "pickem";
 type BoardTimeFilter = "today" | "upcoming" | "all_games" | "today_closed";
 type PrimaryMode = "player_props" | "straight_bets" | "promos";
 type PromosSubmode = "all" | "boosts" | "bonus_bets" | "qualifiers";
+type StraightBetMarketFilter = "all" | "h2h" | "spreads" | "totals";
 
 // Pick'em is filtered out when surface === "straight_bets" in the render
 const VIEW_MODES: { id: MarketsViewMode; label: string; description: string }[] = [
@@ -110,6 +119,7 @@ const PLAYER_PROP_MARKET_OPTIONS = [
   "player_points_rebounds_assists",
   "player_threes",
 ];
+const PLAYER_PROP_PAGE_SIZE = 10;
 
 const SPORT_KEY_TO_DISPLAY: Record<string, string> = {
   basketball_nba: "NBA",
@@ -405,6 +415,49 @@ function getNextPhoenixDropUtcMs(now: Date): number {
   return todaysDropsUtc[0] + 24 * 60 * 60 * 1000; // Phoenix does not observe DST
 }
 
+function MarketsPaneSkeleton(props: {
+  label: string;
+  variant?: "list" | "pickem" | "gamelines";
+}) {
+  const { label, variant = "list" } = props;
+  const rowCount = variant === "gamelines" ? 3 : 4;
+
+  return (
+    <div className="rounded-lg border border-border bg-card px-4 py-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-28" />
+          <Skeleton className="h-3 w-44" />
+        </div>
+        <Skeleton className="h-6 w-16 rounded-full" />
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {Array.from({ length: rowCount }).map((_, index) => (
+          <div key={`${label}-${index}`} className="rounded-lg border border-border/70 px-3 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1 space-y-2">
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-5 w-3/4" />
+                <Skeleton className="h-3 w-28" />
+              </div>
+              <div className="w-20 space-y-2">
+                <Skeleton className="ml-auto h-4 w-10" />
+                <Skeleton className="ml-auto h-5 w-14" />
+              </div>
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <Skeleton className="h-5 w-16 rounded-full" />
+              <Skeleton className="h-5 w-20 rounded-full" />
+              <Skeleton className="h-5 w-14 rounded-full" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function MarketsPage() {
@@ -421,14 +474,6 @@ export default function MarketsPage() {
   const [viewMode, setViewMode] = useState<MarketsViewMode>("opportunities");
   const [promosSubmode, setPromosSubmode] = useState<PromosSubmode>("all");
 
-  const propsSurface = useBoardSurface(
-    "player_props",
-    primaryMode === "player_props" || primaryMode === "promos",
-  );
-  const straightSurface = useBoardSurface(
-    "straight_bets",
-    primaryMode === "straight_bets" || primaryMode === "promos",
-  );
   // Per-surface book selections — persisted in localStorage (see hydrate / persist effects below)
   const [selectedPropBooks, setSelectedPropBooks] = useState<string[]>(DEFAULT_PLAYER_PROP_BOOKS);
   const [selectedGameLineBooks, setSelectedGameLineBooks] = useState<string[]>(DEFAULT_STRAIGHT_BET_BOOKS);
@@ -439,13 +484,69 @@ export default function MarketsPage() {
   const [timeFilter, setTimeFilter] = useState<BoardTimeFilter>("today");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [propMarketFilter, setPropMarketFilter] = useState<string>("all");
+  const [propSideFilter, setPropSideFilter] = useState<"all" | "over" | "under">("all");
+  const [straightBetMarketFilter, setStraightBetMarketFilter] =
+    useState<StraightBetMarketFilter>("all");
   const [boostPercent, setBoostPercent] = useState(30);
   const [customBoostInput, setCustomBoostInput] = useState("");
   const [boostSheetOpen, setBoostSheetOpen] = useState(false);
   const [boostHydrated, setBoostHydrated] = useState(false);
+  const deferredPlayerPropsSearchQuery = useDeferredValue(searchQuery);
+  const [playerPropsQueryFilters, setPlayerPropsQueryFilters] = useState<{
+    books: string[];
+    timeFilter: BoardTimeFilter;
+    market: string;
+    search: string;
+  }>(() => ({
+    books: [...DEFAULT_PLAYER_PROP_BOOKS].sort(),
+    timeFilter: "today",
+    market: "all",
+    search: "",
+  }));
 
   const selectedBooks = primaryMode === "straight_bets" ? selectedGameLineBooks : selectedPropBooks;
   const setSelectedBooks = primaryMode === "straight_bets" ? setSelectedGameLineBooks : setSelectedPropBooks;
+  const tzOffsetMinutes = useMemo(() => new Date().getTimezoneOffset(), []);
+  const appliedPlayerPropsBooks = playerPropsQueryFilters.books;
+  const appliedPlayerPropsTimeFilter = playerPropsQueryFilters.timeFilter;
+  const appliedPlayerPropsMarketFilter = playerPropsQueryFilters.market;
+  const appliedPlayerPropsSearchQuery = playerPropsQueryFilters.search;
+
+  const straightSurface = useBoardSurface(
+    "straight_bets",
+    primaryMode === "straight_bets",
+  );
+  const playerPropsOpportunities = useInfiniteBoardPlayerPropsView({
+    view: "opportunities",
+    pageSize: PLAYER_PROP_PAGE_SIZE,
+    books: appliedPlayerPropsBooks,
+    timeFilter: appliedPlayerPropsTimeFilter,
+    market: appliedPlayerPropsMarketFilter,
+    search: appliedPlayerPropsSearchQuery,
+    tzOffsetMinutes,
+    enabled: primaryMode === "player_props" && viewMode === "opportunities",
+  });
+  const playerPropsBrowse = useInfiniteBoardPlayerPropsView({
+    view: "browse",
+    pageSize: PLAYER_PROP_PAGE_SIZE,
+    books: appliedPlayerPropsBooks,
+    timeFilter: appliedPlayerPropsTimeFilter,
+    market: appliedPlayerPropsMarketFilter,
+    search: appliedPlayerPropsSearchQuery,
+    tzOffsetMinutes,
+    enabled: primaryMode === "player_props" && viewMode === "browse",
+  });
+  const playerPropsPickem = useInfiniteBoardPlayerPropsView({
+    view: "pickem",
+    pageSize: PLAYER_PROP_PAGE_SIZE,
+    books: appliedPlayerPropsBooks,
+    timeFilter: appliedPlayerPropsTimeFilter,
+    market: appliedPlayerPropsMarketFilter,
+    search: appliedPlayerPropsSearchQuery,
+    tzOffsetMinutes,
+    enabled: primaryMode === "player_props" && viewMode === "pickem",
+  });
+  const boardPromos = useBoardPromos(visibleCount * 3, primaryMode === "promos");
 
   useEffect(() => {
     try {
@@ -506,6 +607,29 @@ export default function MarketsPage() {
     setVisibleCount(10);
   }, [boostPercent, boostHydrated]);
 
+  useEffect(() => {
+    const nextFilters = {
+      books: [...selectedPropBooks].sort(),
+      timeFilter,
+      market: propMarketFilter,
+      search: deferredPlayerPropsSearchQuery.trim(),
+    };
+    const handle = window.setTimeout(() => {
+      setPlayerPropsQueryFilters((current) => {
+        if (
+          sameStringSet(current.books, nextFilters.books) &&
+          current.timeFilter === nextFilters.timeFilter &&
+          current.market === nextFilters.market &&
+          current.search === nextFilters.search
+        ) {
+          return current;
+        }
+        return nextFilters;
+      });
+    }, 250);
+    return () => window.clearTimeout(handle);
+  }, [selectedPropBooks, timeFilter, propMarketFilter, deferredPlayerPropsSearchQuery]);
+
   // ── Board freshness: realtime invalidation ───────────────────────────────
   // Subscribe to Supabase realtime for canonical board changes (surface=board)
   useEffect(() => {
@@ -517,6 +641,9 @@ export default function MarketsPage() {
         { event: "*", schema: "public", table: "global_scan_cache", filter: "surface=eq.board" },
         () => {
           queryClient.invalidateQueries({ queryKey: queryKeys.board });
+          queryClient.invalidateQueries({ queryKey: queryKeys.boardSurface("straight_bets") });
+          queryClient.invalidateQueries({ queryKey: ["board_player_props"] });
+          queryClient.invalidateQueries({ queryKey: ["board_promos"] });
         },
       )
       .subscribe();
@@ -543,39 +670,147 @@ export default function MarketsPage() {
   const boardMeta = board?.meta;
   const isEmptyBoard = !boardMeta || boardMeta.snapshot_id === "none";
 
-  // After logging, we want duplicate-state tags ("already_logged"/"logged_elsewhere") to update immediately.
-  // Board snapshots are persisted and do not re-annotate duplicate state per request, so we temporarily
-  // override the sides we display using /api/scan-latest (annotated with duplicate state for the user).
-  const [scanLatestOverride, setScanLatestOverride] = useState<{
-    player_props?: ScanResult | null;
-    straight_bets?: ScanResult | null;
-  } | null>(null);
-
-  useEffect(() => {
-    // When a new daily drop arrives, discard overrides so we show the new snapshot's sides.
-    setScanLatestOverride(null);
-  }, [boardMeta?.snapshot_id]);
-
-  // Active scan data:
-  // - player_props mode: player props snapshot
-  // - straight_bets mode: straight bets snapshot
-  // - promos mode: merged sides from both surfaces
-  const activeScanData: ScanResult | null = useMemo(() => {
-    const propsScan = scanLatestOverride?.player_props ?? propsSurface.data ?? null;
-    const straightScan = scanLatestOverride?.straight_bets ?? straightSurface.data ?? null;
-
-    if (primaryMode === "player_props") return propsScan;
-    if (primaryMode === "straight_bets") return straightScan;
-
-    // Promos: combine both surfaces so boosts/bonus/qualifier lenses can rank across all cards.
-    if (!propsScan && !straightScan) return null;
-    const base = propsScan ?? straightScan;
-    if (!base) return null;
+  const activePlayerPropsListPage = useMemo(() => {
+    const data = viewMode === "browse" ? playerPropsBrowse.data : playerPropsOpportunities.data;
+    if (viewMode === "pickem" || !data?.pages?.length) return null;
+    const pages = data.pages.filter(Boolean) as PlayerPropBoardPageResponse<PlayerPropBoardItem>[];
+    const lastPage = pages[pages.length - 1];
+    if (!lastPage) return null;
     return {
-      ...base,
-      sides: [...(propsScan?.sides ?? []), ...(straightScan?.sides ?? [])],
+      items: pages.flatMap((page) => page?.items ?? []) as PlayerPropBoardItem[],
+      total: lastPage.total,
+      source_total: lastPage.source_total,
+      has_more: lastPage.has_more,
+      scanned_at: lastPage.scanned_at,
+      available_markets: lastPage.available_markets,
     };
-  }, [primaryMode, scanLatestOverride, propsSurface.data, straightSurface.data]);
+  }, [playerPropsBrowse.data, playerPropsOpportunities.data, viewMode]);
+
+  const activePlayerPropsPickemPage = useMemo(() => {
+    if (viewMode !== "pickem" || !playerPropsPickem.data?.pages?.length) return null;
+    const pages = playerPropsPickem.data.pages.filter(Boolean) as PlayerPropBoardPageResponse<PlayerPropBoardPickEmCard>[];
+    const lastPage = pages[pages.length - 1];
+    if (!lastPage) return null;
+    return {
+      items: pages.flatMap((page) => page?.items ?? []) as PlayerPropBoardPickEmCard[],
+      total: lastPage.total,
+      source_total: lastPage.source_total,
+      has_more: lastPage.has_more,
+      scanned_at: lastPage.scanned_at,
+      available_markets: lastPage.available_markets,
+    };
+  }, [playerPropsPickem.data, viewMode]);
+
+  const activePlayerPropsIsFetchingNextPage = useMemo(() => {
+    if (viewMode === "browse") {
+      return playerPropsBrowse.isFetchingNextPage;
+    }
+    if (viewMode === "pickem") return playerPropsPickem.isFetchingNextPage;
+    return playerPropsOpportunities.isFetchingNextPage;
+  }, [playerPropsBrowse.isFetchingNextPage, playerPropsOpportunities.isFetchingNextPage, playerPropsPickem.isFetchingNextPage, viewMode]);
+
+  const activePlayerPropsError = useMemo(() => {
+    if (viewMode === "browse") return playerPropsBrowse.error;
+    if (viewMode === "pickem") return playerPropsPickem.error;
+    return playerPropsOpportunities.error;
+  }, [playerPropsBrowse.error, playerPropsOpportunities.error, playerPropsPickem.error, viewMode]);
+
+  const activeScanData: ScanResult | null = useMemo(() => {
+    if (primaryMode === "player_props") {
+      if (viewMode === "pickem") {
+        const pickemPage = activePlayerPropsPickemPage;
+        if (!pickemPage) return null;
+        return {
+          surface: "player_props",
+          sport: "basketball_nba",
+          sides: [],
+          events_fetched: 0,
+          events_with_both_books: 0,
+          api_requests_remaining: null,
+          scanned_at: pickemPage.scanned_at ?? boardMeta?.scanned_at ?? null,
+        };
+      }
+      const listPage = activePlayerPropsListPage;
+      if (!listPage) return null;
+      return {
+        surface: "player_props",
+        sport: "basketball_nba",
+        sides: listPage.items as MarketSide[],
+        events_fetched: 0,
+        events_with_both_books: 0,
+        api_requests_remaining: null,
+        scanned_at: listPage.scanned_at ?? boardMeta?.scanned_at ?? null,
+      };
+    }
+
+    if (primaryMode === "straight_bets") {
+      return straightSurface.data ?? null;
+    }
+
+    if (!boardPromos.data) return null;
+    return {
+      surface: "straight_bets",
+      sport: "all",
+      sides: boardPromos.data.sides,
+      events_fetched: 0,
+      events_with_both_books: 0,
+      api_requests_remaining: null,
+      scanned_at: boardPromos.data.meta?.scanned_at ?? boardMeta?.scanned_at ?? null,
+    };
+  }, [
+    activePlayerPropsListPage,
+    activePlayerPropsPickemPage,
+    boardMeta?.scanned_at,
+    boardPromos.data,
+    primaryMode,
+    straightSurface.data,
+    viewMode,
+  ]);
+  const activeSurfaceError = useMemo(() => {
+    if (primaryMode === "player_props") {
+      return activePlayerPropsError;
+    }
+    if (primaryMode === "promos") {
+      return boardPromos.error;
+    }
+    if (primaryMode === "straight_bets") {
+      return straightSurface.error;
+    }
+    return null;
+  }, [activePlayerPropsError, boardPromos.error, primaryMode, straightSurface.error]);
+  const activeSurfaceIsLoading = useMemo(() => {
+    if (primaryMode === "player_props") {
+      if (viewMode === "pickem") {
+        return playerPropsPickem.isLoading || (playerPropsPickem.isFetching && !activePlayerPropsPickemPage);
+      }
+      if (viewMode === "browse") {
+        return playerPropsBrowse.isLoading || (playerPropsBrowse.isFetching && !activePlayerPropsListPage);
+      }
+      return playerPropsOpportunities.isLoading || (playerPropsOpportunities.isFetching && !activePlayerPropsListPage);
+    }
+    if (primaryMode === "promos") {
+      return boardPromos.isLoading || (boardPromos.isFetching && !boardPromos.data);
+    }
+    return straightSurface.isLoading || (straightSurface.isFetching && !straightSurface.data);
+  }, [
+    activePlayerPropsListPage,
+    activePlayerPropsPickemPage,
+    boardPromos.data,
+    boardPromos.isFetching,
+    boardPromos.isLoading,
+    playerPropsBrowse.isFetching,
+    playerPropsBrowse.isLoading,
+    playerPropsOpportunities.isFetching,
+    playerPropsOpportunities.isLoading,
+    playerPropsPickem.isFetching,
+    playerPropsPickem.isLoading,
+    primaryMode,
+    straightSurface.data,
+    straightSurface.isFetching,
+    straightSurface.isLoading,
+    viewMode,
+  ]);
+  const activeContentIsLoading = !boardError && activeScanData === null && (isBoardLoading || activeSurfaceIsLoading);
   const gameContextGames = useMemo(() => parseGameContextGames(board?.game_context), [board?.game_context]);
   const featuredLineBuckets = useMemo(() => parseFeaturedLines(board?.game_context), [board?.game_context]);
 
@@ -642,7 +877,12 @@ export default function MarketsPage() {
       .slice(0, globalCap);
   }, [featuredLineBuckets, showMoreFeaturedLines, timeFilter]);
 
-  const allSides = useMemo(() => activeScanData?.sides ?? [], [activeScanData]);
+  const allSides = useMemo(() => {
+    if (primaryMode === "player_props") {
+      return (activePlayerPropsListPage?.items as MarketSide[]) ?? [];
+    }
+    return activeScanData?.sides ?? [];
+  }, [activePlayerPropsListPage?.items, activeScanData, primaryMode]);
 
   const activeLens = useMemo(() => {
     if (primaryMode !== "promos") return "standard";
@@ -653,6 +893,9 @@ export default function MarketsPage() {
   }, [primaryMode, promosSubmode]);
 
   const rankedSides = useMemo(() => {
+    if (primaryMode === "player_props") {
+      return ((activePlayerPropsListPage?.items as MarketSide[]) ?? []);
+    }
     if (viewMode === "browse") {
       // Browse: all sides for selected books, ordered by game start
       return allSides
@@ -677,15 +920,16 @@ export default function MarketsPage() {
       return ranked.filter((s) => Number(s.ev_percentage || 0) > 1);
     }
     return ranked;
-  }, [allSides, selectedBooks, viewMode, activeLens, primaryMode, boostPercent]);
+  }, [activePlayerPropsListPage?.items, allSides, selectedBooks, viewMode, activeLens, primaryMode, boostPercent]);
 
   const filteredSides = useMemo(() => {
+    if (primaryMode === "player_props") {
+      return ((activePlayerPropsListPage?.items as MarketSide[]) ?? []);
+    }
     const timeFiltered = rankedSides.filter((s) => matchesBoardTimeFilter(s.commence_time, timeFilter));
     const marketFiltered =
-      primaryMode === "player_props" && propMarketFilter !== "all"
-        ? timeFiltered.filter(
-            (s) => s.surface === "player_props" && (s as PlayerPropMarketSide).market_key === propMarketFilter,
-          )
+      primaryMode === "straight_bets" && straightBetMarketFilter !== "all"
+        ? timeFiltered.filter((s) => String(s.market_key ?? "").toLowerCase() === straightBetMarketFilter)
         : timeFiltered;
     if (!searchQuery.trim()) return marketFiltered;
     const q = searchQuery.toLowerCase();
@@ -696,6 +940,7 @@ export default function MarketsPage() {
         s.sport,
         s.sportsbook,
         "player_name" in s ? (s as { player_name?: string }).player_name : "",
+        String(s.market_key ?? ""),
         "team" in s ? (s as { team?: string }).team : "",
         "team_short" in s ? (s as { team_short?: string }).team_short : "",
         "opponent" in s ? (s as { opponent?: string }).opponent : "",
@@ -705,15 +950,15 @@ export default function MarketsPage() {
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [rankedSides, searchQuery, timeFilter, primaryMode, propMarketFilter]);
+  }, [activePlayerPropsListPage?.items, rankedSides, searchQuery, straightBetMarketFilter, timeFilter, primaryMode]);
 
   const todayOpenCount = useMemo(
-    () => rankedSides.filter((s) => matchesBoardTimeFilter(s.commence_time, "today")).length,
-    [rankedSides],
+    () => (primaryMode === "player_props" ? 0 : rankedSides.filter((s) => matchesBoardTimeFilter(s.commence_time, "today")).length),
+    [primaryMode, rankedSides],
   );
   const todayClosedCount = useMemo(
-    () => rankedSides.filter((s) => matchesBoardTimeFilter(s.commence_time, "today_closed")).length,
-    [rankedSides],
+    () => (primaryMode === "player_props" ? 0 : rankedSides.filter((s) => matchesBoardTimeFilter(s.commence_time, "today_closed")).length),
+    [primaryMode, rankedSides],
   );
 
   const filteredGameContextGames = useMemo(
@@ -729,19 +974,28 @@ export default function MarketsPage() {
     [gameContextGames],
   );
 
-  // Pick'em cards are derived from PlayerPropMarketSide sides (not prizepicks_cards).
-  // buildPickEmBoardCards groups by player/market/line across books to build consensus cards.
   const pickEmCards = useMemo(() => {
-    const propSides = allSides.filter(
-      (s): s is PlayerPropMarketSide => s.surface === "player_props",
-    ) as Array<PlayerPropMarketSide & { _retention?: number; _boostedEV?: number }>;
-    return buildPickEmBoardCards(propSides);
-  }, [allSides]);
+    if (primaryMode === "player_props") {
+      return (activePlayerPropsPickemPage?.items ?? []) as PickEmBoardCard[];
+    }
+    return [];
+  }, [activePlayerPropsPickemPage?.items, primaryMode]);
   const filteredPickEmCards = useMemo(
-    () => pickEmCards.filter((card) => matchesBoardTimeFilter(card.commence_time, timeFilter)),
-    [pickEmCards, timeFilter],
+    () =>
+      pickEmCards.filter((card) => {
+        if (primaryMode !== "player_props") return false;
+        if (propSideFilter !== "all" && card.consensus_side !== propSideFilter) return false;
+        return true;
+      }),
+    [pickEmCards, primaryMode, propSideFilter],
   );
   const availablePropMarkets = useMemo(() => {
+    if (primaryMode === "player_props") {
+      const markets = activePlayerPropsListPage?.available_markets ?? activePlayerPropsPickemPage?.available_markets;
+      if (Array.isArray(markets) && markets.length > 0) {
+        return markets;
+      }
+    }
     const markets = new Set<string>();
     for (const market of PLAYER_PROP_MARKET_OPTIONS) {
       markets.add(market);
@@ -750,31 +1004,67 @@ export default function MarketsPage() {
       if (side.surface === "player_props") markets.add((side as PlayerPropMarketSide).market_key);
     }
     return Array.from(markets).sort();
-  }, [allSides]);
+  }, [activePlayerPropsListPage?.available_markets, activePlayerPropsPickemPage?.available_markets, allSides, primaryMode]);
+  const isPickEmView = primaryMode === "player_props" && viewMode === "pickem";
   const activeFilterChips = useMemo(() => {
     const chips: string[] = [];
-    if (timeFilter !== "today") {
+    const activeTimeFilter = primaryMode === "player_props" ? appliedPlayerPropsTimeFilter : timeFilter;
+    const activeMarketFilter = primaryMode === "player_props" ? appliedPlayerPropsMarketFilter : propMarketFilter;
+    const activeSearchValue = primaryMode === "player_props" ? appliedPlayerPropsSearchQuery : searchQuery.trim();
+    const activeBooks = primaryMode === "player_props" ? appliedPlayerPropsBooks : selectedBooks;
+    if (activeTimeFilter !== "today") {
       const label =
-        timeFilter === "upcoming"
+        activeTimeFilter === "upcoming"
           ? "Upcoming"
-          : timeFilter === "all_games"
+          : activeTimeFilter === "all_games"
             ? "All Games"
             : "Closed Today";
       chips.push(`Time: ${label}`);
     }
     const defaultBooks = primaryMode === "straight_bets" ? DEFAULT_STRAIGHT_BET_BOOKS : DEFAULT_PLAYER_PROP_BOOKS;
-    if (!sameStringSet(selectedBooks, defaultBooks)) {
-      chips.push(`Books: ${selectedBooks.length}`);
+    if (!sameStringSet(activeBooks, defaultBooks)) {
+      chips.push(`Books: ${activeBooks.length}`);
     }
-    if (primaryMode === "player_props" && propMarketFilter !== "all") {
-      chips.push(`Market: ${propMarketFilter.replaceAll("_", " ")}`);
+    if (primaryMode === "player_props" && activeMarketFilter !== "all") {
+      chips.push(`Market: ${activeMarketFilter.replaceAll("_", " ")}`);
+    }
+    if (primaryMode === "straight_bets" && straightBetMarketFilter !== "all") {
+      const label =
+        straightBetMarketFilter === "h2h"
+          ? "Moneyline"
+          : straightBetMarketFilter === "spreads"
+            ? "Spreads"
+            : "Totals";
+      chips.push(`Market: ${label}`);
+    }
+    if (isPickEmView && propSideFilter !== "all") {
+      chips.push(`Side: ${propSideFilter}`);
+    }
+    if (activeSearchValue) {
+      chips.push(`Search: ${activeSearchValue}`);
     }
     return chips;
-  }, [timeFilter, primaryMode, selectedBooks, propMarketFilter]);
+  }, [
+    appliedPlayerPropsBooks,
+    appliedPlayerPropsMarketFilter,
+    appliedPlayerPropsSearchQuery,
+    appliedPlayerPropsTimeFilter,
+    isPickEmView,
+    primaryMode,
+    propMarketFilter,
+    propSideFilter,
+    searchQuery,
+    selectedBooks,
+    straightBetMarketFilter,
+    timeFilter,
+  ]);
 
   const resetFilters = () => {
     setTimeFilter("today");
     setPropMarketFilter("all");
+    setPropSideFilter("all");
+    setStraightBetMarketFilter("all");
+    setSearchQuery("");
     if (primaryMode === "straight_bets") {
       setSelectedGameLineBooks(DEFAULT_STRAIGHT_BET_BOOKS);
     } else {
@@ -782,30 +1072,63 @@ export default function MarketsPage() {
     }
   };
 
-  const isPickEmView = primaryMode === "player_props" && viewMode === "pickem";
+  useEffect(() => {
+    if (!isPickEmView && propSideFilter !== "all") {
+      setPropSideFilter("all");
+    }
+  }, [isPickEmView, propSideFilter]);
   // rawSourceCount: keep aligned with ranked/source set so empty-state copy does not
   // misclassify "no opportunities" as "not pregame".
-  const rawSourceCount = isPickEmView ? filteredPickEmCards.length : rankedSides.length;
-  const sourceCount = isPickEmView ? filteredPickEmCards.length : rankedSides.length;
-  const filteredCount = isPickEmView ? filteredPickEmCards.length : filteredSides.length;
+  const rawSourceCount = isPickEmView
+    ? (activePlayerPropsPickemPage?.source_total ?? filteredPickEmCards.length)
+    : primaryMode === "player_props"
+      ? (activePlayerPropsListPage?.source_total ?? filteredSides.length)
+      : rankedSides.length;
+  const sourceCount = rawSourceCount;
+  const filteredCount = isPickEmView
+    ? (activePlayerPropsPickemPage?.total ?? filteredPickEmCards.length)
+    : primaryMode === "player_props"
+      ? (activePlayerPropsListPage?.total ?? filteredSides.length)
+      : filteredSides.length;
 
   const nullState = useMemo(
     () => classifyScannerNullState({ sourceCount, filteredCount }),
     [sourceCount, filteredCount],
   );
 
-  const results = useMemo(
-    () => filteredSides.slice(0, visibleCount),
-    [filteredSides, visibleCount],
-  );
+  const results = useMemo(() => {
+    if (primaryMode === "player_props") {
+      return filteredSides;
+    }
+    return filteredSides.slice(0, visibleCount);
+  }, [filteredSides, primaryMode, visibleCount]);
   const visiblePickEmCards = useMemo(
-    () => filteredPickEmCards.slice(0, visibleCount),
-    [filteredPickEmCards, visibleCount],
+    () => (primaryMode === "player_props" ? filteredPickEmCards : filteredPickEmCards.slice(0, visibleCount)),
+    [filteredPickEmCards, primaryMode, visibleCount],
   );
 
   const canLoadMore = isPickEmView
-    ? visiblePickEmCards.length < filteredPickEmCards.length
-    : results.length < filteredSides.length;
+    ? (playerPropsPickem.hasNextPage ?? false)
+    : primaryMode === "player_props"
+      ? (viewMode === "browse" ? (playerPropsBrowse.hasNextPage ?? false) : (playerPropsOpportunities.hasNextPage ?? false))
+      : results.length < filteredSides.length;
+  const isLoadingMore = primaryMode === "player_props" ? activePlayerPropsIsFetchingNextPage : false;
+
+  const handleLoadMore = () => {
+    if (primaryMode === "player_props") {
+      if (viewMode === "pickem") {
+        void playerPropsPickem.fetchNextPage();
+        return;
+      }
+      if (viewMode === "browse") {
+        void playerPropsBrowse.fetchNextPage();
+        return;
+      }
+      void playerPropsOpportunities.fetchNextPage();
+      return;
+    }
+    setVisibleCount((v) => v + 10);
+  };
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -842,75 +1165,90 @@ export default function MarketsPage() {
     handleSurfaceModeChange(mode);
   };
 
-  const handleLogBet = (side: MarketSide) => {
-    const betData = buildScannerLogBetInitialValues({
-      side,
-      activeLens,
-      boostPercent,
-      sportDisplayMap: SPORT_KEY_TO_DISPLAY,
-      kellyMultiplier,
-      bankroll,
+  const enrichPlayerPropSideForActions = async (side: MarketSide): Promise<MarketSide> => {
+    if (side.surface !== "player_props") {
+      return side;
+    }
+    if ((side.reference_bookmakers?.length ?? 0) > 0) {
+      return side;
+    }
+    const detail = await queryClient.fetchQuery({
+      queryKey: queryKeys.boardPlayerPropDetail(side.selection_key, side.sportsbook),
+      queryFn: () =>
+        getBoardPlayerPropDetail({
+          selectionKey: side.selection_key,
+          sportsbook: side.sportsbook,
+        }),
+      staleTime: Infinity,
+      gcTime: 60 * 60 * 1000,
     });
-    setDrawerInitialValues(betData);
-    setDrawerKey(Date.now());
-    setDrawerOpen(true);
+    return {
+      ...side,
+      reference_bookmakers: detail.reference_bookmakers,
+      reference_bookmaker_count:
+        detail.reference_bookmaker_count ?? side.reference_bookmaker_count ?? detail.reference_bookmakers.length,
+    };
   };
 
-  const handleBetLogged = () => {
-    // Refresh duplicate-state tags without requiring a board refresh/rescan.
-    // /api/scan-latest re-annotates sides for the current user, so "already_logged" updates immediately.
+  const handleLogBet = (side: MarketSide) => {
     void (async () => {
-      try {
-        if (primaryMode === "promos") {
-          const [playerProps, straightBets] = await Promise.all([
-            getLatestScan("player_props"),
-            getLatestScan("straight_bets"),
-          ]);
-          setScanLatestOverride({
-            player_props: playerProps,
-            straight_bets: straightBets,
-          });
+      let actionSide = side;
+      if (side.surface === "player_props") {
+        try {
+          actionSide = await enrichPlayerPropSideForActions(side);
+        } catch {
+          toast.error("Could not load prop detail for review.");
           return;
         }
-
-        if (primaryMode === "player_props") {
-          const playerProps = await getLatestScan("player_props");
-          setScanLatestOverride((prev) => ({
-            player_props: playerProps,
-            straight_bets: prev?.straight_bets ?? board?.straight_bets ?? null,
-          }));
-          return;
-        }
-
-        // straight_bets
-        const straightBets = await getLatestScan("straight_bets");
-        setScanLatestOverride((prev) => ({
-          straight_bets: straightBets,
-          player_props: prev?.player_props ?? board?.player_props ?? null,
-        }));
-      } catch {
-        // Non-blocking: if refresh fails, user can still refresh later.
       }
+      const betData = buildScannerLogBetInitialValues({
+        side: actionSide,
+        activeLens,
+        boostPercent,
+        sportDisplayMap: SPORT_KEY_TO_DISPLAY,
+        kellyMultiplier,
+        bankroll,
+      });
+      setDrawerInitialValues(betData);
+      setDrawerKey(Date.now());
+      setDrawerOpen(true);
     })();
   };
 
+  const handleBetLogged = () => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.boardSurface("straight_bets") });
+    queryClient.invalidateQueries({ queryKey: ["board_player_props"] });
+    queryClient.invalidateQueries({ queryKey: ["board_promos"] });
+  };
+
   const handleAddToCart = (side: MarketSide) => {
-    if (!canAddScannerLensToParlayCart(activeLens)) {
-      toast.error("Slip building is available from Opportunities and Browse lines.");
-      return;
-    }
-    const result = addCartLeg(buildParlayCartLeg(side));
-    if (!result.added) {
-      const msg =
-        result.reason === "sportsbook_mismatch"
-          ? "All legs in a parlay slip must be from the same sportsbook."
-          : result.reason === "slip_kind_mismatch"
-            ? "Pick'em slips and priced parlay slips can't be mixed. Clear your slip to switch."
-            : "That leg is already in your slip.";
-      toast.error(msg);
-      return;
-    }
-    toast.success(`Added to slip (${cart.length + 1} ${cart.length + 1 === 1 ? "leg" : "legs"})`);
+    void (async () => {
+      if (!canAddScannerLensToParlayCart(activeLens)) {
+        toast.error("Slip building is available from Opportunities and Browse lines.");
+        return;
+      }
+      let actionSide = side;
+      if (side.surface === "player_props") {
+        try {
+          actionSide = await enrichPlayerPropSideForActions(side);
+        } catch {
+          toast.error("Could not load prop detail for slip building.");
+          return;
+        }
+      }
+      const result = addCartLeg(buildParlayCartLeg(actionSide));
+      if (!result.added) {
+        const msg =
+          result.reason === "sportsbook_mismatch"
+            ? "All legs in a parlay slip must be from the same sportsbook."
+            : result.reason === "slip_kind_mismatch"
+              ? "Pick'em slips and priced parlay slips can't be mixed. Clear your slip to switch."
+              : "That leg is already in your slip.";
+        toast.error(msg);
+        return;
+      }
+      toast.success(`Added to slip (${cart.length + 1} ${cart.length + 1 === 1 ? "leg" : "legs"})`);
+    })();
   };
 
   const handleAddPickEmToSlip = (card: PickEmBoardCard) => {
@@ -1064,7 +1402,7 @@ export default function MarketsPage() {
       </div>
 
       {/* ── Search + single Filters control ───────────────────────── */}
-      {activeScanData !== null && !isPickEmView && (
+      {activeScanData !== null && (
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <input
@@ -1153,6 +1491,33 @@ export default function MarketsPage() {
                   ))}
                 </div>
               </div>
+              {primaryMode === "straight_bets" && (
+                <div>
+                  <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Market Type</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {([
+                      { id: "all", label: "All" },
+                      { id: "h2h", label: "Moneyline" },
+                      { id: "spreads", label: "Spreads" },
+                      { id: "totals", label: "Totals" },
+                    ] as const).map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => setStraightBetMarketFilter(option.id)}
+                        className={cn(
+                          "rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
+                          straightBetMarketFilter === option.id
+                            ? "border-primary/40 bg-primary/10 text-foreground"
+                            : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {primaryMode === "player_props" && (
                 <div>
                   <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Market Type</p>
@@ -1182,6 +1547,28 @@ export default function MarketsPage() {
                         )}
                       >
                         {formatMarketTypeLabel(market)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {isPickEmView && (
+                <div>
+                  <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Pick&apos;em Side</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(["all", "over", "under"] as const).map((side) => (
+                      <button
+                        key={side}
+                        type="button"
+                        onClick={() => setPropSideFilter(side)}
+                        className={cn(
+                          "rounded-md border px-2.5 py-1 text-xs font-medium capitalize transition-colors",
+                          propSideFilter === side
+                            ? "border-primary/40 bg-primary/10 text-foreground"
+                            : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
+                        )}
+                      >
+                        {side}
                       </button>
                     ))}
                   </div>
@@ -1295,6 +1682,28 @@ export default function MarketsPage() {
         </div>
       )}
 
+      {!boardError && activeSurfaceError && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-xs text-destructive">
+          Failed to load {primaryMode === "promos" ? "promo lines" : primaryMode === "straight_bets" ? "game lines" : isPickEmView ? "pick'em board" : "player props"}:{" "}
+          {activeSurfaceError instanceof Error ? activeSurfaceError.message : "Unknown error"}
+        </div>
+      )}
+
+      {!activeSurfaceError && activeContentIsLoading && (
+        <MarketsPaneSkeleton
+          label={
+            primaryMode === "promos"
+              ? "promos"
+              : primaryMode === "straight_bets"
+                ? "game-lines"
+                : isPickEmView
+                  ? "pickem"
+                  : "player-props"
+          }
+          variant={primaryMode === "straight_bets" ? "gamelines" : isPickEmView ? "pickem" : "list"}
+        />
+      )}
+
       {/*
        * ── Content area: mutually exclusive three-way guard ────────────────
        *
@@ -1307,7 +1716,7 @@ export default function MarketsPage() {
        */}
 
       {/* 1. No board snapshot yet */}
-      {!isBoardLoading && isEmptyBoard && !boardError && activeScanData === null && (
+      {!activeContentIsLoading && !isBoardLoading && isEmptyBoard && !boardError && !activeSurfaceError && activeScanData === null && (
         <div className="rounded-lg border border-border bg-card px-4 py-10 text-center">
           <Layers className="mx-auto mb-3 h-8 w-8 text-muted-foreground/40" />
           <p className="text-sm font-medium text-foreground">No lines loaded yet</p>
@@ -1318,7 +1727,7 @@ export default function MarketsPage() {
       )}
 
       {/* 2. Board exists but this surface has no data in today's snapshot */}
-      {!isBoardLoading && !isEmptyBoard && !boardError && activeScanData === null && (
+      {!activeContentIsLoading && !isBoardLoading && !isEmptyBoard && !boardError && !activeSurfaceError && activeScanData === null && (
         <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
           <p className="text-sm font-medium text-foreground">
             No {primaryMode === "promos" ? "Promos" : primaryMode === "straight_bets" ? "Game Lines" : "Player Props"} in today&apos;s board
@@ -1349,7 +1758,8 @@ export default function MarketsPage() {
               boostPercent={boostPercent}
               addedPickEmComparisonKeys={pickEmSlipKeys}
               canLoadMore={canLoadMore}
-              onLoadMore={() => setVisibleCount((v) => v + 10)}
+              isLoadingMore={isLoadingMore}
+              onLoadMore={handleLoadMore}
               onLogBet={handleLogBet}
               onAddToCart={handleAddToCart}
               onStartPlaceFlow={handleLogBet}
@@ -1415,7 +1825,7 @@ export default function MarketsPage() {
       )}
 
       {/* 3b. Game Lines — rendered from board.game_context (totals context) */}
-      {primaryMode === "straight_bets" && !isBoardLoading && !boardError && allSides.length === 0 && (
+      {primaryMode === "straight_bets" && !activeContentIsLoading && !isBoardLoading && !boardError && allSides.length === 0 && (
         <div className="space-y-2">
           {filteredGameContextGames.length === 0 ? (
             <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">

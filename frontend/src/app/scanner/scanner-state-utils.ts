@@ -105,7 +105,7 @@ export function buildScannerLogBetInitialValues(params: {
         opponent: side.opponent,
         display_name: side.display_name,
         reference_source: side.reference_source,
-        reference_bookmakers: side.reference_bookmakers,
+        reference_bookmakers: side.reference_bookmakers ?? [],
       },
       raw_kelly_stake: rawKellyStake,
       stealth_kelly_stake: stealthKellyStake,
@@ -173,7 +173,7 @@ export function buildParlayCartLeg(side: MarketSide): ParlayCartLeg {
       sourceSelectionKey: side.selection_key,
       selectionMeta: {
         opponent: side.opponent,
-        referenceBookmakers: side.reference_bookmakers,
+        referenceBookmakers: side.reference_bookmakers ?? [],
         referenceBookmakerCount: side.reference_bookmaker_count,
         confidenceLabel: side.confidence_label,
         sportsbookDeeplinkUrl: side.sportsbook_deeplink_url,

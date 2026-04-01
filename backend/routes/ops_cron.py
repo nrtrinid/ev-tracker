@@ -8,7 +8,11 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 
 from dependencies import require_ops_token
-from models import ModelCalibrationSummaryResponse, ResearchOpportunitySummaryResponse
+from models import (
+    ModelCalibrationSummaryResponse,
+    PickEmResearchSummaryResponse,
+    ResearchOpportunitySummaryResponse,
+)
 from utils.telemetry import rss_mb
 from utils.time_utils import utc_now_iso_z
 
@@ -414,6 +418,18 @@ def ops_model_calibration_summary_impl(
     return get_summary(get_db())
 
 
+def ops_pickem_research_summary_impl(
+    x_cron_token: str | None,
+    *,
+    require_valid_cron_token: Callable[[str | None], None],
+    get_db: Callable[[], Any],
+    get_summary: Callable[[Any], PickEmResearchSummaryResponse],
+) -> PickEmResearchSummaryResponse:
+    """Protected pick'em research summary implementation used by the API route wrapper."""
+    require_valid_cron_token(x_cron_token)
+    return get_summary(get_db())
+
+
 def ops_clv_debug_impl(
     x_cron_token: str | None,
     *,
@@ -699,6 +715,23 @@ def ops_model_calibration_summary(
         require_valid_cron_token=lambda token: main._require_ops_token(token, None),
         get_db=main.get_db,
         get_summary=get_model_calibration_summary,
+    )
+
+
+@router.get("/api/ops/pickem-research/summary", response_model=PickEmResearchSummaryResponse)
+def ops_pickem_research_summary(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    import main
+    from services.pickem_research import get_pickem_research_summary
+
+    return ops_pickem_research_summary_impl(
+        x_cron_token=x_ops_token or x_cron_token,
+        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        get_db=main.get_db,
+        get_summary=get_pickem_research_summary,
     )
 
 

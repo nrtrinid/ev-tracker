@@ -26,6 +26,7 @@ interface ScannerResultsPaneProps {
   bankroll: number;
   boostPercent: number;
   canLoadMore: boolean;
+  isLoadingMore?: boolean;
   onLoadMore: () => void;
   onAddPickEmToSlip: (card: PickEmBoardCard) => void;
   onLogBet: (side: MarketSide) => void;
@@ -54,6 +55,7 @@ export function ScannerResultsPane({
   bankroll,
   boostPercent,
   canLoadMore,
+  isLoadingMore = false,
   onLoadMore,
   onAddPickEmToSlip,
   onLogBet,
@@ -83,8 +85,8 @@ export function ScannerResultsPane({
       <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
         {isPropsSurface
           ? isPickEmView
-            ? `Showing ${pickemCards.length} of ${sourceCount} available pick'em board lines`
-            : `Showing ${results.length} of ${sourceCount} available props`
+            ? `Showing ${pickemCards.length} of ${filteredCount} available pick'em board lines`
+            : `Showing ${results.length} of ${filteredCount} available ${activeLens === "standard" ? "opportunities" : "props"}`
           : tutorialMode
             ? `Showing ${results.length} of ${filteredCount} Tutorial Lines`
             : `Showing ${results.length} of ${filteredCount} ${
@@ -147,6 +149,7 @@ export function ScannerResultsPane({
           <PickEmBoardList
             cards={pickemCards}
             canLoadMore={canLoadMore}
+            isLoadingMore={isLoadingMore}
             onLoadMore={onLoadMore}
             bookColors={bookColors}
             sportDisplayMap={sportDisplayMap}
@@ -161,6 +164,7 @@ export function ScannerResultsPane({
             kellyMultiplier={kellyMultiplier}
             bankroll={bankroll}
             canLoadMore={canLoadMore}
+            isLoadingMore={isLoadingMore}
             onLoadMore={onLoadMore}
             onLogBet={(side) => onLogBet(side)}
             onAddToCart={(side) => onAddToCart(side)}
@@ -177,6 +181,7 @@ export function ScannerResultsPane({
             bankroll={bankroll}
             boostPercent={boostPercent}
             canLoadMore={canLoadMore}
+            isLoadingMore={isLoadingMore}
             onLoadMore={onLoadMore}
             onLogBet={onLogBet}
             onAddToCart={onAddToCart}

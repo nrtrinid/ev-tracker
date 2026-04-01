@@ -1547,11 +1547,13 @@ async def _piggyback_clv(sides: list[dict]):
         update_bet_reference_snapshots,
         update_scan_opportunity_reference_snapshots,
     )
+    from services.pickem_research import update_pickem_research_close_snapshots
     started_at = time.monotonic()
     try:
         db = get_db()
         bet_updates = update_bet_reference_snapshots(db, sides=sides, allow_close=True)
         opportunity_updates = update_scan_opportunity_reference_snapshots(db, sides=sides, allow_close=True)
+        pickem_updates = update_pickem_research_close_snapshots(db, sides=sides, allow_close=True)
         _log_event(
             "clv.piggyback.completed",
             duration_ms=round((time.monotonic() - started_at) * 1000, 2),
@@ -1559,6 +1561,8 @@ async def _piggyback_clv(sides: list[dict]):
             bet_close_updated=bet_updates.get("close_updated") if isinstance(bet_updates, dict) else None,
             research_latest_updated=opportunity_updates.get("latest_updated") if isinstance(opportunity_updates, dict) else None,
             research_close_updated=opportunity_updates.get("close_updated") if isinstance(opportunity_updates, dict) else None,
+            pickem_latest_updated=pickem_updates.get("latest_updated") if isinstance(pickem_updates, dict) else None,
+            pickem_close_updated=pickem_updates.get("close_updated") if isinstance(pickem_updates, dict) else None,
         )
     except Exception as e:
         _log_event(

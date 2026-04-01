@@ -67,7 +67,7 @@ function primarySelectionTitle(side: MarketSide): string {
       ""
     );
   }
-  return (side.team_short?.trim() || side.team?.trim() || "").trim();
+  return (side.team?.trim() || side.team_short?.trim() || "").trim();
 }
 
 function formatStraightMarketLabel(side: MarketSide): string {
@@ -226,7 +226,7 @@ export function StraightBetCard({
 
         {/* Row 2: matchup + formatted game time */}
         <p className="mt-0.5 text-xs text-muted-foreground">
-          {(side.event_short || side.event)} • {formatGameTime(side.commence_time)}
+          {side.event} • {formatGameTime(side.commence_time)}
         </p>
 
         {/* Row 3: book odds, fair odds (lens-aware) */}

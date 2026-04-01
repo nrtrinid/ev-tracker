@@ -309,18 +309,21 @@ class PlayerPropSide(BaseModel):
     sportsbook_deeplink_level: ScannerDeeplinkLevel | None = None
     sport: str
     event: str
+    event_short: str | None = None
     commence_time: str
     market: str
     player_name: str
     participant_id: str | None = None
     team: str | None = None
+    team_short: str | None = None
     opponent: str | None = None
+    opponent_short: str | None = None
     selection_side: str
     line_value: float | None = None
     display_name: str
     reference_odds: float
     reference_source: str
-    reference_bookmakers: list[str]
+    reference_bookmakers: list[str] = Field(default_factory=list)
     reference_bookmaker_count: int | None = None
     confidence_label: str | None = None
     book_odds: float
@@ -447,6 +450,127 @@ class FullScanResponse(BaseModel):
                     ],
                 }
         return data
+
+
+class PlayerPropBoardItem(BaseModel):
+    """Lean player-prop board row used by the homepage board views."""
+
+    surface: Literal["player_props"] = "player_props"
+    event_id: str | None = None
+    market_key: str
+    selection_key: str
+    sportsbook: str
+    sportsbook_deeplink_url: str | None = None
+    sportsbook_deeplink_level: ScannerDeeplinkLevel | None = None
+    sport: str
+    event: str
+    event_short: str | None = None
+    commence_time: str
+    market: str
+    player_name: str
+    participant_id: str | None = None
+    team: str | None = None
+    team_short: str | None = None
+    opponent: str | None = None
+    opponent_short: str | None = None
+    selection_side: str
+    line_value: float | None = None
+    display_name: str
+    reference_odds: float
+    reference_source: str
+    reference_bookmaker_count: int | None = None
+    confidence_label: str | None = None
+    book_odds: float
+    true_prob: float
+    base_kelly_fraction: float
+    book_decimal: float
+    ev_percentage: float
+    scanner_duplicate_state: Literal["new", "logged_elsewhere", "already_logged", "better_now"] | None = None
+    best_logged_odds_american: float | None = None
+    current_odds_american: float | None = None
+    matched_pending_bet_id: str | None = None
+
+
+class PlayerPropBoardDetail(BaseModel):
+    """Lazy-loaded player-prop board detail for review/log/cart enrichment."""
+
+    selection_key: str
+    sportsbook: str
+    reference_bookmakers: list[str]
+    reference_bookmaker_count: int | None = None
+
+
+class PlayerPropBoardPickEmCard(BaseModel):
+    """Lean consensus pick'em board card derived from sportsbook prop rows."""
+
+    comparison_key: str
+    event_id: str | None = None
+    sport: str
+    event: str
+    event_short: str | None = None
+    commence_time: str
+    player_name: str
+    participant_id: str | None = None
+    team: str | None = None
+    team_short: str | None = None
+    opponent: str | None = None
+    opponent_short: str | None = None
+    market_key: str
+    market: str
+    line_value: float
+    exact_line_bookmakers: list[str]
+    exact_line_bookmaker_count: int
+    consensus_over_prob: float
+    consensus_under_prob: float
+    consensus_side: Literal["over", "under"]
+    confidence_label: str
+    best_over_sportsbook: str | None = None
+    best_over_odds: float | None = None
+    best_over_deeplink_url: str | None = None
+    best_under_sportsbook: str | None = None
+    best_under_odds: float | None = None
+    best_under_deeplink_url: str | None = None
+
+
+class PlayerPropBoardPageMeta(BaseModel):
+    """Shared paging metadata for lean player-prop board routes."""
+
+    page: int
+    page_size: int
+    total: int
+    source_total: int
+    has_more: bool
+    scanned_at: str | None = None
+    available_books: list[str] = Field(default_factory=list)
+    available_markets: list[str] = Field(default_factory=list)
+
+
+class PlayerPropBoardPageResponse(BaseModel):
+    """Paged lean player-prop board response for Opportunities/Browse."""
+
+    items: list[PlayerPropBoardItem]
+    page: int
+    page_size: int
+    total: int
+    source_total: int
+    has_more: bool
+    scanned_at: str | None = None
+    available_books: list[str] = Field(default_factory=list)
+    available_markets: list[str] = Field(default_factory=list)
+
+
+class PlayerPropBoardPickEmPageResponse(BaseModel):
+    """Paged lean player-prop Pick'em response."""
+
+    items: list[PlayerPropBoardPickEmCard]
+    page: int
+    page_size: int
+    total: int
+    source_total: int
+    has_more: bool
+    scanned_at: str | None = None
+    available_books: list[str] = Field(default_factory=list)
+    available_markets: list[str] = Field(default_factory=list)
 
 
 class AdminMarketRefreshSurfaceSummary(BaseModel):
@@ -689,6 +813,82 @@ class ModelCalibrationSummaryResponse(BaseModel):
     cohort_trend: list[ModelCalibrationCohortTrendRow] = Field(default_factory=list)
     recent_comparisons: list[ModelCalibrationRecentComparisonRow] = Field(default_factory=list)
     release_gate: ModelCalibrationReleaseGate
+
+
+class PickEmResearchBreakdownItem(BaseModel):
+    """Aggregate row for pick'em validation buckets and breakdowns."""
+
+    key: str
+    captured_count: int
+    close_ready_count: int
+    settled_count: int
+    decisive_count: int
+    push_count: int = 0
+    expected_hit_rate_pct: float | None = None
+    actual_hit_rate_pct: float | None = None
+    hit_rate_delta_pct_points: float | None = None
+    avg_close_drift_pct_points: float | None = None
+    avg_close_edge_pct: float | None = None
+    avg_brier_score: float | None = None
+    avg_log_loss: float | None = None
+
+
+class PickEmResearchRecentRow(BaseModel):
+    """Recent pick'em shadow-tracked observation for operator review."""
+
+    observation_key: str
+    comparison_key: str
+    first_seen_at: datetime
+    last_seen_at: datetime
+    sport: str
+    event: str
+    commence_time: str
+    market: str
+    player_name: str
+    selection_side: str
+    line_value: float
+    displayed_probability: float
+    fair_odds_american: float | None = None
+    books_matched_count: int
+    confidence_label: str | None = None
+    ev_basis: str
+    selected_sportsbook: str | None = None
+    selected_market_odds: float | None = None
+    projected_edge_pct: float | None = None
+    close_true_prob: float | None = None
+    close_quality: str | None = None
+    close_edge_pct: float | None = None
+    close_drift_pct_points: float | None = None
+    actual_result: Literal["win", "loss", "push"] | None = None
+    settled_at: datetime | None = None
+    calibration_bucket: str
+    first_source: str
+    surfaced_count: int = 1
+
+
+class PickEmResearchSummaryResponse(BaseModel):
+    """Operator summary for pick'em board validation against close and settled results."""
+
+    captured_count: int
+    close_ready_count: int
+    settled_count: int
+    decisive_count: int
+    push_count: int = 0
+    pending_result_count: int = 0
+    avg_display_probability_pct: float | None = None
+    expected_hit_rate_pct: float | None = None
+    actual_hit_rate_pct: float | None = None
+    hit_rate_delta_pct_points: float | None = None
+    avg_close_probability_pct: float | None = None
+    avg_close_drift_pct_points: float | None = None
+    avg_close_edge_pct: float | None = None
+    avg_brier_score: float | None = None
+    avg_log_loss: float | None = None
+    by_probability_bucket: list[PickEmResearchBreakdownItem] = Field(default_factory=list)
+    by_market: list[PickEmResearchBreakdownItem] = Field(default_factory=list)
+    by_books_matched: list[PickEmResearchBreakdownItem] = Field(default_factory=list)
+    by_ev_basis: list[PickEmResearchBreakdownItem] = Field(default_factory=list)
+    recent_observations: list[PickEmResearchRecentRow] = Field(default_factory=list)
 
 
 class ParlayWarning(BaseModel):

@@ -124,14 +124,16 @@ function filterPickEmBoardCards(params: {
   searchQuery: string;
   timePreset: ScannerTimePreset;
   propMarket: string;
+  pickEmSide: "all" | "over" | "under";
   now?: Date;
 }): PickEmBoardCard[] {
-  const { cards, searchQuery, timePreset, propMarket } = params;
+  const { cards, searchQuery, timePreset, propMarket, pickEmSide } = params;
   const now = params.now ?? new Date();
   const normalizedQuery = normalizeScannerSearch(searchQuery);
 
   return cards.filter((card) => {
     if (propMarket !== "all" && card.market_key !== propMarket) return false;
+    if (pickEmSide !== "all" && card.consensus_side !== pickEmSide) return false;
     if (!matchesScannerComparisonTimePreset(card.commence_time, timePreset, now)) return false;
     if (normalizedQuery) {
       const haystack = normalizeScannerSearch(
@@ -260,6 +262,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
   const [riskPreset, setRiskPreset] = useState<ScannerRiskPreset>(persistedFilters?.riskPreset ?? DEFAULT_RESULT_FILTERS.riskPreset);
   const [propMarket, setPropMarket] = useState(persistedFilters?.propMarket ?? DEFAULT_RESULT_FILTERS.propMarket);
   const [propSide, setPropSide] = useState<"all" | "over" | "under">(persistedFilters?.propSide ?? DEFAULT_RESULT_FILTERS.propSide);
+  const [pickEmSide, setPickEmSide] = useState<"all" | "over" | "under">("all");
   const [, setAgeTick] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerKey, setDrawerKey] = useState(0);
@@ -465,9 +468,10 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
         searchQuery,
         timePreset,
         propMarket,
+        pickEmSide,
       })
     );
-  }, [pickEmSourceCards, propMarket, searchQuery, timePreset]);
+  }, [pickEmSide, pickEmSourceCards, propMarket, searchQuery, timePreset]);
 
   const availablePickEmSourceCount = useMemo(() => {
     return pickEmSourceCards.filter((card) => isPregameCommenceTime(card.commence_time)).length;
@@ -486,10 +490,10 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
         hideAlreadyLogged: isPickEmSubview ? false : hideAlreadyLogged,
         riskPreset: isPickEmSubview ? "any" : riskPreset,
         propMarket,
-        propSide: isPickEmSubview ? "all" : propSide,
+          propSide: isPickEmSubview ? pickEmSide : propSide,
       },
     });
-  }, [edgeMinStandard, effectiveLens, hideAlreadyLogged, hideLongshots, isPickEmSubview, propMarket, propSide, riskPreset, searchQuery, surface, timePreset]);
+  }, [edgeMinStandard, effectiveLens, hideAlreadyLogged, hideLongshots, isPickEmSubview, pickEmSide, propMarket, propSide, riskPreset, searchQuery, surface, timePreset]);
 
   const nullState = useMemo(() => {
     return classifyScannerNullState({
@@ -763,7 +767,6 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
             boostPresets={BOOST_PRESETS}
             activeFilterChips={secondaryActiveFilterChips}
             hasActiveFilters={hasActiveSecondaryFilters}
-            hidePropSideControl={isPickEmSubview}
             sharedPropsOnly={isPickEmSubview}
             searchPlaceholder={surfaceConfig.searchPlaceholder}
             availablePropMarkets={availablePropMarkets}
@@ -774,7 +777,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
             onHideAlreadyLoggedChange={setHideAlreadyLogged}
             onRiskPresetChange={setRiskPreset}
             onPropMarketChange={setPropMarket}
-            onPropSideChange={setPropSide}
+            onPropSideChange={isPickEmSubview ? setPickEmSide : setPropSide}
             onPresetSelect={(preset) => {
               setBoostPercent(preset);
               setCustomBoostInput("");

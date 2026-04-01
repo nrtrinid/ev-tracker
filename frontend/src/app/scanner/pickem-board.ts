@@ -1,35 +1,7 @@
-import type { PlayerPropMarketSide } from "@/lib/types";
+import type { PlayerPropBoardPickEmCard, PlayerPropMarketSide } from "@/lib/types";
 import { americanToDecimal } from "@/lib/utils";
 
-export interface PickEmBoardCard {
-  comparison_key: string;
-  event_id?: string | null;
-  sport: string;
-  event: string;
-  event_short?: string | null;
-  commence_time: string;
-  player_name: string;
-  participant_id?: string | null;
-  team?: string | null;
-  team_short?: string | null;
-  opponent?: string | null;
-  opponent_short?: string | null;
-  market_key: string;
-  market: string;
-  line_value: number;
-  exact_line_bookmakers: string[];
-  exact_line_bookmaker_count: number;
-  consensus_over_prob: number;
-  consensus_under_prob: number;
-  consensus_side: "over" | "under";
-  confidence_label: string;
-  best_over_sportsbook?: string | null;
-  best_over_odds?: number | null;
-  best_over_deeplink_url?: string | null;
-  best_under_sportsbook?: string | null;
-  best_under_odds?: number | null;
-  best_under_deeplink_url?: string | null;
-}
+export type PickEmBoardCard = PlayerPropBoardPickEmCard;
 
 function canonicalize(value: string | null | undefined): string {
   return String(value || "")

@@ -17,9 +17,30 @@ from fastapi.responses import JSONResponse
 
 from auth import get_current_user
 from database import get_db
-from models import BoardResponse, BoardSnapshotMeta, FullScanResponse, ScopedRefreshResponse
+from models import (
+    BoardResponse,
+    BoardSnapshotMeta,
+    FullScanResponse,
+    PlayerPropBoardDetail,
+    PlayerPropBoardPageResponse,
+    PlayerPropBoardPickEmPageResponse,
+    ScopedRefreshResponse,
+)
 from services.board_snapshot import load_board_snapshot, persist_scoped_refresh
 from services.bet_crud import _retry_supabase
+from services.player_prop_board import (
+    BOARD_VIEW_BROWSE,
+    BOARD_VIEW_OPPORTUNITIES,
+    BOARD_VIEW_PICKEM,
+    is_player_prop_board_opportunity,
+    load_player_prop_board_artifact,
+    load_player_prop_board_detail,
+    load_player_prop_board_filtered_page,
+    load_player_prop_board_legacy_surface,
+    matches_player_prop_board_item,
+    matches_player_prop_board_pickem_item,
+)
+from services.scanner_duplicate_detection import annotate_sides_with_duplicate_state
 from utils.telemetry import rss_mb
 from utils.time_utils import utc_now_iso_z
 
@@ -109,6 +130,12 @@ def _meta_from_fallback_surfaces(
         events_scanned=total_events,
         total_sides=total_sides,
     )
+
+
+def _parse_books_param(books: str | None) -> list[str]:
+    if not books:
+        return []
+    return [book.strip() for book in books.split(",") if book.strip()]
 
 
 @router.get("/board/latest", response_model=BoardResponse)
@@ -355,7 +382,10 @@ def get_board_latest_surface(
 
     db = get_db()
     try:
-        payload = load_latest_scan_payload(db=db, retry_supabase=_retry_supabase, surface=surface)
+        if surface == "player_props":
+            payload = load_player_prop_board_legacy_surface(db=db, retry_supabase=_retry_supabase)
+        else:
+            payload = load_latest_scan_payload(db=db, retry_supabase=_retry_supabase, surface=surface)
     except Exception as e:
         _log_event(
             "board.latest_surface.load_failed",
@@ -377,6 +407,14 @@ def get_board_latest_surface(
         )
         return None
 
+    if surface == "player_props":
+        sides_raw = payload.get("sides")
+        sides = sides_raw if isinstance(sides_raw, list) else []
+        payload = {
+            **payload,
+            "sides": annotate_sides_with_duplicate_state(db, str(user.get("id") or ""), sides),
+        }
+
     sides_raw = payload.get("sides")
     sides_count = len(sides_raw) if isinstance(sides_raw, list) else None
     _log_event(
@@ -388,6 +426,162 @@ def get_board_latest_surface(
         scanned_at=payload.get("scanned_at"),
     )
     return payload
+
+
+def _build_player_prop_board_page_response(
+    *,
+    view: str,
+    user_id: str,
+    books: list[str],
+    time_filter: str,
+    market: str | None,
+    search: str | None,
+    page: int,
+    page_size: int,
+    tz_offset_minutes: int | None,
+):
+    db = get_db()
+    meta, paged_items, filtered_total, source_total, has_more = load_player_prop_board_filtered_page(
+        db=db,
+        retry_supabase=_retry_supabase,
+        view=view,  # type: ignore[arg-type]
+        page=page,
+        page_size=page_size,
+        filter_item=lambda item: (
+            is_player_prop_board_opportunity(item) if view == BOARD_VIEW_OPPORTUNITIES else True
+        ) and matches_player_prop_board_item(
+            item,
+            books=books,
+            time_filter=time_filter,
+            market=market,
+            search=search,
+            tz_offset_minutes=tz_offset_minutes,
+        ),
+    )
+    if meta is None:
+        return None
+
+    annotated_items = annotate_sides_with_duplicate_state(db, user_id, paged_items)
+    return {
+        "items": annotated_items,
+        "page": page,
+        "page_size": page_size,
+        "total": filtered_total,
+        "source_total": source_total,
+        "has_more": has_more,
+        "scanned_at": meta.get("scanned_at"),
+        "available_books": meta.get("available_books") or [],
+        "available_markets": meta.get("available_markets") or [],
+    }
+
+
+@router.get("/board/latest/player-props/opportunities", response_model=PlayerPropBoardPageResponse | None)
+def get_board_latest_player_props_opportunities(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=200),
+    books: str | None = Query(default=None),
+    time_filter: str = Query(default="today"),
+    market: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    tz_offset_minutes: int | None = Query(default=None),
+    user: dict = Depends(get_current_user),
+):
+    return _build_player_prop_board_page_response(
+        view=BOARD_VIEW_OPPORTUNITIES,
+        user_id=str(user.get("id") or ""),
+        books=_parse_books_param(books),
+        time_filter=time_filter,
+        market=market,
+        search=search,
+        page=page,
+        page_size=page_size,
+        tz_offset_minutes=tz_offset_minutes,
+    )
+
+
+@router.get("/board/latest/player-props/browse", response_model=PlayerPropBoardPageResponse | None)
+def get_board_latest_player_props_browse(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=200),
+    books: str | None = Query(default=None),
+    time_filter: str = Query(default="today"),
+    market: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    tz_offset_minutes: int | None = Query(default=None),
+    user: dict = Depends(get_current_user),
+):
+    return _build_player_prop_board_page_response(
+        view=BOARD_VIEW_BROWSE,
+        user_id=str(user.get("id") or ""),
+        books=_parse_books_param(books),
+        time_filter=time_filter,
+        market=market,
+        search=search,
+        page=page,
+        page_size=page_size,
+        tz_offset_minutes=tz_offset_minutes,
+    )
+
+
+@router.get("/board/latest/player-props/pickem", response_model=PlayerPropBoardPickEmPageResponse | None)
+def get_board_latest_player_props_pickem(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=200),
+    books: str | None = Query(default=None),
+    time_filter: str = Query(default="today"),
+    market: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    tz_offset_minutes: int | None = Query(default=None),
+    user: dict = Depends(get_current_user),
+):
+    db = get_db()
+    meta, paged_items, filtered_total, source_total, has_more = load_player_prop_board_filtered_page(
+        db=db,
+        retry_supabase=_retry_supabase,
+        view=BOARD_VIEW_PICKEM,
+        page=page,
+        page_size=page_size,
+        filter_item=lambda item: matches_player_prop_board_pickem_item(
+            item,
+            books=_parse_books_param(books),
+            time_filter=time_filter,
+            market=market,
+            search=search,
+            tz_offset_minutes=tz_offset_minutes,
+        ),
+    )
+    if meta is None:
+        return None
+
+    return {
+        "items": paged_items,
+        "page": page,
+        "page_size": page_size,
+        "total": filtered_total,
+        "source_total": source_total,
+        "has_more": has_more,
+        "scanned_at": meta.get("scanned_at"),
+        "available_books": meta.get("available_books") or [],
+        "available_markets": meta.get("available_markets") or [],
+    }
+
+
+@router.get("/board/latest/player-props/detail", response_model=PlayerPropBoardDetail)
+def get_board_latest_player_prop_detail(
+    selection_key: str = Query(...),
+    sportsbook: str = Query(...),
+    user: dict = Depends(get_current_user),
+):
+    db = get_db()
+    detail = load_player_prop_board_detail(
+        db=db,
+        retry_supabase=_retry_supabase,
+        selection_key=selection_key,
+        sportsbook=sportsbook,
+    )
+    if not isinstance(detail, dict):
+        raise HTTPException(status_code=404, detail="Player prop board detail not found")
+    return detail
 
 
 @router.get("/board/latest/promos")
@@ -419,16 +613,20 @@ def get_board_latest_promos(
     game_context = board.get("game_context") if isinstance(board, dict) and isinstance(board.get("game_context"), dict) else None
 
     straight = load_latest_scan_payload(db=db, retry_supabase=_retry_supabase, surface="straight_bets") or {}
-    props = load_latest_scan_payload(db=db, retry_supabase=_retry_supabase, surface="player_props") or {}
+    _props_meta, props_items = load_player_prop_board_artifact(
+        db=db,
+        retry_supabase=_retry_supabase,
+        view=BOARD_VIEW_OPPORTUNITIES,
+    )
 
     straight_sides = straight.get("sides") if isinstance(straight, dict) else None
-    props_sides = props.get("sides") if isinstance(props, dict) else None
     straight_list = straight_sides if isinstance(straight_sides, list) else []
-    props_list = props_sides if isinstance(props_sides, list) else []
+    props_list = props_items if isinstance(props_items, list) else []
 
     # Take a bounded slice from each surface first to avoid doubling memory.
     take_each = max(10, int(limit / 2))
     combined = [*props_list[:take_each], *straight_list[:take_each]]
+    combined = annotate_sides_with_duplicate_state(db, str(user.get("id") or ""), combined)
 
     def _ev(side: object) -> float:
         if not isinstance(side, dict):

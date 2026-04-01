@@ -11,6 +11,7 @@ interface StraightBetListProps {
   bankroll: number;
   boostPercent: number;
   canLoadMore: boolean;
+  isLoadingMore?: boolean;
   onLoadMore: () => void;
   onLogBet: (side: MarketSide) => void;
   onAddToCart: (side: MarketSide) => void;
@@ -27,6 +28,7 @@ export function StraightBetList({
   bankroll,
   boostPercent,
   canLoadMore,
+  isLoadingMore = false,
   onLoadMore,
   onLogBet,
   onAddToCart,
@@ -54,8 +56,8 @@ export function StraightBetList({
       ))}
 
       {canLoadMore && (
-        <Button type="button" variant="secondary" className="w-full" onClick={onLoadMore}>
-          Load more
+        <Button type="button" variant="secondary" className="w-full" onClick={onLoadMore} disabled={isLoadingMore}>
+          {isLoadingMore ? "Loading more..." : "Load more"}
         </Button>
       )}
     </>

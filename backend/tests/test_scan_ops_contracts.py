@@ -103,6 +103,7 @@ def test_ops_endpoints_require_ops_token(public_client):
     assert public_client.get("/api/ops/status").status_code == 401
     assert public_client.get("/api/ops/research-opportunities/summary").status_code == 401
     assert public_client.get("/api/ops/model-calibration/summary").status_code == 401
+    assert public_client.get("/api/ops/pickem-research/summary").status_code == 401
     assert public_client.post("/api/ops/trigger/scan").status_code == 401
     assert public_client.post("/api/ops/trigger/auto-settle").status_code == 401
     assert public_client.post("/api/ops/trigger/test-discord").status_code == 401
@@ -917,6 +918,97 @@ def test_ops_model_calibration_summary_contract_shape(auth_client, monkeypatch):
     assert isinstance(body.get("recent_comparisons"), list)
     assert isinstance(body.get("release_gate"), dict)
     assert body["recent_comparisons"][0]["candidate_model_key"] == "props_v2_shadow"
+
+
+@pytest.mark.integration
+def test_ops_pickem_research_summary_contract_shape(auth_client, monkeypatch):
+    import main
+    import services.pickem_research as pickem_research
+
+    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
+    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+
+    monkeypatch.setattr(pickem_research, "get_pickem_research_summary", lambda _db: {
+        "captured_count": 6,
+        "close_ready_count": 5,
+        "settled_count": 4,
+        "decisive_count": 3,
+        "push_count": 1,
+        "pending_result_count": 2,
+        "avg_display_probability_pct": 64.5,
+        "expected_hit_rate_pct": 64.5,
+        "actual_hit_rate_pct": 66.7,
+        "hit_rate_delta_pct_points": 2.2,
+        "avg_close_probability_pct": 62.1,
+        "avg_close_drift_pct_points": -2.4,
+        "avg_close_edge_pct": -1.1,
+        "avg_brier_score": 0.214,
+        "avg_log_loss": 0.611,
+        "by_probability_bucket": [
+            {
+                "key": "65-70%",
+                "captured_count": 3,
+                "close_ready_count": 3,
+                "settled_count": 2,
+                "decisive_count": 2,
+                "push_count": 0,
+                "expected_hit_rate_pct": 67.0,
+                "actual_hit_rate_pct": 50.0,
+                "hit_rate_delta_pct_points": -17.0,
+                "avg_close_drift_pct_points": -3.1,
+                "avg_close_edge_pct": -1.8,
+                "avg_brier_score": 0.226,
+                "avg_log_loss": 0.644,
+            }
+        ],
+        "by_market": [],
+        "by_books_matched": [],
+        "by_ev_basis": [],
+        "recent_observations": [
+            {
+                "observation_key": "pickem-1",
+                "comparison_key": "evt-1|jokic|player_points|24.5",
+                "first_seen_at": "2026-03-31T15:00:00Z",
+                "last_seen_at": "2026-03-31T15:05:00Z",
+                "sport": "basketball_nba",
+                "event": "Nuggets @ Suns",
+                "commence_time": "2026-03-31T19:00:00Z",
+                "market": "player_points",
+                "player_name": "Nikola Jokic",
+                "selection_side": "over",
+                "line_value": 24.5,
+                "displayed_probability": 0.67,
+                "fair_odds_american": -203.0,
+                "books_matched_count": 3,
+                "confidence_label": "high",
+                "ev_basis": "best_market_price",
+                "selected_sportsbook": "FanDuel",
+                "selected_market_odds": 105.0,
+                "projected_edge_pct": 4.2,
+                "close_true_prob": 0.64,
+                "close_quality": "paired",
+                "close_edge_pct": -1.8,
+                "close_drift_pct_points": -3.0,
+                "actual_result": "loss",
+                "settled_at": "2026-04-01T01:00:00Z",
+                "calibration_bucket": "65-70%",
+                "first_source": "cron_board_drop",
+                "surfaced_count": 1,
+            }
+        ],
+    }, raising=True)
+
+    resp = auth_client.get("/api/ops/pickem-research/summary", headers={"X-Ops-Token": "ops-secret"})
+    assert resp.status_code == 200
+
+    body = resp.json()
+    assert isinstance(body.get("captured_count"), int)
+    assert isinstance(body.get("close_ready_count"), int)
+    assert isinstance(body.get("settled_count"), int)
+    assert isinstance(body.get("decisive_count"), int)
+    assert isinstance(body.get("by_probability_bucket"), list)
+    assert isinstance(body.get("recent_observations"), list)
+    assert body["recent_observations"][0]["player_name"] == "Nikola Jokic"
 
 
 @pytest.mark.integration

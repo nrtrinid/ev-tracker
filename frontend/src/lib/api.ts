@@ -12,6 +12,11 @@ import type {
   Balance,
   ScanResult,
   BoardResponse,
+  BoardPromosResponse,
+  PlayerPropBoardDetail,
+  PlayerPropBoardItem,
+  PlayerPropBoardPageResponse,
+  PlayerPropBoardPickEmCard,
   ScopedRefreshResponse,
   BackendReadiness,
   OperatorStatusResponse,
@@ -21,6 +26,7 @@ import type {
   ParlaySlipUpdate,
   ResearchOpportunitySummary,
   ModelCalibrationSummary,
+  PickEmResearchSummary,
   OpsTriggerScanResponse,
   OpsTriggerAutoSettleResponse,
   ScannerSurface,
@@ -266,6 +272,111 @@ export async function getBoardSurface(surface: ScannerSurface): Promise<ScanResu
   }
 }
 
+function buildBoardPlayerPropsQuery(params: {
+  page: number;
+  pageSize: number;
+  books?: string[];
+  timeFilter?: string;
+  market?: string | null;
+  search?: string | null;
+  tzOffsetMinutes?: number;
+}): string {
+  const query = new URLSearchParams();
+  query.set("page", String(params.page));
+  query.set("page_size", String(params.pageSize));
+  if (params.books && params.books.length > 0) {
+    query.set("books", params.books.join(","));
+  }
+  if (params.timeFilter) {
+    query.set("time_filter", params.timeFilter);
+  }
+  if (params.market && params.market !== "all") {
+    query.set("market", params.market);
+  }
+  if (params.search && params.search.trim()) {
+    query.set("search", params.search.trim());
+  }
+  if (typeof params.tzOffsetMinutes === "number" && Number.isFinite(params.tzOffsetMinutes)) {
+    query.set("tz_offset_minutes", String(params.tzOffsetMinutes));
+  }
+  return query.toString();
+}
+
+export async function getBoardPlayerPropOpportunities(params: {
+  page: number;
+  pageSize: number;
+  books?: string[];
+  timeFilter?: string;
+  market?: string | null;
+  search?: string | null;
+  tzOffsetMinutes?: number;
+}): Promise<PlayerPropBoardPageResponse<PlayerPropBoardItem> | null> {
+  const query = buildBoardPlayerPropsQuery(params);
+  try {
+    return await fetchAPI<PlayerPropBoardPageResponse<PlayerPropBoardItem>>(
+      `/api/board/latest/player-props/opportunities?${query}`,
+    );
+  } catch (e) {
+    if (e instanceof Error && /not found|missing/i.test(e.message)) return null;
+    throw e;
+  }
+}
+
+export async function getBoardPlayerPropBrowse(params: {
+  page: number;
+  pageSize: number;
+  books?: string[];
+  timeFilter?: string;
+  market?: string | null;
+  search?: string | null;
+  tzOffsetMinutes?: number;
+}): Promise<PlayerPropBoardPageResponse<PlayerPropBoardItem> | null> {
+  const query = buildBoardPlayerPropsQuery(params);
+  try {
+    return await fetchAPI<PlayerPropBoardPageResponse<PlayerPropBoardItem>>(
+      `/api/board/latest/player-props/browse?${query}`,
+    );
+  } catch (e) {
+    if (e instanceof Error && /not found|missing/i.test(e.message)) return null;
+    throw e;
+  }
+}
+
+export async function getBoardPlayerPropPickem(params: {
+  page: number;
+  pageSize: number;
+  books?: string[];
+  timeFilter?: string;
+  market?: string | null;
+  search?: string | null;
+  tzOffsetMinutes?: number;
+}): Promise<PlayerPropBoardPageResponse<PlayerPropBoardPickEmCard> | null> {
+  const query = buildBoardPlayerPropsQuery(params);
+  try {
+    return await fetchAPI<PlayerPropBoardPageResponse<PlayerPropBoardPickEmCard>>(
+      `/api/board/latest/player-props/pickem?${query}`,
+    );
+  } catch (e) {
+    if (e instanceof Error && /not found|missing/i.test(e.message)) return null;
+    throw e;
+  }
+}
+
+export async function getBoardPlayerPropDetail(params: {
+  selectionKey: string;
+  sportsbook: string;
+}): Promise<PlayerPropBoardDetail> {
+  const query = new URLSearchParams({
+    selection_key: params.selectionKey,
+    sportsbook: params.sportsbook,
+  });
+  return fetchAPI<PlayerPropBoardDetail>(`/api/board/latest/player-props/detail?${query.toString()}`);
+}
+
+export async function getBoardPromos(limit: number = 300): Promise<BoardPromosResponse> {
+  return fetchAPI<BoardPromosResponse>(`/api/board/latest/promos?limit=${encodeURIComponent(String(limit))}`);
+}
+
 /** Trigger a scoped manual refresh for a surface. Rate-limited. Does NOT overwrite board:latest. */
 export async function refreshBoard(
   scope: ScannerSurface = "player_props",
@@ -394,6 +505,10 @@ export async function getResearchOpportunitySummary(params?: {
 
 export async function getModelCalibrationSummary(): Promise<ModelCalibrationSummary> {
   return fetchInternalAPI<ModelCalibrationSummary>("/api/ops/model-calibration/summary");
+}
+
+export async function getPickEmResearchSummary(): Promise<PickEmResearchSummary> {
+  return fetchInternalAPI<PickEmResearchSummary>("/api/ops/pickem-research/summary");
 }
 
 // ============ Parlay Slips API ============

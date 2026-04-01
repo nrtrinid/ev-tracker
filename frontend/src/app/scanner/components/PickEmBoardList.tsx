@@ -6,6 +6,7 @@ import { PickEmBoardCard } from "./PickEmBoardCard";
 interface PickEmBoardListProps {
   cards: PickEmBoardCardType[];
   canLoadMore: boolean;
+  isLoadingMore?: boolean;
   onLoadMore: () => void;
   bookColors: Record<string, string>;
   sportDisplayMap: Record<string, string>;
@@ -16,6 +17,7 @@ interface PickEmBoardListProps {
 export function PickEmBoardList({
   cards,
   canLoadMore,
+  isLoadingMore = false,
   onLoadMore,
   bookColors,
   sportDisplayMap,
@@ -36,8 +38,8 @@ export function PickEmBoardList({
       ))}
 
       {canLoadMore && (
-        <Button type="button" variant="secondary" className="w-full" onClick={onLoadMore}>
-          Load more
+        <Button type="button" variant="secondary" className="w-full" onClick={onLoadMore} disabled={isLoadingMore}>
+          {isLoadingMore ? "Loading more..." : "Load more"}
         </Button>
       )}
     </>

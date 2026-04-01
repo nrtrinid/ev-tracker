@@ -287,6 +287,12 @@ async def run_daily_board_drop(
     from models import FullScanResponse as _FSR
     from services.board_snapshot import persist_board_meta_snapshot
     from services.odds_api import SUPPORTED_SPORTS, fetch_events, fetch_featured_lines_slate, get_cached_or_scan
+    from services.pickem_research import capture_pickem_research_observations
+    from services.player_prop_board import (
+        build_player_prop_board_item,
+        build_player_prop_board_pickem_cards,
+        persist_player_prop_board_artifacts,
+    )
     from services.player_props import scan_player_props_for_event_ids
     from services.research_opportunities import capture_scan_opportunities
     from services.scan_cache import persist_latest_scan_payload
@@ -461,6 +467,63 @@ async def run_daily_board_drop(
         "diagnostics": props_result.get("diagnostics"),
         "prizepicks_cards": props_result.get("prizepicks_cards"),
     }
+
+    board_props_artifacts_summary: dict[str, Any] | None = None
+    if db is not None:
+        board_chunk_size = int(os.getenv("PLAYER_PROPS_BOARD_CHUNK_SIZE") or "250") or 250
+        board_legacy_max = int(os.getenv("PLAYER_PROPS_BOARD_LEGACY_MAX_ITEMS") or "150") or 150
+        board_props_artifacts_summary = persist_player_prop_board_artifacts(
+            db=db,
+            payload=props_payload,
+            retry_supabase=retry_supabase,
+            log_event=log_event,
+            chunk_size=board_chunk_size,
+            legacy_max_items=board_legacy_max,
+        )
+        log_event(
+            "board.drop.player_props_board_artifacts_persisted",
+            run_id=run_id,
+            source=source,
+            chunk_size=board_chunk_size,
+            legacy_max_items=board_legacy_max,
+            lean_total=board_props_artifacts_summary.get("lean_total") if isinstance(board_props_artifacts_summary, dict) else None,
+            opportunities_total=board_props_artifacts_summary.get("opportunities_total") if isinstance(board_props_artifacts_summary, dict) else None,
+            pickem_total=board_props_artifacts_summary.get("pickem_total") if isinstance(board_props_artifacts_summary, dict) else None,
+            detail_total=board_props_artifacts_summary.get("detail_total") if isinstance(board_props_artifacts_summary, dict) else None,
+            rss_mb=rss_mb(),
+        )
+        try:
+            pickem_cards = build_player_prop_board_pickem_cards(
+                [
+                    build_player_prop_board_item(side)
+                    for side in props_sides
+                    if isinstance(side, dict)
+                ]
+            )
+            pickem_capture = capture_pickem_research_observations(
+                db,
+                cards=pickem_cards,
+                source=source,
+                captured_at=str(props_payload.get("scanned_at") or scanned_at),
+            )
+            log_event(
+                "board.drop.pickem_research_captured",
+                run_id=run_id,
+                source=source,
+                eligible_seen=pickem_capture.get("eligible_seen") if isinstance(pickem_capture, dict) else None,
+                inserted=pickem_capture.get("inserted") if isinstance(pickem_capture, dict) else None,
+                updated=pickem_capture.get("updated") if isinstance(pickem_capture, dict) else None,
+                rss_mb=rss_mb(),
+            )
+        except Exception as exc:
+            log_event(
+                "board.drop.pickem_research_capture_failed",
+                level="warning",
+                run_id=run_id,
+                source=source,
+                error_class=type(exc).__name__,
+                error=str(exc),
+            )
 
     featured_nba_games = _rank_featured_games(
         featured_nba_payload.get("games") if isinstance(featured_nba_payload, dict) else [],
