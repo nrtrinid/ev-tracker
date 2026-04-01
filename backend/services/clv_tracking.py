@@ -85,6 +85,16 @@ def _normalize_line_value(value: Any) -> float | None:
         return None
 
 
+def _is_missing_scan_opportunities_column_error(error: Exception, *columns: str) -> bool:
+    msg = str(error)
+    message = str(getattr(error, "message", "") or "")
+    combined = f"{msg} {message}".lower()
+    code = str(getattr(error, "code", "") or "").strip().upper()
+    if code != "42703" and "scan_opportunities" not in combined:
+        return False
+    return any(column.strip().lower() in combined for column in columns if column)
+
+
 def build_reference_snapshots(sides: list[dict[str, Any]]) -> tuple[dict[tuple[str, str], float], dict[tuple[str, str], float]]:
     snapshot_by_event: dict[tuple[str, str], float] = {}
     snapshot_by_time: dict[tuple[str, str], float] = {}
@@ -694,6 +704,21 @@ def update_scan_opportunity_reference_snapshots(
                 )
             close_updated += 1
 
-        db.table("scan_opportunities").update(payload).eq("id", row["id"]).execute()
+        try:
+            db.table("scan_opportunities").update(payload).eq("id", row["id"]).execute()
+        except Exception as exc:
+            if _is_missing_scan_opportunities_column_error(
+                exc,
+                "close_true_prob",
+                "close_quality",
+                "close_opposing_reference_odds",
+            ):
+                legacy_payload = dict(payload)
+                legacy_payload.pop("close_true_prob", None)
+                legacy_payload.pop("close_quality", None)
+                legacy_payload.pop("close_opposing_reference_odds", None)
+                db.table("scan_opportunities").update(legacy_payload).eq("id", row["id"]).execute()
+            else:
+                raise
 
     return {"latest_updated": latest_updated, "close_updated": close_updated}

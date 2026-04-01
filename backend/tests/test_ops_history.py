@@ -125,6 +125,17 @@ def test_load_ops_status_snapshot_prefers_durable_rows_and_rebuilds_activity():
                     "api_requests_remaining": "211",
                 },
                 {
+                    "job_kind": "jit_clv",
+                    "source": "scheduler",
+                    "status": "completed",
+                    "run_id": "jit-1",
+                    "captured_at": _iso(minutes_ago=6),
+                    "started_at": _iso(minutes_ago=7),
+                    "finished_at": _iso(minutes_ago=6),
+                    "duration_ms": 222.0,
+                    "meta": {"updated": 4},
+                },
+                {
                     "job_kind": "scheduled_scan",
                     "source": "scheduler",
                     "status": "completed",
@@ -260,6 +271,8 @@ def test_load_ops_status_snapshot_prefers_durable_rows_and_rebuilds_activity():
     )
 
     assert snapshot["last_manual_scan"]["sport"] == "basketball_nba"
+    assert snapshot["last_jit_clv"]["run_id"] == "jit-1"
+    assert snapshot["last_jit_clv"]["updated"] == 4
     assert snapshot["last_manual_scan"]["total_sides"] == 31
     assert snapshot["last_scheduler_scan"]["run_id"] == "scheduled-1"
     assert snapshot["last_scheduler_scan"]["autolog_summary"] == {"enabled": False}

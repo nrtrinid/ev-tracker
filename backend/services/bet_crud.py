@@ -3,6 +3,7 @@
 Extracted from main.py to reduce monolith size.
 """
 
+import json
 import logging
 import time
 from datetime import UTC, datetime, timedelta
@@ -18,6 +19,11 @@ from calculations import (
     compute_blend_weight,
 )
 from models import BetCreate, BetResult, BetResponse, BetUpdate
+from utils.request_context import (
+    get_correlation_id,
+    get_request_id,
+    record_db_roundtrip,
+)
 
 logger = logging.getLogger("ev_tracker")
 
@@ -29,12 +35,34 @@ DEFAULT_SPORTSBOOKS = [
 ]
 
 
-def _retry_supabase(f, retries: int = 2):
+def _log_structured_event(event: str, *, level: str = "info", **fields) -> None:
+    payload = {
+        "event": event,
+        "request_id": get_request_id(),
+        "correlation_id": get_correlation_id(),
+        **fields,
+    }
+    getattr(logger, level.lower(), logger.info)(json.dumps(payload, default=str))
+
+
+def _retry_supabase(f, retries: int = 2, *, label: str = "supabase.request", slow_ms: float = 250.0):
     """Retry a Supabase/PostgREST request on transient transport errors."""
     last_err = None
     for attempt in range(retries):
+        started_at = time.monotonic()
         try:
-            return f()
+            result = f()
+            duration_ms = round((time.monotonic() - started_at) * 1000, 2)
+            record_db_roundtrip(duration_ms)
+            if attempt > 0 or duration_ms >= slow_ms:
+                _log_structured_event(
+                    "supabase.request.completed",
+                    label=label,
+                    duration_ms=duration_ms,
+                    attempt=attempt + 1,
+                    retries=retries,
+                )
+            return result
         except (
             httpx.RemoteProtocolError,
             httpx.ReadError,
@@ -43,16 +71,43 @@ def _retry_supabase(f, retries: int = 2):
             httpx.TimeoutException,
         ) as e:
             last_err = e
+            duration_ms = round((time.monotonic() - started_at) * 1000, 2)
+            record_db_roundtrip(duration_ms)
             if attempt == retries - 1:
+                _log_structured_event(
+                    "supabase.request.failed",
+                    level="warning",
+                    label=label,
+                    duration_ms=duration_ms,
+                    attempt=attempt + 1,
+                    retries=retries,
+                    error_class=type(e).__name__,
+                    error=str(e),
+                )
                 raise
-            time.sleep(min(1.5, 0.25 * (2**attempt)))
+            delay_seconds = min(0.35, 0.1 * (2**attempt))
+            _log_structured_event(
+                "supabase.request.retrying",
+                level="warning",
+                label=label,
+                duration_ms=duration_ms,
+                attempt=attempt + 1,
+                retries=retries,
+                retry_delay_ms=round(delay_seconds * 1000, 2),
+                error_class=type(e).__name__,
+                error=str(e),
+            )
+            time.sleep(delay_seconds)
     if last_err:
         raise last_err
 
 
 def get_user_settings(db, user_id: str) -> dict:
     """Get settings from DB, creating defaults for new users."""
-    result = _retry_supabase(lambda: db.table("settings").select("*").eq("user_id", user_id).execute())
+    result = _retry_supabase(
+        lambda: db.table("settings").select("*").eq("user_id", user_id).execute(),
+        label="settings.select",
+    )
     if result.data:
         return result.data[0]
 
@@ -76,8 +131,14 @@ def get_user_settings(db, user_id: str) -> dict:
             "last_seen_at": None,
         },
     }
-    _retry_supabase(lambda: db.table("settings").upsert(defaults).execute())
-    result = _retry_supabase(lambda: db.table("settings").select("*").eq("user_id", user_id).execute())
+    _retry_supabase(
+        lambda: db.table("settings").upsert(defaults).execute(),
+        label="settings.upsert_defaults",
+    )
+    result = _retry_supabase(
+        lambda: db.table("settings").select("*").eq("user_id", user_id).execute(),
+        label="settings.select_after_upsert",
+    )
     return result.data[0]
 
 
@@ -88,12 +149,15 @@ def compute_k_user(db, user_id: str) -> dict:
     """
     created_after = datetime.now(UTC) - timedelta(days=999)
     try:
-        res = _retry_supabase(lambda: (
-            db.table("bets")
-            .select("promo_type,result,created_at,stake,payout_override,win_payout")
-            .eq("user_id", user_id)
-            .execute()
-        ))
+        res = _retry_supabase(
+            lambda: (
+                db.table("bets")
+                .select("promo_type,result,created_at,stake,payout_override,win_payout")
+                .eq("user_id", user_id)
+                .execute()
+            ),
+            label="bets.select_bonus_history",
+        )
         rows = res.data or []
     except Exception:
         return {"k_obs": None, "bonus_stake_settled": 0.0}
@@ -215,13 +279,16 @@ def _lock_ev_for_row(db, bet_id: str, user_id: str, row: dict, settings: dict) -
     }
 
     try:
-        _retry_supabase(lambda: (
-            db.table("bets")
-            .update(locked_updates)
-            .eq("id", bet_id)
-            .eq("user_id", user_id)
-            .execute()
-        ))
+        _retry_supabase(
+            lambda: (
+                db.table("bets")
+                .update(locked_updates)
+                .eq("id", bet_id)
+                .eq("user_id", user_id)
+                .execute()
+            ),
+            label="bets.update_ev_lock",
+        )
     except Exception as e:
         logger.warning("ev_lock.write_failed bet_id=%s err=%s", bet_id, e)
         return row
@@ -400,13 +467,25 @@ def create_bet_impl(db, user: dict, bet: BetCreate) -> BetResponse:
     if bet.event_date:
         data["event_date"] = bet.event_date.isoformat()
 
-    result = db.table("bets").insert(data).execute()
+    started_at = time.monotonic()
+    result = _retry_supabase(
+        lambda: db.table("bets").insert(data).execute(),
+        label="bets.insert",
+    )
 
     if not result.data:
         raise HTTPException(status_code=500, detail="Failed to create bet")
 
     row = result.data[0]
     row = _lock_ev_for_row(db, row["id"], user["id"], row, settings)
+    _log_structured_event(
+        "bets.create.completed",
+        user_id=str(user.get("id") or ""),
+        bet_id=row.get("id"),
+        duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        sportsbook=row.get("sportsbook"),
+        sport=row.get("sport"),
+    )
     return build_bet_response(row, settings["k_factor"])
 
 
@@ -436,19 +515,22 @@ def get_bets_impl(
         query = query.eq("result", result.value)
 
     query = query.range(offset, offset + limit - 1)
-    response = _retry_supabase(lambda: query.execute())
+    response = _retry_supabase(lambda: query.execute(), label="bets.select_list")
     return [build_bet_response(row, settings["k_factor"]) for row in response.data]
 
 
 def get_bet_impl(db, user: dict, bet_id: str) -> BetResponse:
     settings = get_user_settings(db, user["id"])
 
-    result = (
-        db.table("bets")
-        .select("*")
-        .eq("id", bet_id)
-        .eq("user_id", user["id"])
-        .execute()
+    result = _retry_supabase(
+        lambda: (
+            db.table("bets")
+            .select("*")
+            .eq("id", bet_id)
+            .eq("user_id", user["id"])
+            .execute()
+        ),
+        label="bets.select_one",
     )
 
     if not result.data:
@@ -485,12 +567,15 @@ def update_bet_impl(db, user: dict, bet_id: str, bet: BetUpdate) -> BetResponse:
         data["notes"] = bet.notes
     if bet.result is not None:
         data["result"] = bet.result.value
-        current = (
-            db.table("bets")
-            .select("result")
-            .eq("id", bet_id)
-            .eq("user_id", user["id"])
-            .execute()
+        current = _retry_supabase(
+            lambda: (
+                db.table("bets")
+                .select("result")
+                .eq("id", bet_id)
+                .eq("user_id", user["id"])
+                .execute()
+            ),
+            label="bets.select_result_before_update",
         )
         if current.data and current.data[0]["result"] == "pending" and bet.result.value != "pending":
             data["settled_at"] = datetime.now(UTC).isoformat()
@@ -512,12 +597,16 @@ def update_bet_impl(db, user: dict, bet_id: str, bet: BetUpdate) -> BetResponse:
     if not data:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    result = (
-        db.table("bets")
-        .update(data)
-        .eq("id", bet_id)
-        .eq("user_id", user["id"])
-        .execute()
+    started_at = time.monotonic()
+    result = _retry_supabase(
+        lambda: (
+            db.table("bets")
+            .update(data)
+            .eq("id", bet_id)
+            .eq("user_id", user["id"])
+            .execute()
+        ),
+        label="bets.update",
     )
 
     if not result.data:
@@ -525,6 +614,13 @@ def update_bet_impl(db, user: dict, bet_id: str, bet: BetUpdate) -> BetResponse:
 
     row = result.data[0]
     row = _lock_ev_for_row(db, bet_id, user["id"], row, settings)
+    _log_structured_event(
+        "bets.update.completed",
+        user_id=str(user.get("id") or ""),
+        bet_id=bet_id,
+        duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        updated_fields=sorted(data.keys()),
+    )
     return build_bet_response(row, settings["k_factor"])
 
 

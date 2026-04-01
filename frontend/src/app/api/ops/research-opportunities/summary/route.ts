@@ -49,7 +49,13 @@ export async function GET(request: Request) {
       },
     });
 
-    const data = await resp.json().catch(() => ({ error: "Invalid backend response" }));
+    const raw = await resp.text();
+    let data: unknown;
+    try {
+      data = raw ? JSON.parse(raw) : { error: "Empty backend response" };
+    } catch {
+      data = { error: raw || "Invalid backend response" };
+    }
     return NextResponse.json(data, {
       status: resp.status,
       headers: { "Cache-Control": "no-store" },

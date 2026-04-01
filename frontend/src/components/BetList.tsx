@@ -17,6 +17,7 @@ import {
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
   SheetClose,
@@ -1400,9 +1401,9 @@ export function BetList({
                 </button>
               )}
             </div>
-            <p className="text-sm text-muted-foreground">
+            <SheetDescription>
               Focus on one sportsbook or ticket type if you are checking a specific set of bets.
-            </p>
+            </SheetDescription>
           </SheetHeader>
           
           <div className="space-y-4">

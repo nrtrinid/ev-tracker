@@ -21,6 +21,15 @@ function formatGameTime(isoString: string): string {
 }
 
 function formatMarketLabel(value: string) {
+  const key = value.trim();
+  const map: Record<string, string> = {
+    player_points: "PTS",
+    player_rebounds: "REB",
+    player_assists: "AST",
+    player_threes: "3PM",
+    player_points_rebounds_assists: "PRA",
+  };
+  if (map[key]) return map[key];
   return value.replaceAll("_", " ").replace(/^player\s+/i, "");
 }
 

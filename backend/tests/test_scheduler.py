@@ -26,7 +26,7 @@ class DummyScheduler:
 @pytest.mark.asyncio
 async def test_does_not_start_scheduler_when_enable_scheduler_not_1(monkeypatch):
     monkeypatch.setenv("TESTING", "0")
-    monkeypatch.delenv("ENABLE_SCHEDULER", raising=False)
+    monkeypatch.setenv("ENABLE_SCHEDULER", "0")
 
     main = import_main_for_tests(monkeypatch)
     await main.start_scheduler()
@@ -58,10 +58,25 @@ async def test_uses_america_phoenix_timezone_when_available(monkeypatch):
     assert [(j["trigger"].hour, j["trigger"].minute) for j in scan_jobs] == [(15, 30)]
 
     auto_settle_jobs = [j for j in scheduler.jobs if j["func"] == main._run_auto_settler_job]
-    assert len(auto_settle_jobs) == 1
-    assert getattr(auto_settle_jobs[0]["trigger"], "timezone", None) == main.PHOENIX_TZ
-    assert auto_settle_jobs[0]["kwargs"].get("misfire_grace_time") == 3600
-    assert auto_settle_jobs[0]["kwargs"].get("coalesce") is True
+    assert len(auto_settle_jobs) == 2
+    assert all(getattr(j["trigger"], "timezone", None) == main.PHOENIX_TZ for j in auto_settle_jobs)
+    assert sorted((j["trigger"].hour, j["trigger"].minute) for j in auto_settle_jobs) == [(4, 0), (23, 0)]
+    assert all(j["kwargs"].get("misfire_grace_time") == 3600 for j in auto_settle_jobs)
+    assert all(j["kwargs"].get("coalesce") is True for j in auto_settle_jobs)
+
+
+@pytest.mark.asyncio
+async def test_api_role_does_not_start_in_process_scheduler(monkeypatch):
+    monkeypatch.setenv("TESTING", "0")
+    monkeypatch.setenv("ENABLE_SCHEDULER", "1")
+    monkeypatch.setenv("APP_ROLE", "api")
+
+    main = import_main_for_tests(monkeypatch)
+    install_apscheduler_stubs(scheduler_cls=DummyScheduler)
+
+    await main.start_scheduler()
+
+    assert not hasattr(main.app.state, "scheduler")
 
 
 @pytest.mark.asyncio
@@ -166,6 +181,37 @@ def test_scheduler_freshness_fails_if_no_success_past_stale_window(monkeypatch):
     assert fresh is False
     assert any(not state["fresh"] for state in details["jobs"].values())
     assert any(state["freshness_reason"] == "stale_no_success" for state in details["jobs"].values())
+
+
+def test_scheduler_freshness_uses_durable_snapshot_when_scheduler_is_external(monkeypatch):
+    main = import_main_for_tests(monkeypatch)
+    monkeypatch.setenv("ENABLE_SCHEDULER", "1")
+    monkeypatch.setenv("APP_ROLE", "api")
+
+    if hasattr(main.app.state, "scheduler_heartbeats"):
+        delattr(main.app.state, "scheduler_heartbeats")
+
+    import services.ops_history as ops_history
+
+    now = datetime.now(UTC)
+    boot_ts = (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    success_ts = (now - timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+    monkeypatch.setattr(
+        ops_history,
+        "load_scheduler_job_snapshot",
+        lambda **_: {
+            "scheduler_boot": {"captured_at": boot_ts},
+            "jit_clv": {"captured_at": success_ts, "run_id": "jit-1", "status": "completed"},
+            "auto_settle": {"captured_at": success_ts, "run_id": "settle-1", "status": "completed"},
+            "scheduled_scan": {"captured_at": success_ts, "run_id": "scan-1", "status": "completed"},
+        },
+        raising=True,
+    )
+
+    fresh, details = main._check_scheduler_freshness(True)
+
+    assert fresh is True
+    assert details["source"] == "durable_ops_history"
 
 
 def test_ops_status_requires_valid_cron_token(monkeypatch):

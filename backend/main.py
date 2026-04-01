@@ -6,7 +6,8 @@ FastAPI backend for sports betting EV tracking.
 import asyncio
 import json
 import logging
-from fastapi import FastAPI, HTTPException, Depends, Header
+import signal
+from fastapi import FastAPI, HTTPException, Depends, Header, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, UTC, timedelta
 from contextlib import asynccontextmanager
@@ -41,6 +42,15 @@ from services.bet_crud import (
     compute_k_user,
     get_user_settings,
 )
+from utils.request_context import (
+    get_correlation_id,
+    get_db_metrics,
+    get_request_id,
+    reset_db_metrics,
+    reset_request_context,
+    restore_db_metrics,
+    set_request_context,
+)
 
 load_dotenv()
 
@@ -54,12 +64,33 @@ logger = logging.getLogger("ev_tracker")
 _BOOT_ID = f"boot_{uuid4().hex[:12]}"
 
 
+def _app_role() -> str:
+    raw_role = os.getenv("APP_ROLE")
+    if raw_role is None or not raw_role.strip():
+        return "all" if os.getenv("ENABLE_SCHEDULER") == "1" else "api"
+    role = raw_role.strip().lower()
+    if role in {"web", "backend"}:
+        return "api"
+    if role in {"scheduler", "all", "api"}:
+        return role
+    return "api"
+
+
+def _scheduler_runs_in_process() -> bool:
+    if os.getenv("TESTING") == "1":
+        return False
+    if os.getenv("ENABLE_SCHEDULER") != "1":
+        return False
+    return _app_role() in {"scheduler", "all"}
+
+
 def _boot_fields() -> dict:
     from utils.telemetry import rss_mb as _rss_mb
 
     return {
         "boot_id": _BOOT_ID,
         "pid": os.getpid(),
+        "app_role": _app_role(),
         "rss_mb": _rss_mb(),
     }
 
@@ -120,6 +151,9 @@ def _log_event(event: str, level: str = "info", **fields):
     payload = {
         "event": event,
         "timestamp": utc_now_iso_z(),
+        "app_role": _app_role(),
+        "request_id": get_request_id(),
+        "correlation_id": get_correlation_id(),
         **fields,
     }
     message = json.dumps(payload, default=str)
@@ -537,6 +571,18 @@ def _validate_environment() -> None:
             level="warning",
             message="ENABLE_SCHEDULER=1 but ODDS_API_KEY is missing; scan jobs will fail.",
         )
+    if scheduler_enabled and _app_role() == "api":
+        _log_event(
+            "startup.scheduler_externalized",
+            message="API process expects scheduler work to run in a separate process.",
+            redis_configured=is_redis_enabled(),
+        )
+    if scheduler_enabled and _app_role() in {"api", "scheduler"} and not is_redis_enabled():
+        _log_event(
+            "startup.redis_recommended_for_multi_process",
+            level="warning",
+            message="Scheduler/web split is safer with REDIS_URL configured for shared state and rate limiting.",
+        )
 
     if not cron_token_configured:
         _log_event(
@@ -574,12 +620,21 @@ def _capture_research_opportunities(sides: list[dict], *, source: str) -> None:
 
     from services.research_opportunities import capture_scan_opportunities
 
+    started_at = time.monotonic()
     try:
-        capture_scan_opportunities(
+        result = capture_scan_opportunities(
             get_db(),
             sides=sides,
             source=source,
             captured_at=_utc_now_iso(),
+        )
+        _log_event(
+            "research.capture.completed",
+            source=source,
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+            eligible_seen=result.get("eligible_seen") if isinstance(result, dict) else None,
+            inserted=result.get("inserted") if isinstance(result, dict) else None,
+            updated=result.get("updated") if isinstance(result, dict) else None,
         )
     except Exception as e:
         _log_event(
@@ -749,12 +804,82 @@ def _parse_utc_iso(timestamp: str | None) -> datetime | None:
             return None
 
 
+def _check_durable_scheduler_freshness() -> tuple[bool, dict] | None:
+    from services.ops_history import load_scheduler_job_snapshot
+
+    try:
+        snapshot = load_scheduler_job_snapshot(db=get_db(), retry_supabase=_retry_supabase)
+    except Exception as exc:
+        return False, {
+            "enabled": True,
+            "fresh": False,
+            "source": "durable_ops_history",
+            "reason": f"ops_history_unavailable:{type(exc).__name__}",
+            "jobs": {},
+        }
+
+    boot_row = snapshot.get("scheduler_boot")
+    scheduler_started_at = None
+    if isinstance(boot_row, dict):
+        scheduler_started_at = _parse_utc_iso(
+            boot_row.get("captured_at") or boot_row.get("finished_at") or boot_row.get("started_at")
+        )
+
+    now = datetime.now(UTC)
+    all_fresh = True
+    jobs: dict[str, dict] = {}
+    job_kind_map = {
+        "jit_clv": "jit_clv",
+        "auto_settler": "auto_settle",
+        "scheduled_scan": "scheduled_scan",
+    }
+    for job_name, stale_window in SCHEDULER_STALE_WINDOWS.items():
+        row = snapshot.get(job_kind_map[job_name]) or {}
+        last_success = _parse_utc_iso(
+            row.get("captured_at") or row.get("finished_at") or row.get("started_at")
+        ) if isinstance(row, dict) else None
+        freshness_reason = "fresh_success"
+
+        if last_success is not None:
+            age_seconds = (now - last_success).total_seconds()
+            is_fresh = age_seconds <= stale_window.total_seconds()
+            if not is_fresh:
+                freshness_reason = "stale_success"
+        else:
+            age_seconds = None
+            if scheduler_started_at is not None:
+                startup_age = (now - scheduler_started_at).total_seconds()
+                is_fresh = startup_age <= stale_window.total_seconds()
+                freshness_reason = "waiting_first_run" if is_fresh else "stale_no_success"
+            else:
+                is_fresh = False
+                freshness_reason = "missing_durable_boot"
+
+        if not is_fresh:
+            all_fresh = False
+        jobs[job_name] = {
+            "fresh": is_fresh,
+            "freshness_reason": freshness_reason,
+            "last_success_at": row.get("captured_at") if isinstance(row, dict) else None,
+            "last_failure_at": row.get("captured_at") if isinstance(row, dict) and row.get("status") == "failed" else None,
+            "last_run_id": row.get("run_id") if isinstance(row, dict) else None,
+            "last_error": None,
+            "stale_after_seconds": int(stale_window.total_seconds()),
+            "age_seconds": round(age_seconds, 2) if age_seconds is not None else None,
+        }
+
+    return all_fresh, {"enabled": True, "fresh": all_fresh, "source": "durable_ops_history", "jobs": jobs}
+
+
 def _check_scheduler_freshness(scheduler_expected: bool) -> tuple[bool, dict]:
     if not scheduler_expected:
         return True, {"enabled": False, "fresh": True, "jobs": {}}
 
     heartbeats = getattr(app.state, "scheduler_heartbeats", None)
     if not isinstance(heartbeats, dict):
+        durable = _check_durable_scheduler_freshness()
+        if durable is not None:
+            return durable
         return False, {
             "enabled": True,
             "fresh": False,
@@ -799,18 +924,25 @@ def _check_scheduler_freshness(scheduler_expected: bool) -> tuple[bool, dict]:
             "age_seconds": round(age_seconds, 2) if age_seconds is not None else None,
         }
 
-    return all_fresh, {"enabled": True, "fresh": all_fresh, "jobs": jobs}
+    return all_fresh, {"enabled": True, "fresh": all_fresh, "source": "in_process", "jobs": jobs}
 
 
 def _runtime_state() -> dict:
     environment = os.getenv("ENVIRONMENT", "production").lower()
+    app_role = _app_role()
     scheduler_expected = os.getenv("ENABLE_SCHEDULER") == "1" and os.getenv("TESTING") != "1"
     scheduler_running = bool(getattr(app.state, "scheduler", None))
     return {
         "environment": environment,
+        "app_role": app_role,
         "scheduler_expected": scheduler_expected,
         "scheduler_running": scheduler_running,
+        "scheduler_runs_in_process": _scheduler_runs_in_process(),
+        "scheduler_responsibility": "in_process" if _scheduler_runs_in_process() else (
+            "external" if scheduler_expected and app_role == "api" else "disabled"
+        ),
         "redis_configured": is_redis_enabled(),
+        "redis_recommended_for_coordination": bool(scheduler_expected and app_role in {"api", "scheduler"}),
         "cron_token_configured": bool(os.getenv("CRON_TOKEN")),
         "odds_api_key_configured": bool(os.getenv("ODDS_API_KEY")),
         "supabase_url_configured": bool(os.getenv("SUPABASE_URL")),
@@ -822,7 +954,10 @@ def _check_db_ready() -> tuple[bool, str | None]:
     try:
         db = get_db()
         # Cheap DB probe through PostgREST with minimal payload.
-        db.table("settings").select("user_id").limit(1).execute()
+        _retry_supabase(
+            lambda: db.table("settings").select("user_id").limit(1).execute(),
+            label="health.settings_probe",
+        )
         return True, None
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"
@@ -894,23 +1029,50 @@ async def _run_jit_clv_snatcher_job():
     from services.odds_api import run_jit_clv_snatcher
 
     run_id = _new_run_id("jit_clv")
+    started = _utc_now_iso()
     started_at = time.monotonic()
     _record_scheduler_heartbeat("jit_clv", run_id, "started")
     _log_event("scheduler.jit_clv.started", run_id=run_id)
     db = get_db()
     try:
         updated = await run_jit_clv_snatcher(db)
+        finished = _utc_now_iso()
+        duration_ms = round((time.monotonic() - started_at) * 1000, 2)
         _log_event(
             "scheduler.jit_clv.completed",
             run_id=run_id,
             updated=updated,
-            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+            duration_ms=duration_ms,
         )
         _record_scheduler_heartbeat(
             "jit_clv",
             run_id,
             "success",
-            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+            duration_ms=duration_ms,
+        )
+        _set_ops_status(
+            "last_jit_clv",
+            {
+                "source": "scheduler",
+                "run_id": run_id,
+                "started_at": started,
+                "finished_at": finished,
+                "duration_ms": duration_ms,
+                "updated": updated,
+                "captured_at": finished,
+                "status": "completed",
+            },
+        )
+        _persist_ops_job_run(
+            job_kind="jit_clv",
+            source="scheduler",
+            status="completed",
+            run_id=run_id,
+            captured_at=finished,
+            started_at=started,
+            finished_at=finished,
+            duration_ms=duration_ms,
+            meta={"updated": updated},
         )
         if updated:
             print(f"[JIT CLV] Captured closing lines for {updated} bet(s).")
@@ -931,11 +1093,26 @@ async def _run_jit_clv_snatcher_job():
                 }
                 asyncio.create_task(send_discord_webhook(payload, message_type="heartbeat"))
     except Exception as e:
+        finished = _utc_now_iso()
+        duration_ms = round((time.monotonic() - started_at) * 1000, 2)
+        _set_ops_status(
+            "last_jit_clv",
+            {
+                "source": "scheduler",
+                "run_id": run_id,
+                "started_at": started,
+                "finished_at": finished,
+                "duration_ms": duration_ms,
+                "updated": 0,
+                "captured_at": finished,
+                "status": "failed",
+            },
+        )
         _record_scheduler_heartbeat(
             "jit_clv",
             run_id,
             "failure",
-            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+            duration_ms=duration_ms,
             error=str(e),
         )
         _log_event(
@@ -944,7 +1121,20 @@ async def _run_jit_clv_snatcher_job():
             run_id=run_id,
             error_class=type(e).__name__,
             error=str(e),
-            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+            duration_ms=duration_ms,
+        )
+        _persist_ops_job_run(
+            job_kind="jit_clv",
+            source="scheduler",
+            status="failed",
+            run_id=run_id,
+            captured_at=finished,
+            started_at=started,
+            finished_at=finished,
+            duration_ms=duration_ms,
+            error_count=1,
+            errors=[{"error_class": type(e).__name__, "error": str(e)}],
+            meta={"updated": 0},
         )
 
 
@@ -1357,12 +1547,27 @@ async def _piggyback_clv(sides: list[dict]):
         update_bet_reference_snapshots,
         update_scan_opportunity_reference_snapshots,
     )
+    started_at = time.monotonic()
     try:
         db = get_db()
-        update_bet_reference_snapshots(db, sides=sides, allow_close=True)
-        update_scan_opportunity_reference_snapshots(db, sides=sides, allow_close=True)
+        bet_updates = update_bet_reference_snapshots(db, sides=sides, allow_close=True)
+        opportunity_updates = update_scan_opportunity_reference_snapshots(db, sides=sides, allow_close=True)
+        _log_event(
+            "clv.piggyback.completed",
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+            bet_latest_updated=bet_updates.get("latest_updated") if isinstance(bet_updates, dict) else None,
+            bet_close_updated=bet_updates.get("close_updated") if isinstance(bet_updates, dict) else None,
+            research_latest_updated=opportunity_updates.get("latest_updated") if isinstance(opportunity_updates, dict) else None,
+            research_close_updated=opportunity_updates.get("close_updated") if isinstance(opportunity_updates, dict) else None,
+        )
     except Exception as e:
-        print(f"[CLV piggyback] Error: {e}")
+        _log_event(
+            "clv.piggyback.failed",
+            level="warning",
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+            error_class=type(e).__name__,
+            error=str(e),
+        )
 
 
 async def start_scheduler():
@@ -1371,6 +1576,9 @@ async def start_scheduler():
     if os.getenv("ENABLE_SCHEDULER") != "1":
         _log_event("scheduler.disabled", **_boot_fields())
         return  # Only one instance should run background jobs (Render scaling/workers)
+    if not _scheduler_runs_in_process():
+        _log_event("scheduler.externalized", **_boot_fields())
+        return
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
     from apscheduler.triggers.interval import IntervalTrigger
@@ -1379,20 +1587,32 @@ async def start_scheduler():
     # Every 15 min: capture closing Pinnacle lines for games starting within 20 min
     scheduler.add_job(_run_jit_clv_snatcher_job, IntervalTrigger(minutes=15))
     _log_event("scheduler.job_registered", job="jit_clv_snatcher", trigger="interval:15m", **_boot_fields())
-    # 4:00 AM Phoenix daily: auto-grade completed ML bets via /scores.
+    # 11:00 PM Phoenix catches most same-night finals; 4:00 AM cleans up stragglers.
     # Explicit timezone keeps scheduler behavior consistent across hosts.
-    auto_settle_trigger = (
-        CronTrigger(hour=4, minute=0, timezone=PHOENIX_TZ)
+    auto_settle_schedules = (
+        [
+            (23, 0, CronTrigger(hour=23, minute=0, timezone=PHOENIX_TZ)),
+            (4, 0, CronTrigger(hour=4, minute=0, timezone=PHOENIX_TZ)),
+        ]
         if PHOENIX_TZ is not None
-        else CronTrigger(hour=4, minute=0)
+        else [
+            (23, 0, CronTrigger(hour=23, minute=0)),
+            (4, 0, CronTrigger(hour=4, minute=0)),
+        ]
     )
-    scheduler.add_job(
-        _run_auto_settler_job,
-        auto_settle_trigger,
-        misfire_grace_time=60 * 60,
-        coalesce=True,
-    )
-    _log_event("scheduler.job_registered", job="auto_settler", trigger="cron:04:00", **_boot_fields())
+    for hour, minute, trigger in auto_settle_schedules:
+        scheduler.add_job(
+            _run_auto_settler_job,
+            trigger,
+            misfire_grace_time=60 * 60,
+            coalesce=True,
+        )
+        _log_event(
+            "scheduler.job_registered",
+            job="auto_settler",
+            trigger=f"cron:{hour:02d}:{minute:02d}",
+            **_boot_fields(),
+        )
     if PHOENIX_TZ is not None:
         scheduler.add_job(
             _run_early_look_scan_job,
@@ -1414,6 +1634,15 @@ async def start_scheduler():
         jobs_count = len(getattr(scheduler, "jobs", []))
     _log_event("scheduler.started", jobs=jobs_count)
     app.state.scheduler = scheduler
+    _persist_ops_job_run(
+        job_kind="scheduler_boot",
+        source=_app_role(),
+        status="completed",
+        captured_at=app.state.scheduler_started_at,
+        started_at=app.state.scheduler_started_at,
+        finished_at=app.state.scheduler_started_at,
+        meta={"boot_id": _BOOT_ID, "jobs": jobs_count},
+    )
 
 
 async def stop_scheduler():
@@ -1429,6 +1658,35 @@ async def stop_scheduler():
                 error_class=type(e).__name__,
                 error=str(e),
             )
+
+
+async def run_scheduler_worker() -> None:
+    """Run scheduler jobs without serving HTTP traffic."""
+    if not _scheduler_runs_in_process():
+        raise RuntimeError("Scheduler worker requires ENABLE_SCHEDULER=1 with APP_ROLE=scheduler or APP_ROLE=all.")
+    _log_event("scheduler_worker.boot", **_boot_fields())
+    _validate_environment()
+    _init_ops_status()
+    await start_scheduler()
+
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, stop_event.set)
+        except NotImplementedError:
+            pass
+
+    try:
+        await stop_event.wait()
+    finally:
+        try:
+            from services.http_client import close_async_client
+
+            await close_async_client()
+        except Exception:
+            pass
+        await stop_scheduler()
 
 
 @asynccontextmanager
@@ -1468,39 +1726,63 @@ app.add_middleware(
 
 # Lightweight request timing + memory watermark logs for high-risk endpoints.
 _TELEMETRY_PATHS = {
+    "/bets",
     "/balances",
+    "/summary",
     "/api/board/latest",
     "/api/ops/status",
+    "/api/ops/research-opportunities/summary",
+    "/api/ops/clv-debug",
     "/ready",
 }
 
 
 @app.middleware("http")
-async def _timing_middleware(request, call_next):
+async def _timing_middleware(request: Request, call_next):
     import time as _time
 
     from utils.telemetry import rss_mb as _rss_mb
 
     path = request.url.path
-    should_log = path in _TELEMETRY_PATHS
+    should_log = path in _TELEMETRY_PATHS or request.method in {"POST", "PATCH", "DELETE"}
+    request_id = request.headers.get("X-Request-ID") or f"req_{uuid4().hex[:12]}"
+    correlation_id = request.headers.get("X-Correlation-ID") or request_id
+    request_token, correlation_token = set_request_context(
+        request_id=request_id,
+        correlation_id=correlation_id,
+    )
+    db_count_token, db_duration_token = reset_db_metrics()
     started = _time.monotonic()
     rss_before = _rss_mb() if should_log else None
     try:
         response = await call_next(request)
     except Exception as exc:
+        duration_ms = round((_time.monotonic() - started) * 1000, 2)
+        db_metrics = get_db_metrics()
         if should_log:
             _log_event(
                 "http.request.failed",
                 level="warning",
                 method=request.method,
                 path=path,
-                duration_ms=round((_time.monotonic() - started) * 1000, 2),
+                duration_ms=duration_ms,
                 rss_mb_before=rss_before,
                 rss_mb_after=_rss_mb(),
+                db_roundtrip_count=db_metrics["roundtrip_count"],
+                db_roundtrip_duration_ms=db_metrics["roundtrip_duration_ms"],
                 error_class=type(exc).__name__,
                 error=str(exc),
             )
+        restore_db_metrics(count_token=db_count_token, duration_token=db_duration_token)
+        reset_request_context(request_token=request_token, correlation_token=correlation_token)
         raise
+
+    duration_ms = round((_time.monotonic() - started) * 1000, 2)
+    db_metrics = get_db_metrics()
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Correlation-ID"] = correlation_id
+    response.headers["X-DB-Roundtrips"] = str(db_metrics["roundtrip_count"])
+    response.headers["X-Request-Duration-MS"] = str(duration_ms)
 
     if should_log:
         _log_event(
@@ -1508,10 +1790,14 @@ async def _timing_middleware(request, call_next):
             method=request.method,
             path=path,
             status_code=getattr(response, "status_code", None),
-            duration_ms=round((_time.monotonic() - started) * 1000, 2),
+            duration_ms=duration_ms,
             rss_mb_before=rss_before,
             rss_mb_after=_rss_mb(),
+            db_roundtrip_count=db_metrics["roundtrip_count"],
+            db_roundtrip_duration_ms=db_metrics["roundtrip_duration_ms"],
         )
+    restore_db_metrics(count_token=db_count_token, duration_token=db_duration_token)
+    reset_request_context(request_token=request_token, correlation_token=correlation_token)
     return response
 
 # Import database after app setup to avoid circular imports
@@ -1589,7 +1875,12 @@ async def require_scan_rate_limit(user: dict = Depends(get_current_user)) -> dic
 @app.get("/health")
 def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "timestamp": datetime.now(UTC).isoformat()}
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now(UTC).isoformat(),
+        "app_role": _app_role(),
+        "boot_id": _BOOT_ID,
+    }
 
 
 @app.get("/ready")
@@ -1607,7 +1898,11 @@ def readiness_check():
     checks = {
         "supabase_env": runtime["supabase_url_configured"] and runtime["supabase_service_role_configured"],
         "db_connectivity": db_ok,
-        "scheduler_state": (not runtime["scheduler_expected"]) or runtime["scheduler_running"],
+        "scheduler_state": (
+            (not runtime["scheduler_expected"])
+            or runtime["scheduler_running"]
+            or runtime.get("scheduler_responsibility") == "external"
+        ),
         "scheduler_freshness": scheduler_fresh_ok,
     }
     ready = all(checks.values())

@@ -7,6 +7,7 @@ import { SmartOddsInput, type SmartOddsInputRef } from "@/components/SmartOddsIn
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
@@ -437,13 +438,13 @@ export function LogBetDrawer({
         {/* Header */}
         <SheetHeader className="px-4 pt-4 pb-2">
           <SheetTitle className="text-left">Log Bet</SheetTitle>
-          <p className="text-left text-sm text-muted-foreground">
+          <SheetDescription className="text-left">
             {isTutorialPracticeFlow
               ? "Practice the final step here. This ticket stays local to the tutorial and will not touch your real stats or bankroll."
               : isScannerFlow
               ? "Step 3 of 3: confirm what you placed, then log it."
               : "Quick Log starts with the essentials. We assume a standard moneyline bet unless you change the setup."}
-          </p>
+          </SheetDescription>
         </SheetHeader>
 
         {/* Scrollable Content */}
@@ -574,8 +575,8 @@ export function LogBetDrawer({
               label={isScannerFlow ? "Placed Odds" : "Odds"}
               className="[&_input]:h-12 [&_input]:text-lg"
             />
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground block">
                 {isScannerFlow ? "Stake Placed" : "Stake"}
               </label>
               <Input
@@ -586,11 +587,6 @@ export function LogBetDrawer({
                 onChange={(e) => updateField("stake", e.target.value)}
                 className="h-12 text-lg font-mono text-center"
               />
-              {suggestedStake != null && (
-                <p className="mt-1 text-[11px] text-muted-foreground text-center">
-                  Suggested stake: <span className="font-medium text-foreground">{formatCurrency(suggestedStake)}</span>
-                </p>
-              )}
               {/* Quick Stake Presets - directly under stake field */}
               <div className="flex gap-2 mt-2">
                 {[5, 10, 25].map((amount) => (
@@ -609,6 +605,11 @@ export function LogBetDrawer({
                   </button>
                 ))}
               </div>
+              {suggestedStake != null && (
+                <p className="mt-2 text-[11px] text-muted-foreground text-center">
+                  Suggested Kelly stake: <span className="font-medium text-foreground">{formatCurrency(suggestedStake)}</span>
+                </p>
+              )}
             </div>
           </div>
 

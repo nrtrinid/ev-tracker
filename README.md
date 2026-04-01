@@ -21,7 +21,7 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 | **Multi-book scanning** | One scan covers all your selected books simultaneously at no extra API cost |
 | **Full P&L tracking** | Log every bet (pre-game), settle it after, and see actual vs. expected return over time |
 | **Automation hardening** | Scheduler heartbeats + readiness freshness checks + cron fallbacks keep scans/settles reliable |
-| **Operator observability** | Internal `/admin/ops` console shows automation health and compact Odds API activity summaries |
+| **Operator observability** | Internal `/admin/ops` console shows automation health, CLV tracking states, and compact Odds API activity summaries |
 
 ---
 
@@ -177,6 +177,7 @@ Health endpoints:
 - `GET /health` for liveness (process is up)
 - `GET /ready` for readiness (Supabase env + DB connectivity + scheduler state/freshness)
 - `GET /api/ops/status` for operator status (requires `X-Ops-Token`)
+- `GET /api/ops/clv-debug` for CLV audit counts/samples across bets + research tracking (requires `X-Ops-Token`)
 
 Readiness scheduler freshness uses a startup grace window equal to each job's expected
 stale window, so a fresh deploy is not marked degraded before the first scheduled run.
@@ -185,8 +186,16 @@ If you use the frontend cron bridge routes (for example on Vercel), set `BACKEND
 in the frontend environment so the bridge knows where to forward cron triggers.
 
 ```bash
-python main.py
+python entrypoint.py
 # → http://localhost:8000
+```
+
+To run the scheduler locally in a separate process:
+
+```bash
+$env:APP_ROLE="scheduler"        # Windows PowerShell
+$env:ENABLE_SCHEDULER="1"
+python entrypoint.py
 ```
 
 ### Frontend

@@ -145,28 +145,30 @@ function filterPickEmBoardCards(params: {
   });
 }
 
-function sortPickEmBoardCards(cards: PickEmBoardCard[]): PickEmBoardCard[] {
+export function sortPickEmBoardCards(cards: PickEmBoardCard[]): PickEmBoardCard[] {
   const confidenceRank: Record<string, number> = {
     elite: 4,
     high: 3,
     solid: 2,
     thin: 1,
   };
-  return [...cards].sort((left, right) => {
-    const confidenceDiff =
-      (confidenceRank[right.confidence_label?.toLowerCase() ?? "thin"] ?? 0) -
-      (confidenceRank[left.confidence_label?.toLowerCase() ?? "thin"] ?? 0);
-    if (confidenceDiff !== 0) return confidenceDiff;
+  return [...cards]
+    .filter((card) => Math.max(card.consensus_over_prob, card.consensus_under_prob) > 0.5)
+    .sort((left, right) => {
+      const rightConsensus = Math.max(right.consensus_over_prob, right.consensus_under_prob);
+      const leftConsensus = Math.max(left.consensus_over_prob, left.consensus_under_prob);
+      if (rightConsensus !== leftConsensus) return rightConsensus - leftConsensus;
 
-    const supportDiff = right.exact_line_bookmaker_count - left.exact_line_bookmaker_count;
-    if (supportDiff !== 0) return supportDiff;
+      const supportDiff = right.exact_line_bookmaker_count - left.exact_line_bookmaker_count;
+      if (supportDiff !== 0) return supportDiff;
 
-    const leftLean = Math.abs(left.consensus_over_prob - 0.5);
-    const rightLean = Math.abs(right.consensus_over_prob - 0.5);
-    if (rightLean !== leftLean) return rightLean - leftLean;
+      const confidenceDiff =
+        (confidenceRank[right.confidence_label?.toLowerCase() ?? "thin"] ?? 0) -
+        (confidenceRank[left.confidence_label?.toLowerCase() ?? "thin"] ?? 0);
+      if (confidenceDiff !== 0) return confidenceDiff;
 
-    return left.player_name.localeCompare(right.player_name);
-  });
+      return left.player_name.localeCompare(right.player_name);
+    });
 }
 
 export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {

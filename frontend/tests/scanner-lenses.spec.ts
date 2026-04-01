@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { rankScannerSidesByLens } from "@/app/scanner/scanner-lenses";
+import { calculateLensQualifierHold, rankScannerSidesByLens } from "@/app/scanner/scanner-lenses";
 import type { MarketSide } from "@/lib/types";
 
 const BASE_SIDE: MarketSide = {
@@ -84,5 +84,12 @@ test.describe("scanner lens ranking", () => {
     });
 
     expect(results.map((s) => s.team)).toEqual(["B"]);
+  });
+
+  test("qualifier hold prefers the cheaper playthrough candidate", async () => {
+    const cheapHold = calculateLensQualifierHold({ ...BASE_SIDE, team: "A", book_decimal: 2.0, true_prob: 0.5 });
+    const expensiveHold = calculateLensQualifierHold({ ...BASE_SIDE, team: "B", book_decimal: 1.8, true_prob: 0.5 });
+
+    expect(cheapHold).toBeLessThan(expensiveHold);
   });
 });

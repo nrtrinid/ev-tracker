@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
   SheetClose,
@@ -580,8 +581,8 @@ export default function AnalyticsPage() {
 
   return (
     <main className="min-h-screen bg-background">
-      {/* Sticky Filter Bar - Positioned below TopNav (56px) */}
-      <div className="sticky top-14 z-10 w-full py-3 bg-background border-b border-border shadow-sm">
+      {/* Sticky filter bar aligned to the mobile app header height. */}
+      <div className="sticky top-[49px] z-10 w-full border-b border-border bg-background py-3 shadow-sm">
         <div className="container mx-auto px-4 max-w-4xl">
           <div className="flex justify-between items-center">
             <h1 className="text-lg font-semibold">Stats</h1>
@@ -680,6 +681,9 @@ export default function AnalyticsPage() {
               <SheetContent side="bottom" className="p-6">
                 <SheetHeader className="p-0 pb-4">
                   <SheetTitle>Filter Analytics</SheetTitle>
+                  <SheetDescription>
+                    Adjust the analytics filters to focus on a specific slice of results.
+                  </SheetDescription>
                 </SheetHeader>
                 <AnalyticsFilterBar
                   timeframe={timeframe}

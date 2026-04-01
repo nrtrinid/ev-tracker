@@ -9,6 +9,7 @@ from models import (
     ResearchOpportunityBreakdownItem,
     ResearchOpportunityCohortTrendRow,
     ResearchOpportunityRecentRow,
+    ResearchOpportunityStatusBucket,
     ResearchOpportunitySummaryResponse,
 )
 from services.match_keys import scanner_match_key_from_side
@@ -79,12 +80,28 @@ def _line_token(value: Any) -> str:
 
 def is_missing_scan_opportunities_error(error: Exception) -> bool:
     msg = str(error)
-    return "PGRST205" in msg or ("scan_opportunities" in msg and "schema cache" in msg)
+    message = str(getattr(error, "message", "") or "")
+    combined = f"{msg} {message}".lower()
+    code = str(getattr(error, "code", "") or "").strip().upper()
+    return code == "PGRST205" or ("scan_opportunities" in combined and "schema cache" in combined)
+
+
+def is_missing_scan_opportunities_column_error(error: Exception, *columns: str) -> bool:
+    msg = str(error)
+    message = str(getattr(error, "message", "") or "")
+    combined = f"{msg} {message}".lower()
+    code = str(getattr(error, "code", "") or "").strip().upper()
+    if code != "42703" and "scan_opportunities" not in combined:
+        return False
+    return any(column.strip().lower() in combined for column in columns if column)
 
 
 def is_missing_scan_opportunity_model_evaluations_error(error: Exception) -> bool:
     msg = str(error)
-    return "PGRST205" in msg or ("scan_opportunity_model_evaluations" in msg and "schema cache" in msg)
+    message = str(getattr(error, "message", "") or "")
+    combined = f"{msg} {message}".lower()
+    code = str(getattr(error, "code", "") or "").strip().upper()
+    return code == "PGRST205" or ("scan_opportunity_model_evaluations" in combined and "schema cache" in combined)
 
 
 def _coerce_float(value: Any) -> float | None:
@@ -408,15 +425,29 @@ def capture_scan_opportunities(
 
     normalized_source = _normalize_source(source)
     opportunity_keys = list(collapsed_by_key.keys())
-    existing_res = (
-        db.table("scan_opportunities")
-        .select(
-            "id,opportunity_key,seen_count,best_book_odds,event,commence_time,team,sportsbook,event_id,"
-            "surface,market,player_name,source_market_key,selection_side,line_value,first_model_key,last_model_key"
-        )
-        .in_("opportunity_key", opportunity_keys)
-        .execute()
+    existing_fields = (
+        "id,opportunity_key,seen_count,best_book_odds,event,commence_time,team,sportsbook,event_id,"
+        "surface,market,player_name,source_market_key,selection_side,line_value"
     )
+    supports_model_key_columns = True
+    try:
+        existing_res = (
+            db.table("scan_opportunities")
+            .select(f"{existing_fields},first_model_key,last_model_key")
+            .in_("opportunity_key", opportunity_keys)
+            .execute()
+        )
+    except Exception as exc:
+        if is_missing_scan_opportunities_column_error(exc, "first_model_key", "last_model_key"):
+            supports_model_key_columns = False
+            existing_res = (
+                db.table("scan_opportunities")
+                .select(existing_fields)
+                .in_("opportunity_key", opportunity_keys)
+                .execute()
+            )
+        else:
+            raise
     existing_by_key = {
         str(row.get("opportunity_key") or ""): row
         for row in (existing_res.data or [])
@@ -441,46 +472,46 @@ def capture_scan_opportunities(
         row = existing_by_key.get(opportunity_key)
 
         if row is None:
-            insert_payloads.append(
-                {
-                    "opportunity_key": opportunity_key,
-                    "surface": surface,
-                    "sport": str(side.get("sport") or ""),
-                    "event": str(side.get("event") or ""),
-                    "commence_time": str(side.get("commence_time") or ""),
-                    "team": str(side.get("team") or ""),
-                    "sportsbook": str(side.get("sportsbook") or ""),
-                    "market": "ML" if surface == "straight_bets" else str(side.get("market") or source_market_key or ""),
-                    "event_id": event_id,
-                    "player_name": player_name,
-                    "source_market_key": source_market_key,
-                    "selection_side": selection_side,
-                    "line_value": line_value,
-                    "first_source": normalized_source,
-                    "last_source": normalized_source,
-                    "first_model_key": live_model_key,
-                    "last_model_key": live_model_key,
-                    "seen_count": 1,
-                    "first_seen_at": captured_at,
-                    "last_seen_at": captured_at,
-                    "best_seen_at": captured_at,
-                    "first_book_odds": book_odds,
-                    "last_book_odds": book_odds,
-                    "best_book_odds": float(collapsed["best_book_odds"]),
-                    "first_reference_odds": ref_odds,
-                    "last_reference_odds": ref_odds,
-                    "best_reference_odds": float(collapsed["best_reference_odds"]),
-                    "first_ev_percentage": ev_percentage,
-                    "last_ev_percentage": ev_percentage,
-                    "best_ev_percentage": float(collapsed["best_ev_percentage"]),
-                    "latest_reference_odds": ref_odds,
-                    "latest_reference_updated_at": captured_at,
-                    "reference_odds_at_close": None,
-                    "close_captured_at": None,
-                    "clv_ev_percent": None,
-                    "beat_close": None,
-                }
-            )
+            payload = {
+                "opportunity_key": opportunity_key,
+                "surface": surface,
+                "sport": str(side.get("sport") or ""),
+                "event": str(side.get("event") or ""),
+                "commence_time": str(side.get("commence_time") or ""),
+                "team": str(side.get("team") or ""),
+                "sportsbook": str(side.get("sportsbook") or ""),
+                "market": "ML" if surface == "straight_bets" else str(side.get("market") or source_market_key or ""),
+                "event_id": event_id,
+                "player_name": player_name,
+                "source_market_key": source_market_key,
+                "selection_side": selection_side,
+                "line_value": line_value,
+                "first_source": normalized_source,
+                "last_source": normalized_source,
+                "seen_count": 1,
+                "first_seen_at": captured_at,
+                "last_seen_at": captured_at,
+                "best_seen_at": captured_at,
+                "first_book_odds": book_odds,
+                "last_book_odds": book_odds,
+                "best_book_odds": float(collapsed["best_book_odds"]),
+                "first_reference_odds": ref_odds,
+                "last_reference_odds": ref_odds,
+                "best_reference_odds": float(collapsed["best_reference_odds"]),
+                "first_ev_percentage": ev_percentage,
+                "last_ev_percentage": ev_percentage,
+                "best_ev_percentage": float(collapsed["best_ev_percentage"]),
+                "latest_reference_odds": ref_odds,
+                "latest_reference_updated_at": captured_at,
+                "reference_odds_at_close": None,
+                "close_captured_at": None,
+                "clv_ev_percent": None,
+                "beat_close": None,
+            }
+            if supports_model_key_columns:
+                payload["first_model_key"] = live_model_key
+                payload["last_model_key"] = live_model_key
+            insert_payloads.append(payload)
             continue
 
         best_book_odds = _coerce_float(row.get("best_book_odds"))
@@ -499,8 +530,6 @@ def capture_scan_opportunities(
             "selection_side": selection_side or row.get("selection_side"),
             "line_value": line_value if line_value is not None else row.get("line_value"),
             "last_source": normalized_source,
-            "first_model_key": row.get("first_model_key") or live_model_key,
-            "last_model_key": live_model_key,
             "seen_count": int(row.get("seen_count") or 0) + 1,
             "last_seen_at": captured_at,
             "last_book_odds": book_odds,
@@ -509,6 +538,9 @@ def capture_scan_opportunities(
             "latest_reference_odds": ref_odds,
             "latest_reference_updated_at": captured_at,
         }
+        if supports_model_key_columns:
+            payload["first_model_key"] = row.get("first_model_key") or live_model_key
+            payload["last_model_key"] = live_model_key
         if batch_best_quality is not None and (best_quality is None or batch_best_quality > best_quality):
             payload.update(
                 {
@@ -550,6 +582,9 @@ def empty_research_opportunities_summary() -> ResearchOpportunitySummaryResponse
         valid_close_coverage_pct=None,
         invalid_close_rate_pct=None,
         clv_ready_count=0,
+        aggregate_status="not_captured",
+        suppressed_by_sample_size=False,
+        min_valid_close_threshold=MIN_VALID_CLOSE_OVERALL,
         beat_close_pct=None,
         avg_clv_percent=None,
         by_surface=[],
@@ -557,8 +592,32 @@ def empty_research_opportunities_summary() -> ResearchOpportunitySummaryResponse
         by_sportsbook=[],
         by_edge_bucket=[],
         by_odds_bucket=[],
+        status_buckets=[],
         recent_opportunities=[],
     )
+
+
+def _aggregate_status_for_counts(
+    *,
+    captured_count: int,
+    pending_close_count: int,
+    valid_close_count: int,
+    invalid_close_count: int,
+    threshold: int,
+) -> str:
+    if captured_count <= 0:
+        return "not_captured"
+    if valid_close_count >= threshold:
+        return "aggregate_available"
+    if valid_close_count > 0:
+        return "sample_too_small"
+    if pending_close_count > 0 and invalid_close_count > 0:
+        return "pending_and_invalid"
+    if pending_close_count > 0:
+        return "pending_close"
+    if invalid_close_count > 0:
+        return "invalid_only"
+    return "not_captured"
 
 
 def _edge_bucket(ev_percentage: float | None) -> str:
@@ -602,11 +661,14 @@ def _aggregate_breakdown(
     preferred_position = {key: index for index, key in enumerate(preferred_order or [])}
     items: list[ResearchOpportunityBreakdownItem] = []
     for key, bucket_rows in groups.items():
+        pending_close_count = sum(1 for row in bucket_rows if row.get("_close_status") == "pending")
         valid_close_rows = [row for row in bucket_rows if row.get("_close_status") == "valid"]
         valid_close_count = len(valid_close_rows)
+        invalid_close_count = sum(1 for row in bucket_rows if row.get("_close_status") == "invalid")
 
         beat_close_count = sum(1 for row in valid_close_rows if row.get("beat_close") is True)
         avg_clv = None
+        suppressed_by_sample_size = 0 < valid_close_count < MIN_VALID_CLOSE_BY_BUCKET
         if valid_close_count >= MIN_VALID_CLOSE_BY_BUCKET:
             avg_clv = round(
                 sum(float(row["clv_ev_percent"]) for row in valid_close_rows)
@@ -621,8 +683,18 @@ def _aggregate_breakdown(
             ResearchOpportunityBreakdownItem(
                 key=key,
                 captured_count=len(bucket_rows),
+                pending_close_count=pending_close_count,
                 clv_ready_count=valid_close_count,
                 valid_close_count=valid_close_count,
+                invalid_close_count=invalid_close_count,
+                aggregate_status=_aggregate_status_for_counts(
+                    captured_count=len(bucket_rows),
+                    pending_close_count=pending_close_count,
+                    valid_close_count=valid_close_count,
+                    invalid_close_count=invalid_close_count,
+                    threshold=MIN_VALID_CLOSE_BY_BUCKET,
+                ),
+                suppressed_by_sample_size=suppressed_by_sample_size,
                 beat_close_pct=beat_close_pct,
                 avg_clv_percent=avg_clv,
             )
@@ -741,16 +813,27 @@ def get_research_opportunities_summary(
         return "valid"
 
     try:
-        res = (
-            db.table("scan_opportunities")
-            .select(
-                "opportunity_key,surface,first_seen_at,last_seen_at,commence_time,sport,event,team,sportsbook,market,event_id,"
-                "player_name,source_market_key,selection_side,line_value,"
-                "first_source,last_source,first_model_key,last_model_key,seen_count,first_ev_percentage,first_book_odds,best_book_odds,"
-                "latest_reference_odds,reference_odds_at_close,close_captured_at,clv_ev_percent,beat_close"
-            )
-            .execute()
+        summary_fields = (
+            "opportunity_key,surface,first_seen_at,last_seen_at,commence_time,sport,event,team,sportsbook,market,event_id,"
+            "player_name,source_market_key,selection_side,line_value,"
+            "first_source,last_source,seen_count,first_ev_percentage,first_book_odds,best_book_odds,"
+            "latest_reference_odds,reference_odds_at_close,close_captured_at,clv_ev_percent,beat_close"
         )
+        try:
+            res = (
+                db.table("scan_opportunities")
+                .select(f"{summary_fields},first_model_key,last_model_key")
+                .execute()
+            )
+        except Exception as exc:
+            if is_missing_scan_opportunities_column_error(exc, "first_model_key", "last_model_key"):
+                res = (
+                    db.table("scan_opportunities")
+                    .select(summary_fields)
+                    .execute()
+                )
+            else:
+                raise
     except Exception as e:
         if is_missing_scan_opportunities_error(e):
             return empty_research_opportunities_summary()
@@ -899,6 +982,57 @@ def get_research_opportunities_summary(
         for row in recent_rows
     ]
 
+    status_buckets = [
+        ResearchOpportunityStatusBucket(
+            status=status,
+            count=sum(1 for row in rows if row.get("_close_status") == status),
+            sample=[
+                ResearchOpportunityRecentRow(
+                    opportunity_key=str(row.get("opportunity_key") or ""),
+                    surface=str(row.get("surface") or "straight_bets"),
+                    first_seen_at=_coerce_datetime(row.get("first_seen_at")) or _utc_now(),
+                    last_seen_at=_coerce_datetime(row.get("last_seen_at")) or _utc_now(),
+                    commence_time=str(row.get("commence_time") or ""),
+                    sport=str(row.get("sport") or ""),
+                    event=str(row.get("event") or ""),
+                    team=str(row.get("team") or ""),
+                    sportsbook=str(row.get("sportsbook") or ""),
+                    market=str(row.get("market") or "ML"),
+                    event_id=str(row.get("event_id") or "").strip() or None,
+                    player_name=str(row.get("player_name") or "").strip() or None,
+                    source_market_key=str(row.get("source_market_key") or "").strip() or None,
+                    selection_side=str(row.get("selection_side") or "").strip() or None,
+                    line_value=_coerce_float(row.get("line_value")),
+                    first_source=str(row.get("_product_source_label") or row.get("first_source") or "unknown"),
+                    seen_count=int(row.get("seen_count") or 0),
+                    first_ev_percentage=float(row.get("first_ev_percentage") or 0),
+                    first_book_odds=float(row.get("first_book_odds") or 0),
+                    best_book_odds=float(row.get("best_book_odds") or 0),
+                    latest_reference_odds=_coerce_float(row.get("latest_reference_odds")),
+                    reference_odds_at_close=_coerce_float(row.get("reference_odds_at_close")),
+                    clv_ev_percent=_coerce_float(row.get("clv_ev_percent")),
+                    beat_close=row.get("beat_close"),
+                    close_status=str(row.get("_close_status") or "pending"),
+                )
+                for row in sorted(
+                    [row for row in rows if row.get("_close_status") == status],
+                    key=lambda row: _coerce_datetime(row.get("first_seen_at")) or datetime.min.replace(tzinfo=timezone.utc),
+                    reverse=True,
+                )[:3]
+            ],
+        )
+        for status in ("pending", "valid", "invalid")
+    ]
+
+    aggregate_status = _aggregate_status_for_counts(
+        captured_count=captured_count,
+        pending_close_count=pending_close_count,
+        valid_close_count=valid_close_count,
+        invalid_close_count=invalid_close_count,
+        threshold=MIN_VALID_CLOSE_OVERALL,
+    )
+    suppressed_by_sample_size = aggregate_status == "sample_too_small"
+
     return ResearchOpportunitySummaryResponse(
         captured_count=captured_count,
         open_count=pending_close_count,
@@ -911,6 +1045,9 @@ def get_research_opportunities_summary(
         selected_cohort_key=selected_cohort_key,
         cohort_trend=cohort_trend,
         clv_ready_count=valid_close_count,
+        aggregate_status=aggregate_status,
+        suppressed_by_sample_size=suppressed_by_sample_size,
+        min_valid_close_threshold=MIN_VALID_CLOSE_OVERALL,
         beat_close_pct=beat_close_pct,
         avg_clv_percent=avg_clv_percent,
         by_surface=_aggregate_breakdown(
@@ -934,5 +1071,6 @@ def get_research_opportunities_summary(
             key_fn=lambda row: _odds_bucket(_coerce_float(row.get("first_book_odds"))),
             preferred_order=ODDS_BUCKET_ORDER,
         ),
+        status_buckets=status_buckets,
         recent_opportunities=recent,
     )

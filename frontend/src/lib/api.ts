@@ -21,13 +21,41 @@ import type {
   ParlaySlipUpdate,
   ResearchOpportunitySummary,
   ModelCalibrationSummary,
-  AdminMarketRefreshResponse,
+  OpsTriggerScanResponse,
   OpsTriggerAutoSettleResponse,
   ScannerSurface,
 } from "./types";
 import { createClient } from "./supabase";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+let browserBurstCorrelationId: string | null = null;
+let browserBurstCorrelationExpiry = 0;
+
+function newCorrelationId(): string {
+  try {
+    if (typeof globalThis.crypto?.randomUUID === "function") {
+      return globalThis.crypto.randomUUID();
+    }
+  } catch {
+    // Fall through to timestamp-based fallback.
+  }
+  return `corr_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
+}
+
+function getCorrelationId(): string {
+  if (typeof window === "undefined") return newCorrelationId();
+
+  const now = Date.now();
+  if (browserBurstCorrelationId && now < browserBurstCorrelationExpiry) {
+    browserBurstCorrelationExpiry = now + 2500;
+    return browserBurstCorrelationId;
+  }
+
+  browserBurstCorrelationId = newCorrelationId();
+  browserBurstCorrelationExpiry = now + 2500;
+  return browserBurstCorrelationId;
+}
 
 async function fetchAPI<T>(
   endpoint: string,
@@ -38,10 +66,12 @@ async function fetchAPI<T>(
     data: { session },
   } = await supabase.auth.getSession();
 
+  const correlationId = getCorrelationId();
   const res = await fetch(`${API_URL}${endpoint}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
+      "X-Correlation-ID": correlationId,
       ...(session?.access_token && {
         Authorization: `Bearer ${session.access_token}`,
       }),
@@ -68,7 +98,15 @@ async function fetchInternalAPI<T>(endpoint: string): Promise<T> {
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ error: "Unknown error" }));
-    throw new Error(error.error || `API error: ${res.status}`);
+    const detail =
+      typeof error?.error === "string"
+        ? error.error
+        : typeof error?.detail === "string"
+          ? error.detail
+          : typeof error?.message === "string"
+            ? error.message
+            : `API error: ${res.status}`;
+    throw new Error(detail);
   }
 
   return res.json();
@@ -311,21 +349,11 @@ function formatFetchErrorDetail(error: { detail?: unknown }, status: number): st
   return `API error: ${status}`;
 }
 
-/** Admin-only: full manual scan for straight bets and player props (no per-user scan rate limit). */
-export async function adminRefreshMarkets(): Promise<AdminMarketRefreshResponse> {
-  const supabase = createClient();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
+/** Admin-only: run the full daily-board refresh through the ops trigger bridge. */
+export async function adminRefreshMarkets(): Promise<OpsTriggerScanResponse> {
   const res = await fetch("/api/admin/refresh-markets", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(session?.access_token && {
-        Authorization: `Bearer ${session.access_token}`,
-      }),
-    },
+    headers: { "Content-Type": "application/json" },
   });
 
   if (!res.ok) {

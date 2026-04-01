@@ -388,6 +388,7 @@ export interface BackendReadiness {
   scheduler_freshness?: {
     enabled: boolean;
     fresh: boolean;
+    source?: string;
     reason?: string;
     jobs?: Record<
       string,
@@ -479,9 +480,13 @@ export interface OperatorStatusResponse {
   timestamp: string;
   runtime: {
     environment?: string;
+    app_role?: string;
     scheduler_expected?: boolean;
     scheduler_running?: boolean;
+    scheduler_runs_in_process?: boolean;
+    scheduler_responsibility?: "in_process" | "external" | "disabled" | string;
     redis_configured?: boolean;
+    redis_recommended_for_coordination?: boolean;
     cron_token_configured?: boolean;
     odds_api_key_configured?: boolean;
     supabase_url_configured?: boolean;
@@ -520,6 +525,16 @@ export interface OperatorStatusResponse {
         featured_games_count?: number;
         duration_ms?: number;
       } | null;
+    } | null;
+    last_jit_clv?: {
+      source?: string;
+      run_id?: string;
+      started_at?: string;
+      finished_at?: string;
+      duration_ms?: number;
+      updated?: number;
+      captured_at?: string;
+      status?: string;
     } | null;
     last_ops_trigger_scan?: {
       run_id?: string;
@@ -577,8 +592,18 @@ export interface OperatorStatusResponse {
 export interface ResearchOpportunityBreakdownItem {
   key: string;
   captured_count: number;
+  pending_close_count: number;
   clv_ready_count: number;
   valid_close_count: number;
+  invalid_close_count: number;
+  aggregate_status:
+    | "not_captured"
+    | "pending_close"
+    | "invalid_only"
+    | "pending_and_invalid"
+    | "sample_too_small"
+    | "aggregate_available";
+  suppressed_by_sample_size: boolean;
   beat_close_pct: number | null;
   avg_clv_percent: number | null;
 }
@@ -625,6 +650,25 @@ export interface AdminMarketRefreshResponse {
   results: AdminMarketRefreshSurfaceSummary[];
 }
 
+/** Response from POST /api/ops/trigger/scan (proxied via admin manual scan button). */
+export interface OpsTriggerScanResponse {
+  ok: boolean;
+  run_id: string;
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  total_sides: number | null;
+  alerts_scheduled: number;
+  board_drop: boolean;
+  errors: Array<Record<string, unknown>>;
+  result?: {
+    props_sides?: number;
+    selected_event_ids?: string[];
+    selected_games?: Array<Record<string, unknown>>;
+    duration_ms?: number;
+  } | null;
+}
+
 /** Response from POST /api/ops/trigger/auto-settle (proxied via admin). */
 export interface OpsTriggerAutoSettleResponse {
   ok: boolean;
@@ -647,6 +691,15 @@ export interface ResearchOpportunitySummary {
   selected_cohort_key: string | null;
   cohort_trend: ResearchOpportunityCohortTrendRow[];
   clv_ready_count: number;
+  aggregate_status:
+    | "not_captured"
+    | "pending_close"
+    | "invalid_only"
+    | "pending_and_invalid"
+    | "sample_too_small"
+    | "aggregate_available";
+  suppressed_by_sample_size: boolean;
+  min_valid_close_threshold: number;
   beat_close_pct: number | null;
   avg_clv_percent: number | null;
   by_surface: ResearchOpportunityBreakdownItem[];
@@ -654,7 +707,14 @@ export interface ResearchOpportunitySummary {
   by_sportsbook: ResearchOpportunityBreakdownItem[];
   by_edge_bucket: ResearchOpportunityBreakdownItem[];
   by_odds_bucket: ResearchOpportunityBreakdownItem[];
+  status_buckets: ResearchOpportunityStatusBucket[];
   recent_opportunities: ResearchOpportunityRecentRow[];
+}
+
+export interface ResearchOpportunityStatusBucket {
+  status: "pending" | "valid" | "invalid";
+  count: number;
+  sample: ResearchOpportunityRecentRow[];
 }
 
 export interface ResearchOpportunityCohortTrendRow {

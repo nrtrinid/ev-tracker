@@ -504,8 +504,19 @@ class ResearchOpportunityBreakdownItem(BaseModel):
 
     key: str
     captured_count: int
+    pending_close_count: int = 0
     clv_ready_count: int
     valid_close_count: int
+    invalid_close_count: int = 0
+    aggregate_status: Literal[
+        "not_captured",
+        "pending_close",
+        "invalid_only",
+        "pending_and_invalid",
+        "sample_too_small",
+        "aggregate_available",
+    ] = "not_captured"
+    suppressed_by_sample_size: bool = False
     beat_close_pct: float | None = None
     avg_clv_percent: float | None = None
 
@@ -550,6 +561,14 @@ class ResearchOpportunityCohortTrendRow(BaseModel):
     avg_clv_percent: float | None = None
 
 
+class ResearchOpportunityStatusBucket(BaseModel):
+    """Counts plus a small sample of recent opportunities for one CLV state."""
+
+    status: Literal["pending", "valid", "invalid"]
+    count: int
+    sample: list[ResearchOpportunityRecentRow] = Field(default_factory=list)
+
+
 class ResearchOpportunitySummaryResponse(BaseModel):
     """Internal operator summary for the scan-opportunity research ledger."""
 
@@ -564,6 +583,16 @@ class ResearchOpportunitySummaryResponse(BaseModel):
     selected_cohort_key: str | None = None
     cohort_trend: list[ResearchOpportunityCohortTrendRow] = Field(default_factory=list)
     clv_ready_count: int
+    aggregate_status: Literal[
+        "not_captured",
+        "pending_close",
+        "invalid_only",
+        "pending_and_invalid",
+        "sample_too_small",
+        "aggregate_available",
+    ] = "not_captured"
+    suppressed_by_sample_size: bool = False
+    min_valid_close_threshold: int = 10
     beat_close_pct: float | None = None
     avg_clv_percent: float | None = None
     by_surface: list[ResearchOpportunityBreakdownItem]
@@ -571,6 +600,7 @@ class ResearchOpportunitySummaryResponse(BaseModel):
     by_sportsbook: list[ResearchOpportunityBreakdownItem]
     by_edge_bucket: list[ResearchOpportunityBreakdownItem]
     by_odds_bucket: list[ResearchOpportunityBreakdownItem]
+    status_buckets: list[ResearchOpportunityStatusBucket] = Field(default_factory=list)
     recent_opportunities: list[ResearchOpportunityRecentRow]
 
 

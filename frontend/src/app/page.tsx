@@ -1127,11 +1127,13 @@ export default function MarketsPage() {
                     viewMode === "browse"
                       ? [
                           { id: "today", label: "Today" },
+                          { id: "today_closed", label: "Closed Today" },
                           { id: "upcoming", label: "Upcoming" },
                           { id: "all_games", label: "All Games" },
                         ]
                       : [
                           { id: "today", label: "Today" },
+                          { id: "today_closed", label: "Closed Today" },
                           { id: "upcoming", label: "Upcoming" },
                         ]
                   ).map((option) => (

@@ -7,6 +7,7 @@ import { SmartOddsInput, type SmartOddsInputRef } from "@/components/SmartOddsIn
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -140,6 +141,9 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
       <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edit Bet</DialogTitle>
+          <DialogDescription>
+            Update the ticket details and save your changes.
+          </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">

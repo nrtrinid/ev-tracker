@@ -9,6 +9,7 @@ interface SmartOddsInputProps {
   onChange: (value: string) => void;
   placeholder?: string;
   defaultSign?: "+" | "-";
+  americanOddsSeed?: number | null;
   inputRef?: React.RefObject<HTMLInputElement>;
   className?: string;
   label?: string;
@@ -26,6 +27,7 @@ export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>
       onChange,
       placeholder = "150",
       defaultSign = "+",
+      americanOddsSeed = null,
       inputRef,
       className,
       label,
@@ -58,9 +60,13 @@ export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>
           }
         }
       } else {
-        setIsPositive(defaultSign === "+");
+        if (typeof americanOddsSeed === "number" && americanOddsSeed !== 0) {
+          setIsPositive(americanOddsSeed >= 0);
+        } else {
+          setIsPositive(defaultSign === "+");
+        }
       }
-    }, [defaultSign, onChange, value]); // Add missing dependencies
+    }, [americanOddsSeed, defaultSign, onChange, value]);
 
     const handleToggleSign = () => {
       setIsPositive(!isPositive);

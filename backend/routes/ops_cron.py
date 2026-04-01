@@ -414,6 +414,25 @@ def ops_model_calibration_summary_impl(
     return get_summary(get_db())
 
 
+def ops_clv_debug_impl(
+    x_cron_token: str | None,
+    *,
+    require_valid_cron_token: Callable[[str | None], None],
+    get_db: Callable[[], Any],
+    retry_supabase: Callable[[Callable[[], Any]], Any],
+    load_snapshot: Callable[..., dict[str, Any]],
+    load_scheduler_job_snapshot: Callable[..., dict[str, Any]],
+    utc_now_iso: Callable[[], str],
+) -> dict[str, Any]:
+    require_valid_cron_token(x_cron_token)
+    return load_snapshot(
+        get_db(),
+        retry_supabase=retry_supabase,
+        load_scheduler_job_snapshot=load_scheduler_job_snapshot,
+        utc_now_iso=utc_now_iso,
+    )
+
+
 async def cron_test_discord_impl(
     x_cron_token: str | None,
     *,
@@ -680,6 +699,27 @@ def ops_model_calibration_summary(
         require_valid_cron_token=lambda token: main._require_ops_token(token, None),
         get_db=main.get_db,
         get_summary=get_model_calibration_summary,
+    )
+
+
+@router.get("/api/ops/clv-debug")
+def ops_clv_debug(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    import main
+    from services.clv_audit import build_clv_audit_snapshot
+    from services.ops_history import load_scheduler_job_snapshot
+
+    return ops_clv_debug_impl(
+        x_cron_token=x_ops_token or x_cron_token,
+        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        get_db=main.get_db,
+        retry_supabase=main._retry_supabase,
+        load_snapshot=build_clv_audit_snapshot,
+        load_scheduler_job_snapshot=load_scheduler_job_snapshot,
+        utc_now_iso=main._utc_now_iso,
     )
 
 

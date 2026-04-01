@@ -7,6 +7,8 @@ surface +EV moneyline bets.
 """
 
 import asyncio
+import json
+import logging
 import os
 import time
 import httpx
@@ -19,6 +21,7 @@ from calculations import american_to_decimal, kelly_fraction
 from services.sportsbook_deeplinks import resolve_sportsbook_deeplink
 from services.shared_state import get_scan_cache, set_scan_cache
 from services.team_aliases import build_short_event_label, canonical_short_name, canonical_team_token
+from utils.request_context import get_correlation_id, get_request_id
 
 load_dotenv()
 
@@ -39,10 +42,22 @@ _ODDS_ACTIVITY_EVENTS = deque(maxlen=_ODDS_ACTIVITY_MAX_ENTRIES)
 _SCAN_ACTIVITY_MAX_ENTRIES = 300
 _SCAN_ACTIVITY_MAX_RECENT = 18
 _SCAN_ACTIVITY_EVENTS = deque(maxlen=_SCAN_ACTIVITY_MAX_ENTRIES)
+logger = logging.getLogger("ev_tracker")
 
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _log_event(event: str, *, level: str = "info", **fields) -> None:
+    payload = {
+        "event": event,
+        "timestamp": _utc_now_iso(),
+        "request_id": get_request_id(),
+        "correlation_id": get_correlation_id(),
+        **fields,
+    }
+    getattr(logger, level.lower(), logger.info)(json.dumps(payload, default=str))
 
 
 def _short_error_message(message: str | None) -> str | None:
@@ -1184,6 +1199,7 @@ async def run_jit_clv_snatcher(db) -> int:
         get_player_prop_min_reference_bookmakers,
     )
 
+    started_at = time.monotonic()
     now = datetime.now(timezone.utc)
     window_end = now + timedelta(minutes=CLOSE_WINDOW_MINUTES)
     now_iso = now.isoformat()
@@ -1222,6 +1238,14 @@ async def run_jit_clv_snatcher(db) -> int:
         if row.get("reference_odds_at_close") is None
         or not has_valid_close_snapshot(row.get("commence_time"), row.get("close_captured_at"))
     ]
+
+    _log_event(
+        "jit_clv.snapshot_candidates",
+        bet_candidates=len(bet_candidates),
+        research_candidates=len(opportunity_candidates),
+        window_start=now_iso,
+        window_end=window_end_iso,
+    )
 
     if not bet_candidates and not opportunity_candidates:
         return 0
@@ -1309,10 +1333,29 @@ async def run_jit_clv_snatcher(db) -> int:
                 now=now,
             )
             total_close_updated += bet_updates["close_updated"] + opportunity_updates["close_updated"]
+            _log_event(
+                "jit_clv.sport_completed",
+                sport=sport_key,
+                fetched_sides=len(sides),
+                bet_close_updated=bet_updates["close_updated"],
+                research_close_updated=opportunity_updates["close_updated"],
+            )
 
         except Exception as e:
-            print(f"[JIT CLV] Error processing sport '{sport_key}': {e}")
+            _log_event(
+                "jit_clv.sport_failed",
+                level="warning",
+                sport=sport_key,
+                error_class=type(e).__name__,
+                error=str(e),
+            )
 
+    _log_event(
+        "jit_clv.snapshot_completed",
+        updated=total_close_updated,
+        duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        sports_processed=len(sport_keys),
+    )
     return total_close_updated
 
 

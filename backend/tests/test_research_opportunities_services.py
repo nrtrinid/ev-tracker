@@ -1,6 +1,7 @@
 from services.research_opportunities import (
     capture_scan_opportunities,
     get_research_opportunities_summary,
+    is_missing_scan_opportunities_column_error,
 )
 
 
@@ -16,8 +17,10 @@ class _Query:
         self._mode = mode
         self._payload = payload
         self._filters = list(filters or [])
+        self._fields = ""
 
-    def select(self, _fields):
+    def select(self, fields):
+        self._fields = str(fields or "")
         return self
 
     def in_(self, key, values):
@@ -42,6 +45,13 @@ class _Query:
         return _Query(self._db, self._table_name, mode="insert", payload=payload)
 
     def execute(self):
+        if (
+            self._mode == "select"
+            and self._table_name == "scan_opportunities"
+            and self._db._missing_model_key_columns
+            and ("first_model_key" in self._fields or "last_model_key" in self._fields)
+        ):
+            raise RuntimeError("column scan_opportunities.first_model_key does not exist")
         rows = self._db.tables[self._table_name]
         matched = [row for row in rows if all(predicate(row) for predicate in self._filters)]
 
@@ -66,19 +76,27 @@ class _Query:
 
 
 class _DB:
-    def __init__(self, rows=None, *, missing_table=False):
+    def __init__(self, rows=None, *, missing_table=False, missing_model_key_columns=False):
         self.tables = {
             "scan_opportunities": list(rows or []),
             "scan_opportunity_model_evaluations": [],
         }
         self._next_id = len(self.tables["scan_opportunities"]) + 1
         self._missing_table = missing_table
+        self._missing_model_key_columns = missing_model_key_columns
 
     def table(self, name):
         assert name in {"scan_opportunities", "scan_opportunity_model_evaluations"}
         if self._missing_table and name == "scan_opportunities":
             raise RuntimeError("PGRST205 scan_opportunities schema cache stale")
         return _Query(self, name)
+
+
+class _PostgrestLikeColumnError(Exception):
+    def __init__(self, message: str, *, code: str = "42703"):
+        super().__init__(message)
+        self.message = message
+        self.code = code
 
 
 def _side(
@@ -485,6 +503,9 @@ def test_get_research_opportunities_summary_aggregates_breakdowns_and_recent_row
     assert summary.pending_close_count == 1
     assert summary.valid_close_count == 2
     assert summary.invalid_close_count == 0
+    assert summary.aggregate_status == "sample_too_small"
+    assert summary.suppressed_by_sample_size is True
+    assert summary.min_valid_close_threshold == 10
     assert summary.beat_close_pct is None
     assert summary.avg_clv_percent is None
 
@@ -505,6 +526,10 @@ def test_get_research_opportunities_summary_aggregates_breakdowns_and_recent_row
     assert summary.recent_opportunities[1].player_name == "Tyrese Haliburton"
     assert summary.recent_opportunities[1].selection_side == "over"
     assert summary.recent_opportunities[1].line_value == 21.5
+    assert summary.status_buckets[0].status == "pending"
+    assert summary.status_buckets[0].count == 1
+    assert summary.status_buckets[1].status == "valid"
+    assert summary.status_buckets[1].count == 2
 
 
 def test_get_research_opportunities_summary_returns_empty_when_table_missing():
@@ -516,4 +541,31 @@ def test_get_research_opportunities_summary_returns_empty_when_table_missing():
     assert summary.pending_close_count == 0
     assert summary.valid_close_count == 0
     assert summary.invalid_close_count == 0
+    assert summary.aggregate_status == "not_captured"
     assert summary.recent_opportunities == []
+
+
+def test_capture_scan_opportunities_and_summary_work_without_model_key_columns():
+    db = _DB(missing_model_key_columns=True)
+
+    capture_scan_opportunities(
+        db,
+        sides=[_side(), _prop_side()],
+        source="manual_scan",
+        captured_at="2026-03-23T18:00:00Z",
+    )
+
+    assert len(db.tables["scan_opportunities"]) == 2
+    assert "first_model_key" not in db.tables["scan_opportunities"][0]
+    assert "last_model_key" not in db.tables["scan_opportunities"][0]
+
+    summary = get_research_opportunities_summary(db)
+
+    assert summary.captured_count == 2
+    assert summary.aggregate_status in {"pending_close", "not_captured"}
+
+
+def test_missing_scan_opportunities_column_error_matches_postgrest_apierror_shape():
+    err = _PostgrestLikeColumnError("column scan_opportunities.first_model_key does not exist")
+
+    assert is_missing_scan_opportunities_column_error(err, "first_model_key", "last_model_key") is True

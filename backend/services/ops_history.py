@@ -41,6 +41,7 @@ def build_empty_odds_api_activity_snapshot() -> dict[str, Any]:
 def build_empty_ops_status() -> dict[str, Any]:
     return {
         "last_scheduler_scan": None,
+        "last_jit_clv": None,
         "last_ops_trigger_scan": None,
         "last_manual_scan": None,
         "last_auto_settle": None,
@@ -517,6 +518,20 @@ def _map_last_auto_settle(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _map_last_jit_clv(row: dict[str, Any]) -> dict[str, Any]:
+    meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+    return {
+        "source": row.get("source"),
+        "run_id": row.get("run_id"),
+        "started_at": row.get("started_at"),
+        "finished_at": row.get("finished_at"),
+        "duration_ms": row.get("duration_ms"),
+        "updated": meta.get("updated"),
+        "captured_at": row.get("captured_at"),
+        "status": row.get("status"),
+    }
+
+
 def _map_last_auto_settle_summary(row: dict[str, Any]) -> dict[str, Any]:
     meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
     return {
@@ -533,6 +548,28 @@ def _map_last_readiness_failure(row: dict[str, Any]) -> dict[str, Any]:
         "captured_at": row.get("captured_at"),
         "checks": row.get("checks"),
         "db_error": meta.get("db_error"),
+    }
+
+
+def load_scheduler_job_snapshot(
+    *,
+    db: Any | None,
+    retry_supabase: Callable[[Callable[[], Any]], Any] | None,
+) -> dict[str, dict[str, Any] | None]:
+    resolved_db = _resolve_db(db)
+    if resolved_db is None:
+        return {
+            "scheduler_boot": None,
+            "jit_clv": None,
+            "auto_settle": None,
+            "scheduled_scan": None,
+        }
+
+    return {
+        "scheduler_boot": _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="scheduler_boot"),
+        "jit_clv": _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="jit_clv"),
+        "auto_settle": _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="auto_settle"),
+        "scheduled_scan": _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="scheduled_scan"),
     }
 
 
@@ -628,6 +665,7 @@ def load_ops_status_snapshot(
 
     try:
         manual = _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="manual_scan")
+        jit_clv = _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="jit_clv")
         scheduler = _select_latest_job_run(
             db=resolved_db, retry_supabase=retry_supabase, job_kind="scheduled_scan"
         )
@@ -652,6 +690,8 @@ def load_ops_status_snapshot(
 
     if manual:
         ops["last_manual_scan"] = _map_last_manual_scan(manual)
+    if jit_clv:
+        ops["last_jit_clv"] = _map_last_jit_clv(jit_clv)
     if scheduler:
         ops["last_scheduler_scan"] = _map_scan_run(scheduler)
     if ops_trigger:

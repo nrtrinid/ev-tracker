@@ -1,9 +1,21 @@
 services:
-  backend:
+  backend_api:
     build: ./backend
     env_file: .env
+    environment:
+      APP_ROLE: api
+      ENABLE_SCHEDULER: "1"
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-2}
     expose:
       - "8000"
+    restart: unless-stopped
+
+  backend_scheduler:
+    build: ./backend
+    env_file: .env
+    environment:
+      APP_ROLE: scheduler
+      ENABLE_SCHEDULER: "1"
     restart: unless-stopped
 
   caddy:
@@ -18,7 +30,7 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - backend
+      - backend_api
     restart: unless-stopped
 
 volumes:

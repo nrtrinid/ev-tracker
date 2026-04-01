@@ -1,10 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, HelpCircle, RefreshCcw, XCircle } from "lucide-react";
+import { toast } from "sonner";
 
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import * as api from "@/lib/api";
 import { useModelCalibrationSummary, useOperatorStatus, useResearchOpportunitySummary } from "@/lib/hooks";
 import type {
   ModelCalibrationBreakdownItem,
@@ -117,6 +120,24 @@ function scalarOrUnknown(value: number | string | null | undefined): string {
 function formatPercentValue(value: number | null | undefined, digits: number = 1): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "Unknown";
   return `${value.toFixed(digits)}%`;
+}
+
+function researchAggregateStatusLabel(status: string | null | undefined): string {
+  if (status === "aggregate_available") return "Aggregate available";
+  if (status === "sample_too_small") return "Sample too small";
+  if (status === "pending_close") return "Close still pending";
+  if (status === "invalid_only") return "Invalid closes only";
+  if (status === "pending_and_invalid") return "Pending + invalid mix";
+  return "Not captured yet";
+}
+
+function breakdownAggregateLabel(status: string | null | undefined): string {
+  if (status === "aggregate_available") return "agg ready";
+  if (status === "sample_too_small") return "sample small";
+  if (status === "pending_close") return "pending";
+  if (status === "invalid_only") return "invalid";
+  if (status === "pending_and_invalid") return "mixed";
+  return "not tracked";
 }
 
 function formatDecimalValue(value: number | null | undefined, digits: number = 3): string {
@@ -500,7 +521,7 @@ function BreakdownChips({
         <div className="flex flex-wrap gap-1.5">
           {rows.map((row) => (
             <span key={`${title}-${row.key}`} className="rounded bg-muted px-2 py-1 text-[11px] font-mono">
-              {row.key}: {row.captured_count} captured | {formatPercentValue(row.beat_close_pct)}
+              {row.key}: {row.captured_count} captured | {row.valid_close_count} valid | {row.pending_close_count} pending | {row.invalid_close_count} invalid | {breakdownAggregateLabel(row.aggregate_status)}
             </span>
           ))}
         </div>
@@ -662,6 +683,7 @@ export function OpsDashboard() {
   const oddsApiState = useMemo(() => deriveOddsApiState(query.data), [query.data]);
 
   const schedulerScan = query.data?.ops?.last_scheduler_scan;
+  const jitClv = query.data?.ops?.last_jit_clv;
   const cronScan = query.data?.ops?.last_ops_trigger_scan;
   const manualScan = query.data?.ops?.last_manual_scan;
   const autoSettle = query.data?.ops?.last_auto_settle;
@@ -694,6 +716,44 @@ export function OpsDashboard() {
   const recentStraightResearch = recentResearch.filter((row) => row.surface !== "player_props");
   const recentPropResearch = recentResearch.filter((row) => row.surface === "player_props");
   const gateState = deriveCalibrationGateState(calibration?.release_gate?.passes, calibration?.release_gate?.eligible);
+  const isRefreshing = query.isFetching || researchQuery.isFetching || calibrationQuery.isFetching;
+
+  const refreshAll = () => {
+    query.refetch();
+    researchQuery.refetch();
+    calibrationQuery.refetch();
+  };
+
+  const manualScanMutation = useMutation({
+    mutationFn: api.adminRefreshMarkets,
+    onSuccess: (result) => {
+      const totalSides = Number(result?.total_sides ?? result?.result?.props_sides ?? 0);
+      toast("Manual board refresh finished", {
+        description: `Run ${result.run_id} completed with ${totalSides} side${totalSides === 1 ? "" : "s"} captured.`,
+      });
+      refreshAll();
+    },
+    onError: (error) => {
+      toast("Manual scan failed", {
+        description: error instanceof Error ? error.message : "Unknown error",
+      });
+    },
+  });
+
+  const autoSettleMutation = useMutation({
+    mutationFn: api.adminTriggerAutoSettle,
+    onSuccess: (result) => {
+      toast("Auto-settle triggered", {
+        description: `Run ${result.run_id} settled ${result.settled} bet${result.settled === 1 ? "" : "s"}.`,
+      });
+      refreshAll();
+    },
+    onError: (error) => {
+      toast("Auto-settle failed", {
+        description: error instanceof Error ? error.message : "Unknown error",
+      });
+    },
+  });
 
   return (
     <main className="min-h-screen bg-background">
@@ -708,20 +768,38 @@ export function OpsDashboard() {
               Last snapshot: {formatTime(query.data?.timestamp)}
             </p>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              query.refetch();
-              researchQuery.refetch();
-              calibrationQuery.refetch();
-            }}
-            disabled={query.isFetching || researchQuery.isFetching || calibrationQuery.isFetching}
-          >
-            <RefreshCcw className={`h-4 w-4 mr-1.5 ${(query.isFetching || researchQuery.isFetching || calibrationQuery.isFetching) ? "animate-spin" : ""}`} />
-            Refresh
-          </Button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => manualScanMutation.mutate()}
+              disabled={manualScanMutation.isPending || autoSettleMutation.isPending}
+            >
+              <RefreshCcw className={`h-4 w-4 mr-1.5 ${manualScanMutation.isPending ? "animate-spin" : ""}`} />
+              Manual Scan
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => autoSettleMutation.mutate()}
+              disabled={manualScanMutation.isPending || autoSettleMutation.isPending}
+            >
+              <RefreshCcw className={`h-4 w-4 mr-1.5 ${autoSettleMutation.isPending ? "animate-spin" : ""}`} />
+              Auto-Settle
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={refreshAll}
+              disabled={isRefreshing || manualScanMutation.isPending || autoSettleMutation.isPending}
+            >
+              <RefreshCcw className={`h-4 w-4 mr-1.5 ${isRefreshing ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+          </div>
         </div>
 
         {query.isError && (
@@ -1008,6 +1086,8 @@ export function OpsDashboard() {
             <CardContent className="space-y-2">
               <Row label="Last readiness failure" value={formatTime(readinessFailure?.captured_at)} />
               <Row label="Last readiness DB error" value={readinessFailure?.db_error || "None"} />
+              <Row label="Last JIT CLV run" value={formatTimeWithRelative(jitClv?.finished_at || jitClv?.captured_at)} />
+              <Row label="JIT CLV updates" value={scalarOrUnknown(jitClv?.updated)} />
               <Row label="Auto-settle source" value={autoSettle?.source || "Unknown"} />
               <Row label="Auto-settle run id" value={autoSettle?.run_id || "Unknown"} />
             </CardContent>
@@ -1036,7 +1116,7 @@ export function OpsDashboard() {
                 </p>
               ) : (
                 <>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                     <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
                       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Captured</p>
                       <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(research?.captured_count)}</p>
@@ -1054,6 +1134,19 @@ export function OpsDashboard() {
                       <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(research?.clv_ready_count)}</p>
                     </div>
                     <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Invalid Close</p>
+                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(research?.invalid_close_count)}</p>
+                    </div>
+                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2 md:col-span-2">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Aggregate Status</p>
+                      <p className="text-sm font-semibold mt-0.5">{researchAggregateStatusLabel(research?.aggregate_status)}</p>
+                      {research?.suppressed_by_sample_size && (
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          Waiting for {research.min_valid_close_threshold} valid closes before showing beat-close and avg CLV.
+                        </p>
+                      )}
+                    </div>
+                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
                       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Beat Close</p>
                       <p className="text-sm font-semibold mt-0.5">{formatPercentValue(research?.beat_close_pct)}</p>
                     </div>
@@ -1061,6 +1154,12 @@ export function OpsDashboard() {
                       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Avg CLV</p>
                       <p className="text-sm font-semibold mt-0.5">{formatPercentValue(research?.avg_clv_percent)}</p>
                     </div>
+                  </div>
+
+                  <div className="rounded border border-border/70 bg-muted/10 px-3 py-2">
+                    <p className="text-xs text-muted-foreground">
+                      Tracker state: {researchAggregateStatusLabel(research?.aggregate_status)}. Pending and invalid counts are now surfaced directly so “not tracked” is separate from “sample too small.”
+                    </p>
                   </div>
 
                   <BreakdownChips title="By Surface" rows={research?.by_surface ?? []} />

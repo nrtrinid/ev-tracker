@@ -80,7 +80,7 @@ function formatPropMarketLabel(marketKey: string | undefined | null): string {
     player_rebounds: "REB",
     player_assists: "AST",
     player_threes: "3PM",
-    player_points_rebounds_assists: "PTS/REB/AST",
+    player_points_rebounds_assists: "PRA",
   };
   if (map[key]) return map[key];
   if (!key) return "Prop";

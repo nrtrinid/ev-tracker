@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import {
   buildParlayCartLeg,
+  buildParlayCartLegFromPickEmCard,
   buildScannerLogBetInitialValues,
   parseScannerCustomBoostInput,
   toggleScannerBookSelection,
@@ -163,5 +164,43 @@ test.describe("scanner state utils", () => {
     expect(out.referenceOddsAmerican).toBe(240);
     expect(out.referenceTrueProbability).toBeCloseTo(100 / 340, 8);
     expect(out.selectionMeta).toMatchObject({ rawPinnacleOdds: 227 });
+  });
+
+  test("buildParlayCartLegFromPickEmCard maps consensus winner into a pick'em slip leg", async () => {
+    const out = buildParlayCartLegFromPickEmCard({
+      comparison_key: "evt-2|player_points|jokic|24.5",
+      event_id: "evt-2",
+      sport: "basketball_nba",
+      event: "Nuggets @ Suns",
+      commence_time: "2026-03-21T03:00:00Z",
+      player_name: "Nikola Jokic",
+      participant_id: "pp-123",
+      team: "Nuggets",
+      opponent: "Suns",
+      market_key: "player_points",
+      market: "player_points",
+      line_value: 24.5,
+      exact_line_bookmakers: ["FanDuel", "BetMGM"],
+      exact_line_bookmaker_count: 2,
+      consensus_over_prob: 0.57,
+      consensus_under_prob: 0.43,
+      consensus_side: "over",
+      confidence_label: "solid",
+      best_over_sportsbook: "FanDuel",
+      best_over_odds: 105,
+      best_over_deeplink_url: "https://example.com/over",
+      best_under_sportsbook: "BetMGM",
+      best_under_odds: -120,
+      best_under_deeplink_url: "https://example.com/under",
+    });
+
+    expect(out).not.toBeNull();
+    expect(out?.sportsbook).toBe("FanDuel");
+    expect(out?.selectionSide).toBe("over");
+    expect(out?.referenceSource).toBe("pickem_consensus");
+    expect(out?.selectionMeta).toMatchObject({
+      pickEmComparisonKey: "evt-2|player_points|jokic|24.5",
+      sportsbookDeeplinkUrl: "https://example.com/over",
+    });
   });
 });
