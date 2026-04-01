@@ -7,7 +7,7 @@ This project moves fastest when `main` stays boring.
 - `main`
   - Stable branch
   - Safe to share with testers
-  - The only branch that should auto-deploy to the public Vercel and Render apps
+  - The only branch that should feed the public Vercel frontend and Hetzner backend deploys
 - `dev`
   - Daily work branch
   - Safe place for in-progress features, refactors, and deployment experiments
@@ -31,7 +31,7 @@ For larger efforts, branch from `dev`:
    - parlay cart works if touched
 4. Push to `dev` while iterating.
 5. Merge `dev` into `main` only when the current state is acceptable for testers.
-6. Let Vercel and Render deploy from `main`.
+6. Let Vercel deploy from `main`, and deploy the Hetzner backend from `main`.
 
 ## Release Rule
 

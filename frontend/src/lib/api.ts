@@ -27,7 +27,7 @@ import type {
 } from "./types";
 import { createClient } from "./supabase";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
 let browserBurstCorrelationId: string | null = null;
 let browserBurstCorrelationExpiry = 0;

@@ -158,7 +158,7 @@ ALERT_DEDUPE_TTL_SECONDS=21600
 ```
 
 ### Operator-triggered automation
-If your backend sleeps when idle (Render free tier), use an external scheduler (cron-job.org, GitHub Actions, etc.) to hit these endpoints:
+If you want external wake/trigger automation, use a scheduler (cron-job.org, GitHub Actions, etc.) to hit these endpoints:
 
 - `POST /api/ops/trigger/scan` (warms scanner cache; sends Discord +EV alerts if configured)
 - `POST /api/ops/trigger/auto-settle` (grades eligible pending ML bets)
@@ -217,6 +217,12 @@ CRON_SECRET=your-random-cron-secret
 CRON_TOKEN=your-backend-cron-token
 OPS_ADMIN_EMAILS=ops@example.com
 ```
+
+Production / preview Vercel env:
+- `NEXT_PUBLIC_API_URL=/api/backend`
+- `BACKEND_BASE_URL=http://5.78.192.196`
+
+That keeps browser requests same-origin through the Next proxy while server-side bridge routes still forward to Hetzner directly. Once you provision a real HTTPS backend hostname, only `BACKEND_BASE_URL` needs to change.
 
 ### Internal operator console
 

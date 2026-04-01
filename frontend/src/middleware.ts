@@ -4,7 +4,10 @@ import { NextResponse, type NextRequest } from "next/server";
 export async function middleware(request: NextRequest) {
   // Allow Vercel cron endpoints to run without Supabase auth redirects.
   // These endpoints are protected separately via CRON_SECRET checks inside the route handlers.
-  if (request.nextUrl.pathname.startsWith("/api/cron/")) {
+  if (
+    request.nextUrl.pathname.startsWith("/api/cron/") ||
+    request.nextUrl.pathname.startsWith("/api/backend/")
+  ) {
     return NextResponse.next();
   }
 

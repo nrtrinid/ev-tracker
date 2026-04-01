@@ -42,6 +42,17 @@ If your local machine already has SSH access configured for the VPS, you can run
 ssh root@5.78.192.196 "cd ~/ev-tracker && git pull origin main && docker compose up -d --build"
 ```
 
+## Vercel env for the browser proxy cutover
+
+Set these in Vercel preview and production:
+
+```env
+NEXT_PUBLIC_API_URL=/api/backend
+BACKEND_BASE_URL=http://5.78.192.196
+```
+
+This keeps browser traffic same-origin through Next/Vercel while server-side bridge routes proxy to Hetzner directly. After you provision a real HTTPS backend hostname, keep `NEXT_PUBLIC_API_URL=/api/backend` and change only `BACKEND_BASE_URL`.
+
 ## Env var change
 
 After SSH'ing into the VPS:

@@ -18,20 +18,20 @@ Operational hardening adds:
 - Odds API activity tracking (summary + recent calls, no secrets/raw payloads).
 
 ```
-┌─────────────────┐  JWT (Bearer)   ┌─────────────────┐   service role client   ┌─────────────────┐
-│  Next.js       │ ───────────────►│  FastAPI        │────────────────────────► │  Supabase       │
-│  (port 3000)   │   REST + bridge  │  (port 8000)    │    (PostgREST/Auth)     │  (PostgreSQL)   │
-└─────────────────┘                  └─────────────────┘                          └─────────────────┘
-    │                                      │
-    │                                      │
-    ▼                                      ▼
-  Supabase Auth                         The Odds API
-  (SSR + JWT)                           (odds + scores)
+┌─────────────────┐   same-origin API   ┌─────────────────┐   JWT (Bearer)   ┌─────────────────┐   service role client   ┌─────────────────┐
+│  Next.js       │ ───────────────────► │  Next route     │ ───────────────► │  FastAPI        │────────────────────────► │  Supabase       │
+│  (port 3000)   │   /api/backend/*     │  proxy/bridges   │   REST + bridge  │  (port 8000)    │    (PostgREST/Auth)     │  (PostgreSQL)   │
+└─────────────────┘                      └─────────────────┘                   └─────────────────┘                          └─────────────────┘
+    │                                                                                   │
+    │                                                                                   │
+    ▼                                                                                   ▼
+  Supabase Auth                                                                      The Odds API
+  (SSR + JWT)                                                                        (odds + scores)
 ```
 
 ### Data Flow
 
-1. **Auth**: Supabase Auth → JWT → `api.ts` adds `Authorization` header → `auth.get_current_user` validates JWT.
+1. **Auth**: Supabase Auth → JWT → `api.ts` adds `Authorization` header → local dev calls FastAPI directly, while Vercel production calls same-origin `/api/backend/*` → `auth.get_current_user` validates JWT.
 2. **Bets**: `LogBetDrawer` / `EditBetModal` → `api.createBet` / `api.updateBet` → FastAPI → Supabase `bets`.
 3. **EV**: `calculate_ev` in `calculations.py` → `build_bet_response` in `main.py` → frontend.
 4. **Scanner**: Frontend `scanMarkets()` → `/api/scan-markets` → `services/odds_api.get_cached_or_scan` → The Odds API → de-vig Pinnacle → compare to target books.
@@ -102,7 +102,7 @@ ev-betting-tracker/
 ├── frontend/                # Next.js React frontend
 │   └── src/
 │       ├── app/             # App Router pages (scanner, settings, analytics, login, admin/ops)
-│       │   └── api/         # Protected bridge routes (ops + wakeup)
+│       │   └── api/         # Protected bridge/proxy routes (ops + cron + backend proxy)
 │       ├── components/      # UI (Dashboard, BetList, LogBetDrawer, EditBetModal, TopNav, SmartOddsInput, ui/)
 │       ├── lib/             # api.ts, auth-context, hooks, kelly-context, supabase, types, utils
 │       └── middleware.ts    # Auth redirects
@@ -258,10 +258,10 @@ ev-betting-tracker/
 
 | Variable | Purpose |
 |----------|---------|
-| `NEXT_PUBLIC_API_URL` | Backend URL (default `http://localhost:8000`) |
+| `NEXT_PUBLIC_API_URL` | Browser API base (`http://localhost:8000` locally, `/api/backend` on Vercel) |
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key |
-| `BACKEND_BASE_URL` | Base URL used by server-side bridge routes |
+| `BACKEND_BASE_URL` | Hetzner backend origin used by server-side bridge/proxy routes |
 | `CRON_SECRET` | Authorization secret for frontend cron bridge endpoints |
 | `CRON_TOKEN` | Optional dedicated backend cron token for forwarded requests |
 | `OPS_ADMIN_EMAILS` | Comma-separated allowlist for `/admin/ops` and `/api/ops/status` |
