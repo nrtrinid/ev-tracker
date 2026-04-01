@@ -6,6 +6,7 @@ import { Calculator, BarChart3, Settings, Home, LogOut, Radar, Activity } from "
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
 import { useBackendReadiness } from "@/lib/hooks";
+import { hasUserFacingSyncIssue } from "@/lib/readiness-ui";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
 
 const navItems = [
@@ -26,19 +27,8 @@ export function TopNav() {
 
   if (pathname === "/login") return null;
 
-  const hasCrossSurfaceImpact = !!readiness && (
-    readiness.status === "unreachable"
-    || !readiness.checks.db_connectivity
-    || !readiness.checks.supabase_env
-  );
-
-  const scheduledScanAgeSeconds = readiness?.scheduler_freshness?.jobs?.scheduled_scan?.age_seconds;
-  const hasSustainedScannerDelay = typeof scheduledScanAgeSeconds === "number" && scheduledScanAgeSeconds >= 20 * 60;
-  const showStatus = hasCrossSurfaceImpact || hasSustainedScannerDelay;
-
-  const statusLabel = hasCrossSurfaceImpact
-    ? "Sync issue"
-    : "Updates delayed";
+  const showStatus = hasUserFacingSyncIssue(readiness);
+  const statusLabel = "Sync issue";
   const showHomeReviewBadge =
     Boolean(scannerReviewCandidate) && !onboardingDismissed.includes("home_scanner_review");
 
@@ -65,7 +55,7 @@ export function TopNav() {
           {showStatus && (
             <span
               className="hidden md:inline-flex items-center gap-1.5 rounded-md border border-[#B85C38]/30 bg-[#B85C38]/10 px-2.5 py-1 text-[11px] font-medium text-[#8B3D20]"
-              title="Some data may take longer than usual to refresh"
+              title="Core services are temporarily unavailable"
             >
               <Activity className="h-3.5 w-3.5" />
               {statusLabel}

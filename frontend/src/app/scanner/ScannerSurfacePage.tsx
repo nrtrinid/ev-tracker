@@ -9,6 +9,7 @@ import { LogBetDrawer } from "@/components/LogBetDrawer";
 import { getLatestScan, scanMarkets } from "@/lib/api";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
 import { useBalances, useBackendReadiness, useSettings, queryKeys } from "@/lib/hooks";
+import { hasUserFacingSyncIssue } from "@/lib/readiness-ui";
 import {
   applyScannerResultFilters,
   defaultScannerResultFilters,
@@ -274,11 +275,11 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
       ? STRAIGHT_BETS_TUTORIAL_SCAN
       : null
     : scanData;
-  const showBackendHint = !!readiness && (readiness.status !== "ready" || !readiness.checks.scheduler_freshness);
+  const showBackendHint = hasUserFacingSyncIssue(readiness);
   const backendHint =
     readiness?.status === "unreachable"
       ? "Scanner is reconnecting. Odds may be slightly delayed."
-      : "Scanner data is refreshing. Prices may be a little behind.";
+      : "Scanner data is temporarily unavailable. Try again shortly.";
 
   const applyTutorialScannerDefaults = useCallback(() => {
     setSelectedBooks(TUTORIAL_SELECTED_BOOKS.filter((book) => availableBooks.includes(book)));

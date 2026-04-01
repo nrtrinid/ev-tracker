@@ -23,6 +23,7 @@ import { TopKpiCards } from "@/components/TopKpiCards";
 import { useQuery } from "@tanstack/react-query";
 import { getBets, getSummary, getBalances } from "@/lib/api";
 import { useBackendReadiness } from "@/lib/hooks";
+import { hasUserFacingSyncIssue } from "@/lib/readiness-ui";
 import {
   BarChart,
   Bar,
@@ -283,7 +284,7 @@ export default function AnalyticsPage() {
   const { data: readiness } = useBackendReadiness();
 
   const isLoading = summaryLoading || betsLoading;
-  const showAnalyticsHint = !!readiness && (readiness.status !== "ready" || !readiness.checks.scheduler_freshness);
+  const showAnalyticsHint = hasUserFacingSyncIssue(readiness);
 
   // Get unique sportsbooks for filter options
   const sportsbookOptions = useMemo(() => {
@@ -611,7 +612,7 @@ export default function AnalyticsPage() {
         {showAnalyticsHint && (
           <div className="inline-flex items-center gap-1.5 rounded-md border border-[#C4A35A]/35 bg-[#C4A35A]/15 px-2.5 py-1.5 text-xs text-[#5C4D2E]">
             <Info className="h-3.5 w-3.5" />
-            Recent analytics may be incomplete while data finishes syncing.
+            Some analytics may be temporarily unavailable while core data reconnects.
           </div>
         )}
         {isLoading ? (

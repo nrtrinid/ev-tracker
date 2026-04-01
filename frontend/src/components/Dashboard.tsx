@@ -3,6 +3,7 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSummary, useBets, useBackendReadiness, useBalances } from "@/lib/hooks";
+import { hasUserFacingSyncIssue } from "@/lib/readiness-ui";
 
 import { AlertTriangle } from "lucide-react";
 import { TopKpiCards } from "@/components/TopKpiCards";
@@ -48,10 +49,10 @@ export function Dashboard() {
     clvBets.length > 0
       ? clvBets.reduce((sum, b) => sum + (b.clv_ev_percent ?? 0), 0) / clvBets.length
       : null;
-  const showDegradedHint = !!readiness && (readiness.status !== "ready" || !readiness.checks.scheduler_freshness);
+  const showDegradedHint = hasUserFacingSyncIssue(readiness);
   const degradedLabel = readiness?.status === "unreachable"
     ? "Some data is temporarily unavailable"
-    : "Recent bet results may still be updating";
+    : "Some data is temporarily unavailable while core data reconnects.";
 
   return (
     <>
