@@ -60,16 +60,30 @@ def test_build_clv_audit_snapshot_counts_pending_valid_and_invalid_rows():
     db = _DB(
         bets=[
             {
-                "id": "bet-pending",
+                "id": "bet-missing",
                 "surface": "straight_bets",
                 "event": "A @ B",
                 "sportsbook": "DraftKings",
                 "commence_time": "2026-03-31T22:00:00Z",
                 "created_at": "2026-03-31T18:00:00Z",
+                "odds_american": -110,
+                "latest_pinnacle_odds": None,
+                "latest_pinnacle_updated_at": None,
                 "pinnacle_odds_at_close": None,
                 "clv_updated_at": None,
-                "clv_ev_percent": None,
-                "beat_close": None,
+            },
+            {
+                "id": "bet-latest-only",
+                "surface": "player_props",
+                "event": "B @ C",
+                "sportsbook": "FanDuel",
+                "commence_time": "2026-03-31T22:00:00Z",
+                "created_at": "2026-03-31T17:30:00Z",
+                "odds_american": 105,
+                "latest_pinnacle_odds": -112,
+                "latest_pinnacle_updated_at": "2026-03-31T21:40:00Z",
+                "pinnacle_odds_at_close": None,
+                "clv_updated_at": None,
             },
             {
                 "id": "bet-valid",
@@ -78,25 +92,41 @@ def test_build_clv_audit_snapshot_counts_pending_valid_and_invalid_rows():
                 "sportsbook": "FanDuel",
                 "commence_time": "2026-03-31T22:00:00Z",
                 "created_at": "2026-03-31T17:00:00Z",
+                "odds_american": -110,
+                "latest_pinnacle_odds": -120,
+                "latest_pinnacle_updated_at": "2026-03-31T21:45:00Z",
                 "pinnacle_odds_at_close": -120,
                 "clv_updated_at": "2026-03-31T21:45:00Z",
-                "clv_ev_percent": 1.1,
-                "beat_close": True,
             },
             {
-                "id": "bet-invalid",
+                "id": "bet-outside-window",
                 "surface": "straight_bets",
                 "event": "E @ F",
                 "sportsbook": "BetMGM",
                 "commence_time": "2026-03-31T22:00:00Z",
                 "created_at": "2026-03-31T16:00:00Z",
+                "odds_american": -118,
+                "latest_pinnacle_odds": -130,
+                "latest_pinnacle_updated_at": "2026-03-31T20:00:00Z",
                 "pinnacle_odds_at_close": -130,
                 "clv_updated_at": "2026-03-31T20:00:00Z",
-                "clv_ev_percent": 0.4,
-                "beat_close": True,
             },
         ],
         research=[
+            {
+                "id": "opp-latest-only",
+                "surface": "player_props",
+                "event": "Road @ Home",
+                "sportsbook": "FanDuel",
+                "commence_time": "2026-03-31T22:00:00Z",
+                "first_seen_at": "2026-03-31T18:40:00Z",
+                "first_book_odds": 120,
+                "latest_reference_odds": 145,
+                "latest_reference_updated_at": "2026-03-31T21:41:00Z",
+                "reference_odds_at_close": None,
+                "close_opposing_reference_odds": None,
+                "close_captured_at": None,
+            },
             {
                 "id": "opp-valid",
                 "surface": "player_props",
@@ -104,10 +134,12 @@ def test_build_clv_audit_snapshot_counts_pending_valid_and_invalid_rows():
                 "sportsbook": "FanDuel",
                 "commence_time": "2026-03-31T22:00:00Z",
                 "first_seen_at": "2026-03-31T18:30:00Z",
+                "first_book_odds": 120,
+                "latest_reference_odds": 150,
+                "latest_reference_updated_at": "2026-03-31T21:45:00Z",
                 "reference_odds_at_close": 150,
+                "close_opposing_reference_odds": -105,
                 "close_captured_at": "2026-03-31T21:45:00Z",
-                "clv_ev_percent": 0.7,
-                "beat_close": True,
             }
         ],
     )
@@ -120,8 +152,14 @@ def test_build_clv_audit_snapshot_counts_pending_valid_and_invalid_rows():
     )
 
     assert snapshot["generated_at"] == "2026-03-31T22:05:00Z"
-    assert snapshot["bets"]["tracked_count"] == 3
-    assert snapshot["bets"]["pending_count"] == 1
+    assert snapshot["bets"]["tracked_count"] == 4
+    assert snapshot["bets"]["pending_count"] == 2
     assert snapshot["bets"]["valid_count"] == 1
     assert snapshot["bets"]["invalid_count"] == 1
+    assert snapshot["bets"]["missing_close_count"] == 1
+    assert snapshot["bets"]["latest_only_count"] == 1
+    assert snapshot["bets"]["outside_window_count"] == 1
+    assert snapshot["bets"]["sample"]["latest_only"][0]["id"] == "bet-latest-only"
+    assert snapshot["bets"]["sample"]["valid"][0]["clv_ev_percent"] is not None
     assert snapshot["research_opportunities"]["valid_count"] == 1
+    assert snapshot["research_opportunities"]["latest_only_count"] == 1

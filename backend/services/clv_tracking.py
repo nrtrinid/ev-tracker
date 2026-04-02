@@ -63,7 +63,16 @@ def should_capture_close_snapshot(
     captured_at: Any,
     now: datetime | None = None,
     window_minutes: int = CLOSE_WINDOW_MINUTES,
+    allow_retroactive_close_capture: bool = False,
 ) -> bool:
+    if allow_retroactive_close_capture:
+        commence_dt = _parse_iso_datetime(commence_time)
+        if commence_dt is None:
+            return False
+        if existing_close is None:
+            return True
+        return not has_valid_close_snapshot(commence_time, captured_at, window_minutes=window_minutes)
+
     current = now or _utc_now()
     if not is_within_close_window(commence_time, now=current, window_minutes=window_minutes):
         return False
@@ -365,6 +374,7 @@ def _update_parlay_bet_leg_snapshots(
     allow_close: bool,
     current: datetime,
     updated_at: str,
+    allow_retroactive_close_capture: bool = False,
 ) -> tuple[int, int]:
     """Merge per-leg reference / close CLV into bets.selection_meta.legs (parlay rows only)."""
     if not sports_set:
@@ -435,6 +445,7 @@ def _update_parlay_bet_leg_snapshots(
                 existing_close=leg_out.get("pinnacle_odds_at_close"),
                 captured_at=leg_out.get("reference_updated_at"),
                 now=current,
+                allow_retroactive_close_capture=allow_retroactive_close_capture,
             ):
                 clv_result = calculate_clv(book_am, float(reference_odds))
                 leg_out["pinnacle_odds_at_close"] = reference_odds
@@ -459,6 +470,7 @@ def update_bet_reference_snapshots(
     sides: list[dict[str, Any]],
     allow_close: bool,
     now: datetime | None = None,
+    allow_retroactive_close_capture: bool = False,
 ) -> dict[str, int]:
     if not sides:
         return {"latest_updated": 0, "close_updated": 0}
@@ -554,6 +566,7 @@ def update_bet_reference_snapshots(
             existing_close=row.get("pinnacle_odds_at_close"),
             captured_at=row.get("clv_updated_at"),
             now=current,
+            allow_retroactive_close_capture=allow_retroactive_close_capture,
         ):
             clv_result = calculate_clv(
                 float(row.get("odds_american")),
@@ -582,6 +595,7 @@ def update_bet_reference_snapshots(
         allow_close=allow_close,
         current=current,
         updated_at=updated_at,
+        allow_retroactive_close_capture=allow_retroactive_close_capture,
     )
     latest_updated += p_latest
     close_updated += p_close

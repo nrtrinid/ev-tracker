@@ -754,6 +754,43 @@ def test_ops_trigger_scan_contract_shape(auth_client, monkeypatch):
 
 
 @pytest.mark.integration
+def test_ops_trigger_clv_replay_contract_shape(auth_client, monkeypatch):
+    import main
+    import services.odds_api as odds_api
+
+    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
+    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+
+    async def _fake_replay_recent_clv_closes(_db, *, lookback_hours: int):
+        assert lookback_hours == 6
+        return {
+            "ok": True,
+            "lookback_hours": lookback_hours,
+            "candidate_count": 3,
+            "bet_straight_candidates": 1,
+            "bet_prop_candidates": 2,
+            "updated": 2,
+            "close_updated": 2,
+            "sports_processed": 1,
+        }
+
+    monkeypatch.setattr(odds_api, "replay_recent_clv_closes", _fake_replay_recent_clv_closes, raising=True)
+
+    resp = auth_client.post("/api/ops/trigger/clv-replay?lookback_hours=6", headers={"X-Ops-Token": "ops-secret"})
+    assert resp.status_code == 200
+
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["lookback_hours"] == 6
+    assert isinstance(body["candidate_count"], int)
+    assert isinstance(body["bet_straight_candidates"], int)
+    assert isinstance(body["bet_prop_candidates"], int)
+    assert isinstance(body["updated"], int)
+    assert isinstance(body["close_updated"], int)
+    assert isinstance(body["sports_processed"], int)
+
+
+@pytest.mark.integration
 def test_ops_research_opportunities_summary_contract_shape(auth_client, monkeypatch):
     import main
     import services.research_opportunities as research

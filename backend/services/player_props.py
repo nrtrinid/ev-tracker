@@ -69,6 +69,8 @@ PLAYER_PROP_REFERENCE_BOOK_WEIGHTS: dict[str, float] = {
 # consensus artifacts without starving the slate as aggressively as a 4-book gate.
 PLAYER_PROP_MIN_SOLID_REFERENCE_BOOKMAKERS = 3
 PLAYER_PROP_MIN_REFERENCE_BOOKMAKERS_ENV = "PLAYER_PROP_MIN_REFERENCE_BOOKMAKERS"
+PLAYER_PROP_MIN_CLV_REFERENCE_BOOKMAKERS = 1
+PLAYER_PROP_MIN_CLV_REFERENCE_BOOKMAKERS_ENV = "PLAYER_PROP_CLV_MIN_REFERENCE_BOOKMAKERS"
 PLAYER_PROP_FALLBACK_MAX_EVENTS = 3
 PLAYER_PROP_CACHE_VERSION = "v2"
 
@@ -116,6 +118,20 @@ def get_player_prop_min_reference_bookmakers() -> int:
         parsed = int(raw)
     except ValueError:
         return PLAYER_PROP_MIN_SOLID_REFERENCE_BOOKMAKERS
+
+    max_reference_books = max(1, len(PLAYER_PROP_BOOKS) - 1)
+    return max(1, min(parsed, max_reference_books))
+
+
+def get_player_prop_clv_min_reference_bookmakers() -> int:
+    raw = os.getenv(PLAYER_PROP_MIN_CLV_REFERENCE_BOOKMAKERS_ENV, "").strip()
+    if not raw:
+        return PLAYER_PROP_MIN_CLV_REFERENCE_BOOKMAKERS
+
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return PLAYER_PROP_MIN_CLV_REFERENCE_BOOKMAKERS
 
     max_reference_books = max(1, len(PLAYER_PROP_BOOKS) - 1)
     return max(1, min(parsed, max_reference_books))

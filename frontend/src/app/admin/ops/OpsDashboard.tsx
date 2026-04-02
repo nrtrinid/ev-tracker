@@ -536,6 +536,31 @@ function OpsMetricTile({
   );
 }
 
+function InsightActionCard({
+  title,
+  summary,
+  helper,
+  state,
+}: {
+  title: string;
+  summary: string;
+  helper?: string | null;
+  state: HealthState;
+}) {
+  return (
+    <div className="rounded border border-border/70 bg-muted/10 px-3 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">{title}</p>
+          <p className="mt-1 text-sm font-medium">{summary}</p>
+          {helper ? <p className="mt-1.5 text-[11px] text-muted-foreground">{helper}</p> : null}
+        </div>
+        <StatusBadge state={state} />
+      </div>
+    </div>
+  );
+}
+
 function InsightSelectorButton({
   title,
   description,
@@ -687,6 +712,83 @@ function deriveCalibrationGateState(passes: boolean | undefined, eligible: boole
   return "unknown";
 }
 
+function deriveResearchAction(
+  research: ResearchOpportunitySummary | undefined,
+): { state: HealthState; summary: string; helper: string } {
+  if (!research) {
+    return {
+      state: "unknown",
+      summary: "Research summary unavailable.",
+      helper: "Refresh the panel once the backend summary is reachable.",
+    };
+  }
+  if ((research.valid_close_count || 0) <= 0) {
+    return {
+      state: research.open_count > 0 ? "warning" : "unknown",
+      summary: "Wait for valid closes before judging CLV.",
+      helper: `${scalarOrUnknown(research.captured_count)} tracked and ${scalarOrUnknown(research.open_count)} still open.`,
+    };
+  }
+  if (research.suppressed_by_sample_size) {
+    return {
+      state: "warning",
+      summary: "Close capture is working, but the CLV sample is still small.",
+      helper: `Need ${research.min_valid_close_threshold} valid closes before beat-close and avg CLV are decision-grade.`,
+    };
+  }
+  if ((research.invalid_close_count || 0) > (research.valid_close_count || 0)) {
+    return {
+      state: "degraded",
+      summary: "Close capture quality needs attention.",
+      helper: `${scalarOrUnknown(research.invalid_close_count)} invalid closes vs ${scalarOrUnknown(research.valid_close_count)} valid.`,
+    };
+  }
+  return {
+    state: "healthy",
+    summary: "CLV sample is large enough to read directionally.",
+    helper: `Beat close ${formatPercentValue(research.beat_close_pct)} across ${scalarOrUnknown(research.valid_close_count)} valid closes.`,
+  };
+}
+
+function derivePickEmAction(
+  pickemResearch: PickEmResearchSummary | undefined,
+): { state: HealthState; summary: string; helper: string } {
+  if (!pickemResearch) {
+    return {
+      state: "unknown",
+      summary: "Pick'em validation summary unavailable.",
+      helper: "Refresh the panel once the backend summary is reachable.",
+    };
+  }
+  if ((pickemResearch.settled_count || 0) <= 0) {
+    return {
+      state: pickemResearch.captured_count > 0 ? "warning" : "unknown",
+      summary: "Wait for settled results before judging probability quality.",
+      helper: `${scalarOrUnknown(pickemResearch.captured_count)} tracked and ${scalarOrUnknown(pickemResearch.pending_result_count)} still pending.`,
+    };
+  }
+  const delta = Math.abs(Number(pickemResearch.hit_rate_delta_pct_points || 0));
+  if ((pickemResearch.settled_count || 0) < 20) {
+    return {
+      state: "warning",
+      summary: "Early read only; settlement sample is still thin.",
+      helper: `${scalarOrUnknown(pickemResearch.settled_count)} settled so far. Watch delta and Brier as the sample grows.`,
+    };
+  }
+  if (delta >= 7) {
+    return {
+      state: "degraded",
+      summary: "Displayed probabilities look materially miscalibrated.",
+      helper: `Expected ${formatPercentValue(pickemResearch.expected_hit_rate_pct)} vs actual ${formatPercentValue(pickemResearch.actual_hit_rate_pct)}.`,
+    };
+  }
+  return {
+    state: "healthy",
+    summary: "Displayed probabilities are tracking outcomes reasonably well.",
+    helper: `Expected ${formatPercentValue(pickemResearch.expected_hit_rate_pct)} vs actual ${formatPercentValue(pickemResearch.actual_hit_rate_pct)}.`,
+  };
+}
+
 function CalibrationRecentList({
   rows,
 }: {
@@ -825,31 +927,47 @@ function ResearchTrackerPanel({
   if (isError) {
     return (
       <p className="text-sm text-muted-foreground">
-        Research summary unavailable{errorMessage ? `: ${errorMessage}` : "."}
+        Close-tracking summary unavailable{errorMessage ? `: ${errorMessage}` : "."}
       </p>
     );
   }
 
+  const action = deriveResearchAction(research);
+  const invalidCloseRate = research?.close_captured_count
+    ? (research.invalid_close_count / research.close_captured_count) * 100
+    : null;
+
   return (
     <>
+      <InsightActionCard
+        title="What To Do"
+        summary={action.summary}
+        helper={action.helper}
+        state={action.state}
+      />
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-        <OpsMetricTile label="Captured" value={scalarOrUnknown(research?.captured_count)} />
+        <OpsMetricTile label="Valid Closes" value={scalarOrUnknown(research?.valid_close_count)} />
+        <OpsMetricTile label="Beat Close" value={formatPercentValue(research?.beat_close_pct)} />
+        <OpsMetricTile label="Avg CLV" value={formatPercentValue(research?.avg_clv_percent)} />
+        <OpsMetricTile label="Invalid Close Rate" value={formatPercentValue(invalidCloseRate)} />
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+        <OpsMetricTile label="Tracked" value={scalarOrUnknown(research?.captured_count)} />
         <OpsMetricTile label="Open" value={scalarOrUnknown(research?.open_count)} />
         <OpsMetricTile label="Close Captured" value={scalarOrUnknown(research?.close_captured_count)} />
-        <OpsMetricTile label="CLV Ready" value={scalarOrUnknown(research?.clv_ready_count)} />
         <OpsMetricTile label="Invalid Close" value={scalarOrUnknown(research?.invalid_close_count)} />
         <OpsMetricTile
-          label="Aggregate Status"
+          label="Tracking State"
           value={researchAggregateStatusLabel(research?.aggregate_status)}
           helper={
             research?.suppressed_by_sample_size
               ? `Waiting for ${research.min_valid_close_threshold} valid closes before showing beat-close and avg CLV.`
               : null
           }
-          className="md:col-span-2"
+          className="md:col-span-1"
         />
-        <OpsMetricTile label="Beat Close" value={formatPercentValue(research?.beat_close_pct)} />
-        <OpsMetricTile label="Avg CLV" value={formatPercentValue(research?.avg_clv_percent)} />
       </div>
 
       <div className="rounded border border-border/70 bg-muted/10 px-3 py-2">
@@ -861,11 +979,16 @@ function ResearchTrackerPanel({
       <BreakdownChips title="By Surface" rows={research?.by_surface ?? []} />
       <BreakdownChips title="By Source" rows={research?.by_source ?? []} />
       <BreakdownChips title="By Sportsbook" rows={research?.by_sportsbook ?? []} />
-      <BreakdownChips title="By Edge Bucket" rows={research?.by_edge_bucket ?? []} />
-      <BreakdownChips title="By Odds Bucket" rows={research?.by_odds_bucket ?? []} />
+      <details className="rounded border border-border/70 bg-background/50 px-3 py-2">
+        <summary className="cursor-pointer text-xs text-muted-foreground">Diagnostics</summary>
+        <div className="mt-3 space-y-3">
+          <BreakdownChips title="By Edge Bucket" rows={research?.by_edge_bucket ?? []} />
+          <BreakdownChips title="By Odds Bucket" rows={research?.by_odds_bucket ?? []} />
+        </div>
+      </details>
 
       <div className="space-y-1.5">
-        <p className="text-xs text-muted-foreground">Recent opportunities</p>
+        <p className="text-xs text-muted-foreground">Recent tracked opportunities</p>
         <p className="text-[11px] text-muted-foreground">
           Close pending means the final reference is still waiting for the last 20-minute pregame window.
         </p>
@@ -903,10 +1026,29 @@ function ModelCalibrationPanel({
 
   return (
     <>
+      <InsightActionCard
+        title="What To Do"
+        summary={
+          calibration?.release_gate?.passes
+            ? "Shadow model is within the current promotion gate."
+            : calibration?.release_gate?.eligible
+              ? "Keep shadow running and review the gate reasons before promoting."
+              : "Wait for more valid closes before making model decisions."
+        }
+        helper={
+          calibration?.release_gate?.passes
+            ? `Gate is passing on ${scalarOrUnknown(calibration?.valid_close_count)} valid closes.`
+            : calibration?.release_gate?.eligible
+              ? `${scalarOrUnknown(calibration?.paired_close_count)} paired closes captured so far.`
+              : `Need more valid closes; currently ${scalarOrUnknown(calibration?.valid_close_count)} of ${scalarOrUnknown(calibration?.release_gate?.candidate_valid_close_count)} candidate closes are usable.`
+        }
+        state={gateState}
+      />
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-        <OpsMetricTile label="Captured Evals" value={scalarOrUnknown(calibration?.captured_count)} />
         <OpsMetricTile label="Valid Closes" value={scalarOrUnknown(calibration?.valid_close_count)} />
         <OpsMetricTile label="Paired Close %" value={formatPercentValue(calibration?.paired_close_pct)} />
+        <OpsMetricTile label="Captured Evals" value={scalarOrUnknown(calibration?.captured_count)} />
         <OpsMetricTile
           label="Promotion Gate"
           value={calibration?.release_gate?.passes ? "Pass" : calibration?.release_gate?.eligible ? "Hold" : "Not ready"}
@@ -941,8 +1083,14 @@ function ModelCalibrationPanel({
 
       <CalibrationBreakdownChips title="By Model" rows={calibration?.by_model ?? []} />
       <CalibrationBreakdownChips title="By Interpolation Mode" rows={calibration?.by_interpolation_mode ?? []} />
-      <CalibrationBreakdownChips title="By Market" rows={(calibration?.by_market ?? []).slice(0, 8)} />
-      <CalibrationBreakdownChips title="By Sportsbook" rows={(calibration?.by_sportsbook ?? []).slice(0, 8)} />
+
+      <details className="rounded border border-border/70 bg-background/50 px-3 py-2">
+        <summary className="cursor-pointer text-xs text-muted-foreground">Diagnostics</summary>
+        <div className="mt-3 space-y-3">
+          <CalibrationBreakdownChips title="By Market" rows={(calibration?.by_market ?? []).slice(0, 8)} />
+          <CalibrationBreakdownChips title="By Sportsbook" rows={(calibration?.by_sportsbook ?? []).slice(0, 8)} />
+        </div>
+      </details>
 
       <div className="space-y-1.5">
         <p className="text-xs text-muted-foreground">Recent live vs shadow comparisons</p>
@@ -972,31 +1120,49 @@ function PickEmResearchPanel({
     );
   }
 
+  const action = derivePickEmAction(pickemResearch);
+
   return (
     <>
+      <InsightActionCard
+        title="What To Do"
+        summary={action.summary}
+        helper={action.helper}
+        state={action.state}
+      />
+
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-        <OpsMetricTile label="Captured" value={scalarOrUnknown(pickemResearch?.captured_count)} />
-        <OpsMetricTile label="Close Ready" value={scalarOrUnknown(pickemResearch?.close_ready_count)} />
         <OpsMetricTile label="Settled" value={scalarOrUnknown(pickemResearch?.settled_count)} />
         <OpsMetricTile label="Expected Hit" value={formatPercentValue(pickemResearch?.expected_hit_rate_pct)} />
         <OpsMetricTile label="Actual Hit" value={formatPercentValue(pickemResearch?.actual_hit_rate_pct)} />
         <OpsMetricTile label="Delta" value={formatPercentValue(pickemResearch?.hit_rate_delta_pct_points)} />
+        <OpsMetricTile label="Brier" value={formatDecimalValue(pickemResearch?.avg_brier_score)} />
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+        <OpsMetricTile label="Tracked" value={scalarOrUnknown(pickemResearch?.captured_count)} />
+        <OpsMetricTile label="Close Ready" value={scalarOrUnknown(pickemResearch?.close_ready_count)} />
         <OpsMetricTile label="Avg Close Drift" value={formatPercentValue(pickemResearch?.avg_close_drift_pct_points)} />
         <OpsMetricTile label="Avg Close Edge" value={formatPercentValue(pickemResearch?.avg_close_edge_pct)} />
-        <OpsMetricTile label="Brier" value={formatDecimalValue(pickemResearch?.avg_brier_score)} />
         <OpsMetricTile label="Pending Result" value={scalarOrUnknown(pickemResearch?.pending_result_count)} />
       </div>
 
       <div className="rounded border border-border/70 bg-muted/10 px-3 py-2">
         <p className="text-xs text-muted-foreground">
-          This view tells us whether surfaced pick&apos;em reads are calibrated. Probability buckets compare displayed hit rate to actual settled outcomes, while close drift shows whether the market moved toward or away from the board read.
+          This card answers one question: are displayed probabilities calibrated? The first row is the answer. The second row is supporting market context.
         </p>
       </div>
 
       <PickEmBreakdownChips title="By Probability Bucket" rows={pickemResearch?.by_probability_bucket ?? []} />
-      <PickEmBreakdownChips title="By Market" rows={(pickemResearch?.by_market ?? []).slice(0, 8)} />
-      <PickEmBreakdownChips title="By Books Matched" rows={pickemResearch?.by_books_matched ?? []} />
-      <PickEmBreakdownChips title="By EV Basis" rows={pickemResearch?.by_ev_basis ?? []} />
+
+      <details className="rounded border border-border/70 bg-background/50 px-3 py-2">
+        <summary className="cursor-pointer text-xs text-muted-foreground">Diagnostics</summary>
+        <div className="mt-3 space-y-3">
+          <PickEmBreakdownChips title="By Market" rows={(pickemResearch?.by_market ?? []).slice(0, 8)} />
+          <PickEmBreakdownChips title="By Books Matched" rows={pickemResearch?.by_books_matched ?? []} />
+          <PickEmBreakdownChips title="By EV Basis" rows={pickemResearch?.by_ev_basis ?? []} />
+        </div>
+      </details>
 
       <div className="space-y-1.5">
         <p className="text-xs text-muted-foreground">Recent pick&apos;em observations</p>
@@ -1064,15 +1230,15 @@ export function OpsDashboard() {
   const gateState = deriveCalibrationGateState(calibration?.release_gate?.passes, calibration?.release_gate?.eligible);
   const isRefreshing = query.isFetching || researchQuery.isFetching || calibrationQuery.isFetching || pickemResearchQuery.isFetching;
   const activeInsightTitle = activeInsight === "research"
-    ? "Research Tracker"
+    ? "CLV Close Tracking"
     : activeInsight === "calibration"
       ? "Model Calibration"
-      : "Pick'em Research";
+      : "Pick'em Validation";
   const activeInsightDescription = activeInsight === "research"
-    ? "Fresh scanner opportunities captured into the internal research ledger."
+    ? "Can we trust CLV yet, and is close capture healthy enough to support it?"
     : activeInsight === "calibration"
-      ? "Live vs shadow props-model tracking, paired-close coverage, and promotion gates."
-      : "Shadow-tracked pick'em board reads, validated against close drift and actual settled results.";
+      ? "Is the shadow props model strong enough to promote over the live baseline?"
+      : "Are surfaced pick'em probabilities lining up with actual settled outcomes?";
 
   const refreshAll = () => {
     query.refetch();
@@ -1486,8 +1652,8 @@ export function OpsDashboard() {
 
               <div className="grid gap-2 md:grid-cols-3">
                 <InsightSelectorButton
-                  title="Research"
-                  description="Scanner capture and close tracking"
+                  title="CLV Tracking"
+                  description="Can we trust close-based CLV yet?"
                   metric={`${scalarOrUnknown(research?.clv_ready_count)} / ${scalarOrUnknown(research?.captured_count)}`}
                   metricLabel="ready / captured"
                   detail={`${scalarOrUnknown(research?.valid_close_count)} valid closes | ${researchAggregateStatusLabel(research?.aggregate_status)}`}
@@ -1496,7 +1662,7 @@ export function OpsDashboard() {
                 />
                 <InsightSelectorButton
                   title="Calibration"
-                  description="Live vs shadow model performance"
+                  description="Should shadow replace live?"
                   metric={`${scalarOrUnknown(calibration?.valid_close_count)} / ${scalarOrUnknown(calibration?.captured_count)}`}
                   metricLabel="valid / evals"
                   detail={`${scalarOrUnknown(calibration?.paired_close_count)} paired | Gate ${calibration?.release_gate?.passes ? "pass" : calibration?.release_gate?.eligible ? "hold" : "not ready"}`}
@@ -1505,7 +1671,7 @@ export function OpsDashboard() {
                 />
                 <InsightSelectorButton
                   title="Pick'em"
-                  description="Board probability validation"
+                  description="Are displayed probabilities calibrated?"
                   metric={`${scalarOrUnknown(pickemResearch?.settled_count)} / ${scalarOrUnknown(pickemResearch?.captured_count)}`}
                   metricLabel="settled / tracked"
                   detail={`${scalarOrUnknown(pickemResearch?.close_ready_count)} close ready | Actual ${formatPercentValue(pickemResearch?.actual_hit_rate_pct)}`}

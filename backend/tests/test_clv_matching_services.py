@@ -671,3 +671,226 @@ async def test_run_jit_clv_snatcher_still_updates_bets_when_scan_opportunities_t
 
     assert updated == 1
     assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -108
+
+
+@pytest.mark.asyncio
+async def test_run_jit_clv_snatcher_updates_player_prop_bets_without_research_rows(monkeypatch):
+    mod = _reload_odds_api()
+    import services.player_props as player_props
+
+    commence_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    db = _DB(
+        bets=[
+            {
+                "id": 40,
+                "result": "pending",
+                "surface": "player_props",
+                "clv_sport_key": "basketball_nba",
+                "source_event_id": "evt-prop-jit",
+                "source_market_key": "player_points",
+                "participant_name": "Nikola Jokic",
+                "selection_side": "over",
+                "line_value": 24.5,
+                "odds_american": 105,
+                "commence_time": commence_time,
+                "pinnacle_odds_at_close": None,
+            }
+        ],
+    )
+
+    async def _fake_fetch_prop_market_for_event(*, sport, event_id, markets, source):
+        assert sport == "basketball_nba"
+        assert event_id == "evt-prop-jit"
+        assert markets == ["player_points"]
+        assert source == "jit_clv_props"
+        return {"id": event_id, "commence_time": commence_time}, None
+
+    def _fake_parse_prop_sides(**kwargs):
+        return [
+            {
+                "surface": "player_props",
+                "sport": "basketball_nba",
+                "event_id": "evt-prop-jit",
+                "commence_time": commence_time,
+                "player_name": "Nikola Jokic",
+                "market_key": "player_points",
+                "selection_side": "over",
+                "line_value": 24.5,
+                "reference_odds": -112,
+            }
+        ]
+
+    monkeypatch.setattr(player_props, "_fetch_prop_market_for_event", _fake_fetch_prop_market_for_event, raising=True)
+    monkeypatch.setattr(player_props, "_parse_prop_sides", _fake_parse_prop_sides, raising=True)
+
+    updated = await mod.run_jit_clv_snatcher(db)
+
+    assert updated == 1
+    assert db.tables["bets"][0]["latest_pinnacle_odds"] == -112
+    assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -112
+    assert db.tables["bets"][0]["clv_updated_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_run_jit_clv_snatcher_uses_looser_prop_clv_gate_than_surface_scan(monkeypatch):
+    mod = _reload_odds_api()
+    import services.player_props as player_props
+
+    commence_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    db = _DB(
+        bets=[
+            {
+                "id": 41,
+                "result": "pending",
+                "surface": "player_props",
+                "clv_sport_key": "basketball_nba",
+                "source_event_id": "evt-prop-gate",
+                "source_market_key": "player_points",
+                "participant_name": "Nikola Jokic",
+                "selection_side": "over",
+                "line_value": 24.5,
+                "odds_american": 105,
+                "commence_time": commence_time,
+                "pinnacle_odds_at_close": None,
+            }
+        ],
+    )
+
+    async def _fake_fetch_prop_market_for_event(*, sport, event_id, markets, source):
+        return {"id": event_id, "commence_time": commence_time}, None
+
+    def _fake_parse_prop_sides(**kwargs):
+        assert kwargs["min_reference_bookmakers"] == 1
+        return [
+            {
+                "surface": "player_props",
+                "sport": "basketball_nba",
+                "event_id": "evt-prop-gate",
+                "commence_time": commence_time,
+                "player_name": "Nikola Jokic",
+                "market_key": "player_points",
+                "selection_side": "over",
+                "line_value": 24.5,
+                "reference_odds": -111,
+            }
+        ]
+
+    monkeypatch.setattr(player_props, "_fetch_prop_market_for_event", _fake_fetch_prop_market_for_event, raising=True)
+    monkeypatch.setattr(player_props, "_parse_prop_sides", _fake_parse_prop_sides, raising=True)
+    monkeypatch.setattr(player_props, "get_player_prop_min_reference_bookmakers", lambda: 3, raising=True)
+    monkeypatch.setattr(player_props, "get_player_prop_clv_min_reference_bookmakers", lambda: 1, raising=True)
+
+    updated = await mod.run_jit_clv_snatcher(db)
+
+    assert updated == 1
+    assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -111
+
+
+@pytest.mark.asyncio
+async def test_fetch_clv_for_pending_bets_updates_player_prop_bets(monkeypatch):
+    mod = _reload_odds_api()
+    import services.player_props as player_props
+
+    commence_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    db = _DB(
+        bets=[
+            {
+                "id": 42,
+                "result": "pending",
+                "surface": "player_props",
+                "clv_sport_key": "basketball_nba",
+                "source_event_id": "evt-prop-daily",
+                "source_market_key": "player_points",
+                "participant_name": "Nikola Jokic",
+                "selection_side": "over",
+                "line_value": 24.5,
+                "odds_american": 105,
+                "commence_time": commence_time,
+                "pinnacle_odds_at_close": None,
+            }
+        ],
+    )
+
+    async def _fake_fetch_prop_market_for_event(*, sport, event_id, markets, source):
+        assert source == "clv_daily_props"
+        return {"id": event_id, "commence_time": commence_time}, None
+
+    def _fake_parse_prop_sides(**kwargs):
+        return [
+            {
+                "surface": "player_props",
+                "sport": "basketball_nba",
+                "event_id": "evt-prop-daily",
+                "commence_time": commence_time,
+                "player_name": "Nikola Jokic",
+                "market_key": "player_points",
+                "selection_side": "over",
+                "line_value": 24.5,
+                "reference_odds": -114,
+            }
+        ]
+
+    monkeypatch.setattr(player_props, "_fetch_prop_market_for_event", _fake_fetch_prop_market_for_event, raising=True)
+    monkeypatch.setattr(player_props, "_parse_prop_sides", _fake_parse_prop_sides, raising=True)
+
+    updated = await mod.fetch_clv_for_pending_bets(db)
+
+    assert updated == 1
+    assert db.tables["bets"][0]["latest_pinnacle_odds"] == -114
+    assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -114
+
+
+@pytest.mark.asyncio
+async def test_replay_recent_clv_closes_repairs_started_prop_bets(monkeypatch):
+    mod = _reload_odds_api()
+    import services.player_props as player_props
+
+    commence_time = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+    db = _DB(
+        bets=[
+            {
+                "id": 43,
+                "result": "pending",
+                "surface": "player_props",
+                "clv_sport_key": "basketball_nba",
+                "source_event_id": "evt-prop-replay",
+                "source_market_key": "player_points",
+                "participant_name": "Nikola Jokic",
+                "selection_side": "over",
+                "line_value": 24.5,
+                "odds_american": 105,
+                "commence_time": commence_time,
+                "pinnacle_odds_at_close": None,
+                "clv_updated_at": None,
+            }
+        ],
+    )
+
+    async def _fake_fetch_prop_market_for_event(*, sport, event_id, markets, source):
+        assert source == "clv_replay_props"
+        return {"id": event_id, "commence_time": commence_time}, None
+
+    def _fake_parse_prop_sides(**kwargs):
+        return [
+            {
+                "surface": "player_props",
+                "sport": "basketball_nba",
+                "event_id": "evt-prop-replay",
+                "commence_time": commence_time,
+                "player_name": "Nikola Jokic",
+                "market_key": "player_points",
+                "selection_side": "over",
+                "line_value": 24.5,
+                "reference_odds": -115,
+            }
+        ]
+
+    monkeypatch.setattr(player_props, "_fetch_prop_market_for_event", _fake_fetch_prop_market_for_event, raising=True)
+    monkeypatch.setattr(player_props, "_parse_prop_sides", _fake_parse_prop_sides, raising=True)
+
+    summary = await mod.replay_recent_clv_closes(db, lookback_hours=4)
+
+    assert summary["candidate_count"] == 1
+    assert summary["close_updated"] == 1
+    assert db.tables["bets"][0]["latest_pinnacle_odds"] == -115
+    assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -115

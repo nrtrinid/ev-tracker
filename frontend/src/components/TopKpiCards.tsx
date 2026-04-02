@@ -33,7 +33,7 @@ function BeatCloseValue({
 
   if (beatClosePct !== null && beatClosePct !== undefined) {
     const color =
-      beatClosePct >= 55 ? "text-profit" : beatClosePct >= 45 ? "text-foreground" : "text-loss";
+      beatClosePct >= 55 ? "text-[#4A7C59]" : beatClosePct >= 45 ? "text-foreground" : "text-[#B85C38]";
     return (
       <>
         <p className={cn("text-xl sm:text-2xl font-bold font-mono tracking-tight", color)}>
@@ -46,7 +46,7 @@ function BeatCloseValue({
 
   if (avgClvPct !== null && avgClvPct !== undefined) {
     const color =
-      avgClvPct >= 1.5 ? "text-profit" : avgClvPct >= 0 ? "text-muted-foreground" : "text-loss";
+      avgClvPct >= 1.5 ? "text-[#4A7C59]" : avgClvPct >= 0 ? "text-[#8B7355]" : "text-[#B85C38]";
     return (
       <>
         <p className={cn("text-xl sm:text-2xl font-bold font-mono tracking-tight", color)}>
@@ -78,7 +78,7 @@ function TopKpiCardsInner({ netProfit, expectedProfit, totalBalance, beatClose }
           <p
             className={cn(
               "text-xl sm:text-2xl font-bold font-mono tracking-tight",
-              netProfit >= 0 ? "text-profit" : "text-loss",
+              netProfit >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]",
             )}
           >
             {netProfit >= 0 ? "+" : ""}
@@ -94,7 +94,7 @@ function TopKpiCardsInner({ netProfit, expectedProfit, totalBalance, beatClose }
             <TrendingUp className="h-3.5 w-3.5" />
             <span className="text-xs font-medium uppercase tracking-wide">EV</span>
           </div>
-          <p className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-pending">
+          <p className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-[#C4A35A]">
             {expectedProfit >= 0 ? "+" : ""}
             {formatCurrency(expectedProfit)}
           </p>
@@ -134,8 +134,8 @@ function TopKpiCardsInner({ netProfit, expectedProfit, totalBalance, beatClose }
               totalBalance === null || totalBalance === undefined
                 ? "text-muted-foreground"
                 : totalBalance >= 0
-                  ? "text-profit"
-                  : "text-loss",
+                  ? "text-[#4A7C59]"
+                  : "text-[#B85C38]",
             )}
           >
             {totalBalance === null || totalBalance === undefined

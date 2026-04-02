@@ -63,6 +63,8 @@ async def cron_run_scan_impl(
                 retry_supabase=main._retry_supabase,
                 log_event=main._log_event,
             )
+            if apply_fresh_scan_followups is not None and isinstance(result, dict):
+                await apply_fresh_scan_followups(result)
     except Exception as exc:
         errors.append({"error": f"{type(exc).__name__}: {exc}"})
 
@@ -449,6 +451,18 @@ def ops_clv_debug_impl(
     )
 
 
+async def ops_replay_recent_clv_impl(
+    x_cron_token: str | None,
+    *,
+    require_valid_cron_token: Callable[[str | None], None],
+    get_db: Callable[[], Any],
+    replay_recent_closes: Callable[..., Any],
+    lookback_hours: int,
+) -> dict[str, Any]:
+    require_valid_cron_token(x_cron_token)
+    return await replay_recent_closes(get_db(), lookback_hours=lookback_hours)
+
+
 async def cron_test_discord_impl(
     x_cron_token: str | None,
     *,
@@ -600,7 +614,7 @@ async def ops_trigger_scan(
         log_event=main._log_event,
         set_ops_status=main._set_ops_status,
         persist_ops_job_run=main._persist_ops_job_run,
-        apply_fresh_scan_followups=lambda result: main._apply_fresh_straight_scan_followups(
+        apply_fresh_scan_followups=lambda result: main._apply_fresh_board_drop_followups(
             result,
             source="ops_trigger_scan",
         ),
@@ -753,6 +767,25 @@ def ops_clv_debug(
         load_snapshot=build_clv_audit_snapshot,
         load_scheduler_job_snapshot=load_scheduler_job_snapshot,
         utc_now_iso=main._utc_now_iso,
+    )
+
+
+@router.post("/api/ops/trigger/clv-replay")
+async def ops_trigger_clv_replay(
+    lookback_hours: int = Query(default=8, ge=1, le=24),
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    import main
+    from services.odds_api import replay_recent_clv_closes
+
+    return await ops_replay_recent_clv_impl(
+        x_cron_token=x_ops_token or x_cron_token,
+        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        get_db=main.get_db,
+        replay_recent_closes=replay_recent_clv_closes,
+        lookback_hours=lookback_hours,
     )
 
 

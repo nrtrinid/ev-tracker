@@ -139,6 +139,36 @@ async def test_scheduled_scan_job_calls_get_cached_or_scan_for_all_supported_spo
 
 
 @pytest.mark.asyncio
+async def test_scheduled_scan_job_piggybacks_clv_for_fresh_board_sides(monkeypatch):
+    main = import_main_for_tests(monkeypatch)
+
+    seen: dict[str, list[dict]] = {}
+
+    async def _fake_daily_board_drop(*_args, **_kwargs):
+        return {
+            "ok": True,
+            "props_sides": 2,
+            "selected_event_ids": ["evt-1"],
+            "fresh_straight_sides": [{"surface": "straight_bets", "team": "Lakers"}],
+            "fresh_prop_sides": [{"surface": "player_props", "player_name": "Nikola Jokic"}],
+        }
+
+    async def _fake_piggyback_clv(sides):
+        seen["sides"] = list(sides)
+
+    import services.daily_board as daily_board
+    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
+    monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
+
+    await main._run_scheduled_scan_job()
+
+    assert len(seen["sides"]) == 2
+    snapshot = main.app.state.ops_status["last_scheduler_scan"]
+    assert "fresh_straight_sides" not in (snapshot.get("result") or {})
+    assert "fresh_prop_sides" not in (snapshot.get("result") or {})
+
+
+@pytest.mark.asyncio
 async def test_scheduled_scan_job_never_calls_player_props_scanner(monkeypatch):
     main = import_main_for_tests(monkeypatch)
 

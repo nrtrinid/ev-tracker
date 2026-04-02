@@ -655,6 +655,19 @@ async def _apply_fresh_straight_scan_followups(result: dict, *, source: str) -> 
     await _piggyback_clv(sides)
 
 
+async def _apply_fresh_board_drop_followups(result: dict, *, source: str) -> None:
+    """Piggyback CLV on the fresh sides returned by a daily-board refresh."""
+    if not isinstance(result, dict):
+        return
+    fresh_sides = [
+        *(result.pop("fresh_straight_sides", []) or []),
+        *(result.pop("fresh_prop_sides", []) or []),
+    ]
+    if not fresh_sides:
+        return
+    await _piggyback_clv(fresh_sides)
+
+
 def _get_environment() -> str:
     return os.getenv("ENVIRONMENT", "production").lower()
 
@@ -1306,6 +1319,7 @@ async def _run_scheduled_scan_job():
                     retry_supabase=_retry_supabase,
                     log_event=_log_event,
                 )
+                await _apply_fresh_board_drop_followups(result, source="scheduled_board_drop")
     except Exception as e:
         _log_event(
             "scheduler.daily_board.failed",
@@ -1449,6 +1463,7 @@ async def _run_early_look_scan_job():
                     retry_supabase=_retry_supabase,
                     log_event=_log_event,
                 )
+                await _apply_fresh_board_drop_followups(result, source="scheduled_board_drop_early_look")
     except Exception as e:
         _log_event(
             "scheduler.daily_board.early_look.failed",

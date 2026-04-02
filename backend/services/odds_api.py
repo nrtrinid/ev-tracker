@@ -1146,6 +1146,127 @@ def update_clv_snapshots(sides: list[dict], db) -> int:
     return counts["latest_updated"]
 
 
+def _append_prop_fetch_market(
+    prop_fetch_plan: dict[str, dict[str, set[str]]],
+    *,
+    sport: Any,
+    event_id: Any,
+    market_key: Any,
+) -> None:
+    normalized_sport = str(sport or "").strip()
+    normalized_event_id = str(event_id or "").strip()
+    normalized_market_key = str(market_key or "").strip()
+    if not normalized_sport or not normalized_event_id or not normalized_market_key:
+        return
+    prop_fetch_plan.setdefault(normalized_sport, {}).setdefault(normalized_event_id, set()).add(normalized_market_key)
+
+
+def _build_straight_clv_sides_for_events(*, sport_key: str, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    sides: list[dict[str, Any]] = []
+    for event in events:
+        home = event["home_team"]
+        away = event["away_team"]
+        ct = event.get("commence_time", "")
+        event_id = str(event.get("id") or "").strip()
+        pin_outcomes = _extract_outcomes(event.get("bookmakers", []), SHARP_BOOK)
+        if not pin_outcomes:
+            continue
+        pin_home = pin_outcomes.get(home)
+        pin_away = pin_outcomes.get(away)
+        if pin_home is not None:
+            side = {
+                "surface": "straight_bets",
+                "sport": sport_key,
+                "commence_time": ct,
+                "team": home,
+                "pinnacle_odds": pin_home,
+            }
+            if event_id:
+                side["event_id"] = event_id
+            sides.append(side)
+        if pin_away is not None:
+            side = {
+                "surface": "straight_bets",
+                "sport": sport_key,
+                "commence_time": ct,
+                "team": away,
+                "pinnacle_odds": pin_away,
+            }
+            if event_id:
+                side["event_id"] = event_id
+            sides.append(side)
+    return sides
+
+
+async def _build_prop_clv_sides_for_plan(
+    *,
+    sport_key: str,
+    prop_fetch_plan: dict[str, set[str]],
+    source: str,
+) -> list[dict[str, Any]]:
+    from services.player_props import (
+        _fetch_prop_market_for_event,
+        _parse_prop_sides,
+        get_player_prop_clv_min_reference_bookmakers,
+    )
+
+    sides: list[dict[str, Any]] = []
+    min_reference_bookmakers = get_player_prop_clv_min_reference_bookmakers()
+    for event_id, markets in prop_fetch_plan.items():
+        try:
+            event_payload, _ = await _fetch_prop_market_for_event(
+                sport=sport_key,
+                event_id=event_id,
+                markets=sorted(markets),
+                source=source,
+            )
+        except Exception as exc:
+            _log_event(
+                "clv.prop_fetch_failed",
+                level="warning",
+                sport=sport_key,
+                event_id=event_id,
+                market_count=len(markets),
+                source=source,
+                error_class=type(exc).__name__,
+                error=str(exc),
+            )
+            continue
+        prop_sides = _parse_prop_sides(
+            sport=sport_key,
+            event_payload=event_payload,
+            target_markets=sorted(markets),
+            player_context_lookup=None,
+            min_reference_bookmakers=min_reference_bookmakers,
+        )
+        sides.extend(prop_sides)
+    return sides
+
+
+async def _build_clv_reference_sides_for_sport(
+    *,
+    sport_key: str,
+    fetch_straight: bool,
+    prop_fetch_plan: dict[str, set[str]] | None,
+    straight_source: str,
+    prop_source: str,
+) -> list[dict[str, Any]]:
+    sides: list[dict[str, Any]] = []
+    if fetch_straight:
+        data, _ = await fetch_odds(sport_key, source=straight_source)
+        events = data if isinstance(data, list) else []
+        sides.extend(_build_straight_clv_sides_for_events(sport_key=sport_key, events=events))
+    if prop_fetch_plan:
+        sides.extend(
+            await _build_prop_clv_sides_for_plan(
+                sport_key=sport_key,
+                prop_fetch_plan=prop_fetch_plan,
+                source=prop_source,
+            )
+        )
+    return sides
+
+
 async def fetch_clv_for_pending_bets(db) -> int:
     """
     Layer 3 — Daily safety-net job. Called by APScheduler.
@@ -1154,10 +1275,12 @@ async def fetch_clv_for_pending_bets(db) -> int:
     and makes one fat fetch_odds call per active sport. Updates pinnacle_odds_at_close
     for all matched bets. Returns total bets updated.
     """
-    # Find pending bets with CLV tracking grouped by sport key
     result = (
         db.table("bets")
-        .select("clv_sport_key")
+        .select(
+            "id,surface,clv_sport_key,clv_event_id,source_event_id,source_market_key,"
+            "commence_time,pinnacle_odds_at_close,clv_updated_at"
+        )
         .eq("result", "pending")
         .not_.is_("clv_sport_key", "null")
         .execute()
@@ -1166,42 +1289,63 @@ async def fetch_clv_for_pending_bets(db) -> int:
     if not result.data:
         return 0
 
-    sport_keys = list({row["clv_sport_key"] for row in result.data if row.get("clv_sport_key")})
+    rows = list(result.data or [])
+    straight_sport_keys = {
+        str(row.get("clv_sport_key") or "").strip()
+        for row in rows
+        if str(row.get("surface") or "straight_bets").strip().lower() != "player_props"
+        and row.get("clv_sport_key")
+    }
+    prop_fetch_plan: dict[str, dict[str, set[str]]] = {}
+    for row in rows:
+        if str(row.get("surface") or "straight_bets").strip().lower() != "player_props":
+            continue
+        _append_prop_fetch_market(
+            prop_fetch_plan,
+            sport=row.get("clv_sport_key"),
+            event_id=row.get("source_event_id") or row.get("clv_event_id"),
+            market_key=row.get("source_market_key"),
+        )
+
+    sport_keys = sorted(straight_sport_keys | set(prop_fetch_plan.keys()))
 
     if not sport_keys:
         return 0
 
     total_updated = 0
+    _log_event(
+        "clv_daily.snapshot_candidates",
+        bet_straight_candidates=sum(
+            1
+            for row in rows
+            if str(row.get("surface") or "straight_bets").strip().lower() != "player_props"
+        ),
+        bet_prop_candidates=sum(
+            1 for row in rows if str(row.get("surface") or "straight_bets").strip().lower() == "player_props"
+        ),
+        sports=len(sport_keys),
+    )
 
     for sport_key in sport_keys:
         try:
-            data, _ = await fetch_odds(sport_key, source="clv_daily")
-            events = data if isinstance(data, list) else []
-
-            sides = []
-            for event in events:
-                home = event["home_team"]
-                away = event["away_team"]
-                ct = event.get("commence_time", "")
-
-                pin_outcomes = _extract_outcomes(event.get("bookmakers", []), SHARP_BOOK)
-                if not pin_outcomes:
-                    continue
-
-                pin_home = pin_outcomes.get(home)
-                pin_away = pin_outcomes.get(away)
-                if None in (pin_home, pin_away):
-                    continue
-
-                sides.append({"commence_time": ct, "team": home, "pinnacle_odds": pin_home})
-                sides.append({"commence_time": ct, "team": away, "pinnacle_odds": pin_away})
-                event_id = str(event.get("id") or "").strip()
-                if event_id:
-                    sides[-2]["event_id"] = event_id
-                    sides[-1]["event_id"] = event_id
+            sides = await _build_clv_reference_sides_for_sport(
+                sport_key=sport_key,
+                fetch_straight=sport_key in straight_sport_keys,
+                prop_fetch_plan=prop_fetch_plan.get(sport_key),
+                straight_source="clv_daily",
+                prop_source="clv_daily_props",
+            )
+            if not sides:
+                continue
 
             updated = update_clv_snapshots(sides, db)
             total_updated += updated
+            _log_event(
+                "clv_daily.sport_completed",
+                sport=sport_key,
+                fetched_sides=len(sides),
+                updated=updated,
+            )
 
         except Exception as e:
             # Never let a single sport failure break the entire job
@@ -1234,12 +1378,6 @@ async def run_jit_clv_snatcher(db) -> int:
         update_pickem_research_close_snapshots,
     )
     from services.research_opportunities import is_missing_scan_opportunities_error
-    from services.player_props import (
-        _fetch_prop_market_for_event,
-        _parse_prop_sides,
-        get_player_prop_min_reference_bookmakers,
-    )
-
     started_at = time.monotonic()
     now = datetime.now(timezone.utc)
     window_end = now + timedelta(minutes=CLOSE_WINDOW_MINUTES)
@@ -1248,7 +1386,10 @@ async def run_jit_clv_snatcher(db) -> int:
 
     bet_result = (
         db.table("bets")
-        .select("id,clv_sport_key,commence_time,pinnacle_odds_at_close,clv_updated_at")
+        .select(
+            "id,surface,clv_sport_key,commence_time,pinnacle_odds_at_close,clv_updated_at,"
+            "source_event_id,clv_event_id,source_market_key"
+        )
         .eq("result", "pending")
         .not_.is_("clv_sport_key", "null")
         .gt("commence_time", now_iso)
@@ -1287,10 +1428,26 @@ async def run_jit_clv_snatcher(db) -> int:
         if row.get("pinnacle_odds_at_close") is None
         or not has_valid_close_snapshot(row.get("commence_time"), row.get("clv_updated_at"))
     ]
+    bet_prop_candidates = [
+        row for row in bet_candidates
+        if str(row.get("surface") or "straight_bets").strip().lower() == "player_props"
+    ]
+    bet_straight_candidates = [
+        row for row in bet_candidates
+        if str(row.get("surface") or "straight_bets").strip().lower() != "player_props"
+    ]
     opportunity_candidates = [
         row for row in (opportunity_result.data or [])
         if row.get("reference_odds_at_close") is None
         or not has_valid_close_snapshot(row.get("commence_time"), row.get("close_captured_at"))
+    ]
+    research_prop_candidates = [
+        row for row in opportunity_candidates
+        if str(row.get("surface") or "straight_bets").strip().lower() == "player_props"
+    ]
+    research_straight_candidates = [
+        row for row in opportunity_candidates
+        if str(row.get("surface") or "straight_bets").strip().lower() != "player_props"
     ]
     pickem_candidates = [
         row for row in (pickem_result.data or [])
@@ -1300,9 +1457,11 @@ async def run_jit_clv_snatcher(db) -> int:
 
     _log_event(
         "jit_clv.snapshot_candidates",
-        bet_candidates=len(bet_candidates),
-        research_candidates=len(opportunity_candidates),
-        pickem_candidates=len(pickem_candidates),
+        bet_straight_candidates=len(bet_straight_candidates),
+        bet_prop_candidates=len(bet_prop_candidates),
+        research_straight_candidates=len(research_straight_candidates),
+        research_prop_candidates=len(research_prop_candidates),
+        pickem_prop_candidates=len(pickem_candidates),
         window_start=now_iso,
         window_end=window_end_iso,
     )
@@ -1312,30 +1471,38 @@ async def run_jit_clv_snatcher(db) -> int:
 
     straight_sport_keys = {
         str(row.get("clv_sport_key") or "").strip()
-        for row in bet_candidates
+        for row in bet_straight_candidates
         if row.get("clv_sport_key")
     }
     prop_fetch_plan: dict[str, dict[str, set[str]]] = {}
+    for row in bet_prop_candidates:
+        _append_prop_fetch_market(
+            prop_fetch_plan,
+            sport=row.get("clv_sport_key"),
+            event_id=row.get("source_event_id") or row.get("clv_event_id"),
+            market_key=row.get("source_market_key"),
+        )
     for row in opportunity_candidates:
         sport = str(row.get("sport") or "").strip()
         if not sport:
             continue
         surface = str(row.get("surface") or "straight_bets").strip().lower()
         if surface == "player_props":
-            event_id = str(row.get("event_id") or "").strip()
-            market_key = str(row.get("source_market_key") or "").strip()
-            if not event_id or not market_key:
-                continue
-            prop_fetch_plan.setdefault(sport, {}).setdefault(event_id, set()).add(market_key)
+            _append_prop_fetch_market(
+                prop_fetch_plan,
+                sport=sport,
+                event_id=row.get("event_id"),
+                market_key=row.get("source_market_key"),
+            )
             continue
         straight_sport_keys.add(sport)
     for row in pickem_candidates:
-        sport = str(row.get("sport") or "").strip()
-        event_id = str(row.get("event_id") or "").strip()
-        market_key = str(row.get("market_key") or "").strip()
-        if not sport or not event_id or not market_key:
-            continue
-        prop_fetch_plan.setdefault(sport, {}).setdefault(event_id, set()).add(market_key)
+        _append_prop_fetch_market(
+            prop_fetch_plan,
+            sport=row.get("sport"),
+            event_id=row.get("event_id"),
+            market_key=row.get("market_key"),
+        )
 
     sport_keys = sorted(straight_sport_keys | set(prop_fetch_plan.keys()))
 
@@ -1343,51 +1510,13 @@ async def run_jit_clv_snatcher(db) -> int:
 
     for sport_key in sport_keys:
         try:
-            sides: list[dict[str, Any]] = []
-            if sport_key in straight_sport_keys:
-                data, _ = await fetch_odds(sport_key, source="jit_clv")
-                events = data if isinstance(data, list) else []
-                for event in events:
-                    home = event["home_team"]
-                    away = event["away_team"]
-                    ct = event.get("commence_time", "")
-                    event_id = str(event.get("id") or "").strip()
-                    pin_outcomes = _extract_outcomes(event.get("bookmakers", []), SHARP_BOOK)
-                    if not pin_outcomes:
-                        continue
-                    pin_home = pin_outcomes.get(home)
-                    pin_away = pin_outcomes.get(away)
-                    if pin_home is not None:
-                        side = {"surface": "straight_bets", "sport": sport_key, "commence_time": ct, "team": home, "pinnacle_odds": pin_home}
-                        if event_id:
-                            side["event_id"] = event_id
-                        sides.append(side)
-                    if pin_away is not None:
-                        side = {"surface": "straight_bets", "sport": sport_key, "commence_time": ct, "team": away, "pinnacle_odds": pin_away}
-                        if event_id:
-                            side["event_id"] = event_id
-                        sides.append(side)
-
-            if sport_key in prop_fetch_plan:
-                min_reference_bookmakers = get_player_prop_min_reference_bookmakers()
-                for event_id, markets in prop_fetch_plan[sport_key].items():
-                    try:
-                        event_payload, _ = await _fetch_prop_market_for_event(
-                            sport=sport_key,
-                            event_id=event_id,
-                            markets=sorted(markets),
-                            source="jit_clv_props",
-                        )
-                    except Exception:
-                        continue
-                    prop_sides = _parse_prop_sides(
-                        sport=sport_key,
-                        event_payload=event_payload,
-                        target_markets=sorted(markets),
-                        player_context_lookup=None,
-                        min_reference_bookmakers=min_reference_bookmakers,
-                    )
-                    sides.extend(prop_sides)
+            sides = await _build_clv_reference_sides_for_sport(
+                sport_key=sport_key,
+                fetch_straight=sport_key in straight_sport_keys,
+                prop_fetch_plan=prop_fetch_plan.get(sport_key),
+                straight_source="jit_clv",
+                prop_source="jit_clv_props",
+            )
 
             if not sides:
                 continue
@@ -1414,6 +1543,7 @@ async def run_jit_clv_snatcher(db) -> int:
                 "jit_clv.sport_completed",
                 sport=sport_key,
                 fetched_sides=len(sides),
+                bet_latest_updated=bet_updates["latest_updated"],
                 bet_close_updated=bet_updates["close_updated"],
                 research_close_updated=opportunity_updates["close_updated"],
                 pickem_close_updated=pickem_updates["close_updated"],
@@ -1435,6 +1565,146 @@ async def run_jit_clv_snatcher(db) -> int:
         sports_processed=len(sport_keys),
     )
     return total_close_updated
+
+
+async def replay_recent_clv_closes(
+    db,
+    *,
+    lookback_hours: int = 8,
+) -> dict[str, Any]:
+    from services.clv_tracking import has_valid_close_snapshot, update_bet_reference_snapshots
+
+    now = datetime.now(timezone.utc)
+    lookback_window_start = now - timedelta(hours=max(1, int(lookback_hours)))
+
+    result = (
+        db.table("bets")
+        .select(
+            "id,surface,clv_sport_key,commence_time,pinnacle_odds_at_close,clv_updated_at,"
+            "latest_pinnacle_odds,latest_pinnacle_updated_at,source_event_id,clv_event_id,source_market_key"
+        )
+        .eq("result", "pending")
+        .not_.is_("clv_sport_key", "null")
+        .execute()
+    )
+
+    candidate_rows = []
+    for row in result.data or []:
+        commence_raw = str(row.get("commence_time") or "").strip()
+        try:
+            commence_dt = datetime.fromisoformat(commence_raw.replace("Z", "+00:00"))
+        except Exception:
+            continue
+        if commence_dt.tzinfo is None:
+            commence_dt = commence_dt.replace(tzinfo=timezone.utc)
+        else:
+            commence_dt = commence_dt.astimezone(timezone.utc)
+        if not (lookback_window_start <= commence_dt <= now):
+            continue
+        if row.get("pinnacle_odds_at_close") is None or not has_valid_close_snapshot(
+            row.get("commence_time"),
+            row.get("clv_updated_at"),
+        ):
+            candidate_rows.append(row)
+
+    if not candidate_rows:
+        return {
+            "ok": True,
+            "lookback_hours": max(1, int(lookback_hours)),
+            "candidate_count": 0,
+            "bet_straight_candidates": 0,
+            "bet_prop_candidates": 0,
+            "updated": 0,
+            "close_updated": 0,
+            "sports_processed": 0,
+        }
+
+    bet_prop_candidates = [
+        row for row in candidate_rows
+        if str(row.get("surface") or "straight_bets").strip().lower() == "player_props"
+    ]
+    bet_straight_candidates = [
+        row for row in candidate_rows
+        if str(row.get("surface") or "straight_bets").strip().lower() != "player_props"
+    ]
+
+    straight_sport_keys = {
+        str(row.get("clv_sport_key") or "").strip()
+        for row in bet_straight_candidates
+        if row.get("clv_sport_key")
+    }
+    prop_fetch_plan: dict[str, dict[str, set[str]]] = {}
+    for row in bet_prop_candidates:
+        _append_prop_fetch_market(
+            prop_fetch_plan,
+            sport=row.get("clv_sport_key"),
+            event_id=row.get("source_event_id") or row.get("clv_event_id"),
+            market_key=row.get("source_market_key"),
+        )
+
+    sport_keys = sorted(straight_sport_keys | set(prop_fetch_plan.keys()))
+    total_updated = 0
+    total_close_updated = 0
+
+    _log_event(
+        "clv_replay.snapshot_candidates",
+        lookback_hours=max(1, int(lookback_hours)),
+        bet_straight_candidates=len(bet_straight_candidates),
+        bet_prop_candidates=len(bet_prop_candidates),
+        sports=len(sport_keys),
+    )
+
+    for sport_key in sport_keys:
+        try:
+            sides = await _build_clv_reference_sides_for_sport(
+                sport_key=sport_key,
+                fetch_straight=sport_key in straight_sport_keys,
+                prop_fetch_plan=prop_fetch_plan.get(sport_key),
+                straight_source="clv_replay",
+                prop_source="clv_replay_props",
+            )
+            if not sides:
+                continue
+            bet_updates = update_bet_reference_snapshots(
+                db,
+                sides=sides,
+                allow_close=True,
+                now=now,
+                allow_retroactive_close_capture=True,
+            )
+            total_updated += bet_updates["latest_updated"]
+            total_close_updated += bet_updates["close_updated"]
+            _log_event(
+                "clv_replay.sport_completed",
+                sport=sport_key,
+                fetched_sides=len(sides),
+                bet_latest_updated=bet_updates["latest_updated"],
+                bet_close_updated=bet_updates["close_updated"],
+            )
+        except Exception as exc:
+            _log_event(
+                "clv_replay.sport_failed",
+                level="warning",
+                sport=sport_key,
+                error_class=type(exc).__name__,
+                error=str(exc),
+            )
+
+    summary = {
+        "ok": True,
+        "lookback_hours": max(1, int(lookback_hours)),
+        "candidate_count": len(candidate_rows),
+        "bet_straight_candidates": len(bet_straight_candidates),
+        "bet_prop_candidates": len(bet_prop_candidates),
+        "updated": total_updated,
+        "close_updated": total_close_updated,
+        "sports_processed": len(sport_keys),
+    }
+    _log_event(
+        "clv_replay.completed",
+        **summary,
+    )
+    return summary
 
 
 async def fetch_scores(sport: str, source: str = "auto_settle") -> list[dict]:
