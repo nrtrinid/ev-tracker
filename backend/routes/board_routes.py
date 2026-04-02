@@ -750,7 +750,7 @@ async def refresh_board_scope(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to build response: {e}")
 
-    from main import _log_event
+    from main import _log_event, _sync_pickem_research_from_props_payload
     refreshed_at = persist_scoped_refresh(
         db=db,
         surface=scope,
@@ -758,6 +758,8 @@ async def refresh_board_scope(
         retry_supabase=_retry_supabase,
         log_event=_log_event,
     )
+    if scope == "player_props" and not bool(result.get("cache_hit")):
+        _sync_pickem_research_from_props_payload(scan_payload.model_dump(), source="manual_refresh")
 
     return ScopedRefreshResponse(
         surface=scope,  # type: ignore[arg-type]

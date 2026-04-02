@@ -66,6 +66,7 @@ async def scan_markets_impl(
     append_scan_activity,
     persist_ops_job_run,
     new_run_id,
+    sync_pickem_research_from_props_payload,
     map_error,
     build_full_scan_response,
     get_environment,
@@ -189,6 +190,11 @@ async def scan_markets_impl(
             total_sides=bundle["ops_status_payload"].get("total_sides"),
             api_requests_remaining=bundle["ops_status_payload"].get("api_requests_remaining"),
         )
+        if surface == "player_props" and bundle.get("fresh_sides"):
+            sync_pickem_research_from_props_payload(
+                bundle.get("persist_payload"),
+                source="manual_scan",
+            )
         return build_full_scan_response(response_payload)
 
     try:
@@ -288,6 +294,7 @@ async def scan_markets(
         append_scan_activity=main._append_scan_activity,
         persist_ops_job_run=main._persist_ops_job_run,
         new_run_id=main._new_run_id,
+        sync_pickem_research_from_props_payload=main._sync_pickem_research_from_props_payload,
         map_error=scan_exception_to_http_exception,
         build_full_scan_response=main._build_full_scan_response,
         get_environment=main._get_environment,

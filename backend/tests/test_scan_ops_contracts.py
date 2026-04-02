@@ -377,9 +377,16 @@ def test_player_props_manual_scan_end_to_end_contract(auth_client, auth_headers,
     import services.player_props as player_props
 
     fake_db_state = {}
+    pickem_sync_calls = []
     monkeypatch.setattr(main, "get_db", lambda: _FakeDB(fake_db_state), raising=True)
     monkeypatch.setattr(main, "_retry_supabase", lambda f: f(), raising=True)
     monkeypatch.setattr(main, "_annotate_sides_with_duplicate_state", lambda _db, _uid, sides: sides, raising=True)
+    monkeypatch.setattr(
+        main,
+        "_sync_pickem_research_from_props_payload",
+        lambda payload, source="unknown": pickem_sync_calls.append((payload, source)),
+        raising=True,
+    )
 
     async def _fake_scoreboard():
         return {
@@ -578,6 +585,11 @@ def test_player_props_manual_scan_end_to_end_contract(auth_client, auth_headers,
     assert latest_payload["surface"] == "player_props"
     assert latest_payload["diagnostics"]["quality_gate_min_reference_bookmakers"] == 2
     assert latest_payload["sides"][0]["participant_id"] == "4431767"
+    assert len(pickem_sync_calls) == 1
+    synced_payload, synced_source = pickem_sync_calls[0]
+    assert synced_source == "manual_scan"
+    assert synced_payload["surface"] == "player_props"
+    assert len(synced_payload["sides"]) == 6
     assert latest_payload["prizepicks_cards"] == []
 
     fake_db_state["select_data"] = [{"payload": latest_payload}]

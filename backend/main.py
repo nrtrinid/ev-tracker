@@ -13,6 +13,7 @@ from datetime import datetime, UTC, timedelta
 from contextlib import asynccontextmanager
 import os
 import time
+from typing import Any
 from uuid import uuid4
 from dotenv import load_dotenv
 import httpx
@@ -639,6 +640,64 @@ def _capture_research_opportunities(sides: list[dict], *, source: str) -> None:
     except Exception as e:
         _log_event(
             "research.capture.failed",
+            level="warning",
+            source=source,
+            error_class=type(e).__name__,
+            error=str(e),
+        )
+
+
+def _sync_pickem_research_from_props_payload(payload: dict[str, Any] | None, *, source: str) -> None:
+    """Persist player-props board artifacts + pick'em research rows from a fresh props payload."""
+    if not isinstance(payload, dict):
+        return
+    if str(payload.get("surface") or "").strip() != "player_props":
+        return
+    sides = payload.get("sides")
+    if not isinstance(sides, list) or not sides:
+        return
+
+    try:
+        from services.pickem_research import capture_pickem_research_observations
+        from services.player_prop_board import (
+            build_player_prop_board_item,
+            build_player_prop_board_pickem_cards,
+            persist_player_prop_board_artifacts,
+        )
+
+        db = get_db()
+        board_chunk_size = int(os.getenv("PLAYER_PROPS_BOARD_CHUNK_SIZE") or "250") or 250
+        board_legacy_max = int(os.getenv("PLAYER_PROPS_BOARD_LEGACY_MAX_ITEMS") or "150") or 150
+        artifacts_summary = persist_player_prop_board_artifacts(
+            db=db,
+            payload=payload,
+            retry_supabase=_retry_supabase,
+            log_event=_log_event,
+            chunk_size=board_chunk_size,
+            legacy_max_items=board_legacy_max,
+        )
+        pickem_cards = build_player_prop_board_pickem_cards(
+            [build_player_prop_board_item(side) for side in sides if isinstance(side, dict)]
+        )
+        capture_summary = capture_pickem_research_observations(
+            db,
+            cards=pickem_cards,
+            source=source,
+            captured_at=str(payload.get("scanned_at") or _utc_now_iso()),
+        )
+        _log_event(
+            "pickem.sync.completed",
+            source=source,
+            lean_total=artifacts_summary.get("lean_total") if isinstance(artifacts_summary, dict) else None,
+            opportunities_total=artifacts_summary.get("opportunities_total") if isinstance(artifacts_summary, dict) else None,
+            pickem_total=artifacts_summary.get("pickem_total") if isinstance(artifacts_summary, dict) else None,
+            eligible_seen=capture_summary.get("eligible_seen") if isinstance(capture_summary, dict) else None,
+            inserted=capture_summary.get("inserted") if isinstance(capture_summary, dict) else None,
+            updated=capture_summary.get("updated") if isinstance(capture_summary, dict) else None,
+        )
+    except Exception as e:
+        _log_event(
+            "pickem.sync.failed",
             level="warning",
             source=source,
             error_class=type(e).__name__,
