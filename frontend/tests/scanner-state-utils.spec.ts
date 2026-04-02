@@ -179,6 +179,41 @@ test.describe("scanner state utils", () => {
     expect(out.line_value).toBe(221.5);
   });
 
+  test("buildScannerLogBetInitialValues recovers spread line metadata from selection key", async () => {
+    const out = buildScannerLogBetInitialValues({
+      side: {
+        ...BASE_SPREAD_SIDE,
+        line_value: null,
+      },
+      activeLens: "standard",
+      boostPercent: 30,
+      sportDisplayMap: { basketball_nba: "NBA" },
+      kellyMultiplier: 1,
+      bankroll: 1000,
+    });
+
+    expect(out.event).toBe("Lakers +4.5");
+    expect(out.market).toBe("Spread");
+  });
+
+  test("buildScannerLogBetInitialValues recovers total line metadata from selection key", async () => {
+    const out = buildScannerLogBetInitialValues({
+      side: {
+        ...BASE_TOTAL_SIDE,
+        line_value: null,
+        selection_side: null,
+      },
+      activeLens: "standard",
+      boostPercent: 30,
+      sportDisplayMap: { basketball_nba: "NBA" },
+      kellyMultiplier: 1,
+      bankroll: 1000,
+    });
+
+    expect(out.event).toBe("Over 221.5");
+    expect(out.market).toBe("Total");
+  });
+
   test("buildParlayCartLeg builds stable ids for props", async () => {
     const out = buildParlayCartLeg(BASE_PROP_SIDE);
 
@@ -229,6 +264,21 @@ test.describe("scanner state utils", () => {
     expect(totalLeg.marketDisplay).toBe("Total");
     expect(totalLeg.selectionSide).toBe("over");
     expect(totalLeg.lineValue).toBe(221.5);
+  });
+
+  test("buildParlayCartLeg formats spread and total legs distinctly even without explicit line values", async () => {
+    const spreadLeg = buildParlayCartLeg({
+      ...BASE_SPREAD_SIDE,
+      line_value: null,
+    });
+    const totalLeg = buildParlayCartLeg({
+      ...BASE_TOTAL_SIDE,
+      line_value: null,
+      selection_side: null,
+    });
+
+    expect(spreadLeg.display).toBe("Lakers +4.5");
+    expect(totalLeg.display).toBe("Over 221.5");
   });
 
   test("buildParlayCartLegFromPickEmCard maps consensus winner into a pick'em slip leg", async () => {

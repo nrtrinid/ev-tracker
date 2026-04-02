@@ -58,10 +58,34 @@ function formatScannerLineValue(value: number | null | undefined): string {
   return `${Number.parseFloat(value.toFixed(2))}`;
 }
 
+function parseStraightSelectionKeyParts(selectionKey: string | null | undefined): string[] {
+  return String(selectionKey ?? "")
+    .split("|")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function parseStraightBetFallbackLineValue(side: Extract<MarketSide, { surface: "straight_bets" }>): number | null {
+  if (side.line_value != null && Number.isFinite(side.line_value)) {
+    return side.line_value;
+  }
+  const parts = parseStraightSelectionKeyParts(side.selection_key);
+  const candidate = parts.at(-1);
+  if (!candidate) return null;
+  const parsed = Number.parseFloat(candidate);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseStraightBetFallbackSelectionSide(side: Extract<MarketSide, { surface: "straight_bets" }>): string {
+  if (side.selection_side) return String(side.selection_side).trim();
+  const parts = parseStraightSelectionKeyParts(side.selection_key);
+  return parts[2] ?? String(side.team ?? "").trim();
+}
+
 export function formatStraightBetDisplay(side: Extract<MarketSide, { surface: "straight_bets" }>): string {
   const marketKey = String(side.market_key ?? "h2h").toLowerCase();
   if (marketKey === "spreads") {
-    const line = side.line_value;
+    const line = parseStraightBetFallbackLineValue(side);
     const lineLabel =
       line == null || !Number.isFinite(line)
         ? ""
@@ -71,8 +95,8 @@ export function formatStraightBetDisplay(side: Extract<MarketSide, { surface: "s
     return `${side.team}${lineLabel}`.trim();
   }
   if (marketKey === "totals") {
-    const sideLabel = String(side.selection_side ?? side.team ?? "").trim();
-    const lineLabel = formatScannerLineValue(side.line_value);
+    const sideLabel = parseStraightBetFallbackSelectionSide(side);
+    const lineLabel = formatScannerLineValue(parseStraightBetFallbackLineValue(side));
     const normalizedSideLabel = `${sideLabel.charAt(0).toUpperCase()}${sideLabel.slice(1)}`.trim();
     return `${normalizedSideLabel}${lineLabel ? ` ${lineLabel}` : ""}`.trim();
   }
