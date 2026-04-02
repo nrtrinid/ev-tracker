@@ -1,147 +1,107 @@
 ## Testing
 
-This project touches money-adjacent calculations (EV, profit, balances), user-facing recordkeeping (bets/transactions), and background automation (scan/settle scheduling and ops observability). The goal of testing is to prevent regressions in EV math, settlement/profit logic, scheduler behavior, protected ops routes, and critical UI flows without over-claiming maturity.
+This project touches EV math, real-money-adjacent recordkeeping, background automation, and operator tooling. The goal is to prevent regressions without pretending the product is fully frozen.
 
-### Strategy (lean pyramid)
+### Strategy
 
-- **Unit (backend, fast)**: deterministic tests for the calculation engine.
-- **Unit (backend, fast)**: deterministic tests for calculation and odds-activity summarization logic.
-- **Integration (backend routes, Supabase-backed)**: route-level behavior against a real Supabase DB + Auth user.
-- **Automation route checks (backend)**: cron/ops/scheduler status behavior with controlled fixtures.
-- **Contract checks (backend/frontend)**: scanner and ops payload shape/null-state guardrails to prevent silent contract drift.
-- **Smoke (frontend, Playwright)**: a couple critical UI flows against local dev servers.
-- **Manual dogfooding**: scanner realism, scheduler behavior, and UX edge cases.
+- **Backend unit tests** for calculations and service logic
+- **Backend contract / hardening tests** for scheduler, ops, Discord, and payload shape
+- **Backend integration tests** against a real test Supabase project
+- **Frontend build and type checks**
+- **Playwright smoke tests** for critical user flows
+- **Manual beta smoke** for live data, CLV, Discord routing, and deploy health
 
-### Live vs mocked
+### Run Tests Locally
 
-- **Mocked/overridden**:
-  - Backend integration tests override `get_current_user` (no full JWT flow).
-- **Live**:
-  - Supabase Postgres + Auth are real in backend integration tests (writes real rows; tests clean up after themselves).
-  - The Odds API is intentionally not covered by automated tests in this repo’s current scope.
-
-### Run tests locally
-
-#### Backend unit tests
+#### Backend unit / service tests
 
 From `backend/` with your venv activated:
 
 - `pytest tests/test_calculations.py -v`
 - `pytest tests/test_odds_api_activity.py -v`
-- Or exclude integration: `pytest -m "not integration" -v`
+- `pytest tests/test_discord_alerts.py -v`
+- `pytest -m "not integration" -v`
 
-#### Backend hardening / scheduler tests
+#### Backend hardening / contract tests
 
-From `backend/` with your venv activated:
+From `backend/`:
 
 - `pytest tests/test_scheduler.py -v`
-- `pytest tests/test_scheduler.py tests/test_odds_api_activity.py -v`
 - `pytest tests/test_scan_ops_contracts.py -v`
 
-What these cover:
+These cover:
 
-- Scheduler heartbeat/status payload behavior.
-- Protected ops status response expectations.
-- Odds API activity summary and recent-call sanitization.
-- Scanner/ops payload contract-shape parity against golden fixtures.
-- Manual player-props route behavior, including shortlist -> match -> fetch -> persist -> latest payload flow with mocked upstream data.
+- scheduler heartbeat and readiness behavior
+- protected ops payloads
+- Discord routing and failure diagnostics
+- scanner / ops contract-shape drift
 
-#### Backend integration tests (Supabase-backed)
+#### Backend integration tests
 
 Prereqs:
 
 - `backend/.env` has `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
-- A Supabase Auth user exists for testing; set its UUID as `TEST_USER_ID`
-- Run with `TESTING=1` so the scheduler is disabled during test startup
+- a real test auth user exists
+- `TESTING=1` disables scheduler startup during tests
 
-Windows PowerShell (from `backend/`):
+Windows PowerShell:
 
 - `$env:TESTING="1"; $env:TEST_USER_ID="<uuid>"; pytest tests/test_api.py -v`
 - `$env:TESTING="1"; $env:TEST_USER_ID="<uuid>"; pytest -m integration -v`
 
-macOS/Linux (from `backend/`):
+macOS/Linux:
 
 - `TESTING=1 TEST_USER_ID=<uuid> pytest tests/test_api.py -v`
 - `TESTING=1 TEST_USER_ID=<uuid> pytest -m integration -v`
 
-Notes:
-
-- Tests tag created records with a short `run_id` and delete created bets/transactions in teardown.
-- If env vars are missing, the integration module skips with a clear message.
-
-#### Frontend smoke tests (Playwright)
-
-Prereqs:
-
-- Backend running: `http://localhost:8000`
-- Frontend running: `http://localhost:3000`
-- A real test user email + password
+#### Frontend build / type checks
 
 From `frontend/`:
 
-- One-time install: `npm install` and `npx playwright install`
-- Run (Windows PowerShell):
-  - `$env:PLAYWRIGHT_TEST_EMAIL="<email>"; $env:PLAYWRIGHT_TEST_PASSWORD="<password>"; npm run test:e2e`
+- `npm run build`
+- `npx tsc --noEmit`
 
-#### Frontend scanner contract/filter helper tests
-
-From `frontend/`:
-
-- `npx playwright test tests/scanner-contract.spec.ts tests/scanner-filters.spec.ts`
-
-What these cover:
-
-- Scan payload shape guard checks (`isScanResultContractShape`).
-- Null-state classification (`backend_empty` vs `filter_empty`).
-- Search normalization, time presets, edge/lens behavior, and active-filter chip generation.
-
-#### Frontend operator-access tests
-
-These tests cover the new ops hardening layer:
-
-- Utility behavior for allowlist normalization + fail-closed logic
-- Non-admin denial for `/admin/ops` and `/api/ops/status`
+#### Frontend Playwright checks
 
 From `frontend/`:
 
-- Utility tests (no credentials required):
-  - `npm run test:ops-utils`
+- `npm run test:e2e`
+- `npm run test:ops-utils`
+- `npm run test:ops-access`
 
-- Non-admin denial e2e (requires a real non-admin account):
-  - Windows PowerShell:
-    - `$env:PLAYWRIGHT_NON_ADMIN_EMAIL="<email>"; $env:PLAYWRIGHT_NON_ADMIN_PASSWORD="<password>"; npm run test:ops-access`
+The ops-access flow needs real non-admin credentials. The smoke flow needs a real login.
 
-Notes:
+### What This Suite Gives You
 
-- `test:ops-access` intentionally skips if non-admin credentials are not set.
-- Keep one dedicated non-admin test user to avoid false positives.
+- high confidence in math and pricing helpers
+- good confidence in CRUD and summary routes
+- good confidence in scheduler / ops / Discord contract behavior
+- reasonable confidence that the shipped frontend still builds and the core paths still load
 
-### What this suite gives you (today)
+### Known Gaps
 
-- High confidence in EV math and profit computation.
-- Good confidence that core CRUD + summary-style backend routes behave correctly against a real database.
-- Better confidence that automation/ops hardening paths behave correctly.
-- Better confidence that scanner payload and null-state/filter semantics stay stable.
-- Basic “does it still work?” coverage for a couple critical UI flows.
+- live market correctness against real odds on a given slate
+- broader UI regression coverage
+- performance and load behavior
+- CI-hosted Playwright
 
-### Known gaps (intentionally not automated yet)
+### Trusted Beta Checklist
 
-- Scanner end-to-end correctness against live odds + market mapping edge cases.
-- Live acceptance of ESPN shortlist behavior on a real day-of slate.
-- Full time-based scheduler execution lifecycle in CI-like environments.
-- Performance/load, rate-limit behavior, and broader UI regression coverage.
-- Playwright in CI (requires browser/auth secrets/services; kept local for now).
+Before sharing `main` with testers:
 
-### Pre-beta checklist (quick)
-
-- Run unit tests.
-- Run scheduler/odds-activity backend tests.
-- Run backend scan/ops contract fixture tests.
-- Run backend integration tests against a dedicated test user.
-- Run frontend scanner contract/filter helper tests.
-- Run Playwright smokes with a test login.
-- Run `npm run test:ops-utils`.
-- Run `npm run test:ops-access` with non-admin credentials.
-- Manually: scan a sport in dev mode and spot-check a handful of edges/“fair odds.”
-- Manually: log a bet → settle → verify summary and balances change as expected.
-
+- run backend unit and hardening tests
+- run Discord backend tests
+- run backend integration tests against a dedicated test user
+- run frontend `build` and `tsc`
+- run Playwright smoke tests where credentials are available
+- confirm production migrations are applied through `database/migration_013_pickem_research.sql`
+- confirm `backend/sql/add_v2_surface_fields.sql` is applied if needed
+- trigger:
+  - `POST /api/ops/trigger/test-discord`
+  - `POST /api/ops/trigger/test-discord-alert`
+- manually verify:
+  - sign up / sign in
+  - home board loads
+  - promos, game lines, and player props make sense
+  - a bet can be logged and settled
+  - one straight bet and one player prop get watched through the next CLV close window

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 export default function LoginPage() {
+  const discordInviteUrl = process.env.NEXT_PUBLIC_DISCORD_INVITE_URL?.trim() || "";
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -57,9 +58,22 @@ export default function LoginPage() {
             </span>
           </div>
           <h1 className="text-xl font-semibold text-foreground">EV Tracker</h1>
+          <span className="mt-2 inline-flex rounded-full border border-[#C4A35A]/35 bg-[#C4A35A]/12 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#6B5728]">
+            Trusted beta
+          </span>
           <p className="text-sm text-muted-foreground mt-1">
-            {isSignUp ? "Create your account" : "Sign in to your account"}
+            {isSignUp ? "Create your beta account" : "Sign in to your beta account"}
           </p>
+          {discordInviteUrl && (
+            <a
+              href={discordInviteUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            >
+              Questions or bugs? Join the beta Discord.
+            </a>
+          )}
         </div>
 
         {/* Form */}

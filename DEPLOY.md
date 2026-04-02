@@ -1,6 +1,6 @@
-# Production deploy (VPS)
+# Production Deploy (VPS)
 
-## SSH into the server
+## SSH Into The Server
 
 From your local machine:
 
@@ -8,15 +8,7 @@ From your local machine:
 ssh root@5.78.192.196
 ```
 
-If the SSH host is not trusted yet, accept it when prompted.
-
-After you are done on the server:
-
-```bash
-exit
-```
-
-## Normal deploy
+## Normal Deploy
 
 After SSH'ing into the VPS:
 
@@ -26,34 +18,44 @@ git pull origin main
 docker compose up -d --build
 ```
 
-This deploy now runs two backend roles:
+This deploy runs two backend roles:
+
 - `backend_api`: serves FastAPI traffic behind Caddy
 - `backend_scheduler`: runs APScheduler jobs only
 
 Recommended env:
-- `APP_ROLE=api`, `ENABLE_SCHEDULER=1`, `UVICORN_WORKERS=2` for the API service
-- `APP_ROLE=scheduler`, `ENABLE_SCHEDULER=1` for the scheduler service
 
-## One-line deploy from your local machine
+- API container: `APP_ROLE=api`, `ENABLE_SCHEDULER=1`, `UVICORN_WORKERS=2`
+- scheduler container: `APP_ROLE=scheduler`, `ENABLE_SCHEDULER=1`
 
-If your local machine already has SSH access configured for the VPS, you can run:
+## One-Line Deploy From Local
 
 ```bash
 ssh root@5.78.192.196 "cd ~/ev-tracker && git pull origin main && docker compose up -d --build"
 ```
 
-## Vercel env for the browser proxy cutover
+## Vercel Env
 
-Set these in Vercel preview and production:
+Set these in preview and production:
 
 ```env
 NEXT_PUBLIC_API_URL=/api/backend
 BACKEND_BASE_URL=http://5.78.192.196
+NEXT_PUBLIC_DISCORD_INVITE_URL=https://discord.gg/your-beta-invite
 ```
 
-This keeps browser traffic same-origin through Next/Vercel while server-side bridge routes proxy to Hetzner directly. After you provision a real HTTPS backend hostname, keep `NEXT_PUBLIC_API_URL=/api/backend` and change only `BACKEND_BASE_URL`.
+This keeps browser traffic same-origin through Next while server-side bridge routes still proxy to Hetzner directly.
 
-## Env var change
+## Schema Parity Before Beta
+
+Before a trusted-beta release, confirm production has:
+
+- all migrations through `database/migration_013_pickem_research.sql`
+- `backend/sql/add_v2_surface_fields.sql` if the V2 bet identity fields are not already present
+
+This repo does not yet have one canonical migration runner, so apply outstanding SQL through your current Supabase workflow before calling the release ready.
+
+## Env Var Change
 
 After SSH'ing into the VPS:
 
@@ -62,40 +64,52 @@ cd ~/ev-tracker
 docker compose up -d --force-recreate backend_api backend_scheduler caddy
 ```
 
-Or from your local machine:
-
-```bash
-ssh root@5.78.192.196 "cd ~/ev-tracker && docker compose up -d --force-recreate backend_api backend_scheduler caddy"
-```
-
-## Remove old/orphaned containers
-
-If services were renamed and Docker reports orphans, run:
-
-```bash
-cd ~/ev-tracker
-docker compose up -d --build --remove-orphans
-```
-
-## Health check
+## Health Checks
 
 ```bash
 curl -i http://5.78.192.196/health
 curl -i http://5.78.192.196/ready
 ```
 
-## Ops checks
+## Ops Checks
 
 ```bash
 curl -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/status
 curl -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/clv-debug
+curl -X POST -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/trigger/test-discord
+curl -X POST -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/trigger/test-discord-alert
 ```
 
-## Security note
+## Beta Env Checklist
 
-Including the server IP and SSH username in this file is fine.
+Confirm these env values are present in the right place.
+
+Backend / VPS:
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `ODDS_API_KEY`
+- `CRON_TOKEN`
+- `OPS_ADMIN_EMAILS`
+- `DISCORD_WEBHOOK_URL`
+- `DISCORD_ALERT_WEBHOOK_URL`
+- `DISCORD_DEBUG_WEBHOOK_URL`
+
+Frontend / Vercel:
+
+- `NEXT_PUBLIC_API_URL`
+- `BACKEND_BASE_URL`
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `CRON_SECRET`
+- `CRON_TOKEN`
+- `OPS_ADMIN_EMAILS`
+- `NEXT_PUBLIC_DISCORD_INVITE_URL`
+
+## Security Note
 
 Do not commit:
+
 - private SSH keys
 - passwords
 - `.env` secrets

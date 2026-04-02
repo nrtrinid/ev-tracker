@@ -18,7 +18,7 @@ Recommended priority:
 1. `SUPABASE_SERVICE_ROLE_KEY`
 2. `ODDS_API_KEY`
 3. `CRON_TOKEN`
-4. Discord webhook URLs
+4. Discord webhook URLs (`DISCORD_WEBHOOK_URL`, `DISCORD_ALERT_WEBHOOK_URL`, `DISCORD_DEBUG_WEBHOOK_URL`)
 
 After rotation:
 
@@ -48,5 +48,6 @@ What you want to see:
 
 - Never paste real secrets into docs, fixtures, or examples.
 - Never commit real webhook URLs.
+- `NEXT_PUBLIC_DISCORD_INVITE_URL` is intentionally public-facing; do not treat it like a secret.
 - Prefer placeholders in `.env.example`.
 - If a credential was shared anywhere outside your local machine, assume rotation is required.

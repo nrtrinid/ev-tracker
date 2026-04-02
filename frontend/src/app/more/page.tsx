@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Calculator, Settings, Shield, ScanLine } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
+import { TrustedBetaCard } from "@/components/TrustedBetaCard";
 
 const moreLinks = [
   {
@@ -60,8 +61,9 @@ export default function MorePage() {
 
   return (
     <div className="container mx-auto px-4 py-6 max-w-2xl space-y-6">
-      <div>
+      <div className="space-y-4">
         <h1 className="text-lg font-semibold text-foreground mb-4">More</h1>
+        <TrustedBetaCard compact />
         <ul className="space-y-2">
           {moreLinks.map((item) => {
             const Icon = item.icon;

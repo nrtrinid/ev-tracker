@@ -1,8 +1,12 @@
 # Promo Lenses: How Each Promotion Type Is Modeled
 
-The scanner exposes four "lenses" — each with a distinct mathematical objective. This document explains what each lens does, why the math differs, and how to use them.
+The app exposes four promo lenses, each with a different mathematical objective.
 
-All lens logic lives in `frontend/src/app/scanner/page.tsx`.
+These lens rules power:
+
+- the manual scanner
+- home page `Promos`
+- any flow that ranks the same board-backed sides through boost, bonus-bet, or qualifier logic
 
 ---
 
@@ -12,125 +16,99 @@ All lens logic lives in `frontend/src/app/scanner/page.tsx`.
 |---|---|---|---|
 | Standard EV | Maximize expected profit | EV% | Any odds with a true edge |
 | Profit Boost | Maximize boosted EV | Boosted EV% | Odds that benefit most from multiplied payouts |
-| Bonus Bet | Maximize retained value | Retention % | Longer odds (+200 to +400) |
-| Qualifier | Minimize qualifying loss | EV% (near 0) | Restricted odds window (−250 to +150) |
+| Bonus Bet | Maximize retained value | Retention % | Longer odds with strong retention |
+| Qualifier | Minimize qualifying loss | EV% near 0 | Restricted odds window |
 
 ---
 
 ## 1. Standard EV
 
-**When to use:** You have a straight cash bet or a standard promo with no special multiplier.
-
-**Objective:** Find lines where the sharp probability exceeds the soft book's implied probability — a genuine statistical edge.
+**When to use:** You have a normal cash bet with no modifier.
 
 **Formula:**
-```
-EV% = (true_prob × book_decimal − 1) × 100
+
+```text
+EV% = (true_prob * book_decimal - 1) * 100
 ```
 
-The scanner filters to EV% > 0 and sorts descending. The "Rec Bet" sizing uses Fractional Kelly (see [methodology.md](./methodology.md)).
-
-**What to look for:** Lines where the book is slow to move after a sharp line shift. Favorites that are priced slightly softer than Pinnacle are common.
+The system sorts descending by EV%.
 
 ---
 
 ## 2. Profit Boost
 
-**When to use:** You have a profit boost token (e.g., "30% profit boost on any moneyline").
+**When to use:** You have a profit boost token.
 
-**How it works:** The boost is applied to the *profit portion* of the payout only. For a $100 bet on a +200 line with a 30% boost:
+The boost applies to the profit portion only.
 
-```
-Normal payout:   $100 + $200 profit = $300
-Boosted payout:  $100 + $200 × 1.30 = $100 + $260 = $360
-Boosted odds:    +260
-```
-
-**Formula:**
-```
-base_profit   = book_decimal − 1
-boosted_profit = base_profit × (1 + boost% / 100)
+```text
+base_profit = book_decimal - 1
+boosted_profit = base_profit * (1 + boost_pct / 100)
 boosted_decimal = 1 + boosted_profit
 
-boosted_EV% = (true_prob × boosted_decimal − 1) × 100
+boosted_EV% = (true_prob * boosted_decimal - 1) * 100
 ```
 
-The scanner sorts by `boosted_EV%` descending using the selected boost percentage (30% or 50%).
-
-**What to look for:** Lines that were borderline negative EV at true odds but become +EV after applying the boost. Boosts are most powerful on longer odds (e.g., +200 line becomes +260 at 30%) because the absolute dollar gain is larger.
-
-**Note:** Winnings caps (common on boost tokens) are handled in the `calculate_ev()` backend function but not currently surfaced in the scanner UI.
+Boosts usually help longer prices more because the multiplied profit portion is larger.
 
 ---
 
 ## 3. Bonus Bet
 
-**When to use:** You have a "bonus bet" (also called "free bet") token where the stake is not returned on a win.
+**When to use:** You are trying to maximize the retained value of a free bet / bonus bet token.
 
-**Key difference:** With a real money bet at +200, a $100 win returns $300 ($200 profit + $100 stake). With a bonus bet, the same win only returns $200 — the stake is forfeited.
+Because the original stake is not returned on a win, the right objective is retention rather than standard EV.
 
-This changes the objective entirely. You're not trying to maximize edge vs. a fair line — you're trying to maximize **how much real money you extract from the token**.
-
-**Formula:**
-```
-retention = (book_decimal − 1) × true_prob
+```text
+retention = (book_decimal - 1) * true_prob
 ```
 
-Retention is the expected fraction of the bonus bet's face value you'll receive as real cash. A retention of 0.72 means a $100 bonus bet is expected to yield $72 in real winnings.
-
-**Why longer odds?**
-
-A $100 bonus bet at +100 (decimal 2.0): `retention = 1.0 × 0.50 = 50%`  
-A $100 bonus bet at +300 (decimal 4.0): `retention = 3.0 × 0.25 = 75%`
-
-Longer odds increase the multiplier (`decimal − 1`) faster than the probability decreases. There's a sweet spot roughly between +250 and +450 where retention peaks. Beyond ~+600, the win probability gets too low.
-
-The scanner sorts by `retention` descending and shows the top 10 targets across your selected books.
-
-**Benchmark:** 70%+ retention is considered excellent. Below 60% is generally not worth it.
+Higher retention means more real-money value extracted from the token.
 
 ---
 
 ## 4. Qualifier
 
-**When to use:** A promotion requires a qualifying bet that meets specific odds criteria before unlocking a bonus (e.g., "place a $50 bet at −200 or longer to activate your free bet").
+**When to use:** You are placing the least-bad qualifying leg to unlock a bigger offer.
 
-**Objective:** The qualifier itself isn't meant to make money — it's the cost to unlock a larger promo. So the goal is to **minimize the qualifying loss**, not maximize profit.
+Typical filter:
 
-**Filter:**
+```text
+-250 <= book_odds <= +150
 ```
-−250 ≤ book_odds ≤ +150
-```
 
-This window is common across book qualifying requirements. It excludes heavy favorites (where losses are most severe) and longer odds (where variance is higher).
-
-**Sort:** Within the filtered odds window, sides are sorted by `EV%` descending. A result at −1.2% EV is better than one at −3.5% — you're looking for the least-bad qualifying option, ideally one close to 0% or slightly positive.
-
-**Strategy:**
-- If a qualifying bet is also slightly +EV (positive result in this lens), that's a free qualifier — the promotion has zero qualifying cost.
-- If a near-0% EV line is available in the window, the qualifying cost is close to the book's vig alone (~2–4%), which is minimal relative to the bonus value.
+Within the window, the system favors lines closest to zero cost.
 
 ---
 
-## Promo Calculations in the Backend
+## Logged-Bet Promo Math
 
-For bets you've already logged, `backend/calculations.py` computes `ev_per_dollar` at log time:
+For logged bets, the backend computes `ev_per_dollar` in `backend/calculations.py`.
 
-| Promo Type | `ev_per_dollar` formula |
+| Promo Type | `ev_per_dollar` intuition |
 |---|---|
-| `standard` | `−vig` (tracks expected loss vs. fair) |
-| `bonus_bet` | `1 − 1/decimal_odds` (expected return on free stake) |
-| `no_sweat` | `−vig` (cost of the qualifying leg; the refund is logged separately) |
-| `promo_qualifier` | `−vig` (same as no_sweat — minimize cost) |
-| `boost_30/50/100/custom` | `win_prob × boost_value − vig` |
+| `standard` | expected loss vs fair (vig-aware) |
+| `bonus_bet` | retained value of the free stake |
+| `no_sweat` | cost of the qualifying leg |
+| `promo_qualifier` | same qualifying-cost framing |
+| `boost_*` | win probability times boost value minus vig |
 
-The scanner's real-time lens math and the logged-bet EV math are consistent — both reference the same true probability from Pinnacle de-vigging.
+---
+
+## Board And Promos Behavior
+
+The home page `Promos` view is broader than the old shortlist-style implementation.
+
+- It merges player props with straight-bet game lines.
+- Straight-bet promos can now include moneylines, spreads, and totals.
+- Final display still depends on selected books, board inventory, and the active promo submode.
+
+So it is normal for `Promos` and `Game Lines` to overlap while still serving different ranking goals.
 
 ---
 
 ## Operational Notes
 
-- **Execution path parity:** Lens math is identical regardless of trigger source (manual scan, scheduled scan, or cron-triggered scan).
-- **Cache consistency:** Because scan results are cached per sport for 5 minutes, rapid re-runs across trigger sources usually produce the same lens candidates.
-- **Ops diagnostics:** The operator console (`/admin/ops`) and status payload (`/api/ops/status`) provide compact Odds API activity and scan recency context when promo lens results look stale or unexpectedly empty.
-- **Fallback behavior:** If the dedicated odds-activity block is temporarily unavailable, the ops UI derives fallback status from recent scan snapshots to avoid ambiguous "unknown" states.
+- Lens math stays consistent across manual scans, board-backed views, and cached results.
+- Because scan results are cached per sport, repeated runs can look identical within the TTL window.
+- Ops visibility lives in `/admin/ops` and `/api/ops/status` when promo output feels stale or unexpectedly empty.

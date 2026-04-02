@@ -6,7 +6,7 @@
 
 EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. It uses live odds from [The Odds API](https://the-odds-api.com) and Pinnacle as a sharp-line reference to surface positive expected value (+EV) opportunities across DraftKings, FanDuel, BetMGM, Caesars, and ESPN Bet — then gives you the math to size them.
 
-> **Status:** Active development. Local setup fully functional. Hosted demo coming soon.
+> **Status:** Trusted beta prep. `main` is the shareable branch for invited testers, with active iteration continuing on `dev`.
 
 ---
 
@@ -21,7 +21,7 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 | **Multi-book scanning** | One scan covers all your selected books simultaneously at no extra API cost |
 | **Full P&L tracking** | Log every bet (pre-game), settle it after, and see actual vs. expected return over time |
 | **Automation hardening** | Scheduler heartbeats + readiness freshness checks + cron fallbacks keep scans/settles reliable |
-| **Operator observability** | Internal `/admin/ops` console shows automation health, CLV tracking states, and compact Odds API activity summaries |
+| **Operator observability** | Internal `/admin/ops` console shows automation health, CLV tracking states, pick'em validation, and compact Odds API activity summaries |
 
 ---
 
@@ -35,9 +35,11 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 
 ## Feature Set
 
-### Scanner (Promo Decision Engine)
-- Full scan across NBA, NCAAB, MLB, and NHL
-- **Standard EV** lens: top +EV moneylines sorted by edge
+### Scanner And Daily Board
+- Daily-drop board powers Home across `Promos`, `Game Lines`, and `Player Props`
+- Manual straight-bet scanner across NBA, NCAAB, and MLB
+- Straight-bet cards can surface moneylines, spreads, and totals when exact-line references are available
+- **Standard EV** lens: top +EV game lines sorted by edge
 - **Profit Boost** lens: recalculates EV after applying a 30% or 50% profit multiplier
 - **Bonus Bet** lens: sorts by retention rate (`true_prob × decimal_odds`) to maximize free-bet conversion
 - **Qualifier** lens: filters odds between −250 and +150, minimizing expected qualifying loss
@@ -50,6 +52,7 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 - Player Props surface with two clear modes:
   - **Sportsbooks** for curated prop cards with consensus fair odds
   - **Pick'em** for exact-line board comparisons and matching-book support
+- Promos merges promo-ranked game lines and player props into one board view
 - Pregame-only availability messaging so stale scans explain when started games are hidden
 
 ### Bet Logging
@@ -112,7 +115,7 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 - `backend/routes/scan_routes.py` — scan endpoint routing
 - `backend/dependencies.py` — shared auth/rate-limit/ops-token dependencies
 - `backend/main.py` — FastAPI app bootstrap + scanner handler implementations
-- `frontend/src/app/scanner/page.tsx` — scanner orchestration and lens ranking
+- `frontend/src/app/scanner/[surface]/page.tsx` — scanner surface routing
 - `frontend/src/app/scanner/components/ScannerResultFilters.tsx` — scanner filter bar UI
 - `frontend/src/lib/scanner-filters.ts` — scanner result-filter helpers
 - `frontend/src/lib/kelly-context.tsx` — global Kelly/bankroll state
@@ -153,6 +156,8 @@ ENVIRONMENT=development
 LOG_LEVEL=INFO
 CRON_TOKEN=your-random-cron-token
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+DISCORD_ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...
+DISCORD_DEBUG_WEBHOOK_URL=https://discord.com/api/webhooks/...
 REDIS_URL=redis://localhost:6379/0
 ALERT_DEDUPE_TTL_SECONDS=21600
 ```
@@ -163,6 +168,7 @@ If you want external wake/trigger automation, use a scheduler (cron-job.org, Git
 - `POST /api/ops/trigger/scan` (warms scanner cache; sends Discord +EV alerts if configured)
 - `POST /api/ops/trigger/auto-settle` (grades eligible pending ML bets)
 - `POST /api/ops/trigger/test-discord` (sends a test Discord message)
+- `POST /api/ops/trigger/test-discord-alert` (sends a test alert through the alert webhook path)
 
 All operator endpoints require the header `X-Ops-Token` matching `CRON_TOKEN`.
 
@@ -216,6 +222,7 @@ BACKEND_BASE_URL=http://localhost:8000
 CRON_SECRET=your-random-cron-secret
 CRON_TOKEN=your-backend-cron-token
 OPS_ADMIN_EMAILS=ops@example.com
+NEXT_PUBLIC_DISCORD_INVITE_URL=https://discord.gg/your-beta-invite
 ```
 
 Production / preview Vercel env:
@@ -223,6 +230,17 @@ Production / preview Vercel env:
 - `BACKEND_BASE_URL=http://5.78.192.196`
 
 That keeps browser requests same-origin through the Next proxy while server-side bridge routes still forward to Hetzner directly. Once you provision a real HTTPS backend hostname, only `BACKEND_BASE_URL` needs to change.
+
+### Trusted beta checklist
+
+Before inviting testers onto `main`:
+
+- Apply database migrations through `database/migration_013_pickem_research.sql`
+- Apply `backend/sql/add_v2_surface_fields.sql` if the V2 bet identity fields are not already live
+- Confirm `OPS_ADMIN_EMAILS`, cron secrets, and Discord webhook env vars are present in production
+- Run both Discord validation routes and confirm alert/debug messages land in the right channels
+- Verify `/health`, `/ready`, and `/api/ops/status` after deploy
+- Smoke the main tester journey: sign up, browse the board, log a bet, settle a bet, and confirm balances update
 
 ### Internal operator console
 
@@ -265,7 +283,9 @@ A small but meaningful test suite protects EV math, settlement/profit logic, sch
 | [docs/methodology.md](./docs/methodology.md) | How Pinnacle lines are de-vigged and EV is calculated |
 | [docs/scanner.md](./docs/scanner.md) | End-to-end scanner pipeline |
 | [docs/promos.md](./docs/promos.md) | Math behind each promo lens |
+| [docs/player-props-v2.md](./docs/player-props-v2.md) | Curated props, pick'em board, quality gates, and board integration |
 | [docs/testing.md](./docs/testing.md) | Unit/integration/e2e strategy and hardening coverage |
+| [docs/trusted-beta.md](./docs/trusted-beta.md) | Trusted beta expectations, env checklist, and launch-day operator runbook |
 | [docs/workflow.md](./docs/workflow.md) | Lightweight stable-vs-dev workflow for solo shipping and beta testers |
 | [PROJECT.md](./PROJECT.md) | Architecture, conventions, key decisions |
 | [DEPLOY.md](./DEPLOY.md) | VPS deploy, env reload, health check |

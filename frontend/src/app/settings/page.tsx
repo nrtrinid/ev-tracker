@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, formatCurrency } from "@/lib/utils";
 import { Plus, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, Target as TargetIcon } from "lucide-react";
+import { TrustedBetaCard } from "@/components/TrustedBetaCard";
 import {
   useTransactions,
   useCreateTransaction,
@@ -548,6 +549,8 @@ export default function SettingsPage() {
                 </Button>
               </CardContent>
             </Card>
+
+            <TrustedBetaCard />
           </>
         )}
       </div>

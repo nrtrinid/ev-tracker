@@ -1,155 +1,110 @@
 # Methodology: How EV Is Calculated
 
-This document explains the mathematical foundation behind EV Betting Tracker's scanners. Straight bets and player props now use different reference models.
+This document explains the mathematical foundation behind EV Betting Tracker's pricing. Straight bets and player props use different reference models.
 
-For straight bets, Pinnacle remains the sharp reference. For player props, the V2 scanner uses a curated market-median consensus across supported books instead. See [Player Props V2](./player-props-v2.md).
+- Straight bets: Pinnacle remains the sharp reference.
+- Player props: curated cross-book consensus is the reference model.
+
+See [player-props-v2.md](./player-props-v2.md) for the props-specific approach.
 
 ---
 
 ## The Core Idea
 
-Standard sportsbooks ("soft books") like DraftKings and FanDuel build a profit margin (the "vig" or "juice") into their odds. This means their lines systematically overstate the true probability of each outcome.
+Soft books build vig into their prices. Sharp reference markets move faster and provide a better estimate of fair probability. If a target book is paying better than that fair estimate, the bet is positive expected value.
 
-Pinnacle is a "sharp book" — it accepts large bets from professional bettors and adjusts its lines aggressively in response. As a result, Pinnacle's lines serve as the market's best estimate of true outcome probabilities. By removing Pinnacle's small vig, we can derive a **no-vig fair probability** and compare it directly against soft book payouts.
-
-If the soft book is paying better than fair, we have a +EV bet.
+The home page daily board reuses this logic, even though it serves persisted snapshots instead of always hitting a live manual scan path.
 
 ---
 
-## Step 1: Odds Conversion
+## Step 1: Convert Odds
 
-All American odds are first converted to decimal:
+All American odds are converted to decimal.
 
+```text
+If odds >= 0: decimal = 1 + odds / 100
+If odds < 0:  decimal = 1 + 100 / abs(odds)
 ```
-If odds ≥ 0:   decimal = 1 + (odds / 100)
-If odds < 0:   decimal = 1 + (100 / |odds|)
-```
 
-**Examples:**
-- `+150` → `2.50`
-- `−150` → `1.667`
-- `+100` → `2.00`
+Examples:
 
-Decimal odds represent total return per $1 wagered, including the original stake.
+- `+150` -> `2.50`
+- `-150` -> `1.667`
+- `+100` -> `2.00`
 
 ---
 
-## Step 2: De-Vigging Pinnacle
+## Step 2: Remove The Vig
 
-Given Pinnacle's two-way moneyline (both sides), we remove the vig using the **additive (proportional) method**:
+For a two-way market:
 
-```
+```text
 implied_a = 1 / decimal_a
 implied_b = 1 / decimal_b
-overround  = implied_a + implied_b   # > 1.0 due to the vig
+overround = implied_a + implied_b
 
 true_prob_a = implied_a / overround
 true_prob_b = implied_b / overround
 ```
 
-The overround represents the total "extra" probability built into the line. Dividing each side by the overround strips the vig proportionally, giving true probabilities that sum to exactly 1.0.
-
-**Example:**
-
-Pinnacle posts: Home −115, Away +100
-
-```
-decimal_home = 1 + 100/115 = 1.8696
-decimal_away = 1 + 100/100 = 2.0000
-
-implied_home = 1/1.8696 = 0.5349
-implied_away = 1/2.0000 = 0.5000
-overround    = 0.5349 + 0.5000 = 1.0349
-
-true_prob_home = 0.5349 / 1.0349 = 0.5169  (51.7%)
-true_prob_away = 0.5000 / 1.0349 = 0.4831  (48.3%)
-```
-
-This implementation is in `devig_pinnacle()` in `odds_api.py`.
+This produces a no-vig probability pair that sums to 1.0.
 
 ---
 
 ## Step 3: Calculate Edge
 
-With the true probability in hand, we compare it against the soft book's payout:
-
-```
-EV = (true_prob × book_decimal) − 1
+```text
+EV = (true_prob * book_decimal) - 1
 ```
 
-This gives the expected return per $1 wagered at the soft book's odds, using our best estimate of the true probability.
-
-**Example:**
-
-DraftKings posts Home at −105 (decimal = 1.9524), true probability = 51.7%
-
-```
-EV = (0.517 × 1.9524) − 1 = 1.0094 − 1 = +0.94%
-```
-
-This means for every $100 wagered, you expect to gain $0.94 on average over many bets.
-
-A positive EV means the book's payout exceeds what the sharp market says is fair. A negative EV means the book's line is sharper than (or consistent with) Pinnacle — no edge.
+Positive EV means the book payout is better than the fair estimate implied by the sharp reference.
 
 ---
 
-## Step 4: Kelly Criterion (Bet Sizing)
+## Step 4: Kelly Sizing
 
-Once we have true probability and decimal odds, we calculate the optimal fraction of bankroll to wager using the **Kelly Criterion**:
+The system computes full Kelly first:
 
-```
-f* = (b × p − q) / b
+```text
+f* = (b * p - q) / b
 
-Where:
-  b = decimal_odds − 1   (net payout per $1 wagered)
-  p = true probability of winning
-  q = 1 − p
-```
-
-If `f* ≤ 0`, no bet is recommended.
-
-The backend returns `base_kelly_fraction` (full Kelly). The frontend multiplies by the user's `kellyMultiplier` (default: 0.25 for "quarter Kelly") and their bankroll to give a dollar recommendation:
-
-```
-recommended_bet = base_kelly_fraction × kelly_multiplier × bankroll
+where:
+  b = decimal_odds - 1
+  p = true probability
+  q = 1 - p
 ```
 
-**Why fractional Kelly?** Full Kelly maximizes long-run bankroll growth but produces very volatile swings. Quarter Kelly (0.25×) is a common practical choice that sacrifices some growth for much smoother variance.
+The frontend then applies the user's Kelly multiplier and bankroll.
 
-**Example:**
-
-DraftKings: +215 (decimal 3.15, `b` = 2.15), true prob = 32.0%
-
-```
-f* = (2.15 × 0.32 − 0.68) / 2.15 = (0.688 − 0.68) / 2.15 = 0.008 / 2.15 ≈ 0.0037
+```text
+recommended_bet = base_kelly_fraction * kelly_multiplier * bankroll
 ```
 
-With $1,000 bankroll and 0.25× multiplier: `0.0037 × 0.25 × 1000 = $0.93`
+Quarter Kelly is the default practical setting because it cuts variance materially.
 
 ---
 
-## What This Methodology Does Not Do
+## What This Does Not Do
 
-- **Doesn't account for CLV decay.** Lines move between the time you see them and when you place the bet. Always confirm odds haven't moved before placing.
-- **Doesn't model correlated legs.** Each side is evaluated independently.
-- **Doesn't adjust for low-liquidity markets.** UFC and tennis lines can be thinner, meaning Pinnacle's hold may be higher and the de-vig less precise.
-- **Moneylines only.** The scanner currently evaluates head-to-head (h2h) markets only. Spreads and totals are not included.
+- It does not guarantee a line will still be available by the time you place it.
+- It does not solve correlation between legs.
+- It does not make every thin market equally trustworthy.
+- It does not make CLV and actual game result the same thing.
+
+Straight-bet scanning now covers moneylines, spreads, and totals when an exact-line sharp reference is available, but reliability still varies by market depth and slate quality.
 
 ---
 
 ## Operational Notes
 
-- **Straight bets can run on scheduler jobs:** Math and de-vig logic are unchanged for the straight-bets path.
-- **Player props are manual-only:** The V2 prop sniper does not run on the scheduler, cache warmers, or alert cron paths.
-- **Cron fallback:** If your host sleeps or scheduler is disabled, external cron routes can trigger the same scan pipeline.
-- **Shared cache behavior:** Multiple scan triggers (manual, scheduler, cron) share the same 5-minute per-sport cache, reducing quota usage and keeping outputs consistent.
-- **Operator visibility:** `/api/ops/status` and `/admin/ops` expose compact scan/odds activity summaries (counts, recency, status) to diagnose data freshness and API reliability.
-- **No payload leakage:** Ops activity telemetry intentionally excludes raw API response payloads and secrets.
+- Straight bets can run on scheduled paths and the daily board.
+- Player props are still curated, but they now also feed the daily board, Pick'em validation, and CLV close tracking.
+- Multiple triggers share the same straight-bet cache to protect quota.
+- `/api/ops/status` and `/admin/ops` expose compact activity summaries for diagnosing freshness and API health.
 
 ---
 
 ## Further Reading
 
-- [The Kelly Criterion — Wikipedia](https://en.wikipedia.org/wiki/Kelly_criterion)
-- [De-vigging methods — Pinnacle Resources](https://www.pinnacle.com/en/betting-articles/educational/the-basics-of-betting/no-vig-fair-odds)
+- [The Kelly Criterion - Wikipedia](https://en.wikipedia.org/wiki/Kelly_criterion)
 - [The Odds API documentation](https://the-odds-api.com/liveapi/guides/v4/)

@@ -3,7 +3,26 @@
 All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).  
-Version labels use pre-release suffixes until the app is ready for outside users: `-alpha.N` (early dev), `-beta.N` (dogfooding / smoke tests), then a final `v2.2.0` when comfortable inviting others.
+Version labels use pre-release suffixes until the app is ready for outside users: `-alpha.N` (early dev), `-beta.N` (trusted beta / dogfooding), then a final `v2.2.0` when comfortable inviting others.
+
+---
+
+## [2.2.0-beta.1] - 2026-04-01
+
+### Added
+
+- **Trusted beta support surfaces**
+  - Added a reusable trusted-beta feedback card inside the app.
+  - Added a public `NEXT_PUBLIC_DISCORD_INVITE_URL` env hook for the beta Discord invite link.
+- **Trusted beta runbook**
+  - Added `docs/trusted-beta.md` with beta expectations, Discord workflow, env checklist, and launch-day operator steps.
+
+### Changed
+
+- **Docs and release posture**
+  - Updated README and supporting docs to describe the current daily-drop board, promos/game lines behavior, player props + pick'em flow, CLV tracking, and release workflow more accurately.
+  - Formalized split Discord routing for alert vs debug/test webhook usage in env examples and deploy guidance.
+  - Promoted the project framing from alpha-era setup notes to a trusted-beta launch posture for invited testers.
 
 ---
 
@@ -123,8 +142,9 @@ Version labels use pre-release suffixes until the app is ready for outside users
 
 ---
 
-[2.2.0-alpha.1]: https://github.com/your-org/ev-betting-tracker/compare/v2.1.0...v2.2.0-alpha.1
-[2.2.0-alpha.2]: https://github.com/your-org/ev-betting-tracker/compare/v2.2.0-alpha.1...v2.2.0-alpha.2
-[2.2.0-alpha.3]: https://github.com/your-org/ev-betting-tracker/compare/v2.2.0-alpha.2...v2.2.0-alpha.3
-[2.2.0-alpha.4]: https://github.com/your-org/ev-betting-tracker/compare/v2.2.0-alpha.3...v2.2.0-alpha.4
-[2.1.0]: https://github.com/your-org/ev-betting-tracker/compare/v2.0.0...v2.1.0
+[2.2.0-beta.1]: https://github.com/nrtrinid/ev-tracker/compare/v2.2.0-alpha.4...v2.2.0-beta.1
+[2.2.0-alpha.1]: https://github.com/nrtrinid/ev-tracker/compare/v2.1.0...v2.2.0-alpha.1
+[2.2.0-alpha.2]: https://github.com/nrtrinid/ev-tracker/compare/v2.2.0-alpha.1...v2.2.0-alpha.2
+[2.2.0-alpha.3]: https://github.com/nrtrinid/ev-tracker/compare/v2.2.0-alpha.2...v2.2.0-alpha.3
+[2.2.0-alpha.4]: https://github.com/nrtrinid/ev-tracker/compare/v2.2.0-alpha.3...v2.2.0-alpha.4
+[2.1.0]: https://github.com/nrtrinid/ev-tracker/compare/v2.0.0...v2.1.0

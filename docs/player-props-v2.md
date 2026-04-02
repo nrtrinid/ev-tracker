@@ -1,85 +1,66 @@
 # Player Props V2
 
-This document describes the manual-only player props scanner introduced in the V2 curated sniper sprint.
+This document describes the current curated player-props system used across the manual scanner, daily board, Pick'em validation, and CLV tracking.
 
 ## Goals
 
 - avoid unsupported Pinnacle assumptions for player props
-- keep The Odds API token usage bounded
+- keep Odds API token usage bounded
 - surface only props backed by credible cross-book consensus
-- make empty or thin runs diagnosable from the UI and logs
+- make thin or empty runs diagnosable
+- support board-time research and close tracking without lowering surfaced-card quality
 
-## Architecture
+## Core Flow
 
-1. ESPN scoreboard prefilter
-- Fetch the free ESPN NBA scoreboard window.
-- Rank up to 3 games as `national_tv`, then `nba_tv`, then `scoreboard_fallback`.
-- Never scan the full NBA slate for props.
+1. Curate NBA events instead of crawling every prop market blindly.
+2. Fetch flagship prop markets for those events.
+3. Build no-vig over/under probabilities per book.
+4. Exclude the target book from its own reference pool.
+5. Use the remaining market set to produce fair probability and fair odds.
 
-2. Odds API event mapping
-- Fetch `/v4/sports/basketball_nba/events`.
-- Match ESPN shortlist games to Odds API events by canonicalized away/home team pairs.
-- Skip unmatched games instead of broadening the search.
+## Quality Gates
 
-3. Single-event prop fetches
-- For matched events only, call `/v4/sports/basketball_nba/events/{eventId}/odds`.
-- Send all prop books in one `bookmakers=` parameter:
-  - `bovada`
-  - `betonlineag`
-  - `draftkings`
-  - `betmgm`
-  - `williamhill_us`
-  - `fanduel`
+- Surfaced sportsbook prop cards default to `PLAYER_PROP_MIN_REFERENCE_BOOKMAKERS=3`
+- Thin references still appear in diagnostics, but they do not surface as normal cards
+- CLV close capture can use the looser `PLAYER_PROP_CLV_MIN_REFERENCE_BOOKMAKERS`
 
-4. Sharp consensus math
-- For each `(market_key, player, line)` pair, compute each book's no-vig over/under probabilities.
-- When evaluating book `X`, exclude `X` from the reference pool.
-- Use the median remaining no-vig probability as `true_prob`.
-- Convert that fair probability into `reference_odds`.
+That separation is intentional:
 
-5. Quality gate
-- Default requirement: `PLAYER_PROP_MIN_REFERENCE_BOOKMAKERS=2`
-- Thin one-book references are still counted in diagnostics, but they are not surfaced by default.
+- surfaced cards should be conservative
+- logged-bet close capture should recover as many valid closes as possible
 
-## Response contract
+## Current Runtime Behavior
 
-Player prop sides use:
+Player props now participate in multiple runtime paths:
 
-- `reference_odds`
-- `reference_source`
-- `reference_bookmakers`
-- `reference_bookmaker_count`
-- `confidence_label`
+- manual scanner props at `/scanner/player_props`
+- scheduled daily-board props on the home page
+- Pick'em board generation
+- Pick'em research capture
+- logged-bet CLV close tracking
 
-The diagnostics payload also includes:
+What is still true:
 
-- `candidate_sides_count`
-- `quality_gate_filtered_count`
-- `quality_gate_min_reference_bookmakers`
+- the manual props scanner is curated, not a full prop crawl
+- surfaced prop cards require stronger consensus than CLV close capture
+- board and research paths should be treated as operationally important, not just UI extras
 
-## Manual-only rule
-
-Player props are not part of any scheduler, cache-warm, or alert cron path.
-
-- scheduled scans remain straight-bets only
-- player props should be triggered manually from `/scanner/player_props`
-- any future prop automation should be treated as a new design decision
-
-## Operator checklist
+## Operator Checklist
 
 1. Run a manual `/scanner/player_props` scan.
-2. Confirm diagnostics show shortlist -> matched -> fetched -> props counts.
-3. Confirm the page distinguishes raw props from filtered props.
-4. Confirm top cards show player, team, opponent, sportsbook, and confidence.
-5. Log one prop from the scanner and verify the bet row stores source metadata.
-6. Confirm scheduled scans still do not call the prop scanner.
+2. Confirm diagnostics show shortlist, matched events, fetched events, and surfaced side counts.
+3. Confirm `Sportsbooks` and `Pick'em` modes are both understandable.
+4. Confirm surfaced cards show player, line, sportsbook, and confidence.
+5. Log one prop and verify the bet row stores source metadata.
+6. Confirm the daily board persists props and Pick'em artifacts cleanly.
+7. Confirm logged prop bets now capture CLV close snapshots on the next valid window.
 
-## Key files
+## Key Files
 
 - `backend/services/player_props.py`
-- `backend/services/espn_scoreboard.py`
+- `backend/services/player_prop_board.py`
+- `backend/services/pickem_research.py`
 - `backend/services/odds_api.py`
-- `backend/routes/scan_routes.py`
 - `frontend/src/app/scanner/ScannerSurfacePage.tsx`
 - `frontend/src/app/scanner/components/PlayerPropCard.tsx`
-- `frontend/src/app/scanner/components/PlayerPropDiagnosticsPanel.tsx`
+- `frontend/src/app/scanner/components/PickEmBoardCard.tsx`
