@@ -77,7 +77,8 @@ function primarySelectionTitle(side: MarketSide): string {
         : Number.isInteger(lineValue)
           ? `${lineValue}`
           : `${Number.parseFloat(lineValue.toFixed(2))}`;
-    return `${sideLabel.charAt(0).toUpperCase()}${sideLabel.slice(1)}${lineLabel ? ` ${lineLabel}` : ""}`.trim();
+    const normalizedSideLabel = `${sideLabel.charAt(0).toUpperCase()}${sideLabel.slice(1)}`.trim();
+    return `Game Total ${normalizedSideLabel}${lineLabel ? ` ${lineLabel}` : ""}`.trim();
   }
   if (marketKey.includes("spreads")) {
     const lineValue = side.line_value;

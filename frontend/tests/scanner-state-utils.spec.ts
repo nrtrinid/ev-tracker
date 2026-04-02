@@ -173,7 +173,7 @@ test.describe("scanner state utils", () => {
       bankroll: 1000,
     });
 
-    expect(out.event).toBe("Over 221.5");
+    expect(out.event).toBe("Game Total Over 221.5");
     expect(out.market).toBe("Total");
     expect(out.selection_side).toBe("over");
     expect(out.line_value).toBe(221.5);
@@ -225,7 +225,7 @@ test.describe("scanner state utils", () => {
     expect(spreadLeg.marketDisplay).toBe("Spread");
     expect(spreadLeg.selectionSide).toBe("Lakers");
 
-    expect(totalLeg.display).toBe("Over 221.5");
+    expect(totalLeg.display).toBe("Game Total Over 221.5");
     expect(totalLeg.marketDisplay).toBe("Total");
     expect(totalLeg.selectionSide).toBe("over");
     expect(totalLeg.lineValue).toBe(221.5);

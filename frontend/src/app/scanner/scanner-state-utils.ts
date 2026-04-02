@@ -73,7 +73,8 @@ function formatStraightBetDisplay(side: Extract<MarketSide, { surface: "straight
   if (marketKey === "totals") {
     const sideLabel = String(side.selection_side ?? side.team ?? "").trim();
     const lineLabel = formatScannerLineValue(side.line_value);
-    return `${sideLabel.charAt(0).toUpperCase()}${sideLabel.slice(1)}${lineLabel ? ` ${lineLabel}` : ""}`.trim();
+    const normalizedSideLabel = `${sideLabel.charAt(0).toUpperCase()}${sideLabel.slice(1)}`.trim();
+    return `Game Total ${normalizedSideLabel}${lineLabel ? ` ${lineLabel}` : ""}`.trim();
   }
   return `${side.team} ML`;
 }
