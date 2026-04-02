@@ -58,8 +58,9 @@ function formatScannerLineValue(value: number | null | undefined): string {
   return `${Number.parseFloat(value.toFixed(2))}`;
 }
 
-function formatStraightBetDisplay(side: Extract<MarketSide, { surface: "straight_bets" }>): string {
+export function formatStraightBetDisplay(side: Extract<MarketSide, { surface: "straight_bets" }>): string {
   const marketKey = String(side.market_key ?? "h2h").toLowerCase();
+  const matchupLabel = String(side.event_short ?? side.event ?? "").trim();
   if (marketKey === "spreads") {
     const line = side.line_value;
     const lineLabel =
@@ -68,13 +69,15 @@ function formatStraightBetDisplay(side: Extract<MarketSide, { surface: "straight
         : line > 0
           ? ` +${formatScannerLineValue(line)}`
           : ` ${formatScannerLineValue(line)}`;
-    return `${side.team}${lineLabel}`;
+    const spreadSelection = `${side.team}${lineLabel}`.trim();
+    return matchupLabel ? `${matchupLabel} Spread: ${spreadSelection}` : spreadSelection;
   }
   if (marketKey === "totals") {
     const sideLabel = String(side.selection_side ?? side.team ?? "").trim();
     const lineLabel = formatScannerLineValue(side.line_value);
     const normalizedSideLabel = `${sideLabel.charAt(0).toUpperCase()}${sideLabel.slice(1)}`.trim();
-    return `Game Total ${normalizedSideLabel}${lineLabel ? ` ${lineLabel}` : ""}`.trim();
+    const totalSelection = `Total: ${normalizedSideLabel}${lineLabel ? ` ${lineLabel}` : ""}`.trim();
+    return matchupLabel ? `${matchupLabel} ${totalSelection}` : totalSelection;
   }
   return `${side.team} ML`;
 }

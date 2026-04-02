@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import type { MarketSide } from "@/lib/types";
 import { cn, formatOdds } from "@/lib/utils";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
+import { formatStraightBetDisplay } from "../scanner-state-utils";
 import { buildScannerActionModel, canAddScannerLensToParlayCart } from "../scanner-ui-model";
 import { getStandardEdgeColorClass } from "./scanner-card-colors";
 
@@ -67,30 +68,7 @@ function primarySelectionTitle(side: MarketSide): string {
       ""
     );
   }
-  const marketKey = String(side.market_key || "").toLowerCase();
-  if (marketKey.includes("totals")) {
-    const sideLabel = String(side.selection_side ?? side.team ?? "").trim();
-    const lineValue = side.line_value;
-    const lineLabel =
-      lineValue == null
-        ? ""
-        : Number.isInteger(lineValue)
-          ? `${lineValue}`
-          : `${Number.parseFloat(lineValue.toFixed(2))}`;
-    const normalizedSideLabel = `${sideLabel.charAt(0).toUpperCase()}${sideLabel.slice(1)}`.trim();
-    return `Game Total ${normalizedSideLabel}${lineLabel ? ` ${lineLabel}` : ""}`.trim();
-  }
-  if (marketKey.includes("spreads")) {
-    const lineValue = side.line_value;
-    const lineLabel =
-      lineValue == null
-        ? ""
-        : lineValue > 0
-          ? ` +${Number.isInteger(lineValue) ? lineValue : Number.parseFloat(lineValue.toFixed(2))}`
-          : ` ${Number.isInteger(lineValue) ? lineValue : Number.parseFloat(lineValue.toFixed(2))}`;
-    return `${(side.team?.trim() || side.team_short?.trim() || "").trim()}${lineLabel}`;
-  }
-  return (side.team?.trim() || side.team_short?.trim() || "").trim();
+  return formatStraightBetDisplay(side);
 }
 
 function formatStraightMarketLabel(side: MarketSide): string {
