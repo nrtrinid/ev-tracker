@@ -1169,31 +1169,128 @@ def _build_straight_clv_sides_for_events(*, sport_key: str, events: list[dict[st
         ct = event.get("commence_time", "")
         event_id = str(event.get("id") or "").strip()
         pin_outcomes = _extract_outcomes(event.get("bookmakers", []), SHARP_BOOK)
-        if not pin_outcomes:
-            continue
-        pin_home = pin_outcomes.get(home)
-        pin_away = pin_outcomes.get(away)
+        pin_home = pin_outcomes.get(home) if pin_outcomes else None
+        pin_away = pin_outcomes.get(away) if pin_outcomes else None
         if pin_home is not None:
             side = {
                 "surface": "straight_bets",
                 "sport": sport_key,
                 "commence_time": ct,
+                "market_key": "h2h",
                 "team": home,
+                "selection_side": "home",
                 "pinnacle_odds": pin_home,
             }
             if event_id:
                 side["event_id"] = event_id
+                side["selection_key"] = _build_straight_selection_key(
+                    event_id=event_id,
+                    market_key="h2h",
+                    selection_token=home,
+                )
             sides.append(side)
         if pin_away is not None:
             side = {
                 "surface": "straight_bets",
                 "sport": sport_key,
                 "commence_time": ct,
+                "market_key": "h2h",
                 "team": away,
+                "selection_side": "away",
                 "pinnacle_odds": pin_away,
             }
             if event_id:
                 side["event_id"] = event_id
+                side["selection_key"] = _build_straight_selection_key(
+                    event_id=event_id,
+                    market_key="h2h",
+                    selection_token=away,
+                )
+            sides.append(side)
+
+        pin_spreads_market = _extract_spreads_bookmaker_market(event.get("bookmakers", []), SHARP_BOOK, home, away)
+        if pin_spreads_market:
+            home_spread_token = _selection_line_token(pin_spreads_market["home_spread"], include_plus=True)
+            away_spread_token = _selection_line_token(pin_spreads_market["away_spread"], include_plus=True)
+            side = {
+                "surface": "straight_bets",
+                "sport": sport_key,
+                "commence_time": ct,
+                "market_key": "spreads",
+                "team": home,
+                "selection_side": "home",
+                "line_value": float(pin_spreads_market["home_spread"]),
+                "pinnacle_odds": float(pin_spreads_market["home_odds"]),
+            }
+            if event_id:
+                side["event_id"] = event_id
+                side["selection_key"] = _build_straight_selection_key(
+                    event_id=event_id,
+                    market_key="spreads",
+                    selection_token=home,
+                    line_token=home_spread_token,
+                )
+            sides.append(side)
+            side = {
+                "surface": "straight_bets",
+                "sport": sport_key,
+                "commence_time": ct,
+                "market_key": "spreads",
+                "team": away,
+                "selection_side": "away",
+                "line_value": float(pin_spreads_market["away_spread"]),
+                "pinnacle_odds": float(pin_spreads_market["away_odds"]),
+            }
+            if event_id:
+                side["event_id"] = event_id
+                side["selection_key"] = _build_straight_selection_key(
+                    event_id=event_id,
+                    market_key="spreads",
+                    selection_token=away,
+                    line_token=away_spread_token,
+                )
+            sides.append(side)
+
+        pin_totals_market = _extract_totals_bookmaker_market(event.get("bookmakers", []), SHARP_BOOK)
+        if pin_totals_market:
+            total_token = _selection_line_token(pin_totals_market["total"])
+            side = {
+                "surface": "straight_bets",
+                "sport": sport_key,
+                "commence_time": ct,
+                "market_key": "totals",
+                "team": "over",
+                "selection_side": "over",
+                "line_value": float(pin_totals_market["total"]),
+                "pinnacle_odds": float(pin_totals_market["over_odds"]),
+            }
+            if event_id:
+                side["event_id"] = event_id
+                side["selection_key"] = _build_straight_selection_key(
+                    event_id=event_id,
+                    market_key="totals",
+                    selection_token="over",
+                    line_token=total_token,
+                )
+            sides.append(side)
+            side = {
+                "surface": "straight_bets",
+                "sport": sport_key,
+                "commence_time": ct,
+                "market_key": "totals",
+                "team": "under",
+                "selection_side": "under",
+                "line_value": float(pin_totals_market["total"]),
+                "pinnacle_odds": float(pin_totals_market["under_odds"]),
+            }
+            if event_id:
+                side["event_id"] = event_id
+                side["selection_key"] = _build_straight_selection_key(
+                    event_id=event_id,
+                    market_key="totals",
+                    selection_token="under",
+                    line_token=total_token,
+                )
             sides.append(side)
     return sides
 

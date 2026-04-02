@@ -112,7 +112,7 @@ def build_reference_snapshots(sides: list[dict[str, Any]]) -> tuple[dict[tuple[s
             continue
         event_id = str(side.get("event_id") or "").strip()
         commence_time = str(side.get("commence_time") or "")
-        team = str(side.get("team") or "")
+        team = _normalize_text(side.get("team"))
         pinnacle_odds = side.get("pinnacle_odds")
         if pinnacle_odds is None or not team:
             continue
@@ -133,7 +133,7 @@ def build_reference_pair_snapshots(
             continue
         event_id = str(side.get("event_id") or "").strip()
         commence_time = str(side.get("commence_time") or "")
-        team = str(side.get("team") or "")
+        team = _normalize_text(side.get("team"))
         pinnacle_odds = side.get("pinnacle_odds")
         if pinnacle_odds is None or not team:
             continue
@@ -141,6 +141,61 @@ def build_reference_pair_snapshots(
             snapshot_by_event.setdefault(event_id, {})[team] = float(pinnacle_odds)
         if commence_time:
             snapshot_by_time.setdefault(commence_time, {})[team] = float(pinnacle_odds)
+    return snapshot_by_event, snapshot_by_time
+
+
+def _straight_pair_line_key(market_key: Any, line_value: Any) -> tuple[str, float] | None:
+    normalized_market = _normalize_text(market_key)
+    normalized_line = _normalize_line_value(line_value)
+    if normalized_market not in {"spreads", "totals"} or normalized_line is None:
+        return None
+    if normalized_market == "spreads":
+        return (normalized_market, abs(normalized_line))
+    return (normalized_market, normalized_line)
+
+
+def build_straight_exact_reference_snapshots(
+    sides: list[dict[str, Any]],
+) -> tuple[dict[tuple[str, str, str, float], float], dict[tuple[str, str, str, float], float]]:
+    snapshot_by_event: dict[tuple[str, str, str, float], float] = {}
+    snapshot_by_time: dict[tuple[str, str, str, float], float] = {}
+    for side in sides:
+        if str(side.get("surface") or "straight_bets").strip().lower() != "straight_bets":
+            continue
+        market_key = _normalize_text(side.get("market_key"))
+        team = _normalize_text(side.get("team"))
+        line_value = _normalize_line_value(side.get("line_value"))
+        pinnacle_odds = side.get("pinnacle_odds")
+        if market_key not in {"spreads", "totals"} or not team or line_value is None or pinnacle_odds is None:
+            continue
+        event_id = str(side.get("event_id") or "").strip()
+        commence_time = str(side.get("commence_time") or "")
+        if event_id:
+            snapshot_by_event[(event_id, team, market_key, line_value)] = float(pinnacle_odds)
+        if commence_time:
+            snapshot_by_time[(commence_time, team, market_key, line_value)] = float(pinnacle_odds)
+    return snapshot_by_event, snapshot_by_time
+
+
+def build_straight_exact_pair_snapshots(
+    sides: list[dict[str, Any]],
+) -> tuple[dict[tuple[str, str, float], dict[str, float]], dict[tuple[str, str, float], dict[str, float]]]:
+    snapshot_by_event: dict[tuple[str, str, float], dict[str, float]] = {}
+    snapshot_by_time: dict[tuple[str, str, float], dict[str, float]] = {}
+    for side in sides:
+        if str(side.get("surface") or "straight_bets").strip().lower() != "straight_bets":
+            continue
+        team = _normalize_text(side.get("team"))
+        pair_key = _straight_pair_line_key(side.get("market_key"), side.get("line_value"))
+        pinnacle_odds = side.get("pinnacle_odds")
+        if not team or pair_key is None or pinnacle_odds is None:
+            continue
+        event_id = str(side.get("event_id") or "").strip()
+        commence_time = str(side.get("commence_time") or "")
+        if event_id:
+            snapshot_by_event.setdefault((event_id, pair_key[0], pair_key[1]), {})[team] = float(pinnacle_odds)
+        if commence_time:
+            snapshot_by_time.setdefault((commence_time, pair_key[0], pair_key[1]), {})[team] = float(pinnacle_odds)
     return snapshot_by_event, snapshot_by_time
 
 
@@ -200,7 +255,7 @@ def lookup_reference_odds(
     snapshot_by_event: dict[tuple[str, str], float],
     snapshot_by_time: dict[tuple[str, str], float],
 ) -> float | None:
-    normalized_team = str(team or "")
+    normalized_team = _normalize_text(team)
     normalized_event_id = str(event_id or "").strip()
     normalized_commence = str(commence_time or "")
     if normalized_event_id and normalized_team:
@@ -220,7 +275,7 @@ def lookup_opposing_reference_odds(
     pair_snapshot_by_event: dict[str, dict[str, float]],
     pair_snapshot_by_time: dict[str, dict[str, float]],
 ) -> float | None:
-    normalized_team = str(team or "")
+    normalized_team = _normalize_text(team)
     normalized_event_id = str(event_id or "").strip()
     normalized_commence = str(commence_time or "")
     market = pair_snapshot_by_event.get(normalized_event_id) if normalized_event_id else None
@@ -229,6 +284,59 @@ def lookup_opposing_reference_odds(
     if not isinstance(market, dict) or len(market) < 2:
         return None
     for candidate_team, candidate_odds in market.items():
+        if candidate_team != normalized_team:
+            return float(candidate_odds)
+    return None
+
+
+def lookup_straight_exact_reference_odds(
+    *,
+    team: str | None,
+    source_market_key: str | None,
+    line_value: float | None,
+    commence_time: str | None,
+    event_id: str | None,
+    snapshot_by_event: dict[tuple[str, str, str, float], float],
+    snapshot_by_time: dict[tuple[str, str, str, float], float],
+) -> float | None:
+    normalized_team = _normalize_text(team)
+    normalized_market = _normalize_text(source_market_key)
+    normalized_line = _normalize_line_value(line_value)
+    normalized_event_id = str(event_id or "").strip()
+    normalized_commence = str(commence_time or "")
+    if normalized_market not in {"spreads", "totals"} or not normalized_team or normalized_line is None:
+        return None
+    if normalized_event_id:
+        match = snapshot_by_event.get((normalized_event_id, normalized_team, normalized_market, normalized_line))
+        if match is not None:
+            return match
+    if normalized_commence:
+        return snapshot_by_time.get((normalized_commence, normalized_team, normalized_market, normalized_line))
+    return None
+
+
+def lookup_straight_exact_opposing_reference_odds(
+    *,
+    team: str | None,
+    source_market_key: str | None,
+    line_value: float | None,
+    commence_time: str | None,
+    event_id: str | None,
+    pair_snapshot_by_event: dict[tuple[str, str, float], dict[str, float]],
+    pair_snapshot_by_time: dict[tuple[str, str, float], dict[str, float]],
+) -> float | None:
+    normalized_team = _normalize_text(team)
+    pair_key = _straight_pair_line_key(source_market_key, line_value)
+    if not normalized_team or pair_key is None:
+        return None
+    normalized_event_id = str(event_id or "").strip()
+    normalized_commence = str(commence_time or "")
+    pair = pair_snapshot_by_event.get((normalized_event_id, pair_key[0], pair_key[1])) if normalized_event_id else None
+    if not pair and normalized_commence:
+        pair = pair_snapshot_by_time.get((normalized_commence, pair_key[0], pair_key[1]))
+    if not isinstance(pair, dict):
+        return None
+    for candidate_team, candidate_odds in pair.items():
         if candidate_team != normalized_team:
             return float(candidate_odds)
     return None
@@ -326,6 +434,8 @@ def lookup_parlay_leg_reference_odds(
     *,
     straight_snapshot_by_event: dict[tuple[str, str], float],
     straight_snapshot_by_time: dict[tuple[str, str], float],
+    straight_exact_snapshot_by_event: dict[tuple[str, str, str, float], float],
+    straight_exact_snapshot_by_time: dict[tuple[str, str, str, float], float],
     prop_snapshot_by_event: dict[tuple[str, str, str, str, float], float],
     prop_snapshot_by_time: dict[tuple[str, str, str, str, float], float],
 ) -> float | None:
@@ -351,9 +461,25 @@ def lookup_parlay_leg_reference_odds(
             snapshot_by_event=prop_snapshot_by_event,
             snapshot_by_time=prop_snapshot_by_time,
         )
+    source_market_key = leg.get("sourceMarketKey") or leg.get("source_market_key")
+    line_value = _normalize_line_value(
+        leg.get("lineValue") if leg.get("lineValue") is not None else leg.get("line_value")
+    )
     team = leg.get("team")
     if not team:
         return None
+    if _normalize_text(source_market_key) in {"spreads", "totals"} and line_value is not None:
+        match = lookup_straight_exact_reference_odds(
+            team=team,
+            source_market_key=source_market_key,
+            line_value=line_value,
+            commence_time=commence or None,
+            event_id=event_id or None,
+            snapshot_by_event=straight_exact_snapshot_by_event,
+            snapshot_by_time=straight_exact_snapshot_by_time,
+        )
+        if match is not None:
+            return match
     return lookup_reference_odds(
         team=team,
         commence_time=commence or None,
@@ -369,6 +495,8 @@ def _update_parlay_bet_leg_snapshots(
     sports_set: set[str],
     straight_snapshot_by_event: dict[tuple[str, str], float],
     straight_snapshot_by_time: dict[tuple[str, str], float],
+    straight_exact_snapshot_by_event: dict[tuple[str, str, str, float], float],
+    straight_exact_snapshot_by_time: dict[tuple[str, str, str, float], float],
     prop_snapshot_by_event: dict[tuple[str, str, str, str, float], float],
     prop_snapshot_by_time: dict[tuple[str, str, str, str, float], float],
     allow_close: bool,
@@ -417,6 +545,8 @@ def _update_parlay_bet_leg_snapshots(
                 leg_out,
                 straight_snapshot_by_event=straight_snapshot_by_event,
                 straight_snapshot_by_time=straight_snapshot_by_time,
+                straight_exact_snapshot_by_event=straight_exact_snapshot_by_event,
+                straight_exact_snapshot_by_time=straight_exact_snapshot_by_time,
                 prop_snapshot_by_event=prop_snapshot_by_event,
                 prop_snapshot_by_time=prop_snapshot_by_time,
             )
@@ -476,13 +606,17 @@ def update_bet_reference_snapshots(
         return {"latest_updated": 0, "close_updated": 0}
 
     straight_snapshot_by_event, straight_snapshot_by_time = build_reference_snapshots(sides)
+    straight_exact_snapshot_by_event, straight_exact_snapshot_by_time = build_straight_exact_reference_snapshots(sides)
     prop_snapshot_by_event, prop_snapshot_by_time = build_prop_reference_snapshots(sides)
     straight_pair_by_event, straight_pair_by_time = build_reference_pair_snapshots(sides)
+    straight_exact_pair_by_event, straight_exact_pair_by_time = build_straight_exact_pair_snapshots(sides)
     prop_pair_by_event, prop_pair_by_time = build_prop_reference_pair_snapshots(sides)
 
     if (
         not straight_snapshot_by_event
         and not straight_snapshot_by_time
+        and not straight_exact_snapshot_by_event
+        and not straight_exact_snapshot_by_time
         and not prop_snapshot_by_event
         and not prop_snapshot_by_time
     ):
@@ -494,7 +628,7 @@ def update_bet_reference_snapshots(
         db.table("bets")
         .select(
             "id,result,surface,commence_time,clv_event_id,source_event_id,clv_sport_key,clv_team,"
-            "participant_name,source_market_key,selection_side,line_value,odds_american,"
+            "participant_name,source_market_key,source_selection_key,selection_side,line_value,odds_american,"
             "latest_pinnacle_odds,latest_pinnacle_updated_at,pinnacle_odds_at_close,clv_updated_at"
         )
         .eq("result", "pending")
@@ -536,21 +670,42 @@ def update_bet_reference_snapshots(
         else:
             if not row.get("clv_team"):
                 continue
-
-            reference_odds = lookup_reference_odds(
-                team=row.get("clv_team"),
-                commence_time=row.get("commence_time"),
-                event_id=row.get("clv_event_id"),
-                snapshot_by_event=straight_snapshot_by_event,
-                snapshot_by_time=straight_snapshot_by_time,
-            )
-            opposing_reference_odds = lookup_opposing_reference_odds(
-                team=row.get("clv_team"),
-                commence_time=row.get("commence_time"),
-                event_id=row.get("clv_event_id"),
-                pair_snapshot_by_event=straight_pair_by_event,
-                pair_snapshot_by_time=straight_pair_by_time,
-            )
+            market_key = _normalize_text(row.get("source_market_key"))
+            line_value = _normalize_line_value(row.get("line_value"))
+            if market_key in {"spreads", "totals"} and line_value is not None:
+                reference_odds = lookup_straight_exact_reference_odds(
+                    team=row.get("clv_team"),
+                    source_market_key=row.get("source_market_key"),
+                    line_value=line_value,
+                    commence_time=row.get("commence_time"),
+                    event_id=row.get("source_event_id") or row.get("clv_event_id"),
+                    snapshot_by_event=straight_exact_snapshot_by_event,
+                    snapshot_by_time=straight_exact_snapshot_by_time,
+                )
+                opposing_reference_odds = lookup_straight_exact_opposing_reference_odds(
+                    team=row.get("clv_team"),
+                    source_market_key=row.get("source_market_key"),
+                    line_value=line_value,
+                    commence_time=row.get("commence_time"),
+                    event_id=row.get("source_event_id") or row.get("clv_event_id"),
+                    pair_snapshot_by_event=straight_exact_pair_by_event,
+                    pair_snapshot_by_time=straight_exact_pair_by_time,
+                )
+            else:
+                reference_odds = lookup_reference_odds(
+                    team=row.get("clv_team"),
+                    commence_time=row.get("commence_time"),
+                    event_id=row.get("clv_event_id"),
+                    snapshot_by_event=straight_snapshot_by_event,
+                    snapshot_by_time=straight_snapshot_by_time,
+                )
+                opposing_reference_odds = lookup_opposing_reference_odds(
+                    team=row.get("clv_team"),
+                    commence_time=row.get("commence_time"),
+                    event_id=row.get("clv_event_id"),
+                    pair_snapshot_by_event=straight_pair_by_event,
+                    pair_snapshot_by_time=straight_pair_by_time,
+                )
 
         if reference_odds is None:
             continue
@@ -568,17 +723,10 @@ def update_bet_reference_snapshots(
             now=current,
             allow_retroactive_close_capture=allow_retroactive_close_capture,
         ):
-            clv_result = calculate_clv(
-                float(row.get("odds_american")),
-                float(reference_odds),
-                opposing_reference_odds,
-            ) if row.get("odds_american") is not None else None
             payload.update(
                 {
                     "pinnacle_odds_at_close": reference_odds,
                     "clv_updated_at": updated_at,
-                    "clv_ev_percent": clv_result["clv_ev_percent"] if isinstance(clv_result, dict) else None,
-                    "beat_close": clv_result["beat_close"] if isinstance(clv_result, dict) else None,
                 }
             )
             close_updated += 1
@@ -590,6 +738,8 @@ def update_bet_reference_snapshots(
         sports_set=sports_set,
         straight_snapshot_by_event=straight_snapshot_by_event,
         straight_snapshot_by_time=straight_snapshot_by_time,
+        straight_exact_snapshot_by_event=straight_exact_snapshot_by_event,
+        straight_exact_snapshot_by_time=straight_exact_snapshot_by_time,
         prop_snapshot_by_event=prop_snapshot_by_event,
         prop_snapshot_by_time=prop_snapshot_by_time,
         allow_close=allow_close,
@@ -613,10 +763,19 @@ def update_scan_opportunity_reference_snapshots(
         return {"latest_updated": 0, "close_updated": 0}
 
     straight_snapshot_by_event, straight_snapshot_by_time = build_reference_snapshots(sides)
+    straight_exact_snapshot_by_event, straight_exact_snapshot_by_time = build_straight_exact_reference_snapshots(sides)
     prop_snapshot_by_event, prop_snapshot_by_time = build_prop_reference_snapshots(sides)
     straight_pair_by_event, straight_pair_by_time = build_reference_pair_snapshots(sides)
+    straight_exact_pair_by_event, straight_exact_pair_by_time = build_straight_exact_pair_snapshots(sides)
     prop_pair_by_event, prop_pair_by_time = build_prop_reference_pair_snapshots(sides)
-    if not straight_snapshot_by_event and not straight_snapshot_by_time and not prop_snapshot_by_event and not prop_snapshot_by_time:
+    if (
+        not straight_snapshot_by_event
+        and not straight_snapshot_by_time
+        and not straight_exact_snapshot_by_event
+        and not straight_exact_snapshot_by_time
+        and not prop_snapshot_by_event
+        and not prop_snapshot_by_time
+    ):
         return {"latest_updated": 0, "close_updated": 0}
 
     from services.research_opportunities import is_missing_scan_opportunities_error
@@ -667,20 +826,42 @@ def update_scan_opportunity_reference_snapshots(
                 pair_snapshot_by_time=prop_pair_by_time,
             )
         else:
-            reference_odds = lookup_reference_odds(
-                team=row.get("team"),
-                commence_time=row.get("commence_time"),
-                event_id=row.get("event_id"),
-                snapshot_by_event=straight_snapshot_by_event,
-                snapshot_by_time=straight_snapshot_by_time,
-            )
-            opposing_reference_odds = lookup_opposing_reference_odds(
-                team=row.get("team"),
-                commence_time=row.get("commence_time"),
-                event_id=row.get("event_id"),
-                pair_snapshot_by_event=straight_pair_by_event,
-                pair_snapshot_by_time=straight_pair_by_time,
-            )
+            market_key = _normalize_text(row.get("source_market_key"))
+            line_value = _normalize_line_value(row.get("line_value"))
+            if market_key in {"spreads", "totals"} and line_value is not None:
+                reference_odds = lookup_straight_exact_reference_odds(
+                    team=row.get("team"),
+                    source_market_key=row.get("source_market_key"),
+                    line_value=line_value,
+                    commence_time=row.get("commence_time"),
+                    event_id=row.get("event_id"),
+                    snapshot_by_event=straight_exact_snapshot_by_event,
+                    snapshot_by_time=straight_exact_snapshot_by_time,
+                )
+                opposing_reference_odds = lookup_straight_exact_opposing_reference_odds(
+                    team=row.get("team"),
+                    source_market_key=row.get("source_market_key"),
+                    line_value=line_value,
+                    commence_time=row.get("commence_time"),
+                    event_id=row.get("event_id"),
+                    pair_snapshot_by_event=straight_exact_pair_by_event,
+                    pair_snapshot_by_time=straight_exact_pair_by_time,
+                )
+            else:
+                reference_odds = lookup_reference_odds(
+                    team=row.get("team"),
+                    commence_time=row.get("commence_time"),
+                    event_id=row.get("event_id"),
+                    snapshot_by_event=straight_snapshot_by_event,
+                    snapshot_by_time=straight_snapshot_by_time,
+                )
+                opposing_reference_odds = lookup_opposing_reference_odds(
+                    team=row.get("team"),
+                    commence_time=row.get("commence_time"),
+                    event_id=row.get("event_id"),
+                    pair_snapshot_by_event=straight_pair_by_event,
+                    pair_snapshot_by_time=straight_pair_by_time,
+                )
         if reference_odds is None:
             continue
 

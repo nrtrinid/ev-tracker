@@ -113,16 +113,35 @@ class _DB:
         return _Query(self, name)
 
 
-def _bookmaker_event(book_key, home, away, home_price, away_price):
-    return {
-        "key": book_key,
-        "markets": [{
+def _bookmaker_event(book_key, home, away, home_price=None, away_price=None, *, spread=None, total=None):
+    markets = []
+    if home_price is not None and away_price is not None:
+        markets.append({
             "key": "h2h",
             "outcomes": [
                 {"name": home, "price": home_price},
                 {"name": away, "price": away_price},
             ],
-        }],
+        })
+    if isinstance(spread, dict):
+        markets.append({
+            "key": "spreads",
+            "outcomes": [
+                {"name": home, "price": spread["home_price"], "point": spread["home_line"]},
+                {"name": away, "price": spread["away_price"], "point": spread["away_line"]},
+            ],
+        })
+    if isinstance(total, dict):
+        markets.append({
+            "key": "totals",
+            "outcomes": [
+                {"name": "Over", "price": total["over_price"], "point": total["line"]},
+                {"name": "Under", "price": total["under_price"], "point": total["line"]},
+            ],
+        })
+    return {
+        "key": book_key,
+        "markets": markets,
     }
 
 
@@ -162,6 +181,8 @@ def test_update_clv_snapshots_prefers_event_id_and_updates_latest_only_outside_c
     assert updated == 1
     assert db.tables["bets"][0]["latest_pinnacle_odds"] == -105
     assert db.tables["bets"][0]["pinnacle_odds_at_close"] is None
+    assert all("beat_close" not in update for update in db.updates["bets"])
+    assert all("clv_ev_percent" not in update for update in db.updates["bets"])
 
 
 def test_update_clv_snapshots_falls_back_to_time_team_when_event_id_misses():
@@ -838,6 +859,104 @@ async def test_fetch_clv_for_pending_bets_updates_player_prop_bets(monkeypatch):
     assert updated == 1
     assert db.tables["bets"][0]["latest_pinnacle_odds"] == -114
     assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -114
+
+
+@pytest.mark.asyncio
+async def test_run_jit_clv_snatcher_updates_straight_total_bets(monkeypatch):
+    mod = _reload_odds_api()
+    commence_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    db = _DB(
+        bets=[
+            {
+                "id": 60,
+                "result": "pending",
+                "surface": "straight_bets",
+                "clv_sport_key": "basketball_nba",
+                "clv_team": "over",
+                "source_market_key": "totals",
+                "line_value": 219.5,
+                "commence_time": commence_time,
+                "clv_event_id": "evt-total-jit",
+                "pinnacle_odds_at_close": None,
+                "odds_american": -102,
+            }
+        ],
+    )
+
+    async def _fake_fetch_odds(_sport_key, source="jit_clv"):
+        event = {
+            "id": "evt-total-jit",
+            "home_team": "Team Total A",
+            "away_team": "Team Total B",
+            "commence_time": commence_time,
+            "bookmakers": [
+                _bookmaker_event(
+                    mod.SHARP_BOOK,
+                    "Team Total A",
+                    "Team Total B",
+                    spread={"home_line": -4.5, "away_line": 4.5, "home_price": -110, "away_price": -110},
+                    total={"line": 219.5, "over_price": -114, "under_price": -106},
+                ),
+            ],
+        }
+        return [event], None
+
+    monkeypatch.setattr(mod, "fetch_odds", _fake_fetch_odds)
+
+    updated = await mod.run_jit_clv_snatcher(db)
+
+    assert updated == 1
+    assert db.tables["bets"][0]["latest_pinnacle_odds"] == -114
+    assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -114
+
+
+@pytest.mark.asyncio
+async def test_run_jit_clv_snatcher_updates_straight_spread_bets(monkeypatch):
+    mod = _reload_odds_api()
+    commence_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    db = _DB(
+        bets=[
+            {
+                "id": 61,
+                "result": "pending",
+                "surface": "straight_bets",
+                "clv_sport_key": "basketball_nba",
+                "clv_team": "Team Spread A",
+                "source_market_key": "spreads",
+                "line_value": -4.5,
+                "commence_time": commence_time,
+                "clv_event_id": "evt-spread-jit",
+                "pinnacle_odds_at_close": None,
+                "odds_american": -105,
+            }
+        ],
+    )
+
+    async def _fake_fetch_odds(_sport_key, source="jit_clv"):
+        event = {
+            "id": "evt-spread-jit",
+            "home_team": "Team Spread A",
+            "away_team": "Team Spread B",
+            "commence_time": commence_time,
+            "bookmakers": [
+                _bookmaker_event(
+                    mod.SHARP_BOOK,
+                    "Team Spread A",
+                    "Team Spread B",
+                    spread={"home_line": -4.5, "away_line": 4.5, "home_price": -118, "away_price": 102},
+                    total={"line": 221.5, "over_price": -110, "under_price": -110},
+                ),
+            ],
+        }
+        return [event], None
+
+    monkeypatch.setattr(mod, "fetch_odds", _fake_fetch_odds)
+
+    updated = await mod.run_jit_clv_snatcher(db)
+
+    assert updated == 1
+    assert db.tables["bets"][0]["latest_pinnacle_odds"] == -118
+    assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -118
 
 
 @pytest.mark.asyncio
