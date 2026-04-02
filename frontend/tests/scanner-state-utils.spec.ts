@@ -156,7 +156,7 @@ test.describe("scanner state utils", () => {
       bankroll: 1000,
     });
 
-    expect(out.event).toBe("Lakers @ Warriors Spread: Lakers +4.5");
+    expect(out.event).toBe("Lakers +4.5");
     expect(out.market).toBe("Spread");
     expect(out.selection_side).toBe("Lakers");
     expect(out.line_value).toBe(4.5);
@@ -173,7 +173,7 @@ test.describe("scanner state utils", () => {
       bankroll: 1000,
     });
 
-    expect(out.event).toBe("Lakers @ Warriors Total: Over 221.5");
+    expect(out.event).toBe("Over 221.5");
     expect(out.market).toBe("Total");
     expect(out.selection_side).toBe("over");
     expect(out.line_value).toBe(221.5);
@@ -221,11 +221,11 @@ test.describe("scanner state utils", () => {
     const spreadLeg = buildParlayCartLeg(BASE_SPREAD_SIDE);
     const totalLeg = buildParlayCartLeg(BASE_TOTAL_SIDE);
 
-    expect(spreadLeg.display).toBe("Lakers @ Warriors Spread: Lakers +4.5");
+    expect(spreadLeg.display).toBe("Lakers +4.5");
     expect(spreadLeg.marketDisplay).toBe("Spread");
     expect(spreadLeg.selectionSide).toBe("Lakers");
 
-    expect(totalLeg.display).toBe("Lakers @ Warriors Total: Over 221.5");
+    expect(totalLeg.display).toBe("Over 221.5");
     expect(totalLeg.marketDisplay).toBe("Total");
     expect(totalLeg.selectionSide).toBe("over");
     expect(totalLeg.lineValue).toBe(221.5);

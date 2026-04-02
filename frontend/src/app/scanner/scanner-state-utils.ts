@@ -60,7 +60,6 @@ function formatScannerLineValue(value: number | null | undefined): string {
 
 export function formatStraightBetDisplay(side: Extract<MarketSide, { surface: "straight_bets" }>): string {
   const marketKey = String(side.market_key ?? "h2h").toLowerCase();
-  const matchupLabel = String(side.event_short ?? side.event ?? "").trim();
   if (marketKey === "spreads") {
     const line = side.line_value;
     const lineLabel =
@@ -69,15 +68,13 @@ export function formatStraightBetDisplay(side: Extract<MarketSide, { surface: "s
         : line > 0
           ? ` +${formatScannerLineValue(line)}`
           : ` ${formatScannerLineValue(line)}`;
-    const spreadSelection = `${side.team}${lineLabel}`.trim();
-    return matchupLabel ? `${matchupLabel} Spread: ${spreadSelection}` : spreadSelection;
+    return `${side.team}${lineLabel}`.trim();
   }
   if (marketKey === "totals") {
     const sideLabel = String(side.selection_side ?? side.team ?? "").trim();
     const lineLabel = formatScannerLineValue(side.line_value);
     const normalizedSideLabel = `${sideLabel.charAt(0).toUpperCase()}${sideLabel.slice(1)}`.trim();
-    const totalSelection = `Total: ${normalizedSideLabel}${lineLabel ? ` ${lineLabel}` : ""}`.trim();
-    return matchupLabel ? `${matchupLabel} ${totalSelection}` : totalSelection;
+    return `${normalizedSideLabel}${lineLabel ? ` ${lineLabel}` : ""}`.trim();
   }
   return `${side.team} ML`;
 }
