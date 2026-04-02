@@ -102,6 +102,29 @@ def test_build_discord_payload_tiers():
     assert any(f["name"] == "Tier" and f["value"] == "HIGH EDGE" for f in high_embed["fields"])
 
 
+def test_build_board_drop_alert_payload():
+    mod = _reload_discord_alerts()
+
+    payload = mod.build_board_drop_alert_payload(
+        window_label="Early-Look / Injury-Watch Scan",
+        anchor_time_mst="10:30",
+        result={
+            "props_sides": 24,
+            "straight_sides": 11,
+            "featured_games_count": 9,
+        },
+    )
+
+    embed = payload["embeds"][0]
+    assert embed["title"] == "Trusted Beta Board Live"
+    assert "10:30 MST" in embed["description"]
+    fields = {field["name"]: field["value"] for field in embed["fields"]}
+    assert fields["Player Props"] == "24"
+    assert fields["Game Lines"] == "11"
+    assert fields["Featured Games"] == "9"
+    assert "Open EV Tracker" in fields["Open Board"]
+
+
 def test_schedule_alerts_dedupes(monkeypatch):
     mod = _reload_discord_alerts()
     mod.ALERTED_KEYS.clear()

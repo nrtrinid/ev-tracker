@@ -668,6 +668,20 @@ async def _apply_fresh_board_drop_followups(result: dict, *, source: str) -> Non
     await _piggyback_clv(fresh_sides)
 
 
+def _schedule_board_drop_alert(*, result: dict | None, window_label: str, anchor_time_mst: str | None) -> None:
+    if not isinstance(result, dict) or not result.get("ok"):
+        return
+
+    from services.discord_alerts import build_board_drop_alert_payload, send_discord_webhook
+
+    payload = build_board_drop_alert_payload(
+        window_label=window_label,
+        anchor_time_mst=anchor_time_mst,
+        result=result,
+    )
+    asyncio.create_task(send_discord_webhook(payload, message_type="alert"))
+
+
 def _get_environment() -> str:
     return os.getenv("ENVIRONMENT", "production").lower()
 
@@ -1320,6 +1334,11 @@ async def _run_scheduled_scan_job():
                     log_event=_log_event,
                 )
                 await _apply_fresh_board_drop_followups(result, source="scheduled_board_drop")
+                _schedule_board_drop_alert(
+                    result=result,
+                    window_label="Late-Afternoon / Final-Context Scan",
+                    anchor_time_mst="15:30",
+                )
     except Exception as e:
         _log_event(
             "scheduler.daily_board.failed",
@@ -1404,27 +1423,6 @@ async def _run_scheduled_scan_job():
         },
     )
 
-    # Optional heartbeat so we can confirm the daily board ran.
-    if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1" and hard_errors == 0:
-        from services.discord_alerts import send_discord_webhook
-
-        total_sides = (result or {}).get("props_sides") if isinstance(result, dict) else None
-        payload = {
-            "embeds": [
-                {
-                    "title": "Daily board drop complete",
-                    "description": "Late-Afternoon / Final-Context Scan ran successfully.",
-                    "fields": [
-                        {"name": "Started (UTC)", "value": started, "inline": True},
-                        {"name": "Finished (UTC)", "value": finished, "inline": True},
-                        {"name": "Props sides", "value": str(total_sides), "inline": True},
-                    ],
-                }
-            ]
-        }
-        asyncio.create_task(send_discord_webhook(payload, message_type="heartbeat"))
-
-
 async def _run_early_look_scan_job():
     """Early-Look board scan: pre-main-drop injury/context pulse."""
     from services.daily_board import run_daily_board_drop
@@ -1464,6 +1462,11 @@ async def _run_early_look_scan_job():
                     log_event=_log_event,
                 )
                 await _apply_fresh_board_drop_followups(result, source="scheduled_board_drop_early_look")
+                _schedule_board_drop_alert(
+                    result=result,
+                    window_label="Early-Look / Injury-Watch Scan",
+                    anchor_time_mst="10:30",
+                )
     except Exception as e:
         _log_event(
             "scheduler.daily_board.early_look.failed",

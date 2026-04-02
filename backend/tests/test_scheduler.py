@@ -169,6 +169,95 @@ async def test_scheduled_scan_job_piggybacks_clv_for_fresh_board_sides(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_scheduled_scan_job_sends_board_drop_alert(monkeypatch):
+    import asyncio as real_asyncio
+    import services.discord_alerts as discord_alerts
+    import services.daily_board as daily_board
+
+    main = import_main_for_tests(monkeypatch)
+    created_tasks = []
+    sent = []
+    original_create_task = real_asyncio.create_task
+
+    async def _fake_daily_board_drop(*_args, **_kwargs):
+        return {
+            "ok": True,
+            "props_sides": 12,
+            "straight_sides": 7,
+            "featured_games_count": 6,
+            "selected_event_ids": ["evt-1"],
+            "fresh_straight_sides": [{"surface": "straight_bets", "team": "Lakers"}],
+            "fresh_prop_sides": [{"surface": "player_props", "player_name": "Nikola Jokic"}],
+        }
+
+    async def _fake_send_discord_webhook(payload, message_type="alert"):
+        sent.append((payload, message_type))
+        return None
+
+    def _fake_create_task(coro):
+        task = original_create_task(coro)
+        created_tasks.append(task)
+        return task
+
+    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
+    monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
+    monkeypatch.setattr(main.asyncio, "create_task", _fake_create_task, raising=True)
+
+    await main._run_scheduled_scan_job()
+    if created_tasks:
+        await real_asyncio.gather(*created_tasks)
+
+    assert sent
+    assert any(message_type == "alert" for _payload, message_type in sent)
+    alert_payload = next(payload for payload, message_type in sent if message_type == "alert")
+    assert alert_payload["embeds"][0]["title"] == "Trusted Beta Board Live"
+
+
+@pytest.mark.asyncio
+async def test_early_look_scan_job_sends_board_drop_alert(monkeypatch):
+    import asyncio as real_asyncio
+    import services.discord_alerts as discord_alerts
+    import services.daily_board as daily_board
+
+    main = import_main_for_tests(monkeypatch)
+    created_tasks = []
+    sent = []
+    original_create_task = real_asyncio.create_task
+
+    async def _fake_daily_board_drop(*_args, **_kwargs):
+        return {
+            "ok": True,
+            "props_sides": 9,
+            "straight_sides": 5,
+            "featured_games_count": 4,
+            "selected_event_ids": ["evt-1"],
+            "fresh_straight_sides": [],
+            "fresh_prop_sides": [],
+        }
+
+    async def _fake_send_discord_webhook(payload, message_type="alert"):
+        sent.append((payload, message_type))
+        return None
+
+    def _fake_create_task(coro):
+        task = original_create_task(coro)
+        created_tasks.append(task)
+        return task
+
+    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
+    monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
+    monkeypatch.setattr(main.asyncio, "create_task", _fake_create_task, raising=True)
+
+    await main._run_early_look_scan_job()
+    if created_tasks:
+        await real_asyncio.gather(*created_tasks)
+
+    assert sent
+    alert_payload = next(payload for payload, message_type in sent if message_type == "alert")
+    assert "10:30 MST" in alert_payload["embeds"][0]["description"]
+
+
+@pytest.mark.asyncio
 async def test_scheduled_scan_job_never_calls_player_props_scanner(monkeypatch):
     main = import_main_for_tests(monkeypatch)
 

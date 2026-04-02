@@ -99,6 +99,43 @@ def build_scanner_deeplink(side: dict[str, Any]) -> str:
     return f"{FRONTEND_BASE_URL}/scanner?{urlencode(params)}"
 
 
+def build_board_deeplink() -> str:
+    return FRONTEND_BASE_URL.rstrip("/") + "/"
+
+
+def build_board_drop_alert_payload(
+    *,
+    window_label: str,
+    anchor_time_mst: str | None,
+    result: dict[str, Any] | None,
+) -> dict[str, Any]:
+    snapshot = result if isinstance(result, dict) else {}
+    link = build_board_deeplink()
+
+    props_sides = int(snapshot.get("props_sides") or 0)
+    straight_sides = int(snapshot.get("straight_sides") or 0)
+    featured_games = int(snapshot.get("featured_games_count") or 0)
+
+    anchor_suffix = f" ({anchor_time_mst} MST)" if anchor_time_mst else ""
+    description = f"{window_label}{anchor_suffix} just published."
+
+    return {
+        "embeds": [
+            {
+                "title": "Trusted Beta Board Live",
+                "description": description,
+                "url": link,
+                "fields": [
+                    {"name": "Player Props", "value": str(props_sides), "inline": True},
+                    {"name": "Game Lines", "value": str(straight_sides), "inline": True},
+                    {"name": "Featured Games", "value": str(featured_games), "inline": True},
+                    {"name": "Open Board", "value": f"[Open EV Tracker]({link})", "inline": False},
+                ],
+            }
+        ]
+    }
+
+
 def build_discord_payload(side: dict[str, Any]) -> dict[str, Any]:
     sport = str(side.get("sport", ""))
     event = str(side.get("event", ""))

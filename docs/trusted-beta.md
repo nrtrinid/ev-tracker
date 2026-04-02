@@ -19,12 +19,12 @@ Discord is the primary beta support channel.
 Suggested structure:
 
 - `#beta-feedback` for user reactions and bugs
-- `#beta-alerts` for alert-webhook traffic
+- `#beta-alerts` for board-drop notifications
 - `#beta-debug` or `#ops` for test/debug/heartbeat traffic
 
 Recommended routing:
 
-- `DISCORD_ALERT_WEBHOOK_URL` -> alert/beta-alerts channel
+- `DISCORD_ALERT_WEBHOOK_URL` -> alert/beta-alerts channel for the `10:30` and `15:30` board drops
 - `DISCORD_DEBUG_WEBHOOK_URL` -> debug/ops channel
 - `DISCORD_WEBHOOK_URL` -> fallback only
 

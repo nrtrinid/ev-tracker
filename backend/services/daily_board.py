@@ -715,10 +715,13 @@ async def run_daily_board_drop(
         "selected_event_ids": selected_event_ids,
         "props_scan_event_ids": full_slate_event_ids,
         "selected_games": selected_games,
+        "straight_sides": len(straight_sides),
         "props_sides": len(props_sides),
         "featured_games_count": len(featured_nba_games) + len(featured_cbb_games) + len(featured_mlb_games),
         "props_events_scanned": len(full_slate_event_ids),
         "duration_ms": duration_ms,
+        "fresh_straight_sides_count": len(straight_aggregate.get("fresh_sides") or []),
+        "fresh_prop_sides_count": len(props_sides) if isinstance(props_sides, list) else 0,
         "fresh_straight_sides": straight_aggregate.get("fresh_sides") or [],
         "fresh_prop_sides": props_sides if isinstance(props_sides, list) else [],
     }
