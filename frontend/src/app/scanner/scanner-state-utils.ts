@@ -52,6 +52,39 @@ function fairAmericanFromTrueProbability(trueProb: number | null | undefined): n
   return decimalToAmerican(1 / trueProb);
 }
 
+function formatScannerLineValue(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "";
+  if (Number.isInteger(value)) return `${value}`;
+  return `${Number.parseFloat(value.toFixed(2))}`;
+}
+
+function formatStraightBetDisplay(side: Extract<MarketSide, { surface: "straight_bets" }>): string {
+  const marketKey = String(side.market_key ?? "h2h").toLowerCase();
+  if (marketKey === "spreads") {
+    const line = side.line_value;
+    const lineLabel =
+      line == null || !Number.isFinite(line)
+        ? ""
+        : line > 0
+          ? ` +${formatScannerLineValue(line)}`
+          : ` ${formatScannerLineValue(line)}`;
+    return `${side.team}${lineLabel}`;
+  }
+  if (marketKey === "totals") {
+    const sideLabel = String(side.selection_side ?? side.team ?? "").trim();
+    const lineLabel = formatScannerLineValue(side.line_value);
+    return `${sideLabel.charAt(0).toUpperCase()}${sideLabel.slice(1)}${lineLabel ? ` ${lineLabel}` : ""}`.trim();
+  }
+  return `${side.team} ML`;
+}
+
+function formatStraightBetMarketDisplay(side: Extract<MarketSide, { surface: "straight_bets" }>): string {
+  const marketKey = String(side.market_key ?? "h2h").toLowerCase();
+  if (marketKey === "spreads") return "Spread";
+  if (marketKey === "totals") return "Total";
+  return "Moneyline";
+}
+
 export function buildScannerLogBetInitialValues(params: {
   side: MarketSide;
   activeLens: ScannerLens;
@@ -116,24 +149,35 @@ export function buildScannerLogBetInitialValues(params: {
     };
   }
 
+  const straightDisplay = formatStraightBetDisplay(side);
+  const straightMarket = formatStraightBetMarketDisplay(side);
+  const straightSelectionSide = side.market_key === "totals" ? (side.selection_side ?? side.team) : side.team;
+
   return {
     surface: side.surface,
     sportsbook: side.sportsbook,
     sport: sportDisplay,
-    event: `${side.team} ML`,
-    market: "ML",
+    event: straightDisplay,
+    market: straightMarket,
     odds_american: side.book_odds,
     promo_type: promoType,
     boost_percent: boostPct,
     pinnacle_odds_at_entry: side.pinnacle_odds,
     commence_time: side.commence_time,
-    clv_team: side.team,
+    clv_team: side.market_key === "totals" ? straightSelectionSide : side.team,
     clv_sport_key: side.sport,
     clv_event_id: side.event_id ?? undefined,
     source_event_id: side.event_id ?? undefined,
     source_market_key: side.market_key ?? "h2h",
     source_selection_key: side.selection_key ?? undefined,
-    selection_side: side.team,
+    selection_side: straightSelectionSide,
+    line_value: side.line_value ?? undefined,
+    selection_meta: {
+      marketKey: side.market_key ?? "h2h",
+      display: straightDisplay,
+      sportsbookDeeplinkUrl: side.sportsbook_deeplink_url,
+      sportsbookDeeplinkLevel: side.sportsbook_deeplink_level,
+    },
     true_prob_at_entry: side.true_prob,
     raw_kelly_stake: rawKellyStake,
     stealth_kelly_stake: stealthKellyStake,
@@ -184,6 +228,9 @@ export function buildParlayCartLeg(side: MarketSide): ParlayCartLeg {
 
   const selectionKey = side.selection_key ?? `${side.event_id ?? side.commence_time}:${side.team}`;
   const deviggedFairOdds = fairAmericanFromTrueProbability(side.true_prob);
+  const straightDisplay = formatStraightBetDisplay(side);
+  const straightMarketDisplay = formatStraightBetMarketDisplay(side);
+  const straightSelectionSide = side.market_key === "totals" ? (side.selection_side ?? side.team) : side.team;
   return {
     id: `${side.surface}:${selectionKey}:${side.sportsbook}`,
     surface: side.surface,
@@ -195,14 +242,15 @@ export function buildParlayCartLeg(side: MarketSide): ParlayCartLeg {
     referenceOddsAmerican: deviggedFairOdds ?? side.pinnacle_odds,
     referenceTrueProbability: side.true_prob,
     referenceSource: "pinnacle",
-    display: `${side.team} ML`,
+    display: straightDisplay,
     event: side.event,
     sport: side.sport,
     commenceTime: side.commence_time,
-    correlationTags: [side.event_id ?? side.event, side.team],
+    correlationTags: [side.event_id ?? side.event, side.selection_key ?? `${side.market_key ?? "h2h"}:${straightDisplay}`],
     team: side.team,
-    selectionSide: side.team,
-    marketDisplay: "Moneyline",
+    selectionSide: straightSelectionSide,
+    lineValue: side.line_value ?? undefined,
+    marketDisplay: straightMarketDisplay,
     sourceEventId: side.event_id ?? undefined,
     sourceMarketKey: side.market_key ?? "h2h",
     sourceSelectionKey: selectionKey,

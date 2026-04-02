@@ -207,6 +207,8 @@ export interface StraightBetMarketSide {
   event_id?: string | null;
   market_key?: string;
   selection_key?: string | null;
+  selection_side?: string | null;
+  line_value?: number | null;
   sportsbook: string;
   sportsbook_deeplink_url?: string | null;
   sportsbook_deeplink_level?: SportsbookDeeplinkLevel | null;

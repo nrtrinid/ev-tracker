@@ -62,6 +62,24 @@ const BASE_PROP_SIDE: MarketSide = {
   matched_pending_bet_id: null,
 };
 
+const BASE_SPREAD_SIDE: MarketSide = {
+  ...BASE_SIDE,
+  market_key: "spreads",
+  selection_key: "evt-1|spreads|lakers|+4.5",
+  team: "Lakers",
+  selection_side: "home",
+  line_value: 4.5,
+};
+
+const BASE_TOTAL_SIDE: MarketSide = {
+  ...BASE_SIDE,
+  market_key: "totals",
+  selection_key: "evt-1|totals|over|221.5",
+  team: "Over",
+  selection_side: "over",
+  line_value: 221.5,
+};
+
 test.describe("scanner state utils", () => {
   test("toggleScannerBookSelection keeps at least one selected book", async () => {
     expect(toggleScannerBookSelection(["DraftKings"], "DraftKings")).toEqual(["DraftKings"]);
@@ -128,6 +146,39 @@ test.describe("scanner state utils", () => {
     expect(out.source_selection_key).toBe("evt-2|player_points|jokic|over|24.5");
   });
 
+  test("buildScannerLogBetInitialValues preserves spread line metadata", async () => {
+    const out = buildScannerLogBetInitialValues({
+      side: BASE_SPREAD_SIDE,
+      activeLens: "standard",
+      boostPercent: 30,
+      sportDisplayMap: { basketball_nba: "NBA" },
+      kellyMultiplier: 1,
+      bankroll: 1000,
+    });
+
+    expect(out.event).toBe("Lakers +4.5");
+    expect(out.market).toBe("Spread");
+    expect(out.selection_side).toBe("Lakers");
+    expect(out.line_value).toBe(4.5);
+    expect(out.source_market_key).toBe("spreads");
+  });
+
+  test("buildScannerLogBetInitialValues preserves totals metadata", async () => {
+    const out = buildScannerLogBetInitialValues({
+      side: BASE_TOTAL_SIDE,
+      activeLens: "standard",
+      boostPercent: 30,
+      sportDisplayMap: { basketball_nba: "NBA" },
+      kellyMultiplier: 1,
+      bankroll: 1000,
+    });
+
+    expect(out.event).toBe("Over 221.5");
+    expect(out.market).toBe("Total");
+    expect(out.selection_side).toBe("over");
+    expect(out.line_value).toBe(221.5);
+  });
+
   test("buildParlayCartLeg builds stable ids for props", async () => {
     const out = buildParlayCartLeg(BASE_PROP_SIDE);
 
@@ -164,6 +215,20 @@ test.describe("scanner state utils", () => {
     expect(out.referenceOddsAmerican).toBe(240);
     expect(out.referenceTrueProbability).toBeCloseTo(100 / 340, 8);
     expect(out.selectionMeta).toMatchObject({ rawPinnacleOdds: 227 });
+  });
+
+  test("buildParlayCartLeg formats spread and total legs distinctly", async () => {
+    const spreadLeg = buildParlayCartLeg(BASE_SPREAD_SIDE);
+    const totalLeg = buildParlayCartLeg(BASE_TOTAL_SIDE);
+
+    expect(spreadLeg.display).toBe("Lakers +4.5");
+    expect(spreadLeg.marketDisplay).toBe("Spread");
+    expect(spreadLeg.selectionSide).toBe("Lakers");
+
+    expect(totalLeg.display).toBe("Over 221.5");
+    expect(totalLeg.marketDisplay).toBe("Total");
+    expect(totalLeg.selectionSide).toBe("over");
+    expect(totalLeg.lineValue).toBe(221.5);
   });
 
   test("buildParlayCartLegFromPickEmCard maps consensus winner into a pick'em slip leg", async () => {

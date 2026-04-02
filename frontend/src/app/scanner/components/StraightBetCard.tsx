@@ -67,6 +67,28 @@ function primarySelectionTitle(side: MarketSide): string {
       ""
     );
   }
+  const marketKey = String(side.market_key || "").toLowerCase();
+  if (marketKey.includes("totals")) {
+    const sideLabel = String(side.selection_side ?? side.team ?? "").trim();
+    const lineValue = side.line_value;
+    const lineLabel =
+      lineValue == null
+        ? ""
+        : Number.isInteger(lineValue)
+          ? `${lineValue}`
+          : `${Number.parseFloat(lineValue.toFixed(2))}`;
+    return `${sideLabel.charAt(0).toUpperCase()}${sideLabel.slice(1)}${lineLabel ? ` ${lineLabel}` : ""}`.trim();
+  }
+  if (marketKey.includes("spreads")) {
+    const lineValue = side.line_value;
+    const lineLabel =
+      lineValue == null
+        ? ""
+        : lineValue > 0
+          ? ` +${Number.isInteger(lineValue) ? lineValue : Number.parseFloat(lineValue.toFixed(2))}`
+          : ` ${Number.isInteger(lineValue) ? lineValue : Number.parseFloat(lineValue.toFixed(2))}`;
+    return `${(side.team?.trim() || side.team_short?.trim() || "").trim()}${lineLabel}`;
+  }
   return (side.team?.trim() || side.team_short?.trim() || "").trim();
 }
 

@@ -651,9 +651,21 @@ async def fetch_odds(
 
 
 def _extract_totals_market(bookmakers: list[dict], book_key: str) -> dict | None:
+    market = _extract_totals_bookmaker_market(bookmakers, book_key)
+    if not market:
+        return None
+    return {
+        "total": market["total"],
+        "over_odds": market["over_odds"],
+        "under_odds": market["under_odds"],
+    }
+
+
+def _extract_totals_bookmaker_market(bookmakers: list[dict], book_key: str) -> dict | None:
     for bm in bookmakers:
         if bm.get("key") != book_key:
             continue
+        event_link = bm.get("link") or bm.get("url")
         for market in bm.get("markets", []):
             if market.get("key") != "totals":
                 continue
@@ -679,14 +691,33 @@ def _extract_totals_market(bookmakers: list[dict], book_key: str) -> dict | None
                 "total": point_over,
                 "over_odds": over_price,
                 "under_odds": under_price,
+                "selection_links": {
+                    "over": over.get("link") or over.get("url"),
+                    "under": under.get("link") or under.get("url"),
+                },
+                "market_link": market.get("link") or market.get("url"),
+                "event_link": event_link,
             }
     return None
 
 
 def _extract_spreads_market(bookmakers: list[dict], book_key: str, home_team: str, away_team: str) -> dict | None:
+    market = _extract_spreads_bookmaker_market(bookmakers, book_key, home_team, away_team)
+    if not market:
+        return None
+    return {
+        "home_spread": market["home_spread"],
+        "away_spread": market["away_spread"],
+        "home_odds": market["home_odds"],
+        "away_odds": market["away_odds"],
+    }
+
+
+def _extract_spreads_bookmaker_market(bookmakers: list[dict], book_key: str, home_team: str, away_team: str) -> dict | None:
     for bm in bookmakers:
         if bm.get("key") != book_key:
             continue
+        event_link = bm.get("link") or bm.get("url")
         for market in bm.get("markets", []):
             if market.get("key") != "spreads":
                 continue
@@ -710,6 +741,12 @@ def _extract_spreads_market(bookmakers: list[dict], book_key: str, home_team: st
                 "away_spread": away_spread,
                 "home_odds": home_price,
                 "away_odds": away_price,
+                "selection_links": {
+                    home_team: home.get("link") or home.get("url"),
+                    away_team: away.get("link") or away.get("url"),
+                },
+                "market_link": market.get("link") or market.get("url"),
+                "event_link": event_link,
             }
     return None
 
@@ -1885,6 +1922,57 @@ def get_last_auto_settler_summary() -> dict | None:
     return _LAST_AUTO_SETTLER_SUMMARY
 
 
+def _selection_key_token(value: str | None) -> str:
+    raw = str(value or "").strip().lower()
+    return "".join(ch for ch in raw if ch.isalnum())
+
+
+def _selection_line_token(value: float | int | None, *, include_plus: bool = False) -> str | None:
+    if value is None:
+        return None
+    try:
+        numeric = float(value)
+    except Exception:
+        return None
+    token = f"{numeric:.2f}".rstrip("0").rstrip(".")
+    if include_plus and numeric > 0 and not token.startswith("+"):
+        return f"+{token}"
+    return token
+
+
+def _build_straight_selection_key(
+    *,
+    event_id: str | None,
+    market_key: str,
+    selection_token: str,
+    line_token: str | None = None,
+) -> str:
+    parts = [
+        str(event_id or "").strip().lower(),
+        str(market_key or "").strip().lower(),
+        _selection_key_token(selection_token),
+    ]
+    if line_token:
+        parts.append(str(line_token).strip().lower())
+    return "|".join(parts)
+
+
+async def _fetch_scan_all_sides_odds(sport: str, source: str) -> tuple[list[dict], httpx.Response]:
+    try:
+        return await fetch_odds(
+            sport,
+            source=source,
+            markets="h2h,spreads,totals",
+            regions="us,us2",
+            endpoint=f"/sports/{sport}/odds?markets=h2h,spreads,totals",
+        )
+    except TypeError as exc:
+        message = str(exc)
+        if "unexpected keyword argument" not in message and "positional arguments but" not in message:
+            raise
+        return await fetch_odds(sport, source=source)
+
+
 async def scan_all_sides(sport: str = "basketball_nba", source: str = "unknown") -> dict:
     """
     Return ALL matched sides between Pinnacle and every target book with
@@ -1892,7 +1980,7 @@ async def scan_all_sides(sport: str = "basketball_nba", source: str = "unknown")
     Unlike scan_for_ev, this doesn't filter to +EV only — the frontend
     applies promo-specific lens math.
     """
-    data, resp = await fetch_odds(sport, source=source)
+    data, resp = await _fetch_scan_all_sides_odds(sport, source)
     events = data if isinstance(data, list) else []
     all_sides = []
     events_with_any_book = 0
@@ -1905,15 +1993,19 @@ async def scan_all_sides(sport: str = "basketball_nba", source: str = "unknown")
         away = event["away_team"]
         commence = event.get("commence_time", "")
         if commence:
-          try:
-              # The Odds API returns ISO like "2026-03-19T01:30:00Z"
-              commence_dt = datetime.fromisoformat(str(commence).replace("Z", "+00:00"))
-              if commence_dt <= pregame_cutoff:
-                  continue
-          except Exception:
-              # If commence_time is missing/invalid, keep the event rather than dropping silently.
-              pass
+            try:
+                # The Odds API returns ISO like "2026-03-19T01:30:00Z"
+                commence_dt = datetime.fromisoformat(str(commence).replace("Z", "+00:00"))
+                if commence_dt <= pregame_cutoff:
+                    continue
+            except Exception:
+                # If commence_time is missing/invalid, keep the event rather than dropping silently.
+                pass
 
+        event_id = str(event.get("id") or "").strip() or None
+        sport_key = event.get("sport_key", sport)
+        event_label = f"{away} @ {home}"
+        event_short = build_short_event_label(sport_key, away, home)
         pin_outcomes = _extract_outcomes(event.get("bookmakers", []), SHARP_BOOK)
         if not pin_outcomes:
             continue
@@ -1932,105 +2024,297 @@ async def scan_all_sides(sport: str = "basketball_nba", source: str = "unknown")
         else:
             true_probs = devig_pinnacle(pin_home, pin_away)
             true_prob_draw = None
+        pin_spreads_market = _extract_spreads_bookmaker_market(event.get("bookmakers", []), SHARP_BOOK, home, away)
+        pin_totals_market = _extract_totals_bookmaker_market(event.get("bookmakers", []), SHARP_BOOK)
         had_any_book = False
 
         for book_key, book_display in TARGET_BOOKS.items():
             book_market = _extract_h2h_bookmaker_market(event.get("bookmakers", []), book_key)
-            if not book_market:
-                continue
-            book_outcomes = book_market["outcomes"]
+            if book_market:
+                book_outcomes = book_market["outcomes"]
 
-            book_home = book_outcomes.get(home)
-            book_away = book_outcomes.get(away)
-            if None in (book_home, book_away):
-                continue
+                book_home = book_outcomes.get(home)
+                book_away = book_outcomes.get(away)
+                if None not in (book_home, book_away):
+                    had_any_book = True
 
-            had_any_book = True
-
-            home_edge = calculate_edge(true_probs["team_a"], book_home)
-            away_edge = calculate_edge(true_probs["team_b"], book_away)
-            home_link, home_link_level = resolve_sportsbook_deeplink(
-                sportsbook=book_display,
-                selection_link=book_market["selection_links"].get(home),
-                market_link=book_market["market_link"],
-                event_link=book_market["event_link"],
-            )
-            away_link, away_link_level = resolve_sportsbook_deeplink(
-                sportsbook=book_display,
-                selection_link=book_market["selection_links"].get(away),
-                market_link=book_market["market_link"],
-                event_link=book_market["event_link"],
-            )
-
-            all_sides.append({
-                "event_id": event.get("id"),
-                "sportsbook": book_display,
-                "sportsbook_deeplink_url": home_link,
-                "sportsbook_deeplink_level": home_link_level,
-                "sport": event.get("sport_key", sport),
-                "event": f"{away} @ {home}",
-                "event_short": build_short_event_label(event.get("sport_key", sport), away, home),
-                "commence_time": commence,
-                "team": home,
-                "team_short": canonical_short_name(event.get("sport_key", sport), home),
-                "opponent_short": canonical_short_name(event.get("sport_key", sport), away),
-                "pinnacle_odds": pin_home,
-                "book_odds": book_home,
-                "true_prob": home_edge["true_prob"],
-                "base_kelly_fraction": round(kelly_fraction(home_edge["true_prob"], home_edge["book_decimal"]), 6),
-                "book_decimal": home_edge["book_decimal"],
-                "ev_percentage": home_edge["ev_percentage"],
-            })
-
-            all_sides.append({
-                "event_id": event.get("id"),
-                "sportsbook": book_display,
-                "sportsbook_deeplink_url": away_link,
-                "sportsbook_deeplink_level": away_link_level,
-                "sport": event.get("sport_key", sport),
-                "event": f"{away} @ {home}",
-                "event_short": build_short_event_label(event.get("sport_key", sport), away, home),
-                "commence_time": commence,
-                "team": away,
-                "team_short": canonical_short_name(event.get("sport_key", sport), away),
-                "opponent_short": canonical_short_name(event.get("sport_key", sport), home),
-                "pinnacle_odds": pin_away,
-                "book_odds": book_away,
-                "true_prob": away_edge["true_prob"],
-                "base_kelly_fraction": round(kelly_fraction(away_edge["true_prob"], away_edge["book_decimal"]), 6),
-                "book_decimal": away_edge["book_decimal"],
-                "ev_percentage": away_edge["ev_percentage"],
-            })
-
-            if true_prob_draw is not None:
-                book_draw_key = _find_draw_key(book_outcomes, home, away)
-                if book_draw_key and book_draw_key in book_outcomes:
-                    draw_edge = calculate_edge(true_prob_draw, book_outcomes[book_draw_key])
-                    draw_link, draw_link_level = resolve_sportsbook_deeplink(
+                    home_edge = calculate_edge(true_probs["team_a"], book_home)
+                    away_edge = calculate_edge(true_probs["team_b"], book_away)
+                    home_link, home_link_level = resolve_sportsbook_deeplink(
                         sportsbook=book_display,
-                        selection_link=book_market["selection_links"].get(book_draw_key),
+                        selection_link=book_market["selection_links"].get(home),
                         market_link=book_market["market_link"],
                         event_link=book_market["event_link"],
                     )
+                    away_link, away_link_level = resolve_sportsbook_deeplink(
+                        sportsbook=book_display,
+                        selection_link=book_market["selection_links"].get(away),
+                        market_link=book_market["market_link"],
+                        event_link=book_market["event_link"],
+                    )
+
                     all_sides.append({
-                        "event_id": event.get("id"),
+                        "event_id": event_id,
+                        "market_key": "h2h",
+                        "selection_key": _build_straight_selection_key(
+                            event_id=event_id,
+                            market_key="h2h",
+                            selection_token=home,
+                        ),
+                        "selection_side": "home",
                         "sportsbook": book_display,
-                        "sportsbook_deeplink_url": draw_link,
-                        "sportsbook_deeplink_level": draw_link_level,
-                        "sport": event.get("sport_key", sport),
-                        "event": f"{away} @ {home}",
-                        "event_short": build_short_event_label(event.get("sport_key", sport), away, home),
+                        "sportsbook_deeplink_url": home_link,
+                        "sportsbook_deeplink_level": home_link_level,
+                        "sport": sport_key,
+                        "event": event_label,
+                        "event_short": event_short,
                         "commence_time": commence,
-                        "team": book_draw_key,
-                        "team_short": canonical_short_name(event.get("sport_key", sport), book_draw_key),
-                        "opponent_short": None,
-                        "pinnacle_odds": pin_outcomes[draw_key],
-                        "book_odds": book_outcomes[book_draw_key],
-                        "true_prob": draw_edge["true_prob"],
-                        "base_kelly_fraction": round(kelly_fraction(draw_edge["true_prob"], draw_edge["book_decimal"]), 6),
-                        "book_decimal": draw_edge["book_decimal"],
-                        "ev_percentage": draw_edge["ev_percentage"],
+                        "team": home,
+                        "team_short": canonical_short_name(sport_key, home),
+                        "opponent_short": canonical_short_name(sport_key, away),
+                        "pinnacle_odds": pin_home,
+                        "book_odds": book_home,
+                        "true_prob": home_edge["true_prob"],
+                        "base_kelly_fraction": round(kelly_fraction(home_edge["true_prob"], home_edge["book_decimal"]), 6),
+                        "book_decimal": home_edge["book_decimal"],
+                        "ev_percentage": home_edge["ev_percentage"],
                     })
+
+                    all_sides.append({
+                        "event_id": event_id,
+                        "market_key": "h2h",
+                        "selection_key": _build_straight_selection_key(
+                            event_id=event_id,
+                            market_key="h2h",
+                            selection_token=away,
+                        ),
+                        "selection_side": "away",
+                        "sportsbook": book_display,
+                        "sportsbook_deeplink_url": away_link,
+                        "sportsbook_deeplink_level": away_link_level,
+                        "sport": sport_key,
+                        "event": event_label,
+                        "event_short": event_short,
+                        "commence_time": commence,
+                        "team": away,
+                        "team_short": canonical_short_name(sport_key, away),
+                        "opponent_short": canonical_short_name(sport_key, home),
+                        "pinnacle_odds": pin_away,
+                        "book_odds": book_away,
+                        "true_prob": away_edge["true_prob"],
+                        "base_kelly_fraction": round(kelly_fraction(away_edge["true_prob"], away_edge["book_decimal"]), 6),
+                        "book_decimal": away_edge["book_decimal"],
+                        "ev_percentage": away_edge["ev_percentage"],
+                    })
+
+                    if true_prob_draw is not None:
+                        book_draw_key = _find_draw_key(book_outcomes, home, away)
+                        if book_draw_key and book_draw_key in book_outcomes:
+                            draw_edge = calculate_edge(true_prob_draw, book_outcomes[book_draw_key])
+                            draw_link, draw_link_level = resolve_sportsbook_deeplink(
+                                sportsbook=book_display,
+                                selection_link=book_market["selection_links"].get(book_draw_key),
+                                market_link=book_market["market_link"],
+                                event_link=book_market["event_link"],
+                            )
+                            all_sides.append({
+                                "event_id": event_id,
+                                "market_key": "h2h",
+                                "selection_key": _build_straight_selection_key(
+                                    event_id=event_id,
+                                    market_key="h2h",
+                                    selection_token=book_draw_key,
+                                ),
+                                "selection_side": "draw",
+                                "sportsbook": book_display,
+                                "sportsbook_deeplink_url": draw_link,
+                                "sportsbook_deeplink_level": draw_link_level,
+                                "sport": sport_key,
+                                "event": event_label,
+                                "event_short": event_short,
+                                "commence_time": commence,
+                                "team": book_draw_key,
+                                "team_short": canonical_short_name(sport_key, book_draw_key),
+                                "opponent_short": None,
+                                "pinnacle_odds": pin_outcomes[draw_key],
+                                "book_odds": book_outcomes[book_draw_key],
+                                "true_prob": draw_edge["true_prob"],
+                                "base_kelly_fraction": round(kelly_fraction(draw_edge["true_prob"], draw_edge["book_decimal"]), 6),
+                                "book_decimal": draw_edge["book_decimal"],
+                                "ev_percentage": draw_edge["ev_percentage"],
+                            })
+
+            book_spreads_market = _extract_spreads_bookmaker_market(event.get("bookmakers", []), book_key, home, away)
+            if (
+                pin_spreads_market
+                and book_spreads_market
+                and abs(float(pin_spreads_market["home_spread"]) - float(book_spreads_market["home_spread"])) <= 0.01
+                and abs(float(pin_spreads_market["away_spread"]) - float(book_spreads_market["away_spread"])) <= 0.01
+            ):
+                had_any_book = True
+                spread_true_probs = devig_pinnacle(
+                    float(pin_spreads_market["home_odds"]),
+                    float(pin_spreads_market["away_odds"]),
+                )
+                home_spread_edge = calculate_edge(spread_true_probs["team_a"], float(book_spreads_market["home_odds"]))
+                away_spread_edge = calculate_edge(spread_true_probs["team_b"], float(book_spreads_market["away_odds"]))
+                home_spread_link, home_spread_link_level = resolve_sportsbook_deeplink(
+                    sportsbook=book_display,
+                    selection_link=(book_spreads_market.get("selection_links") or {}).get(home),
+                    market_link=book_spreads_market.get("market_link"),
+                    event_link=book_spreads_market.get("event_link"),
+                )
+                away_spread_link, away_spread_link_level = resolve_sportsbook_deeplink(
+                    sportsbook=book_display,
+                    selection_link=(book_spreads_market.get("selection_links") or {}).get(away),
+                    market_link=book_spreads_market.get("market_link"),
+                    event_link=book_spreads_market.get("event_link"),
+                )
+                home_spread_token = _selection_line_token(book_spreads_market["home_spread"], include_plus=True)
+                away_spread_token = _selection_line_token(book_spreads_market["away_spread"], include_plus=True)
+
+                all_sides.append({
+                    "event_id": event_id,
+                    "market_key": "spreads",
+                    "selection_key": _build_straight_selection_key(
+                        event_id=event_id,
+                        market_key="spreads",
+                        selection_token=home,
+                        line_token=home_spread_token,
+                    ),
+                    "selection_side": "home",
+                    "line_value": float(book_spreads_market["home_spread"]),
+                    "sportsbook": book_display,
+                    "sportsbook_deeplink_url": home_spread_link,
+                    "sportsbook_deeplink_level": home_spread_link_level,
+                    "sport": sport_key,
+                    "event": event_label,
+                    "event_short": event_short,
+                    "commence_time": commence,
+                    "team": home,
+                    "team_short": canonical_short_name(sport_key, home),
+                    "opponent_short": canonical_short_name(sport_key, away),
+                    "pinnacle_odds": float(pin_spreads_market["home_odds"]),
+                    "book_odds": float(book_spreads_market["home_odds"]),
+                    "true_prob": home_spread_edge["true_prob"],
+                    "base_kelly_fraction": round(kelly_fraction(home_spread_edge["true_prob"], home_spread_edge["book_decimal"]), 6),
+                    "book_decimal": home_spread_edge["book_decimal"],
+                    "ev_percentage": home_spread_edge["ev_percentage"],
+                })
+
+                all_sides.append({
+                    "event_id": event_id,
+                    "market_key": "spreads",
+                    "selection_key": _build_straight_selection_key(
+                        event_id=event_id,
+                        market_key="spreads",
+                        selection_token=away,
+                        line_token=away_spread_token,
+                    ),
+                    "selection_side": "away",
+                    "line_value": float(book_spreads_market["away_spread"]),
+                    "sportsbook": book_display,
+                    "sportsbook_deeplink_url": away_spread_link,
+                    "sportsbook_deeplink_level": away_spread_link_level,
+                    "sport": sport_key,
+                    "event": event_label,
+                    "event_short": event_short,
+                    "commence_time": commence,
+                    "team": away,
+                    "team_short": canonical_short_name(sport_key, away),
+                    "opponent_short": canonical_short_name(sport_key, home),
+                    "pinnacle_odds": float(pin_spreads_market["away_odds"]),
+                    "book_odds": float(book_spreads_market["away_odds"]),
+                    "true_prob": away_spread_edge["true_prob"],
+                    "base_kelly_fraction": round(kelly_fraction(away_spread_edge["true_prob"], away_spread_edge["book_decimal"]), 6),
+                    "book_decimal": away_spread_edge["book_decimal"],
+                    "ev_percentage": away_spread_edge["ev_percentage"],
+                })
+
+            book_totals_market = _extract_totals_bookmaker_market(event.get("bookmakers", []), book_key)
+            if (
+                pin_totals_market
+                and book_totals_market
+                and abs(float(pin_totals_market["total"]) - float(book_totals_market["total"])) <= 0.01
+            ):
+                had_any_book = True
+                totals_true_probs = devig_pinnacle(
+                    float(pin_totals_market["over_odds"]),
+                    float(pin_totals_market["under_odds"]),
+                )
+                over_edge = calculate_edge(totals_true_probs["team_a"], float(book_totals_market["over_odds"]))
+                under_edge = calculate_edge(totals_true_probs["team_b"], float(book_totals_market["under_odds"]))
+                total_token = _selection_line_token(book_totals_market["total"])
+                over_link, over_link_level = resolve_sportsbook_deeplink(
+                    sportsbook=book_display,
+                    selection_link=(book_totals_market.get("selection_links") or {}).get("over"),
+                    market_link=book_totals_market.get("market_link"),
+                    event_link=book_totals_market.get("event_link"),
+                )
+                under_link, under_link_level = resolve_sportsbook_deeplink(
+                    sportsbook=book_display,
+                    selection_link=(book_totals_market.get("selection_links") or {}).get("under"),
+                    market_link=book_totals_market.get("market_link"),
+                    event_link=book_totals_market.get("event_link"),
+                )
+
+                all_sides.append({
+                    "event_id": event_id,
+                    "market_key": "totals",
+                    "selection_key": _build_straight_selection_key(
+                        event_id=event_id,
+                        market_key="totals",
+                        selection_token="over",
+                        line_token=total_token,
+                    ),
+                    "selection_side": "over",
+                    "line_value": float(book_totals_market["total"]),
+                    "sportsbook": book_display,
+                    "sportsbook_deeplink_url": over_link,
+                    "sportsbook_deeplink_level": over_link_level,
+                    "sport": sport_key,
+                    "event": event_label,
+                    "event_short": event_short,
+                    "commence_time": commence,
+                    "team": "Over",
+                    "team_short": None,
+                    "opponent_short": None,
+                    "pinnacle_odds": float(pin_totals_market["over_odds"]),
+                    "book_odds": float(book_totals_market["over_odds"]),
+                    "true_prob": over_edge["true_prob"],
+                    "base_kelly_fraction": round(kelly_fraction(over_edge["true_prob"], over_edge["book_decimal"]), 6),
+                    "book_decimal": over_edge["book_decimal"],
+                    "ev_percentage": over_edge["ev_percentage"],
+                })
+
+                all_sides.append({
+                    "event_id": event_id,
+                    "market_key": "totals",
+                    "selection_key": _build_straight_selection_key(
+                        event_id=event_id,
+                        market_key="totals",
+                        selection_token="under",
+                        line_token=total_token,
+                    ),
+                    "selection_side": "under",
+                    "line_value": float(book_totals_market["total"]),
+                    "sportsbook": book_display,
+                    "sportsbook_deeplink_url": under_link,
+                    "sportsbook_deeplink_level": under_link_level,
+                    "sport": sport_key,
+                    "event": event_label,
+                    "event_short": event_short,
+                    "commence_time": commence,
+                    "team": "Under",
+                    "team_short": None,
+                    "opponent_short": None,
+                    "pinnacle_odds": float(pin_totals_market["under_odds"]),
+                    "book_odds": float(book_totals_market["under_odds"]),
+                    "true_prob": under_edge["true_prob"],
+                    "base_kelly_fraction": round(kelly_fraction(under_edge["true_prob"], under_edge["book_decimal"]), 6),
+                    "book_decimal": under_edge["book_decimal"],
+                    "ev_percentage": under_edge["ev_percentage"],
+                })
 
         if had_any_book:
             events_with_any_book += 1

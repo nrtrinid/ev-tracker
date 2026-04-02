@@ -31,7 +31,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { cn } from "@/lib/utils";
+import { americanToDecimal, cn } from "@/lib/utils";
 import type {
   MarketSide,
   PlayerPropBoardItem,
@@ -280,10 +280,15 @@ type SpreadOffer = {
 };
 
 type FeaturedLineGame = {
+  event_id?: string | null;
   event: string;
   event_short?: string;
   sport: string;
   commence_time: string;
+  away_team?: string;
+  away_team_short?: string;
+  home_team?: string;
+  home_team_short?: string;
   h2h_offers: H2HOffer[];
   spreads_offers: SpreadOffer[];
   totals_offers: TotalsOffer[];
@@ -352,10 +357,21 @@ function parseFeaturedLines(gameContext: unknown): FeaturedSportBucket[] {
       const totals = Array.isArray(g.totals_offers) ? g.totals_offers.filter((o) => o && typeof o.sportsbook === "string") : [];
       if (h2h.length === 0 && spreads.length === 0 && totals.length === 0) continue;
       games.push({
+        event_id: typeof (rawGame as { event_id?: unknown }).event_id === "string" ? (rawGame as { event_id: string }).event_id : undefined,
         event: g.event,
         event_short: typeof g.event_short === "string" ? g.event_short : undefined,
         sport,
         commence_time: g.commence_time,
+        away_team: typeof (rawGame as { away_team?: unknown }).away_team === "string" ? (rawGame as { away_team: string }).away_team : undefined,
+        away_team_short:
+          typeof (rawGame as { away_team_short?: unknown }).away_team_short === "string"
+            ? (rawGame as { away_team_short: string }).away_team_short
+            : undefined,
+        home_team: typeof (rawGame as { home_team?: unknown }).home_team === "string" ? (rawGame as { home_team: string }).home_team : undefined,
+        home_team_short:
+          typeof (rawGame as { home_team_short?: unknown }).home_team_short === "string"
+            ? (rawGame as { home_team_short: string }).home_team_short
+            : undefined,
         h2h_offers: h2h as FeaturedLineGame["h2h_offers"],
         spreads_offers: spreads as FeaturedLineGame["spreads_offers"],
         totals_offers: totals as FeaturedLineGame["totals_offers"],
@@ -364,6 +380,218 @@ function parseFeaturedLines(gameContext: unknown): FeaturedSportBucket[] {
     if (games.length > 0) buckets.push({ sport, games });
   }
   return buckets;
+}
+
+function devigTwoWayProbabilities(priceA: number, priceB: number): { sideA: number; sideB: number } | null {
+  if (!Number.isFinite(priceA) || !Number.isFinite(priceB)) return null;
+  const decimalA = americanToDecimal(priceA);
+  const decimalB = americanToDecimal(priceB);
+  if (decimalA <= 1 || decimalB <= 1) return null;
+  const impliedA = 1 / decimalA;
+  const impliedB = 1 / decimalB;
+  const overround = impliedA + impliedB;
+  if (!Number.isFinite(overround) || overround <= 0) return null;
+  return {
+    sideA: impliedA / overround,
+    sideB: impliedB / overround,
+  };
+}
+
+function calculateKellyFraction(trueProb: number, decimalOdds: number): number {
+  if (!Number.isFinite(trueProb) || !Number.isFinite(decimalOdds) || decimalOdds <= 1) return 0;
+  const b = decimalOdds - 1;
+  const q = 1 - trueProb;
+  const kelly = ((b * trueProb) - q) / b;
+  return Math.max(0, kelly);
+}
+
+function buildSelectionToken(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function buildLineToken(value: number, options?: { includePlus?: boolean }): string {
+  const includePlus = options?.includePlus ?? false;
+  const normalized = Number.parseFloat(value.toFixed(2));
+  const token = `${normalized}`.replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
+  if (includePlus && normalized > 0 && !token.startsWith("+")) return `+${token}`;
+  return token;
+}
+
+function buildFeaturedSelectionKey(
+  game: FeaturedLineGame,
+  marketKey: "spreads" | "totals",
+  selectionToken: string,
+  lineValue: number,
+): string {
+  const eventRef = (game.event_id ?? `${game.sport}|${game.commence_time}|${game.event}`).trim().toLowerCase();
+  return [
+    eventRef,
+    marketKey,
+    buildSelectionToken(selectionToken),
+    buildLineToken(lineValue, { includePlus: marketKey === "spreads" }),
+  ].join("|");
+}
+
+function makeStraightCardKey(side: MarketSide): string {
+  const lineToken =
+    side.line_value == null || !Number.isFinite(side.line_value)
+      ? ""
+      : `|${Number.parseFloat(side.line_value.toFixed(2))}`;
+  return [
+    side.surface,
+    side.sportsbook,
+    side.market_key ?? "h2h",
+    side.selection_key ?? "",
+    side.selection_side ?? "",
+    side.event_id ?? side.commence_time,
+    side.team ?? "",
+    lineToken,
+  ].join("|");
+}
+
+function mergeMarketSides(primary: MarketSide[], supplemental: MarketSide[]): MarketSide[] {
+  const seen = new Set<string>();
+  const merged: MarketSide[] = [];
+  for (const side of [...primary, ...supplemental]) {
+    const key = makeStraightCardKey(side);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(side);
+  }
+  return merged;
+}
+
+function buildFeaturedDerivedSides(buckets: FeaturedSportBucket[]): MarketSide[] {
+  const derived: MarketSide[] = [];
+
+  for (const bucket of buckets) {
+    for (const game of bucket.games) {
+      const homeTeam = game.home_team?.trim();
+      const awayTeam = game.away_team?.trim();
+      if (!homeTeam || !awayTeam) continue;
+
+      const pinnacleSpread = game.spreads_offers.find((offer) => offer.sportsbook === "Pinnacle");
+      if (pinnacleSpread) {
+        const trueProbs = devigTwoWayProbabilities(pinnacleSpread.home_odds, pinnacleSpread.away_odds);
+        if (trueProbs) {
+          for (const offer of game.spreads_offers) {
+            if (offer.sportsbook === "Pinnacle") continue;
+            if (
+              Math.abs(offer.home_spread - pinnacleSpread.home_spread) > 0.01 ||
+              Math.abs(offer.away_spread - pinnacleSpread.away_spread) > 0.01
+            ) {
+              continue;
+            }
+            const homeDecimal = americanToDecimal(offer.home_odds);
+            const awayDecimal = americanToDecimal(offer.away_odds);
+            derived.push({
+              surface: "straight_bets",
+              event_id: game.event_id,
+              market_key: "spreads",
+              selection_key: buildFeaturedSelectionKey(game, "spreads", homeTeam, offer.home_spread),
+              selection_side: "home",
+              line_value: offer.home_spread,
+              sportsbook: offer.sportsbook,
+              sport: bucket.sport,
+              event: game.event,
+              event_short: game.event_short,
+              commence_time: game.commence_time,
+              team: homeTeam,
+              team_short: game.home_team_short,
+              opponent_short: game.away_team_short,
+              pinnacle_odds: pinnacleSpread.home_odds,
+              book_odds: offer.home_odds,
+              true_prob: trueProbs.sideA,
+              base_kelly_fraction: calculateKellyFraction(trueProbs.sideA, homeDecimal),
+              book_decimal: homeDecimal,
+              ev_percentage: (trueProbs.sideA * homeDecimal - 1) * 100,
+            });
+            derived.push({
+              surface: "straight_bets",
+              event_id: game.event_id,
+              market_key: "spreads",
+              selection_key: buildFeaturedSelectionKey(game, "spreads", awayTeam, offer.away_spread),
+              selection_side: "away",
+              line_value: offer.away_spread,
+              sportsbook: offer.sportsbook,
+              sport: bucket.sport,
+              event: game.event,
+              event_short: game.event_short,
+              commence_time: game.commence_time,
+              team: awayTeam,
+              team_short: game.away_team_short,
+              opponent_short: game.home_team_short,
+              pinnacle_odds: pinnacleSpread.away_odds,
+              book_odds: offer.away_odds,
+              true_prob: trueProbs.sideB,
+              base_kelly_fraction: calculateKellyFraction(trueProbs.sideB, awayDecimal),
+              book_decimal: awayDecimal,
+              ev_percentage: (trueProbs.sideB * awayDecimal - 1) * 100,
+            });
+          }
+        }
+      }
+
+      const pinnacleTotal = game.totals_offers.find((offer) => offer.sportsbook === "Pinnacle");
+      if (pinnacleTotal) {
+        const trueProbs = devigTwoWayProbabilities(pinnacleTotal.over_odds, pinnacleTotal.under_odds);
+        if (trueProbs) {
+          for (const offer of game.totals_offers) {
+            if (offer.sportsbook === "Pinnacle") continue;
+            if (Math.abs(offer.total - pinnacleTotal.total) > 0.01) continue;
+            const overDecimal = americanToDecimal(offer.over_odds);
+            const underDecimal = americanToDecimal(offer.under_odds);
+            derived.push({
+              surface: "straight_bets",
+              event_id: game.event_id,
+              market_key: "totals",
+              selection_key: buildFeaturedSelectionKey(game, "totals", "over", offer.total),
+              selection_side: "over",
+              line_value: offer.total,
+              sportsbook: offer.sportsbook,
+              sport: bucket.sport,
+              event: game.event,
+              event_short: game.event_short,
+              commence_time: game.commence_time,
+              team: "Over",
+              team_short: null,
+              opponent_short: null,
+              pinnacle_odds: pinnacleTotal.over_odds,
+              book_odds: offer.over_odds,
+              true_prob: trueProbs.sideA,
+              base_kelly_fraction: calculateKellyFraction(trueProbs.sideA, overDecimal),
+              book_decimal: overDecimal,
+              ev_percentage: (trueProbs.sideA * overDecimal - 1) * 100,
+            });
+            derived.push({
+              surface: "straight_bets",
+              event_id: game.event_id,
+              market_key: "totals",
+              selection_key: buildFeaturedSelectionKey(game, "totals", "under", offer.total),
+              selection_side: "under",
+              line_value: offer.total,
+              sportsbook: offer.sportsbook,
+              sport: bucket.sport,
+              event: game.event,
+              event_short: game.event_short,
+              commence_time: game.commence_time,
+              team: "Under",
+              team_short: null,
+              opponent_short: null,
+              pinnacle_odds: pinnacleTotal.under_odds,
+              book_odds: offer.under_odds,
+              true_prob: trueProbs.sideB,
+              base_kelly_fraction: calculateKellyFraction(trueProbs.sideB, underDecimal),
+              book_decimal: underDecimal,
+              ev_percentage: (trueProbs.sideB * underDecimal - 1) * 100,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return derived;
 }
 
 const PHOENIX_TZ = "America/Phoenix";
@@ -496,7 +724,6 @@ export default function MarketsPage() {
   const [booksHydrated, setBooksHydrated] = useState(false);
   const [visibleCount, setVisibleCount] = useState(10);
   const [searchQuery, setSearchQuery] = useState("");
-  const [showMoreFeaturedLines, setShowMoreFeaturedLines] = useState(false);
   const [timeFilter, setTimeFilter] = useState<BoardTimeFilter>("today");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [propMarketFilter, setPropMarketFilter] = useState<string>("all");
@@ -828,6 +1055,7 @@ export default function MarketsPage() {
   ]);
   const activeContentIsLoading = !boardError && activeScanData === null && (isBoardLoading || activeSurfaceIsLoading);
   const featuredLineBuckets = useMemo(() => parseFeaturedLines(board?.game_context), [board?.game_context]);
+  const featuredDerivedSides = useMemo(() => buildFeaturedDerivedSides(featuredLineBuckets), [featuredLineBuckets]);
 
   const boardAgeMinutes = useMemo(() => {
     if (boardMeta?.scanned_at) return minutesAgo(boardMeta.scanned_at);
@@ -876,28 +1104,12 @@ export default function MarketsPage() {
     return `${scanLabel} • ${local} local`;
   }, [board?.game_context]);
 
-  const featuredGames = useMemo(() => {
-    const perSportCap = showMoreFeaturedLines ? 4 : 2;
-    const globalCap = showMoreFeaturedLines ? 12 : 6;
-    const flat: FeaturedLineGame[] = [];
-    for (const bucket of featuredLineBuckets) {
-      const sorted = bucket.games
-        .slice()
-        .filter((g) => matchesBoardTimeFilter(g.commence_time, timeFilter))
-        .sort((a, b) => new Date(a.commence_time).getTime() - new Date(b.commence_time).getTime());
-      flat.push(...sorted.slice(0, perSportCap));
-    }
-    return flat
-      .sort((a, b) => new Date(a.commence_time).getTime() - new Date(b.commence_time).getTime())
-      .slice(0, globalCap);
-  }, [featuredLineBuckets, showMoreFeaturedLines, timeFilter]);
-
   const allSides = useMemo(() => {
     if (primaryMode === "player_props") {
       return (activePlayerPropsListPage?.items as MarketSide[]) ?? [];
     }
-    return activeScanData?.sides ?? [];
-  }, [activePlayerPropsListPage?.items, activeScanData, primaryMode]);
+    return mergeMarketSides((activeScanData?.sides as MarketSide[] | undefined) ?? [], featuredDerivedSides);
+  }, [activePlayerPropsListPage?.items, activeScanData, featuredDerivedSides, primaryMode]);
 
   const activeLens = useMemo(() => {
     if (primaryMode !== "promos") return "standard";
@@ -1012,24 +1224,6 @@ export default function MarketsPage() {
     () => (primaryMode === "player_props" ? 0 : rankedSides.filter((s) => matchesBoardTimeFilter(s.commence_time, "today_closed")).length),
     [primaryMode, rankedSides],
   );
-
-  const filteredFeaturedGames = useMemo(() => {
-    return featuredGames.filter((game) => {
-      if (straightBetMarketFilter === "h2h") return game.h2h_offers.length > 0;
-      if (straightBetMarketFilter === "spreads") return game.spreads_offers.length > 0;
-      if (straightBetMarketFilter === "totals") return game.totals_offers.length > 0;
-      return game.h2h_offers.length > 0 || game.spreads_offers.length > 0 || game.totals_offers.length > 0;
-    });
-  }, [featuredGames, straightBetMarketFilter]);
-  const gameTodayOpenCount = useMemo(
-    () => featuredLineBuckets.flatMap((bucket) => bucket.games).filter((g) => matchesBoardTimeFilter(g.commence_time, "today")).length,
-    [featuredLineBuckets],
-  );
-  const gameTodayClosedCount = useMemo(
-    () => featuredLineBuckets.flatMap((bucket) => bucket.games).filter((g) => matchesBoardTimeFilter(g.commence_time, "today_closed")).length,
-    [featuredLineBuckets],
-  );
-
   const pickEmCards = useMemo(() => {
     if (primaryMode === "player_props") {
       return (activePlayerPropsPickemPage?.items ?? []) as PickEmBoardCard[];
@@ -1862,52 +2056,11 @@ export default function MarketsPage() {
               </button>
             </div>
           )}
-          {false && (
-            <div className="rounded-lg border border-border bg-card px-4 py-3">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Featured Game Lines
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setShowMoreFeaturedLines((prev) => !prev)}
-                  className="text-[11px] text-muted-foreground hover:text-foreground"
-                >
-                  {showMoreFeaturedLines ? "Show less" : "Show more"}
-                </button>
-              </div>
-              <div className="space-y-2">
-                {featuredGames.map((game) => {
-                  const kickoff = new Date(game.commence_time);
-                  const kickoffLabel = Number.isNaN(kickoff.getTime())
-                    ? ""
-                    : kickoff.toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
-                  return (
-                    <div key={`${game.sport}|${game.event}|${game.commence_time}`} className="rounded-md border border-border/70 px-3 py-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium">{game.event_short || game.event}</p>
-                          <p className="text-[11px] text-muted-foreground">
-                            {SPORT_KEY_TO_DISPLAY[game.sport] ?? game.sport}
-                            {kickoffLabel ? ` • ${kickoffLabel}` : ""}
-                          </p>
-                        </div>
-                        <div className="text-right text-[11px] text-muted-foreground">
-                          <p>ML {game.h2h_offers.length}</p>
-                          <p>Spr {game.spreads_offers.length} · Tot {game.totals_offers.length}</p>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
         </>
       )}
 
-      {/* 3b. Featured Game Lines */}
-      {primaryMode === "straight_bets" && !activeContentIsLoading && !isBoardLoading && !boardError && (filteredFeaturedGames.length > 0 || allSides.length === 0) && (
+      {/* 3b. Featured Game Lines
+      {false && primaryMode === "straight_bets" && !activeContentIsLoading && !isBoardLoading && !boardError && (filteredFeaturedGames.length > 0 || allSides.length === 0) && (
         <div className="space-y-2">
           {filteredFeaturedGames.length === 0 ? (
             <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
@@ -2026,7 +2179,7 @@ export default function MarketsPage() {
             </div>
           )}
         </div>
-      )}
+      */}
       <LogBetDrawer
         key={drawerKey}
         open={drawerOpen}
