@@ -17,7 +17,7 @@ import {
 } from "@/app/scanner/scanner-state-utils";
 import { canAddScannerLensToParlayCart } from "@/app/scanner/scanner-ui-model";
 import { classifyScannerNullState } from "@/lib/scanner-contract";
-import { useBoard, useBoardPromos, useBoardSurface, useBalances, useSettings, queryKeys, useInfiniteBoardPlayerPropsView } from "@/lib/hooks";
+import { useBoard, useBoardSurface, useBalances, useSettings, queryKeys, useInfiniteBoardPlayerPropsView } from "@/lib/hooks";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
 import { useKellySettings } from "@/lib/kelly-context";
 import { createClient } from "@/lib/supabase";
@@ -120,6 +120,7 @@ const PLAYER_PROP_MARKET_OPTIONS = [
   "player_threes",
 ];
 const PLAYER_PROP_PAGE_SIZE = 10;
+const PROMO_PLAYER_PROP_PAGE_SIZE = 200;
 
 const SPORT_KEY_TO_DISPLAY: Record<string, string> = {
   basketball_nba: "NBA",
@@ -732,7 +733,7 @@ export default function MarketsPage() {
 
   const straightSurface = useBoardSurface(
     "straight_bets",
-    primaryMode === "straight_bets",
+    primaryMode === "straight_bets" || primaryMode === "promos",
   );
   const playerPropsOpportunities = useInfiniteBoardPlayerPropsView({
     view: "opportunities",
@@ -746,13 +747,13 @@ export default function MarketsPage() {
   });
   const playerPropsBrowse = useInfiniteBoardPlayerPropsView({
     view: "browse",
-    pageSize: PLAYER_PROP_PAGE_SIZE,
+    pageSize: primaryMode === "promos" ? PROMO_PLAYER_PROP_PAGE_SIZE : PLAYER_PROP_PAGE_SIZE,
     books: appliedPlayerPropsBooks,
     timeFilter: appliedPlayerPropsTimeFilter,
     market: appliedPlayerPropsMarketFilter,
     search: appliedPlayerPropsSearchQuery,
     tzOffsetMinutes,
-    enabled: primaryMode === "player_props" && viewMode === "browse",
+    enabled: (primaryMode === "player_props" && viewMode === "browse") || primaryMode === "promos",
   });
   const playerPropsPickem = useInfiniteBoardPlayerPropsView({
     view: "pickem",
@@ -764,8 +765,6 @@ export default function MarketsPage() {
     tzOffsetMinutes,
     enabled: primaryMode === "player_props" && viewMode === "pickem",
   });
-  const boardPromos = useBoardPromos(visibleCount * 3, primaryMode === "promos");
-
   useEffect(() => {
     try {
       const raw = localStorage.getItem(SCANNER_BOOKS_STORAGE_KEY);
@@ -889,8 +888,13 @@ export default function MarketsPage() {
   const isEmptyBoard = !boardMeta || boardMeta.snapshot_id === "none";
 
   const activePlayerPropsListPage = useMemo(() => {
-    const data = viewMode === "browse" ? playerPropsBrowse.data : playerPropsOpportunities.data;
-    if (viewMode === "pickem" || !data?.pages?.length) return null;
+    const data =
+      primaryMode === "promos"
+        ? playerPropsBrowse.data
+        : viewMode === "browse"
+          ? playerPropsBrowse.data
+          : playerPropsOpportunities.data;
+    if ((primaryMode !== "promos" && viewMode === "pickem") || !data?.pages?.length) return null;
     const pages = data.pages.filter(Boolean) as PlayerPropBoardPageResponse<PlayerPropBoardItem>[];
     const lastPage = pages[pages.length - 1];
     if (!lastPage) return null;
@@ -902,7 +906,7 @@ export default function MarketsPage() {
       scanned_at: lastPage.scanned_at,
       available_markets: lastPage.available_markets,
     };
-  }, [playerPropsBrowse.data, playerPropsOpportunities.data, viewMode]);
+  }, [playerPropsBrowse.data, playerPropsOpportunities.data, primaryMode, viewMode]);
 
   const activePlayerPropsPickemPage = useMemo(() => {
     if (viewMode !== "pickem" || !playerPropsPickem.data?.pages?.length) return null;
@@ -920,12 +924,15 @@ export default function MarketsPage() {
   }, [playerPropsPickem.data, viewMode]);
 
   const activePlayerPropsIsFetchingNextPage = useMemo(() => {
+    if (primaryMode === "promos") {
+      return playerPropsBrowse.isFetchingNextPage;
+    }
     if (viewMode === "browse") {
       return playerPropsBrowse.isFetchingNextPage;
     }
     if (viewMode === "pickem") return playerPropsPickem.isFetchingNextPage;
     return playerPropsOpportunities.isFetchingNextPage;
-  }, [playerPropsBrowse.isFetchingNextPage, playerPropsOpportunities.isFetchingNextPage, playerPropsPickem.isFetchingNextPage, viewMode]);
+  }, [playerPropsBrowse.isFetchingNextPage, playerPropsOpportunities.isFetchingNextPage, playerPropsPickem.isFetchingNextPage, primaryMode, viewMode]);
 
   const activePlayerPropsError = useMemo(() => {
     if (viewMode === "browse") return playerPropsBrowse.error;
@@ -965,21 +972,22 @@ export default function MarketsPage() {
       return straightSurface.data ?? null;
     }
 
-    if (!boardPromos.data) return null;
+    const promoPropSides = (activePlayerPropsListPage?.items as MarketSide[] | undefined) ?? [];
+    const promoStraightSides = (straightSurface.data?.sides as MarketSide[] | undefined) ?? [];
+    if (promoPropSides.length === 0 && promoStraightSides.length === 0) return null;
     return {
       surface: "straight_bets",
       sport: "all",
-      sides: boardPromos.data.sides,
+      sides: [...promoPropSides, ...promoStraightSides],
       events_fetched: 0,
       events_with_both_books: 0,
       api_requests_remaining: null,
-      scanned_at: boardPromos.data.meta?.scanned_at ?? boardMeta?.scanned_at ?? null,
+      scanned_at: activePlayerPropsListPage?.scanned_at ?? straightSurface.data?.scanned_at ?? boardMeta?.scanned_at ?? null,
     };
   }, [
     activePlayerPropsListPage,
     activePlayerPropsPickemPage,
     boardMeta?.scanned_at,
-    boardPromos.data,
     primaryMode,
     straightSurface.data,
     viewMode,
@@ -989,13 +997,13 @@ export default function MarketsPage() {
       return activePlayerPropsError;
     }
     if (primaryMode === "promos") {
-      return boardPromos.error;
+      return playerPropsBrowse.error ?? straightSurface.error;
     }
     if (primaryMode === "straight_bets") {
       return straightSurface.error;
     }
     return null;
-  }, [activePlayerPropsError, boardPromos.error, primaryMode, straightSurface.error]);
+  }, [activePlayerPropsError, playerPropsBrowse.error, primaryMode, straightSurface.error]);
   const activeSurfaceIsLoading = useMemo(() => {
     if (primaryMode === "player_props") {
       if (viewMode === "pickem") {
@@ -1007,15 +1015,17 @@ export default function MarketsPage() {
       return playerPropsOpportunities.isLoading || (playerPropsOpportunities.isFetching && !activePlayerPropsListPage);
     }
     if (primaryMode === "promos") {
-      return boardPromos.isLoading || (boardPromos.isFetching && !boardPromos.data);
+      return (
+        playerPropsBrowse.isLoading ||
+        (playerPropsBrowse.isFetching && !activePlayerPropsListPage) ||
+        straightSurface.isLoading ||
+        (straightSurface.isFetching && !straightSurface.data)
+      );
     }
     return straightSurface.isLoading || (straightSurface.isFetching && !straightSurface.data);
   }, [
     activePlayerPropsListPage,
     activePlayerPropsPickemPage,
-    boardPromos.data,
-    boardPromos.isFetching,
-    boardPromos.isLoading,
     playerPropsBrowse.isFetching,
     playerPropsBrowse.isLoading,
     playerPropsOpportunities.isFetching,
@@ -1328,8 +1338,10 @@ export default function MarketsPage() {
     ? (playerPropsPickem.hasNextPage ?? false)
     : primaryMode === "player_props"
       ? (viewMode === "browse" ? (playerPropsBrowse.hasNextPage ?? false) : (playerPropsOpportunities.hasNextPage ?? false))
-      : results.length < filteredSides.length;
-  const isLoadingMore = primaryMode === "player_props" ? activePlayerPropsIsFetchingNextPage : false;
+      : primaryMode === "promos"
+        ? (results.length < filteredSides.length) || (playerPropsBrowse.hasNextPage ?? false)
+        : results.length < filteredSides.length;
+  const isLoadingMore = (primaryMode === "player_props" || primaryMode === "promos") ? activePlayerPropsIsFetchingNextPage : false;
 
   const handleLoadMore = () => {
     if (primaryMode === "player_props") {
@@ -1342,6 +1354,14 @@ export default function MarketsPage() {
         return;
       }
       void playerPropsOpportunities.fetchNextPage();
+      return;
+    }
+    if (primaryMode === "promos") {
+      const nextVisibleCount = visibleCount + 10;
+      if (nextVisibleCount >= filteredSides.length && (playerPropsBrowse.hasNextPage ?? false)) {
+        void playerPropsBrowse.fetchNextPage();
+      }
+      setVisibleCount(nextVisibleCount);
       return;
     }
     setVisibleCount((v) => v + 10);
