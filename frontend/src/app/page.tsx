@@ -6,7 +6,6 @@ import { toast } from "sonner";
 import { Clock, Gift, Layers, ShieldCheck, TrendingUp, Zap } from "lucide-react";
 
 import { ScannerResultsPane } from "@/app/scanner/components/ScannerResultsPane";
-import { StraightBetList } from "@/app/scanner/components/StraightBetList";
 import type { PickEmBoardCard } from "@/app/scanner/pickem-board";
 import { rankScannerSidesByLens, type RankedScannerSide } from "@/app/scanner/scanner-lenses";
 import { getBoardPlayerPropDetail } from "@/lib/api";
@@ -210,30 +209,6 @@ function compareRankedSidesByLens(
     if (holdDiff !== 0) return holdDiff;
   }
   return (right.ev_percentage ?? 0) - (left.ev_percentage ?? 0);
-}
-
-function selectDiversePromoGameLineCandidates(
-  sides: Array<RankedScannerSide>,
-  maxItems: number,
-): Array<RankedScannerSide> {
-  const picked: RankedScannerSide[] = [];
-  const seenBuckets = new Set<string>();
-
-  for (const side of sides) {
-    const bucket = `${side.sport}|${String(side.market_key ?? "").toLowerCase()}`;
-    if (seenBuckets.has(bucket)) continue;
-    seenBuckets.add(bucket);
-    picked.push(side);
-    if (picked.length >= maxItems) return picked;
-  }
-
-  for (const side of sides) {
-    if (picked.includes(side)) continue;
-    picked.push(side);
-    if (picked.length >= maxItems) return picked;
-  }
-
-  return picked;
 }
 
 function sanitizeStoredBooks(stored: unknown, allowed: readonly string[], fallback: string[]): string[] {
@@ -1208,14 +1183,6 @@ export default function MarketsPage() {
       return haystack.includes(q);
     });
   }, [activePlayerPropsListPage?.items, rankedSides, searchQuery, straightBetMarketFilter, timeFilter, primaryMode]);
-  const promoGameLineResults = useMemo(() => {
-    if (primaryMode !== "promos") return [];
-    return selectDiversePromoGameLineCandidates(
-      filteredSides.filter((side): side is RankedScannerSide => side.surface === "straight_bets"),
-      6,
-    );
-  }, [filteredSides, primaryMode]);
-
   const todayOpenCount = useMemo(
     () => (primaryMode === "player_props" ? 0 : rankedSides.filter((s) => matchesBoardTimeFilter(s.commence_time, "today")).length),
     [primaryMode, rankedSides],
@@ -2017,32 +1984,6 @@ export default function MarketsPage() {
               bookColors={BOOK_COLORS}
               sportDisplayMap={SPORT_KEY_TO_DISPLAY}
             />
-          )}
-          {primaryMode === "promos" && promoGameLineResults.length > 0 && (
-            <div className="rounded-lg border border-border bg-card px-4 py-3">
-              <div className="mb-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Game-Line Promos
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Straight-bet promo candidates pulled from the current board across moneylines, spreads, and totals.
-                </p>
-              </div>
-              <StraightBetList
-                activeLens={activeLens}
-                results={promoGameLineResults}
-                kellyMultiplier={kellyMultiplier}
-                bankroll={bankroll}
-                boostPercent={boostPercent}
-                canLoadMore={false}
-                onLoadMore={() => {}}
-                onLogBet={handleLogBet}
-                onAddToCart={handleAddToCart}
-                onStartPlaceFlow={handleLogBet}
-                bookColors={BOOK_COLORS}
-                sportDisplayMap={SPORT_KEY_TO_DISPLAY}
-              />
-            </div>
           )}
           {timeFilter === "today" && todayOpenCount === 0 && todayClosedCount > 0 && (
             <div className="rounded-md border border-border bg-card px-3 py-2 text-center">
