@@ -717,8 +717,14 @@ export function BetList({
 
   useEffect(() => {
     if (!tutorialPracticeBet || activeTab === "pending") return;
-    updateTrackerView({ tab: "pending" });
-  }, [tutorialPracticeBet, activeTab]);
+    const query = buildTrackerViewQuery({
+      tab: "pending",
+      source: sourceFilter,
+      sportsbook: selectedBook,
+      search: searchQuery,
+    });
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [tutorialPracticeBet, activeTab, pathname, router, searchQuery, selectedBook, sourceFilter]);
   
   // Count active filters for badge
   const activeFilterCount = [

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { SlidersHorizontal } from "lucide-react";
 
@@ -22,7 +22,7 @@ import {
 } from "@/lib/tracker-view";
 import { cn } from "@/lib/utils";
 
-export default function BetsLayout({ children }: { children: React.ReactNode }) {
+function BetsLayoutContent({ children }: { children: React.ReactNode }) {
   const { data: bets } = useBets();
   const pathname = usePathname();
   const router = useRouter();
@@ -202,5 +202,13 @@ export default function BetsLayout({ children }: { children: React.ReactNode }) 
 
       {children}
     </div>
+  );
+}
+
+export default function BetsLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense fallback={<div>{children}</div>}>
+      <BetsLayoutContent>{children}</BetsLayoutContent>
+    </Suspense>
   );
 }

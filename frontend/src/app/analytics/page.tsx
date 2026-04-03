@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -481,7 +481,7 @@ function StatsPageSkeleton() {
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 
-export default function AnalyticsPage() {
+function AnalyticsPageContent() {
   const searchParams = useSearchParams();
   const [chartFilter, setChartFilter] = useState<StatsChartFilter>("all");
   const [bankrollSheetOpen, setBankrollSheetOpen] = useState(false);
@@ -969,5 +969,21 @@ export default function AnalyticsPage() {
         </SheetContent>
       </Sheet>
     </main>
+  );
+}
+
+export default function AnalyticsPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-background">
+          <div className="container mx-auto max-w-3xl px-4 py-4 sm:py-5">
+            <StatsPageSkeleton />
+          </div>
+        </main>
+      }
+    >
+      <AnalyticsPageContent />
+    </Suspense>
   );
 }
