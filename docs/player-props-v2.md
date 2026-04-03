@@ -21,12 +21,14 @@ This document describes the current curated player-props system used across the 
 ## Quality Gates
 
 - Surfaced sportsbook prop cards default to `PLAYER_PROP_MIN_REFERENCE_BOOKMAKERS=3`
+- Pick'em board + pick'em research default to `PLAYER_PROP_PICKEM_MIN_REFERENCE_BOOKMAKERS=2`
 - Thin references still appear in diagnostics, but they do not surface as normal cards
 - CLV close capture can use the looser `PLAYER_PROP_CLV_MIN_REFERENCE_BOOKMAKERS`
 
 That separation is intentional:
 
 - surfaced cards should be conservative
+- pick'em validation should still form exact-line pairs often enough to be measurable
 - logged-bet close capture should recover as many valid closes as possible
 
 ## Current Runtime Behavior

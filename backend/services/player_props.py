@@ -69,6 +69,8 @@ PLAYER_PROP_REFERENCE_BOOK_WEIGHTS: dict[str, float] = {
 # consensus artifacts without starving the slate as aggressively as a 4-book gate.
 PLAYER_PROP_MIN_SOLID_REFERENCE_BOOKMAKERS = 3
 PLAYER_PROP_MIN_REFERENCE_BOOKMAKERS_ENV = "PLAYER_PROP_MIN_REFERENCE_BOOKMAKERS"
+PLAYER_PROP_MIN_PICKEM_REFERENCE_BOOKMAKERS = 2
+PLAYER_PROP_MIN_PICKEM_REFERENCE_BOOKMAKERS_ENV = "PLAYER_PROP_PICKEM_MIN_REFERENCE_BOOKMAKERS"
 PLAYER_PROP_MIN_CLV_REFERENCE_BOOKMAKERS = 1
 PLAYER_PROP_MIN_CLV_REFERENCE_BOOKMAKERS_ENV = "PLAYER_PROP_CLV_MIN_REFERENCE_BOOKMAKERS"
 PLAYER_PROP_FALLBACK_MAX_EVENTS = 3
@@ -118,6 +120,20 @@ def get_player_prop_min_reference_bookmakers() -> int:
         parsed = int(raw)
     except ValueError:
         return PLAYER_PROP_MIN_SOLID_REFERENCE_BOOKMAKERS
+
+    max_reference_books = max(1, len(PLAYER_PROP_BOOKS) - 1)
+    return max(1, min(parsed, max_reference_books))
+
+
+def get_player_prop_pickem_min_reference_bookmakers() -> int:
+    raw = os.getenv(PLAYER_PROP_MIN_PICKEM_REFERENCE_BOOKMAKERS_ENV, "").strip()
+    if not raw:
+        return PLAYER_PROP_MIN_PICKEM_REFERENCE_BOOKMAKERS
+
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return PLAYER_PROP_MIN_PICKEM_REFERENCE_BOOKMAKERS
 
     max_reference_books = max(1, len(PLAYER_PROP_BOOKS) - 1)
     return max(1, min(parsed, max_reference_books))
@@ -1208,6 +1224,28 @@ def _apply_reference_quality_gate(
     return filtered
 
 
+def _build_pickem_cards_from_candidates(
+    candidates: list[dict],
+    *,
+    min_reference_bookmakers: int,
+) -> list[dict]:
+    if not candidates:
+        return []
+
+    from services.player_prop_board import build_player_prop_board_item, build_player_prop_board_pickem_cards
+
+    eligible_sides = _apply_reference_quality_gate(
+        candidates,
+        min_reference_bookmakers=min_reference_bookmakers,
+    )
+    if not eligible_sides:
+        return []
+
+    return build_player_prop_board_pickem_cards(
+        [build_player_prop_board_item(side) for side in eligible_sides if isinstance(side, dict)]
+    )
+
+
 def _parse_prop_sides(
     *,
     sport: str,
@@ -1476,6 +1514,7 @@ def _build_prizepicks_comparison_cards(
 async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
     target_markets = get_player_prop_markets()
     min_reference_bookmakers = get_player_prop_min_reference_bookmakers()
+    pickem_min_reference_bookmakers = get_player_prop_pickem_min_reference_bookmakers()
     weight_overrides = get_player_prop_weight_overrides()
     scoreboard_payload = await fetch_nba_scoreboard_window()
     scoreboard_events = scoreboard_payload.get("events") if isinstance(scoreboard_payload, dict) else []
@@ -1502,6 +1541,7 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
         return {
             "surface": PLAYER_PROPS_SURFACE,
             "sides": [],
+            "pickem_cards": [],
             "prizepicks_cards": [],
             "events_fetched": 0,
             "events_with_both_books": 0,
@@ -1522,7 +1562,9 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
                 "candidate_sides_count": 0,
                 "quality_gate_filtered_count": 0,
                 "quality_gate_min_reference_bookmakers": min_reference_bookmakers,
+                "pickem_quality_gate_min_reference_bookmakers": pickem_min_reference_bookmakers,
                 "sides_count": 0,
+                "pickem_cards_count": 0,
                 "markets_requested": target_markets,
                 "prizepicks_status": "disabled",
                 "prizepicks_message": None,
@@ -1596,6 +1638,7 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
     skipped_pregame = 0
     candidate_sides_count = 0
     quality_gate_filtered_count = 0
+    pickem_candidates: list[dict] = []
     for event in events_to_scan:
         commence = str(event.get("commence_time") or "")
         if commence:
@@ -1637,6 +1680,7 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
             weight_overrides=weight_overrides,
         )
         candidate_sides_count += len(event_candidates)
+        pickem_candidates.extend(event_candidates)
         event_sides = _apply_reference_quality_gate(
             event_candidates,
             min_reference_bookmakers=min_reference_bookmakers,
@@ -1660,6 +1704,10 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
         len(all_sides),
         skipped_pregame,
         remaining,
+    )
+    pickem_cards = _build_pickem_cards_from_candidates(
+        pickem_candidates,
+        min_reference_bookmakers=pickem_min_reference_bookmakers,
     )
 
     diagnostics = {
@@ -1690,7 +1738,9 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
         "candidate_sides_count": candidate_sides_count,
         "quality_gate_filtered_count": quality_gate_filtered_count,
         "quality_gate_min_reference_bookmakers": min_reference_bookmakers,
+        "pickem_quality_gate_min_reference_bookmakers": pickem_min_reference_bookmakers,
         "sides_count": len(all_sides),
+        "pickem_cards_count": len(pickem_cards),
         "markets_requested": target_markets,
         "prizepicks_status": prizepicks_status,
         "prizepicks_message": prizepicks_message,
@@ -1703,6 +1753,7 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
     return {
         "surface": PLAYER_PROPS_SURFACE,
         "sides": all_sides,
+        "pickem_cards": pickem_cards,
         "prizepicks_cards": prizepicks_cards,
         "events_fetched": events_fetched,
         "events_with_both_books": events_with_any_book,
@@ -1727,6 +1778,7 @@ async def scan_player_props_for_event_ids(
         return {
             "surface": PLAYER_PROPS_SURFACE,
             "sides": [],
+            "pickem_cards": [],
             "prizepicks_cards": [],
             "events_fetched": 0,
             "events_with_both_books": 0,
@@ -1747,7 +1799,9 @@ async def scan_player_props_for_event_ids(
                 "candidate_sides_count": 0,
                 "quality_gate_filtered_count": 0,
                 "quality_gate_min_reference_bookmakers": get_player_prop_min_reference_bookmakers(),
+                "pickem_quality_gate_min_reference_bookmakers": get_player_prop_pickem_min_reference_bookmakers(),
                 "sides_count": 0,
+                "pickem_cards_count": 0,
                 "markets_requested": markets,
                 "prizepicks_status": "disabled",
                 "prizepicks_message": None,
@@ -1760,6 +1814,7 @@ async def scan_player_props_for_event_ids(
 
     target_markets = markets or get_player_prop_markets()
     min_reference_bookmakers = get_player_prop_min_reference_bookmakers()
+    pickem_min_reference_bookmakers = get_player_prop_pickem_min_reference_bookmakers()
     weight_overrides = get_player_prop_weight_overrides()
     pregame_cutoff = datetime.now(timezone.utc) + timedelta(minutes=1)
 
@@ -1769,6 +1824,7 @@ async def scan_player_props_for_event_ids(
     skipped_pregame = 0
     candidate_sides_count = 0
     quality_gate_filtered_count = 0
+    pickem_candidates: list[dict] = []
     remaining: str | None = None
 
     for raw_event_id in event_ids:
@@ -1804,6 +1860,7 @@ async def scan_player_props_for_event_ids(
             weight_overrides=weight_overrides,
         )
         candidate_sides_count += len(event_candidates)
+        pickem_candidates.extend(event_candidates)
         event_sides = _apply_reference_quality_gate(
             event_candidates,
             min_reference_bookmakers=min_reference_bookmakers,
@@ -1812,6 +1869,10 @@ async def scan_player_props_for_event_ids(
         if event_sides:
             events_with_any_book += 1
             all_sides.extend(event_sides)
+    pickem_cards = _build_pickem_cards_from_candidates(
+        pickem_candidates,
+        min_reference_bookmakers=pickem_min_reference_bookmakers,
+    )
 
     diagnostics = {
         "scan_mode": "selected_events",
@@ -1829,7 +1890,9 @@ async def scan_player_props_for_event_ids(
         "candidate_sides_count": candidate_sides_count,
         "quality_gate_filtered_count": quality_gate_filtered_count,
         "quality_gate_min_reference_bookmakers": min_reference_bookmakers,
+        "pickem_quality_gate_min_reference_bookmakers": pickem_min_reference_bookmakers,
         "sides_count": len(all_sides),
+        "pickem_cards_count": len(pickem_cards),
         "markets_requested": target_markets,
         "prizepicks_status": "disabled",
         "prizepicks_message": None,
@@ -1842,6 +1905,7 @@ async def scan_player_props_for_event_ids(
     return {
         "surface": PLAYER_PROPS_SURFACE,
         "sides": all_sides,
+        "pickem_cards": pickem_cards,
         "prizepicks_cards": [],
         "events_fetched": events_fetched,
         "events_with_both_books": events_with_any_book,

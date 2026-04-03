@@ -676,9 +676,13 @@ def _sync_pickem_research_from_props_payload(payload: dict[str, Any] | None, *, 
             chunk_size=board_chunk_size,
             legacy_max_items=board_legacy_max,
         )
-        pickem_cards = build_player_prop_board_pickem_cards(
-            [build_player_prop_board_item(side) for side in sides if isinstance(side, dict)]
-        )
+        raw_pickem_cards = payload.get("pickem_cards")
+        if isinstance(raw_pickem_cards, list):
+            pickem_cards = [card for card in raw_pickem_cards if isinstance(card, dict)]
+        else:
+            pickem_cards = build_player_prop_board_pickem_cards(
+                [build_player_prop_board_item(side) for side in sides if isinstance(side, dict)]
+            )
         capture_summary = capture_pickem_research_observations(
             db,
             cards=pickem_cards,

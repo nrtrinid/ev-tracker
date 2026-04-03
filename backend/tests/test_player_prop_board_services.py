@@ -198,6 +198,71 @@ def test_persist_and_load_player_prop_board_artifacts():
     assert detail["reference_bookmakers"] == ["DraftKings", "FanDuel", "BetMGM"]
 
 
+def test_persist_player_prop_board_artifacts_prefers_prebuilt_pickem_cards():
+    db = _DB()
+    prebuilt_pickem = [
+        {
+            "comparison_key": "evt-1|player_points|devinbooker|24.5",
+            "event_id": "evt-1",
+            "sport": "basketball_nba",
+            "event": "Lakers @ Suns",
+            "event_short": "LAL @ PHX",
+            "commence_time": "2026-04-02T02:00:00Z",
+            "player_name": "Devin Booker",
+            "participant_id": "p-1",
+            "team": "Phoenix Suns",
+            "team_short": "PHX",
+            "opponent": "Los Angeles Lakers",
+            "opponent_short": "LAL",
+            "market_key": "player_points",
+            "market": "player_points",
+            "line_value": 24.5,
+            "exact_line_bookmakers": ["DraftKings", "FanDuel"],
+            "exact_line_bookmaker_count": 2,
+            "consensus_over_prob": 0.58,
+            "consensus_under_prob": 0.42,
+            "consensus_side": "over",
+            "confidence_label": "solid",
+            "best_over_sportsbook": "FanDuel",
+            "best_over_odds": 110,
+            "best_under_sportsbook": "DraftKings",
+            "best_under_odds": -120,
+        }
+    ]
+    payload = {
+        "surface": "player_props",
+        "sport": "basketball_nba",
+        "sides": [
+            _prop_side(sportsbook="DraftKings", side="over", ev_percentage=7.0),
+        ],
+        "pickem_cards": prebuilt_pickem,
+        "events_fetched": 1,
+        "events_with_both_books": 1,
+        "api_requests_remaining": "88",
+        "scanned_at": "2026-04-02T00:00:00Z",
+    }
+
+    summary = persist_player_prop_board_artifacts(
+        db=db,
+        payload=payload,
+        retry_supabase=lambda fn: fn(),
+        log_event=lambda *_args, **_kwargs: None,
+        chunk_size=2,
+        legacy_max_items=1,
+    )
+
+    assert summary["pickem_total"] == 1
+
+    meta, items = load_player_prop_board_artifact(
+        db=db,
+        retry_supabase=lambda fn: fn(),
+        view="pickem",
+    )
+    assert meta is not None
+    assert len(items) == 1
+    assert items[0]["comparison_key"] == prebuilt_pickem[0]["comparison_key"]
+
+
 def test_filter_and_paginate_player_prop_board_items():
     items = [
         build_player_prop_board_item(_prop_side(sportsbook="DraftKings", event="Lakers @ Suns", event_short="LAL @ PHX")),

@@ -493,13 +493,17 @@ async def run_daily_board_drop(
             rss_mb=rss_mb(),
         )
         try:
-            pickem_cards = build_player_prop_board_pickem_cards(
-                [
-                    build_player_prop_board_item(side)
-                    for side in props_sides
-                    if isinstance(side, dict)
-                ]
-            )
+            raw_pickem_cards = props_payload.get("pickem_cards")
+            if isinstance(raw_pickem_cards, list):
+                pickem_cards = [card for card in raw_pickem_cards if isinstance(card, dict)]
+            else:
+                pickem_cards = build_player_prop_board_pickem_cards(
+                    [
+                        build_player_prop_board_item(side)
+                        for side in props_sides
+                        if isinstance(side, dict)
+                    ]
+                )
             pickem_capture = capture_pickem_research_observations(
                 db,
                 cards=pickem_cards,

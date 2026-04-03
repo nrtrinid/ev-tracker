@@ -481,7 +481,11 @@ def persist_player_prop_board_artifacts(
 
     opportunities.sort(key=_ev_value, reverse=True)
     browse_items.sort(key=lambda item: str(item.get("commence_time") or ""))
-    pickem = build_player_prop_board_pickem_cards(browse_items)
+    raw_pickem_cards = payload.get("pickem_cards")
+    if isinstance(raw_pickem_cards, list):
+        pickem = [card for card in raw_pickem_cards if isinstance(card, dict)]
+    else:
+        pickem = build_player_prop_board_pickem_cards(browse_items)
     available_books = sorted(available_books_set)
     available_markets = sorted(available_markets_set)
 

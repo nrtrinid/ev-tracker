@@ -6,6 +6,7 @@ import httpx
 from services.player_props import (
     PLAYER_PROP_REFERENCE_SOURCE,
     _aggregate_reference_estimates,
+    _build_pickem_cards_from_candidates,
     _book_weight_for_model,
     _build_prizepicks_comparison_cards,
     _build_prop_side_candidates,
@@ -161,6 +162,96 @@ def test_parse_prop_sides_builds_consensus_reference_payload():
     assert first_draftkings["reference_odds"] == -104
     assert first_draftkings["sportsbook_deeplink_url"] == "https://example.test/jokic/over"
     assert first_draftkings["sportsbook_deeplink_level"] == "selection"
+
+
+def test_build_pickem_cards_from_candidates_uses_looser_pickem_gate():
+    candidates = [
+        {
+            "event_id": "evt-1",
+            "market_key": "player_points",
+            "selection_key": "evt-1|player_points|nikola jokic|over|24.5",
+            "sportsbook": "DraftKings",
+            "sport": "basketball_nba",
+            "event": "Nuggets @ Suns",
+            "commence_time": "2026-03-21T03:00:00Z",
+            "market": "player_points",
+            "player_name": "Nikola Jokic",
+            "team": "Denver Nuggets",
+            "opponent": "Phoenix Suns",
+            "selection_side": "over",
+            "line_value": 24.5,
+            "book_odds": 105,
+            "true_prob": 0.56,
+            "ev_percentage": 6.2,
+            "reference_bookmaker_count": 3,
+        },
+        {
+            "event_id": "evt-1",
+            "market_key": "player_points",
+            "selection_key": "evt-1|player_points|nikola jokic|under|24.5",
+            "sportsbook": "DraftKings",
+            "sport": "basketball_nba",
+            "event": "Nuggets @ Suns",
+            "commence_time": "2026-03-21T03:00:00Z",
+            "market": "player_points",
+            "player_name": "Nikola Jokic",
+            "team": "Denver Nuggets",
+            "opponent": "Phoenix Suns",
+            "selection_side": "under",
+            "line_value": 24.5,
+            "book_odds": -125,
+            "true_prob": 0.44,
+            "ev_percentage": 1.3,
+            "reference_bookmaker_count": 2,
+        },
+        {
+            "event_id": "evt-1",
+            "market_key": "player_points",
+            "selection_key": "evt-1|player_points|nikola jokic|over|24.5",
+            "sportsbook": "FanDuel",
+            "sport": "basketball_nba",
+            "event": "Nuggets @ Suns",
+            "commence_time": "2026-03-21T03:00:00Z",
+            "market": "player_points",
+            "player_name": "Nikola Jokic",
+            "team": "Denver Nuggets",
+            "opponent": "Phoenix Suns",
+            "selection_side": "over",
+            "line_value": 24.5,
+            "book_odds": 110,
+            "true_prob": 0.57,
+            "ev_percentage": 7.1,
+            "reference_bookmaker_count": 2,
+        },
+        {
+            "event_id": "evt-1",
+            "market_key": "player_points",
+            "selection_key": "evt-1|player_points|nikola jokic|under|24.5",
+            "sportsbook": "FanDuel",
+            "sport": "basketball_nba",
+            "event": "Nuggets @ Suns",
+            "commence_time": "2026-03-21T03:00:00Z",
+            "market": "player_points",
+            "player_name": "Nikola Jokic",
+            "team": "Denver Nuggets",
+            "opponent": "Phoenix Suns",
+            "selection_side": "under",
+            "line_value": 24.5,
+            "book_odds": -120,
+            "true_prob": 0.43,
+            "ev_percentage": 1.1,
+            "reference_bookmaker_count": 2,
+        },
+    ]
+
+    assert _build_pickem_cards_from_candidates(candidates, min_reference_bookmakers=3) == []
+
+    pickem_cards = _build_pickem_cards_from_candidates(candidates, min_reference_bookmakers=2)
+
+    assert len(pickem_cards) == 1
+    assert pickem_cards[0]["comparison_key"] == "evt-1|player_points|nikolajokic|24.5"
+    assert pickem_cards[0]["exact_line_bookmaker_count"] == 2
+    assert pickem_cards[0]["consensus_side"] == "over"
 
 
 def test_parse_prop_sides_falls_back_to_homepage_when_provider_links_are_unusable():
