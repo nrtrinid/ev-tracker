@@ -18,17 +18,17 @@ export function TrustedBetaCard({ className, compact = false }: TrustedBetaCardP
   return (
     <Card
       className={cn(
-        "border-[#C4A35A]/35 bg-[linear-gradient(135deg,rgba(250,245,232,0.92),rgba(255,255,255,0.98))]",
+        "border-primary/30 bg-card/95",
         className,
       )}
     >
       <CardHeader className={compact ? "pb-2" : "pb-3"}>
         <div className="flex items-start gap-3">
-          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#2C2416] text-[#FAF8F5] shadow-sm">
+          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-primary/15 text-primary shadow-sm">
             <ShieldCheck className="h-4.5 w-4.5" />
           </div>
           <div className="space-y-1">
-            <div className="inline-flex items-center rounded-full border border-[#C4A35A]/35 bg-[#C4A35A]/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#6B5728]">
+            <div className="inline-flex items-center rounded-full border border-primary/30 bg-primary/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">
               Trusted Beta
             </div>
             <div>
@@ -41,7 +41,7 @@ export function TrustedBetaCard({ className, compact = false }: TrustedBetaCardP
         </div>
       </CardHeader>
       <CardContent className={cn("space-y-3", compact && "pt-0")}>
-        <div className="rounded-lg border border-[#C4A35A]/25 bg-background/70 px-3 py-2 text-xs text-muted-foreground">
+        <div className="rounded-lg border border-border/70 bg-background/70 px-3 py-2 text-xs text-muted-foreground">
           Market coverage, CLV capture, and board composition will keep evolving during beta, so fast feedback is especially helpful.
         </div>
         <div className="flex flex-wrap items-center gap-2">

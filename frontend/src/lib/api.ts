@@ -124,14 +124,36 @@ export async function getBets(filters?: {
   sport?: string;
   sportsbook?: string;
   result?: BetResult;
+}, paging?: {
+  limit?: number;
+  offset?: number;
 }): Promise<Bet[]> {
   const params = new URLSearchParams();
   if (filters?.sport) params.set("sport", filters.sport);
   if (filters?.sportsbook) params.set("sportsbook", filters.sportsbook);
   if (filters?.result) params.set("result", filters.result);
+  if (typeof paging?.limit === "number") params.set("limit", String(paging.limit));
+  if (typeof paging?.offset === "number") params.set("offset", String(paging.offset));
 
   const query = params.toString() ? `?${params.toString()}` : "";
   return fetchAPI<Bet[]>(`/bets${query}`);
+}
+
+export async function getAllBetsForStats(): Promise<Bet[]> {
+  const pageSize = 1000;
+  const allBets: Bet[] = [];
+  let offset = 0;
+
+  while (true) {
+    const page = await getBets(undefined, { limit: pageSize, offset });
+    allBets.push(...page);
+
+    if (page.length < pageSize) {
+      return allBets;
+    }
+
+    offset += pageSize;
+  }
 }
 
 export async function getBet(id: string): Promise<Bet> {

@@ -53,8 +53,9 @@ def install_apscheduler_stubs(*, scheduler_cls):
             self.timezone = timezone
 
     class IntervalTrigger:
-        def __init__(self, *, minutes):
+        def __init__(self, *, minutes, start_date=None):
             self.minutes = minutes
+            self.start_date = start_date
 
     setattr(sched_asyncio_mod, "AsyncIOScheduler", scheduler_cls)
     setattr(triggers_cron_mod, "CronTrigger", CronTrigger)

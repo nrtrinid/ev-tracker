@@ -42,8 +42,8 @@ export function TopNav() {
     <header className="sticky top-0 z-20 border-b border-border bg-card/90 backdrop-blur-sm">
       <div className="container mx-auto px-4 py-3 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2.5 group">
-          <div className="w-9 h-9 rounded-lg bg-[#2C2416] flex items-center justify-center shadow-sm">
-            <span className="text-[#FAF8F5] font-bold text-sm tracking-tight">EV</span>
+          <div className="w-9 h-9 rounded-lg bg-foreground flex items-center justify-center shadow-sm">
+            <span className="text-background font-bold text-sm tracking-tight">EV</span>
           </div>
           <div className="flex flex-col leading-tight">
             <span className="text-[10px] uppercase tracking-widest text-muted-foreground group-hover:text-foreground transition-colors">Expected Value</span>
@@ -54,7 +54,7 @@ export function TopNav() {
         <nav className="flex items-center gap-1">
           {showStatus && (
             <span
-              className="hidden md:inline-flex items-center gap-1.5 rounded-md border border-[#B85C38]/30 bg-[#B85C38]/10 px-2.5 py-1 text-[11px] font-medium text-[#8B3D20]"
+              className="hidden md:inline-flex items-center gap-1.5 rounded-md border border-color-loss/30 bg-color-loss-subtle px-2.5 py-1 text-[11px] font-medium text-color-loss-fg"
               title="Core services are temporarily unavailable"
             >
               <Activity className="h-3.5 w-3.5" />
@@ -79,19 +79,19 @@ export function TopNav() {
                 <span className="hidden sm:inline">{item.label}</span>
                 {item.href === "/" && showHomeReviewBadge && (
                   <span
-                    className="inline-flex min-w-5 items-center justify-center rounded-full bg-[#C4A35A] px-1.5 py-0.5 text-[10px] font-semibold text-[#2C2416]"
+                    className="inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground"
                     title="Saved scanner pick ready to review"
                   >
                     1
                   </span>
                 )}
                 {item.href === "/parlay" && cart.length > 0 && (
-                  <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-[#C4A35A] px-1.5 py-0.5 text-[10px] font-semibold text-[#2C2416]">
+                  <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground">
                     {cart.length}
                   </span>
                 )}
                 {isActive && (
-                  <span className="absolute -bottom-[5px] left-1/2 h-0.5 w-8 -translate-x-1/2 rounded-full bg-[#C4A35A]" />
+                  <span className="absolute -bottom-[5px] left-1/2 h-0.5 w-8 -translate-x-1/2 rounded-full bg-primary" />
                 )}
               </Link>
             );

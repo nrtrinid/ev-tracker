@@ -82,34 +82,34 @@ export function ScannerResultsPane({
           Pick&apos;em support uses all scanned books for exact-line consensus. My Books only affects the sportsbook card view.
         </p>
       )}
-      <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         {isPropsSurface
           ? isPickEmView
-            ? `Showing ${pickemCards.length} of ${filteredCount} available pick'em board lines`
-            : `Showing ${results.length} of ${filteredCount} available ${activeLens === "standard" ? "opportunities" : "props"}`
+            ? `${pickemCards.length} of ${filteredCount} pick'em lines`
+            : `${results.length} of ${filteredCount} ${activeLens === "standard" ? "opportunities" : "props"}`
           : tutorialMode
-            ? `Showing ${results.length} of ${filteredCount} Tutorial Lines`
-            : `Showing ${results.length} of ${filteredCount} ${
+            ? `${results.length} of ${filteredCount} tutorial lines`
+            : `${results.length} of ${filteredCount} ${
               activeLens === "standard"
-                ? "+EV Lines"
+                ? "+EV lines"
                 : activeLens === "bonus_bet"
-                  ? "Bonus Bet Targets"
+                  ? "bonus bet targets"
                   : activeLens === "profit_boost"
-                    ? "Boost Opportunities"
-                    : "Qualifier Candidates"
+                    ? "boost opportunities"
+                    : "qualifier candidates"
             }`}
-      </h2>
+      </p>
 
       {(isPickEmView ? pickemCards.length === 0 : results.length === 0) ? (
-        <Card className="border-dashed">
-          <CardContent className="py-8 text-center">
-            <p className="text-sm text-muted-foreground">
+        <Card className="border-dashed border-border/60 bg-muted/10">
+          <CardContent className="py-10 text-center">
+            <p className="text-sm font-medium text-foreground">
               {scanExpiredOutOfPregame
                 ? isPickEmView
-                  ? `${rawSourceCount} pick'em board lines were scanned, but none are still pregame.`
+                  ? `${rawSourceCount} pick'em lines scanned — none still pregame.`
                   : isPropsSurface
-                    ? `${rawSourceCount} props were scanned, but none are still pregame.`
-                    : `${rawSourceCount} plays were scanned, but none are still pregame.`
+                    ? `${rawSourceCount} props scanned — none still pregame.`
+                    : `${rawSourceCount} plays scanned — none still pregame.`
                 : isPickEmView && nullState === "backend_empty"
                 ? pickemEmptyMessage ||
                   "No supported pick'em board lines are available for this scan yet."
@@ -124,10 +124,10 @@ export function ScannerResultsPane({
                         ? "No clean qualifier candidates are in range right now."
                         : "No strong boost opportunities are standing out at this percentage."
                 : isPickEmView
-                  ? `${sourceCount} pick'em board lines were available, but your current filters hid all of them.`
+                  ? `${sourceCount} pick'em lines available — filters hiding all of them.`
                   : isPropsSurface
-                  ? `${sourceCount} props were scanned, but your current filters hid all of them.`
-                  : "Your current filters are hiding all of the available plays."}
+                  ? `${sourceCount} props scanned — filters hiding all of them.`
+                  : "Filters are hiding all available plays."}
             </p>
             <p className="mt-2 text-xs text-muted-foreground">
               {scanExpiredOutOfPregame

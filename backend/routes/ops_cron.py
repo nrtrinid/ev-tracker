@@ -20,6 +20,24 @@ from utils.time_utils import utc_now_iso_z
 router = APIRouter()
 
 
+def _raise_if_delivery_disabled(delivery: Any, *, run_id: str, fallback_message_type: str) -> None:
+    if not isinstance(delivery, dict):
+        return
+    if delivery.get("delivery_status") != "disabled_no_webhook":
+        return
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "ok": False,
+            "error": "discord_webhook_not_configured",
+            "message_type": delivery.get("message_type") or fallback_message_type,
+            "route_kind": delivery.get("route_kind"),
+            "webhook_source": delivery.get("webhook_source"),
+            "run_id": run_id,
+        },
+    )
+
+
 async def cron_run_scan_impl(
     x_cron_token: str | None,
     *,
@@ -619,11 +637,15 @@ async def cron_test_discord_impl(
     }
 
     try:
-        await send_discord_webhook(payload, message_type="test")
+        delivery = await send_discord_webhook(payload, message_type="test")
+        _raise_if_delivery_disabled(delivery, run_id=run_id, fallback_message_type="test")
     except TypeError as exc:
         if "message_type" not in str(exc):
             raise
-        await send_discord_webhook(payload)
+        delivery = await send_discord_webhook(payload)
+        _raise_if_delivery_disabled(delivery, run_id=run_id, fallback_message_type="test")
+    except HTTPException:
+        raise
     except Exception as exc:
         from services.discord_alerts import DiscordDeliveryError
 
@@ -637,6 +659,8 @@ async def cron_test_discord_impl(
                     "status_code": exc.status_code,
                     "message": str(exc),
                     "response_text": exc.response_text,
+                    "route_kind": exc.route_kind,
+                    "webhook_source": exc.webhook_source,
                     "run_id": run_id,
                 },
             ) from exc
@@ -655,7 +679,12 @@ async def cron_test_discord_impl(
         run_id=run_id,
         duration_ms=round((time.monotonic() - started_at) * 1000, 2),
     )
-    return {"ok": True, "scheduled": True, "run_id": run_id}
+    return {
+        "ok": True,
+        "scheduled": True,
+        "run_id": run_id,
+        "delivery_status": delivery.get("delivery_status") if isinstance(delivery, dict) else None,
+    }
 
 
 async def cron_test_discord_alert_impl(
@@ -689,7 +718,10 @@ async def cron_test_discord_alert_impl(
     }
 
     try:
-        await send_discord_webhook(payload, message_type="alert")
+        delivery = await send_discord_webhook(payload, message_type="alert")
+        _raise_if_delivery_disabled(delivery, run_id=run_id, fallback_message_type="alert")
+    except HTTPException:
+        raise
     except Exception as exc:
         from services.discord_alerts import DiscordDeliveryError
 
@@ -703,6 +735,8 @@ async def cron_test_discord_alert_impl(
                     "status_code": exc.status_code,
                     "message": str(exc),
                     "response_text": exc.response_text,
+                    "route_kind": exc.route_kind,
+                    "webhook_source": exc.webhook_source,
                     "run_id": run_id,
                 },
             ) from exc
@@ -721,7 +755,12 @@ async def cron_test_discord_alert_impl(
         run_id=run_id,
         duration_ms=round((time.monotonic() - started_at) * 1000, 2),
     )
-    return {"ok": True, "scheduled": True, "run_id": run_id}
+    return {
+        "ok": True,
+        "scheduled": True,
+        "run_id": run_id,
+        "delivery_status": delivery.get("delivery_status") if isinstance(delivery, dict) else None,
+    }
 
 
 @router.post("/api/ops/trigger/scan")

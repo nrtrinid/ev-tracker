@@ -55,10 +55,13 @@ async def test_uses_america_phoenix_timezone_when_available(monkeypatch):
     jit_jobs = [j for j in scheduler.jobs if j["func"] == main._run_jit_clv_snatcher_job]
     assert len(jit_jobs) == 1
     assert jit_jobs[0]["trigger"].minutes == 5
+    assert jit_jobs[0]["trigger"].start_date is not None
 
     finalize_jobs = [j for j in scheduler.jobs if j["func"] == main._run_clv_finalize_job]
     assert len(finalize_jobs) == 1
     assert finalize_jobs[0]["trigger"].minutes == 5
+    assert finalize_jobs[0]["trigger"].start_date is not None
+    assert finalize_jobs[0]["trigger"].start_date - jit_jobs[0]["trigger"].start_date == timedelta(minutes=1)
 
     scan_jobs = [j for j in scheduler.jobs if j["func"] == main._run_scheduled_scan_job]
     assert len(scan_jobs) == 1
@@ -180,14 +183,11 @@ async def test_scheduled_scan_job_piggybacks_clv_for_fresh_board_sides(monkeypat
 
 @pytest.mark.asyncio
 async def test_scheduled_scan_job_sends_board_drop_alert(monkeypatch):
-    import asyncio as real_asyncio
     import services.discord_alerts as discord_alerts
     import services.daily_board as daily_board
 
     main = import_main_for_tests(monkeypatch)
-    created_tasks = []
     sent = []
-    original_create_task = real_asyncio.create_task
 
     async def _fake_daily_board_drop(*_args, **_kwargs):
         return {
@@ -202,37 +202,40 @@ async def test_scheduled_scan_job_sends_board_drop_alert(monkeypatch):
 
     async def _fake_send_discord_webhook(payload, message_type="alert"):
         sent.append((payload, message_type))
-        return None
-
-    def _fake_create_task(coro):
-        task = original_create_task(coro)
-        created_tasks.append(task)
-        return task
+        return {
+            "ok": True,
+            "message_type": message_type,
+            "route_kind": "alert_dedicated",
+            "webhook_source": "DISCORD_ALERT_WEBHOOK_URL",
+            "delivery_status": "delivered",
+            "status_code": 204,
+            "response_text": None,
+        }
 
     monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
     monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
-    monkeypatch.setattr(main.asyncio, "create_task", _fake_create_task, raising=True)
 
     await main._run_scheduled_scan_job()
-    if created_tasks:
-        await real_asyncio.gather(*created_tasks)
 
     assert sent
     assert any(message_type == "alert" for _payload, message_type in sent)
     alert_payload = next(payload for payload, message_type in sent if message_type == "alert")
     assert alert_payload["embeds"][0]["title"] == "Trusted Beta Board Live"
+    snapshot = main.app.state.ops_status["last_scheduler_scan"]
+    assert snapshot["alerts_scheduled"] == 1
+    assert snapshot["board_alert_attempted"] is True
+    assert snapshot["board_alert_delivery_status"] == "delivered"
+    assert snapshot["board_alert_http_status"] == 204
+    assert snapshot["board_alert"]["route_kind"] == "alert_dedicated"
 
 
 @pytest.mark.asyncio
 async def test_early_look_scan_job_sends_board_drop_alert(monkeypatch):
-    import asyncio as real_asyncio
     import services.discord_alerts as discord_alerts
     import services.daily_board as daily_board
 
     main = import_main_for_tests(monkeypatch)
-    created_tasks = []
     sent = []
-    original_create_task = real_asyncio.create_task
 
     async def _fake_daily_board_drop(*_args, **_kwargs):
         return {
@@ -247,24 +250,65 @@ async def test_early_look_scan_job_sends_board_drop_alert(monkeypatch):
 
     async def _fake_send_discord_webhook(payload, message_type="alert"):
         sent.append((payload, message_type))
-        return None
-
-    def _fake_create_task(coro):
-        task = original_create_task(coro)
-        created_tasks.append(task)
-        return task
+        return {
+            "ok": True,
+            "message_type": message_type,
+            "route_kind": "alert_dedicated",
+            "webhook_source": "DISCORD_ALERT_WEBHOOK_URL",
+            "delivery_status": "delivered",
+            "status_code": 204,
+            "response_text": None,
+        }
 
     monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
     monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
-    monkeypatch.setattr(main.asyncio, "create_task", _fake_create_task, raising=True)
 
     await main._run_early_look_scan_job()
-    if created_tasks:
-        await real_asyncio.gather(*created_tasks)
 
     assert sent
     alert_payload = next(payload for payload, message_type in sent if message_type == "alert")
     assert "10:30 MST" in alert_payload["embeds"][0]["description"]
+    snapshot = main.app.state.ops_status["last_scheduler_scan"]
+    assert snapshot["board_alert_delivery_status"] == "delivered"
+    assert snapshot["scan_window"]["anchor_time_mst"] == "10:30"
+
+
+@pytest.mark.asyncio
+async def test_scheduled_scan_job_records_board_alert_failure(monkeypatch):
+    import services.discord_alerts as discord_alerts
+    import services.daily_board as daily_board
+
+    main = import_main_for_tests(monkeypatch)
+
+    async def _fake_daily_board_drop(*_args, **_kwargs):
+        return {
+            "ok": True,
+            "props_sides": 3,
+            "selected_event_ids": ["evt-1"],
+        }
+
+    async def _fake_send_discord_webhook(_payload, message_type="alert"):
+        raise discord_alerts.DiscordDeliveryError(
+            message="Discord webhook rejected alert message with status 429: rate limited",
+            message_type=message_type,
+            status_code=429,
+            response_text="rate limited",
+            route_kind="alert_dedicated",
+            webhook_source="DISCORD_ALERT_WEBHOOK_URL",
+        )
+
+    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
+    monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
+
+    await main._run_scheduled_scan_job()
+
+    snapshot = main.app.state.ops_status["last_scheduler_scan"]
+    assert snapshot["alerts_scheduled"] == 1
+    assert snapshot["board_alert_attempted"] is True
+    assert snapshot["board_alert_delivery_status"] == "failed"
+    assert snapshot["board_alert_http_status"] == 429
+    assert "rate limited" in snapshot["board_alert_error"]
+    assert snapshot["board_alert"]["webhook_source"] == "DISCORD_ALERT_WEBHOOK_URL"
 
 
 @pytest.mark.asyncio
@@ -942,4 +986,5 @@ async def test_scheduled_scan_ops_status_includes_autolog_summary(monkeypatch):
     assert isinstance(snapshot, dict)
     assert snapshot.get("board_drop") is True
     assert isinstance(snapshot.get("result"), (dict, type(None)))
+    assert snapshot.get("board_alert_delivery_status") in {"disabled_no_webhook", "delivered", "failed", "failed_unexpected"}
 

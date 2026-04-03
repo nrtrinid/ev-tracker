@@ -60,8 +60,8 @@ Before release, confirm:
   - `OPS_ADMIN_EMAILS`
   - `NEXT_PUBLIC_DISCORD_INVITE_URL`
 - Database
-  - all migrations through `database/migration_013_pickem_research.sql`
-  - `backend/sql/add_v2_surface_fields.sql` if those fields are not already present
+  - all numbered migrations through `database/migration_018_player_prop_model_weights_and_research_rls.sql`
+  - no pending schema changes that exist only under `backend/sql/`
 
 ## Launch-Day Checklist
 

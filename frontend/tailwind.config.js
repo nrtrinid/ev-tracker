@@ -39,7 +39,31 @@ module.exports = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
-        // Semantic status colors — adapt between light/dark via CSS vars
+        // Surface tokens
+        "surface-card": "hsl(var(--surface-card))",
+        "surface-elevated": "hsl(var(--surface-elevated))",
+        "surface-overlay": "hsl(var(--surface-overlay))",
+        // Semantic state colors
+        "color-profit": "hsl(var(--color-profit))",
+        "color-profit-fg": "hsl(var(--color-profit-fg))",
+        "color-profit-subtle": "hsl(var(--color-profit-subtle))",
+        "color-loss": "hsl(var(--color-loss))",
+        "color-loss-fg": "hsl(var(--color-loss-fg))",
+        "color-loss-subtle": "hsl(var(--color-loss-subtle))",
+        "color-pending": "hsl(var(--color-pending))",
+        "color-pending-fg": "hsl(var(--color-pending-fg))",
+        "color-pending-subtle": "hsl(var(--color-pending-subtle))",
+        "color-neutral": "hsl(var(--color-neutral))",
+        "color-neutral-fg": "hsl(var(--color-neutral-fg))",
+        "color-neutral-subtle": "hsl(var(--color-neutral-subtle))",
+        // EV tiers
+        "ev-low": "hsl(var(--color-ev-low))",
+        "ev-mid": "hsl(var(--color-ev-mid))",
+        "ev-high": "hsl(var(--color-ev-high))",
+        "ev-elite": "hsl(var(--color-ev-elite))",
+        // Bonus
+        "color-bonus": "hsl(var(--color-bonus))",
+        // Legacy aliases (deprecated, use color-* tokens)
         profit: "hsl(var(--profit))",
         loss: "hsl(var(--loss))",
         pending: "hsl(var(--pending))",
@@ -57,6 +81,14 @@ module.exports = {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+      },
+      transitionDuration: {
+        fast: "var(--duration-fast)",
+        base: "var(--duration-base)",
+        slow: "var(--duration-slow)",
+      },
+      transitionTimingFunction: {
+        standard: "var(--easing-standard)",
       },
     },
   },

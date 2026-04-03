@@ -1,5 +1,5 @@
 -- ============================================================
--- Migration 008: Protect global scanner cache with RLS
+-- Migration 010: Protect global scanner cache with RLS
 -- ============================================================
 -- The frontend only needs authenticated read access for realtime
 -- invalidation. The backend uses the service-role key and bypasses RLS.

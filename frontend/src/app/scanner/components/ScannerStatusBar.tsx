@@ -1,5 +1,4 @@
 import { Clock, Loader2, Radar } from "lucide-react";
-
 import { Button } from "@/components/ui/button";
 
 interface ScannerStatusBarProps {
@@ -32,14 +31,14 @@ export function ScannerStatusBar({
   return (
     <div className="space-y-1.5">
       <Button
-        className="h-9 w-full text-sm font-semibold"
+        className="h-9 w-full text-sm font-semibold active:scale-[0.98] transition-transform"
         onClick={onScan}
         disabled={isRunningScan || cooldown > 0}
       >
         {isRunningScan ? (
           <>
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Finding the best plays...
+            Finding the best plays…
           </>
         ) : cooldown > 0 ? (
           <>
@@ -49,20 +48,24 @@ export function ScannerStatusBar({
         ) : (
           <>
             <Radar className="mr-2 h-4 w-4" />
-            {tutorialMode ? (hasScanData ? "Reload Tutorial Lines" : "Run Tutorial Scan") : hasScanData ? "Refresh Plays" : "Find Plays"}
+            {tutorialMode
+              ? hasScanData ? "Reload Tutorial Lines" : "Run Tutorial Scan"
+              : hasScanData ? "Refresh Plays" : "Find Plays"}
           </>
         )}
       </Button>
 
-      {scanError && <p className="text-center text-sm text-[#B85C38]">{scanError}</p>}
+      {scanError && (
+        <p className="text-center text-sm text-loss">{scanError}</p>
+      )}
 
       {hasScanData && (
         <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
           {tutorialMode ? (
             <>
-              <div className="inline-flex items-center rounded-full border border-primary/25 bg-primary/8 px-2 py-0.5 text-[10px] text-primary">
-                Tutorial Sample
-              </div>
+              <span className="inline-flex items-center rounded border border-primary/25 bg-primary/8 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
+                Tutorial
+              </span>
               <span className="h-3 w-px bg-border" />
               <span>Practice scanner</span>
               <span className="h-3 w-px bg-border" />
@@ -70,19 +73,19 @@ export function ScannerStatusBar({
             </>
           ) : (
             <>
-              <div
+              <span
                 className={
                   isStale
-                    ? "inline-flex items-center rounded-full border border-[#B85C38]/30 bg-[#B85C38]/10 px-2 py-0.5 text-[10px] text-[#8B3D20]"
-                    : "inline-flex items-center rounded-full border border-[#4A7C59]/25 bg-[#4A7C59]/8 px-2 py-0.5 text-[10px] text-[#2E5D39]"
+                    ? "inline-flex items-center rounded border border-loss/30 bg-loss/8 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-loss"
+                    : "inline-flex items-center rounded border border-profit/25 bg-profit/8 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-profit"
                 }
               >
                 {isStale ? "Stale" : "Fresh"}
-              </div>
+              </span>
               {scanAgeMinutes !== null && (
                 <>
                   <span className="h-3 w-px bg-border" />
-                  <span>Last scan {scanAgeMinutes} min ago</span>
+                  <span>{scanAgeMinutes}m ago</span>
                 </>
               )}
               <span className="h-3 w-px bg-border" />
@@ -93,7 +96,7 @@ export function ScannerStatusBar({
       )}
 
       {showBackendHint && (
-        <div className="rounded-md border border-[#B85C38]/30 bg-[#B85C38]/10 px-2.5 py-1.5 text-[11px] text-[#8B3D20]">
+        <div className="rounded border border-loss/30 bg-loss/8 px-2.5 py-1.5 text-[11px] text-loss">
           {backendHint}
         </div>
       )}

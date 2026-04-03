@@ -1,5 +1,8 @@
 -- EV Tracker Database Schema
--- Run this in Supabase SQL Editor (SQL Editor > New Query > Paste > Run)
+-- LEGACY REFERENCE SNAPSHOT ONLY.
+-- Do not use this file as the canonical bootstrap or deploy path.
+-- Source of truth: numbered migrations in database/migration_*.sql.
+-- Legacy/manual SQL helpers in backend/sql are also non-canonical.
 
 -- Create the bets table
 CREATE TABLE public.bets (

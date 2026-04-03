@@ -42,7 +42,7 @@ Operational hardening adds:
 
 - `user_id` on `bets`, `transactions`, `settings`.
 - RLS policies enforce per-user access.
-- Migration script: `database/migration_001_multi_tenant.sql`.
+- Canonical schema history: numbered migrations in `database/migration_*.sql`.
 
 ---
 
@@ -272,4 +272,5 @@ ev-betting-tracker/
 
 - **README.md** — Setup instructions, EV formulas, deployment
 - **docs/testing.md** — Testing strategy, what’s automated vs manual, and local commands
-- **database/migration_001_multi_tenant.sql** — Multi-tenant schema and RLS policies
+- **database/README.md** — Canonical database workflow and migration policy
+- **database/migration_001_multi_tenant.sql** — Start of the multi-tenant schema history

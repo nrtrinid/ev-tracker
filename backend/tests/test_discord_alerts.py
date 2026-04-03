@@ -169,9 +169,42 @@ async def test_send_discord_webhook_noop_without_env(monkeypatch, capsys):
     monkeypatch.delenv("DISCORD_DEBUG_WEBHOOK_URL", raising=False)
     mod._warned_missing_webhook = False
 
-    await mod.send_discord_webhook({"content": "hi"})
+    delivery = await mod.send_discord_webhook({"content": "hi"})
     out = capsys.readouterr().out
     assert "DISCORD_WEBHOOK_URL not set" in out
+    assert delivery["delivery_status"] == "disabled_no_webhook"
+    assert delivery["route_kind"] == "alert_unconfigured"
+
+
+@pytest.mark.asyncio
+async def test_send_discord_webhook_returns_delivery_metadata_on_success(monkeypatch):
+    mod = _reload_discord_alerts()
+    monkeypatch.setenv("DISCORD_ALERT_WEBHOOK_URL", "https://alert-webhook")
+
+    class FakeResponse:
+        status_code = 204
+        text = ""
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, _url, json):
+            return FakeResponse()
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", lambda timeout: FakeClient(), raising=True)
+
+    delivery = await mod.send_discord_webhook({"content": "hi"}, message_type="alert")
+    assert delivery["delivery_status"] == "delivered"
+    assert delivery["status_code"] == 204
+    assert delivery["webhook_source"] == "DISCORD_ALERT_WEBHOOK_URL"
+    assert delivery["route_kind"] == "alert_dedicated"
 
 
 @pytest.mark.asyncio
@@ -221,6 +254,18 @@ def test_get_webhook_and_role_alert_routing(monkeypatch):
     webhook, role = mod._get_webhook_and_role("alert")
     assert webhook == "https://alert-webhook"
     assert role == "alert-role"
+
+
+def test_describe_discord_delivery_target_alert_fallback(monkeypatch):
+    mod = _reload_discord_alerts()
+
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://primary-webhook")
+    monkeypatch.delenv("DISCORD_ALERT_WEBHOOK_URL", raising=False)
+
+    target = mod.describe_discord_delivery_target("alert")
+    assert target["webhook_configured"] is True
+    assert target["webhook_source"] == "DISCORD_WEBHOOK_URL"
+    assert target["route_kind"] == "alert_primary_fallback"
 
 
 def test_get_webhook_and_role_heartbeat_routing(monkeypatch):

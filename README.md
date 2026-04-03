@@ -235,8 +235,8 @@ That keeps browser requests same-origin through the Next proxy while server-side
 
 Before inviting testers onto `main`:
 
-- Apply database migrations through `database/migration_013_pickem_research.sql`
-- Apply `backend/sql/add_v2_surface_fields.sql` if the V2 bet identity fields are not already live
+- Apply numbered database migrations in order through `database/migration_018_player_prop_model_weights_and_research_rls.sql`
+- Treat `backend/sql/` as legacy reference only, not part of the normal bootstrap path
 - Confirm `OPS_ADMIN_EMAILS`, cron secrets, and Discord webhook env vars are present in production
 - Run both Discord validation routes and confirm alert/debug messages land in the right channels
 - Verify `/health`, `/ready`, and `/api/ops/status` after deploy

@@ -94,8 +94,8 @@ Before sharing `main` with testers:
 - run backend integration tests against a dedicated test user
 - run frontend `build` and `tsc`
 - run Playwright smoke tests where credentials are available
-- confirm production migrations are applied through `database/migration_013_pickem_research.sql`
-- confirm `backend/sql/add_v2_surface_fields.sql` is applied if needed
+- confirm production has all numbered migrations through `database/migration_018_player_prop_model_weights_and_research_rls.sql`
+- confirm no pending schema changes are living only under `backend/sql/`
 - trigger:
   - `POST /api/ops/trigger/test-discord`
   - `POST /api/ops/trigger/test-discord-alert`

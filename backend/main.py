@@ -731,18 +731,157 @@ async def _apply_fresh_board_drop_followups(result: dict, *, source: str) -> Non
     await _piggyback_clv(fresh_sides, source=source)
 
 
-def _schedule_board_drop_alert(*, result: dict | None, window_label: str, anchor_time_mst: str | None) -> None:
-    if not isinstance(result, dict) or not result.get("ok"):
-        return
+def _initial_board_alert_status(*, run_id: str, window_label: str, anchor_time_mst: str | None) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "message_type": "alert",
+        "window_label": window_label,
+        "anchor_time_mst": anchor_time_mst,
+        "attempted": False,
+        "delivery_status": "not_attempted",
+        "status_code": None,
+        "response_text": None,
+        "error": None,
+        "route_kind": None,
+        "webhook_source": None,
+    }
 
-    from services.discord_alerts import build_board_drop_alert_payload, send_discord_webhook
+
+def _board_alert_status_fields(board_alert: dict[str, Any] | None) -> dict[str, Any]:
+    status = board_alert if isinstance(board_alert, dict) else {}
+    return {
+        "board_alert": status or None,
+        "board_alert_attempted": status.get("attempted"),
+        "board_alert_delivery_status": status.get("delivery_status"),
+        "board_alert_http_status": status.get("status_code"),
+        "board_alert_error": status.get("error"),
+    }
+
+
+async def _schedule_board_drop_alert(
+    *,
+    run_id: str,
+    result: dict | None,
+    window_label: str,
+    anchor_time_mst: str | None,
+) -> dict[str, Any]:
+    board_alert = _initial_board_alert_status(
+        run_id=run_id,
+        window_label=window_label,
+        anchor_time_mst=anchor_time_mst,
+    )
+    if not isinstance(result, dict) or not result.get("ok"):
+        board_alert["delivery_status"] = "skipped_result_not_ok"
+        return board_alert
+
+    from services.discord_alerts import (
+        DiscordDeliveryError,
+        build_board_drop_alert_payload,
+        describe_discord_delivery_target,
+        send_discord_webhook,
+    )
 
     payload = build_board_drop_alert_payload(
         window_label=window_label,
         anchor_time_mst=anchor_time_mst,
         result=result,
     )
-    asyncio.create_task(send_discord_webhook(payload, message_type="alert"))
+    delivery_target = describe_discord_delivery_target("alert")
+    board_alert.update(
+        {
+            "route_kind": delivery_target.get("route_kind"),
+            "webhook_source": delivery_target.get("webhook_source"),
+        }
+    )
+    _log_event(
+        "scheduler.board_alert.dispatch.started",
+        run_id=run_id,
+        window_label=window_label,
+        anchor_time_mst=anchor_time_mst,
+        route_kind=board_alert.get("route_kind"),
+        webhook_source=board_alert.get("webhook_source"),
+        webhook_configured=delivery_target.get("webhook_configured"),
+    )
+    try:
+        delivery = await send_discord_webhook(payload, message_type="alert")
+        if isinstance(delivery, dict):
+            board_alert.update(
+                {
+                    "attempted": delivery.get("delivery_status") != "disabled_no_webhook",
+                    "delivery_status": delivery.get("delivery_status"),
+                    "status_code": delivery.get("status_code"),
+                    "response_text": delivery.get("response_text"),
+                    "route_kind": delivery.get("route_kind"),
+                    "webhook_source": delivery.get("webhook_source"),
+                }
+            )
+        if board_alert.get("delivery_status") == "disabled_no_webhook":
+            board_alert["error"] = "Discord alert webhook not configured"
+            _log_event(
+                "scheduler.board_alert.dispatch.skipped",
+                level="warning",
+                run_id=run_id,
+                window_label=window_label,
+                anchor_time_mst=anchor_time_mst,
+                route_kind=board_alert.get("route_kind"),
+                webhook_source=board_alert.get("webhook_source"),
+                delivery_status=board_alert.get("delivery_status"),
+            )
+        else:
+            _log_event(
+                "scheduler.board_alert.dispatch.completed",
+                run_id=run_id,
+                window_label=window_label,
+                anchor_time_mst=anchor_time_mst,
+                route_kind=board_alert.get("route_kind"),
+                webhook_source=board_alert.get("webhook_source"),
+                delivery_status=board_alert.get("delivery_status"),
+                status_code=board_alert.get("status_code"),
+                response_text=board_alert.get("response_text"),
+            )
+    except DiscordDeliveryError as exc:
+        board_alert.update(
+            {
+                "attempted": True,
+                "delivery_status": "failed",
+                "status_code": exc.status_code,
+                "response_text": exc.response_text,
+                "error": str(exc),
+                "route_kind": exc.route_kind or board_alert.get("route_kind"),
+                "webhook_source": exc.webhook_source or board_alert.get("webhook_source"),
+            }
+        )
+        _log_event(
+            "scheduler.board_alert.dispatch.failed",
+            level="error",
+            run_id=run_id,
+            window_label=window_label,
+            anchor_time_mst=anchor_time_mst,
+            route_kind=board_alert.get("route_kind"),
+            webhook_source=board_alert.get("webhook_source"),
+            status_code=board_alert.get("status_code"),
+            response_text=board_alert.get("response_text"),
+            error=str(exc),
+        )
+    except Exception as exc:
+        board_alert.update(
+            {
+                "attempted": bool(delivery_target.get("webhook_configured")),
+                "delivery_status": "failed_unexpected",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        )
+        _log_event(
+            "scheduler.board_alert.dispatch.failed",
+            level="error",
+            run_id=run_id,
+            window_label=window_label,
+            anchor_time_mst=anchor_time_mst,
+            route_kind=board_alert.get("route_kind"),
+            webhook_source=board_alert.get("webhook_source"),
+            error=board_alert.get("error"),
+        )
+    return board_alert
 
 
 def _get_environment() -> str:
@@ -1112,6 +1251,8 @@ except Exception as e:
 
 # In-process lock to prevent overlapping daily-board runs (scheduler + cron/ops triggers).
 _DAILY_BOARD_RUN_LOCK = asyncio.Lock()
+_CLV_SCHEDULER_INTERVAL_MINUTES = 5
+_CLV_FINALIZE_STAGGER_MINUTES = 1
 
 
 async def _run_jit_clv_snatcher_job():
@@ -1472,6 +1613,16 @@ async def _run_scheduled_scan_job():
 
     hard_errors = 0
     result: dict | None = None
+    scan_window = {
+        "label": "Late-Afternoon / Final-Context Scan",
+        "anchor_timezone": "America/Phoenix",
+        "anchor_time_mst": "15:30",
+    }
+    board_alert = _initial_board_alert_status(
+        run_id=run_id,
+        window_label=scan_window["label"],
+        anchor_time_mst=scan_window["anchor_time_mst"],
+    )
     try:
         _log_event(
             "board.drop.started_from_scheduler",
@@ -1499,9 +1650,10 @@ async def _run_scheduled_scan_job():
                     log_event=_log_event,
                 )
                 await _apply_fresh_board_drop_followups(result, source="scheduled_board_drop")
-                _schedule_board_drop_alert(
+                board_alert = await _schedule_board_drop_alert(
+                    run_id=run_id,
                     result=result,
-                    window_label="Late-Afternoon / Final-Context Scan",
+                    window_label=scan_window["label"],
                     anchor_time_mst="15:30",
                 )
     except Exception as e:
@@ -1515,11 +1667,17 @@ async def _run_scheduled_scan_job():
         hard_errors = 1
 
     finished = _utc_now_iso()
+    alerts_scheduled = 1 if board_alert.get("attempted") else 0
+    board_alert_fields = _board_alert_status_fields(board_alert)
     _log_event(
         "scheduler.daily_board.completed",
         run_id=run_id,
         finished_at=finished,
         result=result,
+        alerts_scheduled=alerts_scheduled,
+        board_alert_delivery_status=board_alert.get("delivery_status"),
+        board_alert_http_status=board_alert.get("status_code"),
+        board_alert_error=board_alert.get("error"),
         duration_ms=round((time.monotonic() - started_at) * 1000, 2),
     )
     duration_ms = round((time.monotonic() - started_at) * 1000, 2)
@@ -1543,22 +1701,19 @@ async def _run_scheduled_scan_job():
         "last_scheduler_scan",
         {
             "run_id": run_id,
-            "scan_window": {
-                "label": "Late-Afternoon / Final-Context Scan",
-                "anchor_timezone": "America/Phoenix",
-                "anchor_time_mst": "15:30",
-            },
+            "scan_window": scan_window,
             "started_at": started,
             "finished_at": finished,
             "duration_ms": duration_ms,
             "total_sides": (result or {}).get("props_sides") if isinstance(result, dict) else None,
             "props_events_scanned": (result or {}).get("props_events_scanned") if isinstance(result, dict) else None,
             "featured_games_count": (result or {}).get("featured_games_count") if isinstance(result, dict) else None,
-            "alerts_scheduled": 0,
+            "alerts_scheduled": alerts_scheduled,
             "hard_errors": hard_errors,
             "captured_at": finished,
             "board_drop": True,
             "result": result,
+            **board_alert_fields,
         },
     )
     _persist_ops_job_run(
@@ -1577,13 +1732,15 @@ async def _run_scheduled_scan_job():
         events_fetched=None,
         events_with_both_books=None,
         total_sides=(result or {}).get("props_sides") if isinstance(result, dict) else None,
-        alerts_scheduled=0,
+        alerts_scheduled=alerts_scheduled,
         hard_errors=hard_errors,
         api_requests_remaining=None,
         meta={
             "board_drop": True,
+            "scan_window": scan_window,
             "props_events_scanned": (result or {}).get("props_events_scanned") if isinstance(result, dict) else None,
             "featured_games_count": (result or {}).get("featured_games_count") if isinstance(result, dict) else None,
+            **board_alert_fields,
             "result": result,
         },
     )
@@ -1600,6 +1757,16 @@ async def _run_early_look_scan_job():
 
     hard_errors = 0
     result: dict | None = None
+    scan_window = {
+        "label": "Early-Look / Injury-Watch Scan",
+        "anchor_timezone": "America/Phoenix",
+        "anchor_time_mst": "10:30",
+    }
+    board_alert = _initial_board_alert_status(
+        run_id=run_id,
+        window_label=scan_window["label"],
+        anchor_time_mst=scan_window["anchor_time_mst"],
+    )
     try:
         _log_event(
             "board.drop.started_from_scheduler",
@@ -1627,9 +1794,10 @@ async def _run_early_look_scan_job():
                     log_event=_log_event,
                 )
                 await _apply_fresh_board_drop_followups(result, source="scheduled_board_drop_early_look")
-                _schedule_board_drop_alert(
+                board_alert = await _schedule_board_drop_alert(
+                    run_id=run_id,
                     result=result,
-                    window_label="Early-Look / Injury-Watch Scan",
+                    window_label=scan_window["label"],
                     anchor_time_mst="10:30",
                 )
     except Exception as e:
@@ -1644,11 +1812,17 @@ async def _run_early_look_scan_job():
 
     finished = _utc_now_iso()
     duration_ms = round((time.monotonic() - started_at) * 1000, 2)
+    alerts_scheduled = 1 if board_alert.get("attempted") else 0
+    board_alert_fields = _board_alert_status_fields(board_alert)
     _log_event(
         "scheduler.daily_board.early_look.completed",
         run_id=run_id,
         finished_at=finished,
         result=result,
+        alerts_scheduled=alerts_scheduled,
+        board_alert_delivery_status=board_alert.get("delivery_status"),
+        board_alert_http_status=board_alert.get("status_code"),
+        board_alert_error=board_alert.get("error"),
         duration_ms=duration_ms,
     )
     if hard_errors:
@@ -1671,22 +1845,19 @@ async def _run_early_look_scan_job():
         "last_scheduler_scan",
         {
             "run_id": run_id,
-            "scan_window": {
-                "label": "Early-Look / Injury-Watch Scan",
-                "anchor_timezone": "America/Phoenix",
-                "anchor_time_mst": "10:30",
-            },
+            "scan_window": scan_window,
             "started_at": started,
             "finished_at": finished,
             "duration_ms": duration_ms,
             "total_sides": (result or {}).get("props_sides") if isinstance(result, dict) else None,
             "props_events_scanned": (result or {}).get("props_events_scanned") if isinstance(result, dict) else None,
             "featured_games_count": (result or {}).get("featured_games_count") if isinstance(result, dict) else None,
-            "alerts_scheduled": 0,
+            "alerts_scheduled": alerts_scheduled,
             "hard_errors": hard_errors,
             "captured_at": finished,
             "board_drop": True,
             "result": result,
+            **board_alert_fields,
         },
     )
     _persist_ops_job_run(
@@ -1705,16 +1876,13 @@ async def _run_early_look_scan_job():
         events_fetched=None,
         events_with_both_books=None,
         total_sides=(result or {}).get("props_sides") if isinstance(result, dict) else None,
-        alerts_scheduled=0,
+        alerts_scheduled=alerts_scheduled,
         hard_errors=hard_errors,
         api_requests_remaining=None,
         meta={
             "board_drop": True,
-            "scan_window": {
-                "label": "Early-Look / Injury-Watch Scan",
-                "anchor_timezone": "America/Phoenix",
-                "anchor_time_mst": "10:30",
-            },
+            "scan_window": scan_window,
+            **board_alert_fields,
             "result": result,
         },
     )
@@ -1809,12 +1977,32 @@ async def start_scheduler():
     from apscheduler.triggers.interval import IntervalTrigger
     _init_scheduler_heartbeats()
     scheduler = AsyncIOScheduler()
+    clv_job_anchor = datetime.now(UTC) + timedelta(minutes=_CLV_SCHEDULER_INTERVAL_MINUTES)
     # Every 5 min: capture closing reference lines for games approaching lock.
-    scheduler.add_job(_run_jit_clv_snatcher_job, IntervalTrigger(minutes=5))
-    _log_event("scheduler.job_registered", job="jit_clv_snatcher", trigger="interval:5m", **_boot_fields())
-    # Every 5 min: promote exact latest snapshots already captured inside the close window.
-    scheduler.add_job(_run_clv_finalize_job, IntervalTrigger(minutes=5))
-    _log_event("scheduler.job_registered", job="clv_finalize", trigger="interval:5m", **_boot_fields())
+    scheduler.add_job(
+        _run_jit_clv_snatcher_job,
+        IntervalTrigger(minutes=_CLV_SCHEDULER_INTERVAL_MINUTES, start_date=clv_job_anchor),
+    )
+    _log_event(
+        "scheduler.job_registered",
+        job="jit_clv_snatcher",
+        trigger=f"interval:{_CLV_SCHEDULER_INTERVAL_MINUTES}m",
+        **_boot_fields(),
+    )
+    # Keep finalize on the same cadence, but offset it so it doesn't contend with JIT snapshot work.
+    scheduler.add_job(
+        _run_clv_finalize_job,
+        IntervalTrigger(
+            minutes=_CLV_SCHEDULER_INTERVAL_MINUTES,
+            start_date=clv_job_anchor + timedelta(minutes=_CLV_FINALIZE_STAGGER_MINUTES),
+        ),
+    )
+    _log_event(
+        "scheduler.job_registered",
+        job="clv_finalize",
+        trigger=f"interval:{_CLV_SCHEDULER_INTERVAL_MINUTES}m+{_CLV_FINALIZE_STAGGER_MINUTES}m",
+        **_boot_fields(),
+    )
     # 11:00 PM Phoenix catches most same-night finals; 4:00 AM cleans up stragglers.
     # Explicit timezone keeps scheduler behavior consistent across hosts.
     auto_settle_schedules = (

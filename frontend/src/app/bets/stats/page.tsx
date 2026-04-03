@@ -1,4 +1,3 @@
-// Stats sub-route — renders the analytics surface within the Bets workflow.
-// The bets/layout.tsx provides the Bets | Stats segment tabs above this page.
-// The analytics page handles its own sticky filter bar and data fetching.
+// Stats sub-route. The stats screen reuses the shared Bets | Stats segmented
+// header while rendering the locked analytics content below it.
 export { default } from "@/app/analytics/page";

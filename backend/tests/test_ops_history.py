@@ -147,7 +147,20 @@ def test_load_ops_status_snapshot_prefers_durable_rows_and_rebuilds_activity():
                     "total_sides": 44,
                     "alerts_scheduled": 3,
                     "hard_errors": 0,
-                    "meta": {"autolog_summary": {"enabled": False}},
+                    "meta": {
+                        "autolog_summary": {"enabled": False},
+                        "scan_window": {
+                            "label": "Early-Look / Injury-Watch Scan",
+                            "anchor_timezone": "America/Phoenix",
+                            "anchor_time_mst": "10:30",
+                        },
+                        "board_alert": {
+                            "attempted": True,
+                            "delivery_status": "failed",
+                            "status_code": 429,
+                            "error": "rate limited",
+                        },
+                    },
                 },
                 {
                     "job_kind": "ops_trigger_scan",
@@ -276,6 +289,11 @@ def test_load_ops_status_snapshot_prefers_durable_rows_and_rebuilds_activity():
     assert snapshot["last_manual_scan"]["total_sides"] == 31
     assert snapshot["last_scheduler_scan"]["run_id"] == "scheduled-1"
     assert snapshot["last_scheduler_scan"]["autolog_summary"] == {"enabled": False}
+    assert snapshot["last_scheduler_scan"]["scan_window"]["anchor_time_mst"] == "10:30"
+    assert snapshot["last_scheduler_scan"]["board_alert"]["delivery_status"] == "failed"
+    assert snapshot["last_scheduler_scan"]["board_alert_attempted"] is True
+    assert snapshot["last_scheduler_scan"]["board_alert_http_status"] == 429
+    assert snapshot["last_scheduler_scan"]["board_alert_error"] == "rate limited"
     assert snapshot["last_ops_trigger_scan"]["error_count"] == 1
     assert snapshot["last_auto_settle"]["settled"] == 5
     assert snapshot["last_auto_settle_summary"]["skipped_totals"] == {"missing_score": 2}

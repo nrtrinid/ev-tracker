@@ -1,8 +1,22 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import Link from "next/link";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
+import {
+  Area,
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+
+import { ChevronRight } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Sheet,
@@ -10,65 +24,183 @@ import {
   SheetDescription,
   SheetHeader,
   SheetTitle,
-  SheetClose,
 } from "@/components/ui/sheet";
-import { cn, formatCurrency, formatPercent } from "@/lib/utils";
+import { getAllBetsForStats, getBalances, getSettings } from "@/lib/api";
 import {
-  Target,
-  X,
-  SlidersHorizontal,
-  Info,
-} from "lucide-react";
-import { TopKpiCards } from "@/components/TopKpiCards";
-import { useQuery } from "@tanstack/react-query";
-import { getBets, getSummary, getBalances } from "@/lib/api";
-import { useBackendReadiness } from "@/lib/hooks";
-import { hasUserFacingSyncIssue } from "@/lib/readiness-ui";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
+  buildStatsPageModel,
+  type BankrollDetailsBook,
+  type StatsChartFilter,
+  type StatsChartPoint,
+  type VerdictState,
+} from "@/lib/stats-page";
+import { getTrackerSourceLabel, matchesTrackerSourceFilter } from "@/lib/tracker-source";
+import { buildTrackerViewQuery, parseTrackerSourceFilter } from "@/lib/tracker-view";
+import { cn, formatCurrency } from "@/lib/utils";
 
-  Line,
-  CartesianGrid,
-  ComposedChart,
-} from "recharts";
-import type { Bet } from "@/lib/types";
+// ─── Theme ───────────────────────────────────────────────────────────────────
 
-// Filter options
-const TIMEFRAME_OPTIONS = ["All Time", "YTD", "Last 30 Days", "Last 7 Days"] as const;
-const BET_TYPE_OPTIONS = ["All Types", "Bonus Bets", "Boosts", "Standard"] as const;
-const SPORT_OPTIONS = ["All Sports", "NFL", "NBA", "MLB", "NHL", "NCAAF", "NCAAB", "Soccer", "Tennis", "UFC"] as const;
-const BUCKET_OPTIONS = ["All Buckets", "Low Edge", "High Edge"] as const;
+const CHART_THEME = {
+  varianceFill: "hsl(var(--primary) / 0.10)",
+  varianceStroke: "hsl(var(--primary) / 0.20)",
+  evStroke: "hsl(var(--primary))",
+  profitStroke: "hsl(var(--profit))",
+};
 
-type TimeframeOption = typeof TIMEFRAME_OPTIONS[number];
-type BetTypeOption = typeof BET_TYPE_OPTIONS[number];
-type SportOption = typeof SPORT_OPTIONS[number];
-type BucketOption = typeof BUCKET_OPTIONS[number];
-type SportsbookOption = "All Books" | string;
+// Verdict card: left-border accent only — no bg tints, no gradients.
+// Softer border weight — a thin accent line, not a hard stripe.
+const VERDICT_STYLES: Record<
+  VerdictState,
+  { leftBorder: string; label: string; accent: string }
+> = {
+  hot:            { leftBorder: "border-l-2 border-l-primary",  label: "text-primary", accent: "text-primary" },
+  on_track:       { leftBorder: "border-l-2 border-l-profit",   label: "text-profit",  accent: "text-profit"  },
+  cold_but_okay:  { leftBorder: "border-l-2 border-l-border",   label: "text-foreground", accent: "text-muted-foreground" },
+  worth_reviewing:{ leftBorder: "border-l-2 border-l-loss",     label: "text-loss",    accent: "text-loss"    },
+};
 
-// Filter Pill component
-function FilterPill({ 
-  label, 
-  active, 
-  onClick 
-}: { 
-  label: string; 
-  active: boolean; 
+const CHART_FILTERS: Array<{ value: StatsChartFilter; label: string }> = [
+  { value: "all",    label: "All"    },
+  { value: "core",   label: "Core Bets"  },
+  { value: "promos", label: "Promos" },
+];
+
+// ─── Formatters ──────────────────────────────────────────────────────────────
+
+function formatSignedCurrency(value: number | null): string {
+  if (value === null) return "—";
+  return `${value >= 0 ? "+" : ""}${formatCurrency(value)}`;
+}
+
+function formatSwing(value: number): string {
+  return `±${formatCurrency(value)}`;
+}
+
+function formatWeeklyChange(value: number): string {
+  return `${formatSignedCurrency(value)} this wk`;
+}
+
+function formatPercent(value: number | null): string {
+  if (value === null) return "-";
+  return `${value.toFixed(1)}%`;
+}
+
+function formatCoverage(value: number | null): string | null {
+  if (value === null) return null;
+  return `${value.toFixed(1)}%`;
+}
+
+// ─── Sub-components ──────────────────────────────────────────────────────────
+
+/**
+ * Metric tile inside the verdict card.
+ * Consistent padding, mono number, muted label — same rhythm as scanner cards.
+ */
+function VerdictMetric({
+  label,
+  value,
+  valueClass,
+}: {
+  label: string;
+  value: string;
+  valueClass?: string;
+}) {
+  return (
+    <div className="rounded border border-border/40 bg-background/30 px-3 py-2.5">
+      <p className="text-[11px] text-muted-foreground">
+        {label}
+      </p>
+      <p className={cn("mt-1.5 font-mono text-xl font-semibold tabular-nums leading-none", valueClass)}>
+        {value}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Top-level summary cards — bankroll / profit / at-risk.
+ * Matches the compact density of scanner result cards.
+ */
+function SummaryCard({
+  label,
+  value,
+  secondary,
+  valueClass,
+  onClick,
+  affordance,
+  ariaLabel,
+  triggerTestId,
+}: {
+  label: string;
+  value: string;
+  secondary?: string;
+  valueClass?: string;
+  onClick?: () => void;
+  affordance?: ReactNode;
+  ariaLabel?: string;
+  triggerTestId?: string;
+}) {
+  const card = (
+    <Card data-testid="summary-card" className="border-border/50">
+      <CardContent className="px-3 py-3">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[11px] text-muted-foreground">{label}</p>
+          {affordance}
+        </div>
+        <p className={cn("mt-1.5 font-mono text-lg font-semibold tabular-nums leading-none", valueClass)}>
+          {value}
+        </p>
+        {secondary ? (
+          <p className="mt-1.5 font-mono text-[11px] tabular-nums text-muted-foreground/70">
+            {secondary}
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+
+  if (!onClick) {
+    return card;
+  }
+
+  return (
+    <button
+      type="button"
+      data-testid={triggerTestId}
+      aria-label={ariaLabel ?? `${label} details`}
+      onClick={onClick}
+      className="w-full rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background"
+    >
+      {card}
+    </button>
+  );
+}
+
+/**
+ * Chart filter pills — same visual language as the duplicate-state badges
+ * on scanner cards: small, bordered, uppercase tracking.
+ */
+function ChartFilterPill({
+  active,
+  label,
+  disabled = false,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  disabled?: boolean;
   onClick: () => void;
 }) {
   return (
     <button
+      type="button"
+      disabled={disabled}
       onClick={onClick}
       className={cn(
-        "px-3 py-1.5 rounded-full text-sm font-medium transition-colors whitespace-nowrap shrink-0",
-        active 
-          ? "bg-foreground text-background shadow-sm" 
-          : "bg-muted text-muted-foreground hover:bg-secondary"
+        "rounded px-2.5 py-1 text-xs font-medium transition-colors",
+        disabled && "cursor-not-allowed opacity-60",
+        active
+          ? "bg-primary/15 text-primary"
+          : "text-muted-foreground hover:text-foreground",
       )}
     >
       {label}
@@ -76,1205 +208,766 @@ function FilterPill({
   );
 }
 
-// Filter bar component
-function AnalyticsFilterBar({
-  timeframe,
-  setTimeframe,
-  betType,
-  setBetType,
-  sport,
-  setSport,
-  bucket,
-  setBucket,
-  showBucketFilter,
-  sportsbook,
-  setSportsbook,
-  sportsbookOptions,
-  hasActiveFilters,
-  onClearFilters,
-}: {
-  timeframe: TimeframeOption;
-  setTimeframe: (v: TimeframeOption) => void;
-  betType: BetTypeOption;
-  setBetType: (v: BetTypeOption) => void;
-  sport: SportOption;
-  setSport: (v: SportOption) => void;
-  bucket: BucketOption;
-  setBucket: (v: BucketOption) => void;
-  showBucketFilter: boolean;
-  sportsbook: SportsbookOption;
-  setSportsbook: (v: SportsbookOption) => void;
-  sportsbookOptions: string[];
-  hasActiveFilters: boolean;
-  onClearFilters: () => void;
-}) {
+/**
+ * Inline chart legend — sits on the same row as the filter pills.
+ */
+function ChartLegend() {
   return (
-    <div className="space-y-4">
-      {/* Timeframe - Horizontal Scroll */}
-      <div>
-        <span className="text-xs text-muted-foreground font-medium block mb-2">Time</span>
-        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-          {TIMEFRAME_OPTIONS.map((option) => (
-            <FilterPill
-              key={option}
-              label={option}
-              active={timeframe === option}
-              onClick={() => setTimeframe(option)}
-            />
-          ))}
-        </div>
-      </div>
-      
-      {/* Sportsbook - Horizontal Scroll */}
-      <div>
-        <span className="text-xs text-muted-foreground font-medium block mb-2">Book</span>
-        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-          <FilterPill
-            label="All Books"
-            active={sportsbook === "All Books"}
-            onClick={() => setSportsbook("All Books")}
-          />
-          {sportsbookOptions.map((option) => (
-            <FilterPill
-              key={option}
-              label={option}
-              active={sportsbook === option}
-              onClick={() => setSportsbook(option)}
-            />
-          ))}
-        </div>
-      </div>
-      
-      {/* Bet Type - Horizontal Scroll */}
-      <div>
-        <span className="text-xs text-muted-foreground font-medium block mb-2">Type</span>
-        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-          {BET_TYPE_OPTIONS.map((option) => (
-            <FilterPill
-              key={option}
-              label={option}
-              active={betType === option}
-              onClick={() => setBetType(option)}
-            />
-          ))}
-        </div>
-      </div>
-
-      {showBucketFilter && (
-        <div>
-          <span className="text-xs text-muted-foreground font-medium block mb-2">Bucket</span>
-          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-            {BUCKET_OPTIONS.map((option) => (
-              <FilterPill
-                key={option}
-                label={option}
-                active={bucket === option}
-                onClick={() => setBucket(option)}
-              />
-            ))}
-          </div>
-        </div>
-      )}
-      
-      {/* Sport - Horizontal Scroll */}
-      <div>
-        <span className="text-xs text-muted-foreground font-medium block mb-2">Sport</span>
-        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-          {SPORT_OPTIONS.map((option) => (
-            <FilterPill
-              key={option}
-              label={option}
-              active={sport === option}
-              onClick={() => setSport(option)}
-            />
-          ))}
-        </div>
-      </div>
-
-      {/* Clear filters */}
-      {hasActiveFilters && (
-        <button
-          onClick={onClearFilters}
-          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <X className="h-3 w-3" />
-          Clear filters
-        </button>
-      )}
+    <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+      <span className="flex items-center gap-1.5">
+        <span className="inline-block h-[2px] w-4 rounded-full bg-[hsl(var(--primary))]" />
+        EV
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span className="inline-block h-[2px] w-4 rounded-full bg-[hsl(var(--profit))]" />
+        Profit
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span className="inline-block h-2.5 w-3.5 rounded-sm border border-[hsl(var(--primary)/0.25)] bg-[hsl(var(--primary)/0.10)]" />
+        Range
+      </span>
     </div>
   );
 }
 
-// Sportsbook colors for charts (authentic brand colors)
-const SPORTSBOOK_COLORS: Record<string, string> = {
-  DraftKings: "#4CBB17",
-  FanDuel: "#0E7ACA",
-  BetMGM: "#C5A562",
-  Caesars: "#C49A6C",
-  "ESPN Bet": "#ED174C",
-  Fanatics: "#0047BB",
-  "Hard Rock": "#FDB913",
-  bet365: "#00843D",
-};
-
-const CHART_COLORS = ["#4A7C59", "#C4A35A", "#6B5E4F", "#B85C38", "#8B7355", "#7A9E7E", "#D4C4A8", "#9B8A7B"];
-
-// Promo type chart colors (distinct hues for readability)
-// Note: Chart palette intentionally diverges from tag colors for better differentiation.
-const PROMO_TYPE_CHART_COLORS: Record<string, string> = {
-  "Bonus Bet": "#7A9E7E",
-  "Boosts": "#C4A35A",
-  "30% Boost": "#C4A35A",
-  "50% Boost": "#B8963E",
-  "100% Boost": "#8B7355",
-  "Custom Boost": "#D4C4A8",
-  "No Sweat": "#4A7C59",
-  "Promo Qualifier": "#B85C38",
-  "Standard": "#6B5E4F",
-};
-
-export default function AnalyticsPage() {
-  // Filter state
-  const [timeframe, setTimeframe] = useState<TimeframeOption>("All Time");
-  const [betType, setBetType] = useState<BetTypeOption>("All Types");
-  const [sport, setSport] = useState<SportOption>("All Sports");
-  const [bucket, setBucket] = useState<BucketOption>("All Buckets");
-  const [sportsbook, setSportsbook] = useState<SportsbookOption>("All Books");
-  const [filterOpen, setFilterOpen] = useState(false);
-  const [breakdownTab, setBreakdownTab] = useState<"book" | "sport" | "type">("book");
-  const [bookMetric, setBookMetric] = useState<"ev" | "profit">("ev");
-
-  const clearFilters = () => {
-    setTimeframe("All Time");
-    setBetType("All Types");
-    setSport("All Sports");
-    setBucket("All Buckets");
-    setSportsbook("All Books");
-  };
-
-  const { isLoading: summaryLoading } = useQuery({
-    queryKey: ["summary"],
-    queryFn: getSummary,
-  });
-
-  const { data: bets, isLoading: betsLoading } = useQuery({
-    queryKey: ["bets"],
-    queryFn: () => getBets(),
-  });
-
-  const showBucketFilter = useMemo(() => {
-    if (!bets || bets.length === 0) return false;
-    return bets.some((b) => b.auto_logged || !!b.strategy_cohort);
-  }, [bets]);
-
-  const activeFilterCount = [
-    timeframe !== "All Time",
-    betType !== "All Types",
-    sport !== "All Sports",
-    showBucketFilter && bucket !== "All Buckets",
-    sportsbook !== "All Books",
-  ].filter(Boolean).length;
-
-  const hasActiveFilters = activeFilterCount > 0;
-
-  const { data: balances, isLoading: balancesLoading } = useQuery({
-    queryKey: ["balances"],
-    queryFn: getBalances,
-  });
-  const { data: readiness } = useBackendReadiness();
-
-  const isLoading = summaryLoading || betsLoading;
-  const showAnalyticsHint = hasUserFacingSyncIssue(readiness);
-
-  // Get unique sportsbooks for filter options
-  const sportsbookOptions = useMemo(() => {
-    if (!bets) return [];
-    return Array.from(new Set(bets.map(b => b.sportsbook))).sort();
-  }, [bets]);
-
-  // Apply filters to bets
-  const filteredBets = useMemo(() => {
-    if (!bets) return [];
-    
-    return bets.filter(bet => {
-      // Timeframe filter
-      const betDate = new Date(bet.created_at);
-      const now = new Date();
-      let dateMatch = true;
-      
-      if (timeframe === "Last 7 Days") {
-        const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        dateMatch = betDate >= weekAgo;
-      } else if (timeframe === "Last 30 Days") {
-        const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        dateMatch = betDate >= monthAgo;
-      } else if (timeframe === "YTD") {
-        const startOfYear = new Date(now.getFullYear(), 0, 1);
-        dateMatch = betDate >= startOfYear;
-      }
-      
-      // Sportsbook filter
-      const bookMatch = sportsbook === "All Books" || bet.sportsbook === sportsbook;
-      
-      // Bet type filter
-      let typeMatch = true;
-      if (betType === "Bonus Bets") {
-        typeMatch = bet.promo_type === "bonus_bet";
-      } else if (betType === "Boosts") {
-        typeMatch = bet.promo_type.startsWith("boost");
-      } else if (betType === "Standard") {
-        typeMatch = bet.promo_type === "standard" || bet.promo_type === "no_sweat" || bet.promo_type === "promo_qualifier";
-      }
-      
-      // Sport filter
-      const sportMatch = sport === "All Sports" || bet.sport === sport;
-
-      // Cohort bucket filter (shown only for experiment/autolog accounts)
-      let bucketMatch = true;
-      if (showBucketFilter && bucket !== "All Buckets") {
-        if (bucket === "Low Edge") {
-          bucketMatch = bet.strategy_cohort === "low_edge_test";
-        } else if (bucket === "High Edge") {
-          bucketMatch = bet.strategy_cohort === "high_edge_longshot_test";
-        }
-      }
-      
-      return dateMatch && bookMatch && typeMatch && sportMatch && bucketMatch;
-    });
-  }, [bets, timeframe, sportsbook, betType, sport, showBucketFilter, bucket]);
-
-  // Calculate metrics from filtered bets
-  const settledBets = filteredBets.filter(b => b.result !== "pending");
-  const pendingBets = filteredBets.filter(b => b.result === "pending");
-  
-  // Total stake risked (settled bets only for ROI calc)
-  const totalSettledStake = settledBets.reduce((sum, b) => sum + b.stake, 0);
-
-  
-  // Pending EV
-  const pendingEV = pendingBets.reduce((sum, b) => sum + b.ev_total, 0);
-  const settledEV = settledBets.reduce((sum, b) => sum + b.ev_total, 0);
-  
-  // Z-Score Calculation
-  // Z = (Real Profit - Total EV) / Standard Deviation
-  // Standard deviation estimated from stake variance
-  const totalVariance = settledBets.reduce((sum, b) => {
-    // Variance per bet ≈ stake² × (decimal_odds) for simplified calculation
-    // More accurate: stake² × p × (1-p) × (odds-1)² where p = 1/odds
-    const p = 1 / b.odds_decimal;
-    const betVariance = (b.stake ** 2) * p * (1 - p) * ((b.odds_decimal - 1) ** 2 + 1);
-    return sum + betVariance;
-  }, 0);
-  const standardDeviation = Math.sqrt(totalVariance);
-  const settledProfit = settledBets.reduce((sum, b) => sum + (b.real_profit || 0), 0);
-  // Z-score only becomes meaningful with a small sample (>= 2 settled bets).
-  // With 0-1 bets the UI should keep the "need more data" message.
-  const zScore =
-    settledBets.length <= 1
-      ? null
-      : standardDeviation > 0
-        ? (settledProfit - settledEV) / standardDeviation
-        : null;
-  
-  // Calculate filtered totals
-
-  const filteredRealProfit = settledBets.reduce((sum, b) => sum + (b.real_profit || 0), 0);
-  
-  // EV Conversion (Real Profit / Settled EV)
-  const evConversion = settledEV > 0 ? (filteredRealProfit / settledEV) : null;
-  
-  // ROI based on settled cash
-  const settledROI = totalSettledStake > 0 ? (filteredRealProfit / totalSettledStake) : null;
-  
-  // Fun Metrics Calculations
-  // Biggest Win
-  const biggestWin = settledBets
-    .filter(b => b.real_profit !== null && b.real_profit > 0)
-    .reduce((max, b) => (b.real_profit! > (max?.real_profit || 0)) ? b : max, null as Bet | null);
-  
-  // Win Rate
-  const wins = settledBets.filter(b => b.result === "win").length;
-  const totalSettled = settledBets.length;
-  const actualWinRate = totalSettled > 0 ? (wins / totalSettled) * 100 : null;
-  const expectedWinRate = totalSettled > 0 
-    ? (settledBets.reduce((sum, b) => sum + (1 / b.odds_decimal), 0) / totalSettled) * 100
-    : null;
-  
-  // Profit Factor
-  const grossWinnings = settledBets
-    .filter(b => b.result === "win" && b.real_profit !== null)
-    .reduce((sum, b) => sum + (b.real_profit || 0), 0);
-  const grossLosses = settledBets
-    .filter(b => b.result === "loss")
-    .reduce((sum, b) => sum + b.stake, 0);
-  const profitFactor = grossLosses > 0 ? grossWinnings / grossLosses : null;
-  
-  // Bonus Efficiency
-  const bonusBets = settledBets.filter(b => b.promo_type === "bonus_bet");
-  const bonusStaked = bonusBets.reduce((sum, b) => sum + b.stake, 0);
-  const bonusReturns = bonusBets
-    .filter(b => b.result === "win")
-    .reduce((sum, b) => sum + b.win_payout, 0);
-  const bonusEfficiency = bonusStaked > 0 ? (bonusReturns / bonusStaked) * 100 : null;
-
-  // CLV Analytics — standard bets only. Promos (bonus bets, boosts, qualifiers) optimize
-  // for retention/boost value, not for beating the closing line, so including them would
-  // pollute the signal.
-  const standardBets = filteredBets.filter(b => b.promo_type === "standard");
-  const clvBets = standardBets.filter(b => b.clv_ev_percent !== null);
-  // const clvTrackedCount = standardBets.filter(b => b.pinnacle_odds_at_entry !== null).length; // Remove if unused
-  const beatCloseCount = clvBets.filter(b => b.beat_close === true).length;
-  const beatClosePct = clvBets.length > 0 ? (beatCloseCount / clvBets.length) * 100 : null;
-  const avgCLV = clvBets.length > 0
-    ? clvBets.reduce((sum, b) => sum + (b.clv_ev_percent ?? 0), 0) / clvBets.length
-    : null;
-  const settledStandardCount = standardBets.filter((b) => b.result !== "pending").length;
-
-  // Active bets (cash exposure + potential profit)
-  const pendingCashStake = pendingBets.filter((b) => b.promo_type !== "bonus_bet").reduce((sum, b) => sum + b.stake, 0);
-  const pendingPotentialProfit = pendingBets.reduce((sum, b) => {
-    const profitIfWin = b.promo_type === "bonus_bet" ? b.win_payout : (b.win_payout - b.stake);
-    return sum + profitIfWin;
-  }, 0);
-
-  const performanceLabel = useMemo(() => {
-    if (zScore === null) return "Need more data";
-    if (zScore >= 0.5) return "Above Expected";
-    if (zScore <= -0.5) return "Below Expected";
-    return "On Track";
-  }, [zScore]);
-
-  const performanceSubtext = useMemo(() => {
-    if (zScore === null) return "Settle a couple bets to see how results compare to EV.";
-    const diff = settledProfit - settledEV;
-    const abs = Math.abs(diff);
-    const dir = diff >= 0 ? "up" : "down";
-    return `Currently ${dir} ${formatCurrency(abs)} vs what EV predicted. Short-term swings are normal.`;
-  }, [zScore, settledProfit, settledEV]);
-
-  // Prepare chart data from FILTERED bets
-  const sportsbookChartData = useMemo(() => {
-    const evBySportsbook: Record<string, number> = {};
-    const profitBySportsbook: Record<string, number> = {};
-    
-    filteredBets.forEach(bet => {
-      evBySportsbook[bet.sportsbook] = (evBySportsbook[bet.sportsbook] || 0) + bet.ev_total;
-      if (bet.result !== "pending" && bet.real_profit !== null) {
-        profitBySportsbook[bet.sportsbook] = (profitBySportsbook[bet.sportsbook] || 0) + bet.real_profit;
-      }
-    });
-    
-    return Object.entries(evBySportsbook)
-      .map(([name, ev]) => ({
-        name: name.replace("ESPN Bet", "ESPN").replace("Hard Rock", "HR"),
-        ev,
-        profit: profitBySportsbook[name] || 0,
-        color: SPORTSBOOK_COLORS[name] || "#888",
-      }))
-      .sort((a, b) => b.ev - a.ev);
-  }, [filteredBets]);
-
-  const sportChartData = useMemo(() => {
-    const evBySport: Record<string, number> = {};
-    filteredBets.forEach(bet => {
-      evBySport[bet.sport] = (evBySport[bet.sport] || 0) + bet.ev_total;
-    });
-    const totalEV = Object.values(evBySport).reduce((sum, v) => sum + Math.abs(v), 0);
-    if (totalEV === 0) return [];
-
-    const THRESHOLD = 0.05; // sports below 5% of total EV go into "Other"
-    const bars: Array<{ name: string; ev: number; color: string }> = [];
-    let otherEV = 0;
-
-    Object.entries(evBySport)
-      .sort(([, a], [, b]) => b - a)
-      .forEach(([name, ev]) => {
-        const share = Math.abs(ev) / totalEV;
-        if (share >= THRESHOLD) {
-          bars.push({
-            name,
-            ev,
-            color: CHART_COLORS[bars.length % CHART_COLORS.length],
-          });
-        } else {
-          otherEV += ev;
-        }
-      });
-
-    if (otherEV !== 0) {
-      bars.push({
-        name: "Other",
-        ev: otherEV,
-        color: "#A8A29E",
-      });
-    }
-
-    return bars.sort((a, b) => b.ev - a.ev);
-  }, [filteredBets]);
-
-  // Bets by promo type — boost subtypes are merged into one "Boosts" bar for chart clarity
-  const promoTypeData = useMemo(() => {
-    const counts: Record<string, number> = {};
-    filteredBets.forEach(bet => {
-      const label = bet.promo_type.startsWith("boost_") ? "Boosts" : formatPromoType(bet.promo_type);
-      counts[label] = (counts[label] || 0) + 1;
-    });
-    return Object.entries(counts)
-      .map(([name, value]) => ({
-        name,
-        value,
-        color: PROMO_TYPE_CHART_COLORS[name] || CHART_COLORS[0],
-      }))
-      .sort((a, b) => b.value - a.value);
-  }, [filteredBets]);
-
-  // Cumulative EV vs Real Profit over time (by date)
-  const cumulativeData = settledBets.length > 0
-    ? settledBets
-        .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-        .reduce((acc, bet) => {
-          const betDate = new Date(bet.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-          const lastEntry = acc.length > 0 ? acc[acc.length - 1] : null;
-          
-          const newEV = (lastEntry?.cumulativeEV || 0) + bet.ev_total;
-          const newProfit = (lastEntry?.cumulativeProfit || 0) + (bet.real_profit || 0);
-          
-          // Always add a new point (don't try to group by date)
-          acc.push({
-            date: betDate,
-            cumulativeEV: newEV,
-            cumulativeProfit: newProfit,
-            variance: newProfit - newEV,
-          });
-          
-          return acc;
-        }, [] as Array<{ date: string; cumulativeEV: number; cumulativeProfit: number; variance: number }>)
-    : [];
-
-  const totalBalance =
-    balances && balances.length > 0 ? balances.reduce((sum, b) => sum + (b.balance || 0), 0) : null;
-
-  const bestSource = useMemo(() => {
-    if (!filteredBets || filteredBets.length === 0) return null;
-    const evByBook: Record<string, number> = {};
-    const evBySport: Record<string, number> = {};
-    filteredBets.forEach((b) => {
-      evByBook[b.sportsbook] = (evByBook[b.sportsbook] || 0) + b.ev_total;
-      evBySport[b.sport] = (evBySport[b.sport] || 0) + b.ev_total;
-    });
-    const bestBook = Object.entries(evByBook).sort((a, b) => b[1] - a[1])[0];
-    if (bestBook) return { label: bestBook[0], value: bestBook[1], type: "book" as const };
-    const bestSport = Object.entries(evBySport).sort((a, b) => b[1] - a[1])[0];
-    return bestSport ? { label: bestSport[0], value: bestSport[1], type: "sport" as const } : null;
-  }, [filteredBets]);
-
-  const bestDay = useMemo(() => {
-    if (!settledBets || settledBets.length === 0) return null;
-    const byDay: Record<string, number> = {};
-    settledBets.forEach((b) => {
-      const dateKey = new Date(b.settled_at ?? b.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-      byDay[dateKey] = (byDay[dateKey] || 0) + (b.real_profit || 0);
-    });
-    const best = Object.entries(byDay).sort((a, b) => b[1] - a[1])[0];
-    if (!best) return null;
-    return { label: best[0], profit: best[1] };
-  }, [settledBets]);
+/**
+ * Chart hover tooltip — warm card surface, mono numbers, colored line dots.
+ */
+function StatsChartTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload?: StatsChartPoint }>;
+}) {
+  const point = payload?.[0]?.payload;
+  if (!active || !point) return null;
 
   return (
-    <main className="min-h-screen bg-background">
-      {/* Sticky filter bar aligned to the mobile app header height. */}
-      <div className="sticky top-[49px] z-10 w-full border-b border-border bg-background py-3 shadow-sm">
-        <div className="container mx-auto px-4 max-w-4xl">
-          <div className="flex justify-between items-center">
-            <h1 className="text-lg font-semibold">Stats</h1>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setFilterOpen(true)}
-              className={cn(
-                "gap-2",
-                hasActiveFilters && "border-foreground bg-foreground/5"
-              )}
-            >
-              <SlidersHorizontal className="h-4 w-4" />
-              <span className="hidden sm:inline">Filter</span>
-              {hasActiveFilters && (
-                <span className="bg-foreground text-background text-xs font-semibold px-1.5 py-0.5 rounded-full">
-                  {activeFilterCount}
-                </span>
-              )}
-            </Button>
-          </div>
+    <div className="rounded border border-border/80 bg-card px-3 py-2.5 shadow-md">
+      <p className="text-[11px] font-semibold text-foreground">{point.dateLabel}</p>
+      <div className="mt-2 space-y-1.5 text-xs">
+        <div className="flex items-center justify-between gap-5">
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <span className="inline-block h-[2px] w-3 rounded-full bg-[hsl(var(--profit))]" />
+            Profit
+          </span>
+          <span className={cn("font-mono font-bold tabular-nums", point.cumulativeProfit >= 0 ? "text-profit" : "text-loss")}>
+            {formatSignedCurrency(point.cumulativeProfit)}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-5">
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <span className="inline-block h-[2px] w-3 rounded-full bg-[hsl(var(--primary))]" />
+            EV
+          </span>
+          <span className="font-mono font-bold tabular-nums text-primary">
+            {formatSignedCurrency(point.cumulativeEv)}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-5 border-t border-border/50 pt-1.5">
+          <span className="text-muted-foreground">Range</span>
+          <span className="font-mono tabular-nums text-muted-foreground">
+            {formatCurrency(point.varianceLow)} – {formatCurrency(point.varianceHigh)}
+          </span>
         </div>
       </div>
-      
-      <div className="container mx-auto px-4 py-6 space-y-6 max-w-4xl">
-        {showAnalyticsHint && (
-          <div className="inline-flex items-center gap-1.5 rounded-md border border-[#C4A35A]/35 bg-[#C4A35A]/15 px-2.5 py-1.5 text-xs text-[#5C4D2E]">
-            <Info className="h-3.5 w-3.5" />
-            Some analytics may be temporarily unavailable while core data reconnects.
-          </div>
-        )}
-        {isLoading ? (
-          <div className="space-y-6">
-            {/* Z-Score Hero Card Skeleton */}
-            <Card>
-              <CardContent className="pt-6 pb-4">
-                <div className="text-center space-y-2">
-                  <Skeleton className="h-4 w-32 mx-auto" />
-                  <Skeleton className="h-7 w-40 mx-auto" />
-                  <Skeleton className="h-4 w-48 mx-auto" />
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Summary Cards Skeleton */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {[1, 2, 3, 4].map((i) => (
-                <Card key={i}>
-                  <CardContent className="p-4">
-                    <div className="flex items-center gap-1.5 mb-2">
-                      <Skeleton className="h-3.5 w-3.5 rounded" />
-                      <Skeleton className="h-3 w-16" />
-                    </div>
-                    <Skeleton className="h-7 w-20" />
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-            
-            {/* Chart Skeletons */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Card>
-                <CardHeader className="pb-2">
-                  <Skeleton className="h-5 w-32" />
-                </CardHeader>
-                <CardContent>
-                  <Skeleton className="h-[200px] w-full rounded" />
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-2">
-                  <Skeleton className="h-5 w-28" />
-                </CardHeader>
-                <CardContent>
-                  <Skeleton className="h-[200px] w-full rounded" />
-                </CardContent>
-              </Card>
-            </div>
-            
-            {/* Line Chart Skeleton */}
-            <Card>
-              <CardHeader className="pb-2">
-                <Skeleton className="h-5 w-40" />
-                <Skeleton className="h-3 w-56 mt-1" />
-              </CardHeader>
-              <CardContent>
-                <Skeleton className="h-[200px] w-full rounded" />
-              </CardContent>
-            </Card>
-          </div>
-        ) : (
-          <>
-
-            {/* Filter Sheet (Drawer) */}
-            <Sheet open={filterOpen} onOpenChange={setFilterOpen}>
-              <SheetContent side="bottom" className="p-6">
-                <SheetHeader className="p-0 pb-4">
-                  <SheetTitle>Filter Analytics</SheetTitle>
-                  <SheetDescription>
-                    Adjust the analytics filters to focus on a specific slice of results.
-                  </SheetDescription>
-                </SheetHeader>
-                <AnalyticsFilterBar
-                  timeframe={timeframe}
-                  setTimeframe={setTimeframe}
-                  betType={betType}
-                  setBetType={setBetType}
-                  sport={sport}
-                  setSport={setSport}
-                  bucket={bucket}
-                  setBucket={setBucket}
-                  showBucketFilter={showBucketFilter}
-                  sportsbook={sportsbook}
-                  setSportsbook={setSportsbook}
-                  sportsbookOptions={sportsbookOptions}
-                  hasActiveFilters={hasActiveFilters}
-                  onClearFilters={clearFilters}
-                />
-                <div className="flex gap-3 pt-6">
-                  <Button
-                    variant="outline"
-                    className="flex-1"
-                    onClick={clearFilters}
-                    disabled={!hasActiveFilters}
-                  >
-                    Clear All
-                  </Button>
-                  <SheetClose asChild>
-                    <Button className="flex-1">
-                      Apply Filters
-                    </Button>
-                  </SheetClose>
-                </div>
-              </SheetContent>
-            </Sheet>
-
-            {/* Active Filters Summary (optional inline indicator) */}
-            {hasActiveFilters && (
-              <div className="flex flex-wrap gap-2 items-center">
-                <span className="text-xs text-muted-foreground">Showing:</span>
-                {timeframe !== "All Time" && (
-                  <span className="px-2 py-1 bg-muted rounded-full text-xs font-medium">{timeframe}</span>
-                )}
-                {betType !== "All Types" && (
-                  <span className="px-2 py-1 bg-muted rounded-full text-xs font-medium">{betType}</span>
-                )}
-                {showBucketFilter && bucket !== "All Buckets" && (
-                  <span className="px-2 py-1 bg-muted rounded-full text-xs font-medium">{bucket}</span>
-                )}
-                {sport !== "All Sports" && (
-                  <span className="px-2 py-1 bg-muted rounded-full text-xs font-medium">{sport}</span>
-                )}
-                {sportsbook !== "All Books" && (
-                  <span className="px-2 py-1 bg-muted rounded-full text-xs font-medium">{sportsbook}</span>
-                )}
-                <button
-                  onClick={clearFilters}
-                  className="text-xs text-muted-foreground hover:text-foreground underline"
-                >
-                  Clear
-                </button>
-              </div>
-            )}
-
-            {/* OVERVIEW */}
-            <Card className={cn(
-              "border card-hover",
-              zScore === null ? "border-border" :
-              zScore >= 1.5 ? "border-[#4A7C59]/50 bg-[#4A7C59]/10" :
-              zScore >= 0.5 ? "border-[#4A7C59]/30 bg-[#4A7C59]/5" :
-              zScore >= -0.5 ? "border-[#C4A35A]/30 bg-[#C4A35A]/5" :
-              zScore >= -1.5 ? "border-[#B85C38]/30 bg-[#B85C38]/5" :
-              "border-[#B85C38]/50 bg-[#B85C38]/10"
-            )}>
-              <CardContent className="pt-6 pb-4">
-                <div className="text-center">
-                  <div className="flex items-center justify-center gap-1.5 mb-2">
-                    <p className="text-sm text-muted-foreground uppercase tracking-wide">Overview</p>
-                    <span
-                      title="Z-Score measures how much your actual profit deviates from expected EV. Positive = outrunning variance (running hot). Negative = underrunning variance (running cold). Values between -1 and +1 are normal luck variance."
-                      className="inline-flex"
-                    >
-                      <Info
-                        className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0"
-                        aria-label="Z-Score explanation"
-                      />
-                    </span>
-                  </div>
-                  <div>
-                    <p className={cn(
-                      "text-2xl font-bold",
-                      zScore === null ? "text-muted-foreground" :
-                      zScore >= 0.5 ? "text-[#4A7C59]" :
-                      zScore >= -0.5 ? "text-[#C4A35A]" :
-                      "text-[#B85C38]"
-                    )}>
-                      {performanceLabel}
-                    </p>
-                    <p className="text-sm text-muted-foreground mt-1">{performanceSubtext}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Top KPIs (matches Home) */}
-            <TopKpiCards
-              netProfit={filteredRealProfit}
-              expectedProfit={settledEV}
-              totalBalance={totalBalance}
-              beatClose={{ beatClosePct, avgClvPct: avgCLV, trackedCount: clvBets.length }}
-            />
-
-            {/* HOW YOU’RE TRACKING */}
-            {cumulativeData.length > 1 && (
-              <Card className="card-hover">
-                <CardHeader className="pb-2">
-                  <h2 className="font-semibold">How You’re Tracking</h2>
-                  <p className="text-xs text-muted-foreground">EV is what your results should average over time. Profit will swing above/below it.</p>
-                </CardHeader>
-                <CardContent>
-                  <ResponsiveContainer width="100%" height={200} className="md:!h-[250px]">
-                    <ComposedChart data={cumulativeData} margin={{ left: 0, right: 10, top: 5, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis 
-                        dataKey="date" 
-                        fontSize={10} 
-                        angle={0}
-                        textAnchor="middle" 
-                        height={30}
-                        interval="preserveStartEnd"
-                        tickCount={5}
-                        stroke="hsl(var(--muted-foreground))"
-                      />
-                      <YAxis 
-                        tickFormatter={(v) => `$${v}`} 
-                        fontSize={11} 
-                        stroke="hsl(var(--muted-foreground))"
-                        width={45}
-                      />
-                      <Tooltip 
-                        formatter={(value: number, name: string) => [
-                          formatCurrency(value),
-                          name
-                        ]}
-                        labelFormatter={(label) => label}
-                      />
-                      <Line type="monotone" dataKey="cumulativeEV" stroke="#C4A35A" strokeWidth={2} dot={false} name="EV (Expected)" />
-                      <Line type="monotone" dataKey="cumulativeProfit" stroke="#4A7C59" strokeWidth={2} dot={false} name="Profit (Actual)" />
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* ACTIVE BETS */}
-            <Card>
-              <CardHeader className="pb-2">
-                <h3 className="font-semibold text-sm">Active Bets</h3>
-                <p className="text-xs text-muted-foreground">What you have riding right now.</p>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-3 gap-3 mb-4">
-                  <div className="rounded-lg bg-muted p-3 text-center">
-                    <p className="text-xs text-muted-foreground">At Risk</p>
-                    <p className="text-lg font-bold font-mono text-foreground">{formatCurrency(pendingCashStake)}</p>
-                  </div>
-                  <div className="rounded-lg bg-muted p-3 text-center">
-                    <p className="text-xs text-muted-foreground">To Win</p>
-                    <p className="text-lg font-bold font-mono text-foreground">{formatCurrency(pendingPotentialProfit)}</p>
-                  </div>
-                  <div className="rounded-lg bg-muted p-3 text-center">
-                    <p className="text-xs text-muted-foreground">Open Bets</p>
-                    <p className="text-lg font-bold font-mono text-foreground">{pendingBets.length}</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-sm font-medium">Sportsbook Balances</p>
-                  <p className="text-xs text-muted-foreground">cash available by book</p>
-                </div>
-                {balancesLoading ? (
-                  <Skeleton className="h-24 w-full rounded" />
-                ) : balances && balances.length > 0 ? (
-                  <div className="overflow-x-auto -mx-4 px-4">
-                    <table className="w-full min-w-[560px] text-sm">
-                      <thead>
-                        <tr className="border-b text-xs text-muted-foreground">
-                          <th className="text-left py-1.5 sm:py-2 font-medium whitespace-nowrap">Book</th>
-                          <th className="text-right py-1.5 sm:py-2 font-medium whitespace-nowrap">Deposits</th>
-                          <th className="text-right py-1.5 sm:py-2 font-medium whitespace-nowrap">Withdrawals</th>
-                          <th className="text-right py-1.5 sm:py-2 font-medium whitespace-nowrap">Profit</th>
-                          <th className="text-right py-1.5 sm:py-2 font-medium whitespace-nowrap">Pending</th>
-                          <th className="text-right py-1.5 sm:py-2 font-medium whitespace-nowrap">Balance</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {balances.map((b) => (
-                          <tr key={b.sportsbook} className="border-b border-border hover:bg-muted/50">
-                            <td className="py-1.5 sm:py-2 font-medium whitespace-nowrap">{b.sportsbook}</td>
-                            <td className="text-right py-1.5 sm:py-2 text-[#4A7C59] font-medium whitespace-nowrap">{formatCurrency(b.deposits)}</td>
-                            <td className="text-right py-1.5 sm:py-2 text-[#B85C38] font-medium whitespace-nowrap">{formatCurrency(b.withdrawals)}</td>
-                            <td className={cn("text-right py-1.5 sm:py-2 whitespace-nowrap", b.profit >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
-                              {formatCurrency(b.profit)}
-                            </td>
-                            <td className="text-right py-1.5 sm:py-2 text-muted-foreground whitespace-nowrap">{formatCurrency(b.pending)}</td>
-                            <td className={cn("text-right py-1.5 sm:py-2 font-semibold whitespace-nowrap", b.balance >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
-                              {formatCurrency(b.balance)}
-                            </td>
-                          </tr>
-                        ))}
-                        <tr className="bg-muted/50 font-semibold">
-                          <td className="py-1.5 sm:py-2 whitespace-nowrap">Total</td>
-                          <td className="text-right py-1.5 sm:py-2 text-[#4A7C59] font-semibold whitespace-nowrap">
-                            {formatCurrency(balances.reduce((sum, b) => sum + b.deposits, 0))}
-                          </td>
-                          <td className="text-right py-1.5 sm:py-2 text-[#B85C38] font-semibold whitespace-nowrap">
-                            {formatCurrency(balances.reduce((sum, b) => sum + b.withdrawals, 0))}
-                          </td>
-                          <td className={cn("text-right py-1.5 sm:py-2 whitespace-nowrap", balances.reduce((sum, b) => sum + b.profit, 0) >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
-                            {formatCurrency(balances.reduce((sum, b) => sum + b.profit, 0))}
-                          </td>
-                          <td className="text-right py-1.5 sm:py-2 text-muted-foreground whitespace-nowrap">
-                            {formatCurrency(balances.reduce((sum, b) => sum + b.pending, 0))}
-                          </td>
-                          <td className={cn("text-right py-1.5 sm:py-2 whitespace-nowrap", balances.reduce((sum, b) => sum + b.balance, 0) >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
-                            {formatCurrency(balances.reduce((sum, b) => sum + b.balance, 0))}
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground text-center py-4">
-                    No deposits recorded yet. Add your first deposit on the Settings page.
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* PERFORMANCE */}
-            <Card>
-              <CardHeader className="pb-2">
-                <h3 className="font-semibold text-sm">Performance</h3>
-                <p className="text-xs text-muted-foreground">Familiar stats, with context.</p>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <StatCard label="ROI" value={settledROI} format="percent" colorize subtitle={totalSettledStake > 0 ? "settled" : undefined} />
-                  <StatCard
-                    label="Win Rate"
-                    value={actualWinRate === null ? null : actualWinRate / 100}
-                    format="percent"
-                    subtitle={
-                      actualWinRate !== null && expectedWinRate !== null
-                        ? `Exp: ${expectedWinRate.toFixed(1)}%`
-                        : undefined
-                    }
-                  />
-                  <StatCard
-                    label="Luck vs EV"
-                    value={settledBets.length > 0 ? (settledProfit - settledEV) : null}
-                    format="currency"
-                    colorize
-                    subtitle="profit vs EV"
-                  />
-                  <StatCard label="Settled Bets" value={settledBets.length} format="number" subtitle="sample size" />
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* HIGHLIGHTS */}
-            <Card>
-              <CardHeader className="pb-2">
-                <h3 className="font-semibold text-sm">Highlights</h3>
-                <p className="text-xs text-muted-foreground">Quick wins and momentum.</p>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <StatCard
-                    label="Biggest Win"
-                    value={biggestWin ? biggestWin.real_profit : null}
-                    format="currency"
-                    colorize
-                    subtitle={biggestWin ? `${biggestWin.event.length > 18 ? `${biggestWin.event.slice(0, 18)}…` : biggestWin.event}` : undefined}
-                  />
-                  <StatCard
-                    label="Best Day"
-                    value={bestDay ? bestDay.profit : null}
-                    format="currency"
-                    colorize
-                    subtitle={bestDay ? bestDay.label : undefined}
-                  />
-                  <StatCard
-                    label="Best Source"
-                    value={bestSource ? bestSource.label : "—"}
-                    format="text"
-                    subtitle={bestSource ? `${bestSource.value >= 0 ? "+" : ""}${formatCurrency(bestSource.value)} EV` : undefined}
-                  />
-                  <StatCard label="Beat Close" value={beatClosePct === null ? "—" : `${beatClosePct.toFixed(0)}%`} format="text" subtitle={`of ${clvBets.length} tracked`} />
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* BREAKDOWNS */}
-            <Card className="card-hover">
-              <CardHeader className="pb-2">
-                <h3 className="font-semibold text-sm">Breakdowns</h3>
-                <p className="text-xs text-muted-foreground">Tap to explore where results come from.</p>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex gap-2">
-                  <Button type="button" variant={breakdownTab === "book" ? "default" : "outline"} size="sm" className="flex-1" onClick={() => setBreakdownTab("book")}>
-                    By Book
-                  </Button>
-                  <Button type="button" variant={breakdownTab === "sport" ? "default" : "outline"} size="sm" className="flex-1" onClick={() => setBreakdownTab("sport")}>
-                    By Sport
-                  </Button>
-                  <Button type="button" variant={breakdownTab === "type" ? "default" : "outline"} size="sm" className="flex-1" onClick={() => setBreakdownTab("type")}>
-                    By Type
-                  </Button>
-                </div>
-
-                {breakdownTab === "book" && (
-                  <div className="flex gap-2">
-                    <Button type="button" variant={bookMetric === "ev" ? "default" : "outline"} size="sm" className="flex-1" onClick={() => setBookMetric("ev")}>
-                      EV
-                    </Button>
-                    <Button type="button" variant={bookMetric === "profit" ? "default" : "outline"} size="sm" className="flex-1" onClick={() => setBookMetric("profit")}>
-                      Profit
-                    </Button>
-                  </div>
-                )}
-
-                <div>
-                  {breakdownTab === "book" && (
-                    sportsbookChartData.length > 0 ? (
-                      <ResponsiveContainer width="100%" height={220}>
-                        <BarChart data={sportsbookChartData} layout="vertical" margin={{ left: 0, right: 10, top: 0, bottom: 0 }}>
-                          <XAxis type="number" tickFormatter={(v) => `$${v}`} fontSize={10} stroke="hsl(var(--muted-foreground))" />
-                          <YAxis type="category" dataKey="name" width={70} fontSize={10} stroke="hsl(var(--muted-foreground))" />
-                          <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                          <Bar dataKey={bookMetric} radius={[0, 4, 4, 0]}>
-                            {sportsbookChartData.map((entry, index) => (
-                              <Cell
-                                key={index}
-                                fill={
-                                  bookMetric === "ev"
-                                    ? entry.color
-                                    : entry.profit >= 0
-                                      ? "#4A7C59"
-                                      : "#B85C38"
-                                }
-                              />
-                            ))}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      <EmptyChart message="No data yet" />
-                    )
-                  )}
-
-                  {breakdownTab === "sport" && (
-                    sportChartData.length > 0 ? (
-                      <ResponsiveContainer width="100%" height={Math.max(160, sportChartData.length * 32)}>
-                        <BarChart data={sportChartData} layout="vertical" margin={{ left: 0, right: 10, top: 0, bottom: 0 }}>
-                          <XAxis type="number" tickFormatter={(v) => `$${v}`} fontSize={10} stroke="hsl(var(--muted-foreground))" />
-                          <YAxis type="category" dataKey="name" width={70} fontSize={10} stroke="hsl(var(--muted-foreground))" />
-                          <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                          <Bar dataKey="ev" radius={[0, 4, 4, 0]}>
-                            {sportChartData.map((entry, index) => (
-                              <Cell key={index} fill={entry.color} />
-                            ))}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      <EmptyChart message="No data yet" />
-                    )
-                  )}
-
-                  {breakdownTab === "type" && (
-                    promoTypeData.length > 0 ? (
-                      <ResponsiveContainer width="100%" height={Math.max(160, promoTypeData.length * 32)}>
-                        <BarChart data={promoTypeData} layout="vertical" margin={{ left: 0, right: 10, top: 0, bottom: 0 }}>
-                          <XAxis type="number" allowDecimals={false} fontSize={10} stroke="hsl(var(--muted-foreground))" />
-                          <YAxis type="category" dataKey="name" width={90} fontSize={10} stroke="hsl(var(--muted-foreground))" />
-                          <Tooltip formatter={(value: number) => [`${value} bet${value !== 1 ? "s" : ""}`, "Count"]} />
-                          <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                            {promoTypeData.map((entry, index) => (
-                              <Cell key={index} fill={entry.color} />
-                            ))}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      <EmptyChart message="No data yet" />
-                    )
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Advanced Metrics - Collapsible */}
-            <Card>
-              <details className="group">
-                <summary className="cursor-pointer list-none hover:bg-muted/50 transition-colors rounded-lg">
-                  <CardContent className="py-4 flex items-center justify-between">
-                    <span className="font-medium">Advanced Metrics</span>
-                    <span className="text-muted-foreground text-sm group-open:rotate-180 transition-transform">▼</span>
-                  </CardContent>
-                </summary>
-
-                <div className="px-6 pb-6 pt-6 space-y-6 border-t">
-
-                {/* Market Validation */}
-                <Card>
-                  <CardHeader className="pb-2">
-                    <div className="flex items-center gap-2">
-                      <Target className="h-4 w-4 text-muted-foreground" />
-                      <h3 className="font-semibold text-sm">Market Validation</h3>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Standard bets only. Tracked = we captured entry + close lines.
-                    </p>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                      <StatCard
-                        label="Avg CLV"
-                        value={avgCLV === null ? "—" : `${avgCLV >= 0 ? "+" : ""}${avgCLV.toFixed(2)}%`}
-                        format="text"
-                        subtitle={clvBets.length > 0 ? "tracked standard bets" : undefined}
-                        className={
-                          avgCLV === null
-                            ? ""
-                            : avgCLV >= 1.5
-                              ? "text-[#4A7C59]"
-                              : avgCLV >= 0
-                                ? "text-[#8B7355]"
-                                : "text-[#B85C38]"
-                        }
-                      />
-                      <StatCard
-                        label="Beat Close"
-                        value={beatClosePct === null ? "—" : `${beatClosePct.toFixed(0)}%`}
-                        format="text"
-                        subtitle="of tracked"
-                        className={
-                          beatClosePct === null
-                            ? ""
-                            : beatClosePct >= 55
-                              ? "text-[#4A7C59]"
-                              : beatClosePct >= 45
-                                ? "text-foreground"
-                                : "text-[#B85C38]"
-                        }
-                      />
-                      <StatCard
-                        label="Tracked Sample"
-                        value={`${clvBets.length} tracked`}
-                        format="text"
-                        subtitle={`standard bets (of ${settledStandardCount} settled)`}
-                      />
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* Diagnostics */}
-                <Card>
-                  <CardHeader className="pb-2">
-                    <h3 className="font-semibold text-sm">Diagnostics</h3>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                      <StatCard label="Pending EV" value={pendingEV} format="currency" colorize />
-                      <StatCard label="Cash Risked" value={totalSettledStake} format="currency" subtitle="settled" />
-                      <StatCard
-                        label="EV Conversion"
-                        value={evConversion === null ? "—" : `${(evConversion * 100).toFixed(0)}%`}
-                        format="text"
-                        subtitle="actual / expected"
-                        className={
-                          evConversion === null
-                            ? ""
-                            : evConversion >= 1.2
-                              ? "text-[#4A7C59]"
-                              : evConversion >= 0.8
-                                ? "text-foreground"
-                                : "text-[#B85C38]"
-                        }
-                      />
-                      <StatCard
-                        label="Profit Factor"
-                        value={profitFactor === null ? "—" : `${profitFactor.toFixed(2)} PF`}
-                        format="text"
-                        subtitle={profitFactor === null ? undefined : `$${profitFactor.toFixed(2)} earned per $1 lost`}
-                      />
-                      <StatCard
-                        label="Bonus Efficiency"
-                        value={bonusEfficiency === null ? "—" : `${bonusEfficiency.toFixed(0)}%`}
-                        format="text"
-                        subtitle={bonusEfficiency === null ? undefined : `+${formatCurrency(bonusReturns)} from ${formatCurrency(bonusStaked)}`}
-                      />
-                      <StatCard
-                        label="Z-Score"
-                        value={zScore === null ? "—" : zScore.toFixed(2)}
-                        format="text"
-                        subtitle={zScore === null ? undefined : `${zScore >= 0 ? "+" : ""}${formatCurrency(settledProfit - settledEV)} vs EV`}
-                      />
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-            </details>
-            </Card>
-
-          </>
-        )}
-      </div>
-    </main>
+    </div>
   );
 }
 
-// Stat Card Component
-function StatCard({ 
-  label, 
-  value, 
-  format, 
-  colorize = false,
-  subtitle,
-  className
-}: { 
-  label: string; 
-  value: number | string | null | undefined;
-  format: "currency" | "percent" | "number" | "text";
-  colorize?: boolean;
-  subtitle?: string;
-  className?: string;
+/**
+ * Source breakdown row — Core Bets / Promos.
+ * Two-column tile layout so EV and Profit sit side-by-side at the same size.
+ * When an href is provided the whole row is a link — chevron + hover state
+ * make that affordance obvious.
+ */
+function SourceBreakdownRow({
+  label,
+  ev,
+  profit,
+  dotClass,
+  href,
+}: {
+  label: string;
+  ev: number;
+  profit: number;
+  dotClass?: string;
+  href?: string;
 }) {
-  let displayValue: string;
-  let colorClass = "";
-  
-  if (value === null || value === undefined) {
-    displayValue = "—";
-  } else if (format === "currency" && typeof value === "number") {
-    displayValue = formatCurrency(value);
-    if (colorize) colorClass = value >= 0 ? "text-profit" : "text-loss";
-  } else if (format === "percent" && typeof value === "number") {
-    displayValue = formatPercent(value);
-    if (colorize) colorClass = value >= 0.05 ? "text-profit" : value <= -0.05 ? "text-loss" : "text-pending";
-  } else if (format === "number" && typeof value === "number") {
-    displayValue = value.toLocaleString();
-  } else {
-    displayValue = String(value);
+  const gap = profit - ev;
+
+  const inner = (
+    <>
+      {/* Header */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className={cn("h-1.5 w-1.5 rounded-full opacity-70", dotClass ?? "bg-muted-foreground")} />
+          <p className="text-xs font-medium text-foreground">{label}</p>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span
+            className={cn(
+              "font-mono text-[11px] tabular-nums",
+              gap >= 0 ? "text-profit/80" : "text-loss/80",
+            )}
+          >
+            {gap >= 0 ? "+" : ""}{formatCurrency(gap)} vs EV
+          </span>
+          {href && (
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40 transition-transform group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
+          )}
+        </div>
+      </div>
+
+      {/* Profit / EV tiles */}
+      <div className="mt-2.5 grid grid-cols-2 gap-2">
+        <div className="rounded bg-muted/20 px-2.5 py-2">
+          <p className="text-[11px] text-muted-foreground">Profit</p>
+          <p className={cn("mt-1 font-mono text-sm font-semibold tabular-nums", profit >= 0 ? "text-profit" : "text-loss")}>
+            {formatSignedCurrency(profit)}
+          </p>
+        </div>
+        <div className="rounded bg-muted/20 px-2.5 py-2">
+          <p className="text-[11px] text-muted-foreground">EV</p>
+          <p className="mt-1 font-mono text-sm font-semibold tabular-nums text-primary">
+            {formatSignedCurrency(ev)}
+          </p>
+        </div>
+      </div>
+    </>
+  );
+
+  if (href) {
+    return (
+      <Link
+        href={href}
+        data-testid="source-row"
+        aria-label={`View ${label} bets`}
+        className="group block rounded border border-border/40 bg-background/30 px-3 py-3 transition-colors hover:border-border/70 hover:bg-muted/15"
+      >
+        {inner}
+      </Link>
+    );
   }
 
   return (
-    <div className="rounded-lg bg-muted p-3">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={cn("text-xl font-bold", colorClass, className)}>
-        {displayValue}
-      </p>
-      {subtitle && (
-        <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
-      )}
+    <div data-testid="source-row" className="rounded border border-border/40 bg-background/30 px-3 py-3">
+      {inner}
     </div>
   );
 }
 
-// Empty Chart State
-function EmptyChart({ message }: { message: string }) {
+function ProcessStatRow({
+  label,
+  subtitle,
+  value,
+  secondaryValue,
+}: {
+  label: string;
+  subtitle: string;
+  value: string;
+  secondaryValue?: string | null;
+}) {
   return (
-    <div className="h-[250px] flex items-center justify-center text-muted-foreground">
-      <p className="text-sm">{message}</p>
+    <div className="flex items-start justify-between gap-4 py-3.5">
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-semibold text-foreground">
+          {label}
+        </p>
+        <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+          {subtitle}
+        </p>
+      </div>
+      <div className="shrink-0 text-right">
+        <p className="font-mono text-base font-semibold tabular-nums text-foreground">
+          {value}
+        </p>
+        {secondaryValue ? (
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            {secondaryValue}
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }
 
-// Format promo type for display
-function formatPromoType(promo: string): string {
-  const map: Record<string, string> = {
-    standard: "Standard",
-    bonus_bet: "Bonus Bet",
-    no_sweat: "No Sweat",
-    promo_qualifier: "Promo Qualifier",
-    boost_30: "30% Boost",
-    boost_50: "50% Boost",
-    boost_100: "100% Boost",
-    boost_custom: "Custom Boost",
-  };
-  return map[promo] || promo;
+function BankrollBookRow({
+  book,
+}: {
+  book: BankrollDetailsBook;
+}) {
+  const profit = book.balance - book.deposits + book.withdrawals;
+  
+  return (
+    <tr className="border-b border-border/40 last:border-0">
+      <td className="py-2.5 pr-3 text-sm font-medium text-foreground">
+        {book.sportsbook}
+      </td>
+      <td className="py-2.5 px-2 text-right font-mono text-sm tabular-nums text-muted-foreground">
+        {formatCurrency(book.deposits)}
+      </td>
+      <td className="py-2.5 px-2 text-right font-mono text-sm tabular-nums text-muted-foreground">
+        {formatCurrency(book.withdrawals)}
+      </td>
+      <td className={cn(
+        "py-2.5 px-2 text-right font-mono text-sm font-semibold tabular-nums",
+        profit >= 0 ? "text-profit" : "text-loss"
+      )}>
+        {formatSignedCurrency(profit)}
+      </td>
+      <td className="py-2.5 px-2 text-right font-mono text-sm tabular-nums text-muted-foreground">
+        {formatCurrency(book.pending)}
+      </td>
+      <td className="py-2.5 pl-2 text-right font-mono text-sm font-semibold tabular-nums text-foreground">
+        {formatCurrency(book.balance)}
+      </td>
+    </tr>
+  );
 }
 
+// ─── Skeleton ────────────────────────────────────────────────────────────────
+
+function StatsPageSkeleton() {
+  return (
+    <div className="space-y-3">
+      <Card className="border-l-4 border-l-border border-border/70">
+        <CardContent className="px-4 py-4">
+          <Skeleton className="h-6 w-28" />
+          <Skeleton className="mt-2.5 h-3 w-64" />
+          <Skeleton className="mt-1 h-3 w-48" />
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <Skeleton className="h-14 rounded" />
+            <Skeleton className="h-14 rounded" />
+          </div>
+          <Skeleton className="mt-2.5 h-9 rounded" />
+        </CardContent>
+      </Card>
+      <div className="grid grid-cols-3 gap-2">
+        {[0, 1, 2].map((i) => (
+          <Card key={i} className="border-border/70">
+            <CardContent className="px-3 py-3">
+              <Skeleton className="h-2.5 w-14" />
+              <Skeleton className="mt-2.5 h-5 w-16" />
+              {i === 1 && <Skeleton className="mt-1.5 h-2.5 w-20" />}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+      <Card className="border-border/70">
+        <CardContent className="px-4 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex gap-1.5">
+              {CHART_FILTERS.map((f) => <Skeleton key={f.value} className="h-6 w-12 rounded" />)}
+            </div>
+            <Skeleton className="h-3 w-36" />
+          </div>
+          <Skeleton className="mt-3 h-[220px] rounded" />
+        </CardContent>
+      </Card>
+      <Card className="border-border/70">
+        <CardContent className="px-4 py-4">
+          <Skeleton className="h-2.5 w-32" />
+          <div className="mt-3 space-y-2">
+            <Skeleton className="h-20 rounded" />
+            <Skeleton className="h-20 rounded" />
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ─── Page ────────────────────────────────────────────────────────────────────
+
+export default function AnalyticsPage() {
+  const searchParams = useSearchParams();
+  const [chartFilter, setChartFilter] = useState<StatsChartFilter>("all");
+  const [bankrollSheetOpen, setBankrollSheetOpen] = useState(false);
+  const selectedBook = searchParams.get("sportsbook") ?? "all";
+  const sourceFilter = parseTrackerSourceFilter(searchParams.get("source"));
+
+  const {
+    data: bets = [],
+    isLoading: betsLoading,
+    error: betsError,
+  } = useQuery({
+    queryKey: ["bets", "stats", "all"],
+    queryFn: getAllBetsForStats,
+  });
+
+  const {
+    data: balances = [],
+    isLoading: balancesLoading,
+    error: balancesError,
+  } = useQuery({
+    queryKey: ["balances"],
+    queryFn: getBalances,
+  });
+
+  const { data: settings } = useQuery({
+    queryKey: ["settings", "stats"],
+    queryFn: getSettings,
+  });
+
+  const filteredBets = useMemo(
+    () => bets.filter((bet) => {
+      const bookMatch = selectedBook === "all" || bet.sportsbook === selectedBook;
+      return bookMatch && matchesTrackerSourceFilter(bet, sourceFilter);
+    }),
+    [bets, selectedBook, sourceFilter],
+  );
+
+  useEffect(() => {
+    if (sourceFilter !== "all") {
+      setChartFilter(sourceFilter);
+    }
+  }, [sourceFilter]);
+
+  const model = useMemo(
+    () => buildStatsPageModel({ bets: filteredBets, balances, settings, showProcessStatsRow: true }),
+    [filteredBets, balances, settings],
+  );
+
+  const chartFilterLocked = sourceFilter !== "all";
+  const effectiveChartFilter: StatsChartFilter = chartFilterLocked ? sourceFilter : chartFilter;
+  const chartPoints = model.chartSeriesByFilter[effectiveChartFilter];
+  const finalChartPoint = chartPoints.at(-1);
+  const activeChartFilterLabel = CHART_FILTERS.find((filter) => filter.value === effectiveChartFilter)?.label ?? "All";
+  const vs = VERDICT_STYLES[model.verdict.state];
+  const isLoading = betsLoading || balancesLoading;
+  const error = betsError ?? balancesError;
+
+  if (error) {
+    return (
+      <main className="min-h-screen bg-background">
+        <div className="container mx-auto max-w-3xl px-4 py-4">
+          <Card className="border-destructive/30 bg-destructive/5">
+            <CardContent className="px-4 py-3">
+              <p className="text-sm font-semibold text-foreground">Stats could not load right now.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {error instanceof Error ? error.message : "Unknown error"}
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="min-h-screen bg-background">
+      <div className="container mx-auto max-w-3xl px-4 py-4 sm:py-5">
+        {isLoading ? (
+          <StatsPageSkeleton />
+        ) : (
+          <div className="space-y-3">
+
+            {/* ── Verdict ──────────────────────────────────────────────
+                Left border accent communicates state in dark mode without
+                fighting the warm slate surface with a tinted background.
+            ─────────────────────────────────────────────────────────── */}
+            <Card
+              data-testid="verdict-card"
+              className={cn("border-l-4 border-border/70 animate-slide-up", vs.leftBorder)}
+              style={{ animationFillMode: "both" }}
+            >
+              <CardContent className="px-4 py-4">
+                <p className={cn("text-base font-semibold tracking-wide animate-ink-reveal", vs.label)}
+                   style={{ animationDelay: "80ms", animationFillMode: "both" }}>
+                  {model.verdict.label}
+                </p>
+                <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                  {model.verdict.copy}
+                </p>
+
+                <div className="mt-3.5 grid grid-cols-2 gap-2">
+                  <VerdictMetric
+                    label="Profit"
+                    value={formatSignedCurrency(model.profit)}
+                    valueClass={model.profit >= 0 ? "text-profit" : "text-loss"}
+                  />
+                  <VerdictMetric
+                    label="EV Earned"
+                    value={formatSignedCurrency(model.evEarned)}
+                    valueClass="text-primary"
+                  />
+                </div>
+
+                {/* Swing row — inline label + value, no extra card nesting */}
+                <div className="mt-2.5 flex items-center justify-between border-t border-border/40 pt-2.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Expected swing at {model.settledBetsCount} bets
+                  </p>
+                  <p className={cn("font-mono text-sm font-bold tabular-nums", vs.accent)}>
+                    {formatSwing(model.normalSwing)}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* ── Summary strip ─────────────────────────────────────── */}
+            <section
+              data-testid="summary-cards"
+              className="grid grid-cols-3 gap-2 animate-slide-up"
+              style={{ animationDelay: "60ms", animationFillMode: "both" }}
+            >
+              <SummaryCard
+                label="Bankroll"
+                value={model.bankroll === null ? "—" : formatCurrency(model.bankroll)}
+                secondary={formatWeeklyChange(model.sevenDayProfitChange)}
+                valueClass={model.bankroll !== null && model.bankroll < 0 ? "text-loss" : "text-foreground"}
+                onClick={() => setBankrollSheetOpen(true)}
+                ariaLabel="Open bankroll details"
+                triggerTestId="bankroll-summary-trigger"
+                affordance={<ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40" />}
+              />
+              <SummaryCard
+                label="Bets Logged"
+                value={String(model.totalBetsLogged)}
+                secondary={`${model.settledBetsCount} settled`}
+                valueClass="text-foreground"
+              />
+              <SummaryCard
+                label="At Risk"
+                value={formatCurrency(model.atRisk)}
+                secondary={`${formatSignedCurrency(model.pendingEv)} pending EV`}
+                valueClass="text-foreground"
+              />
+            </section>
+
+            {/* ── Chart ─────────────────────────────────────────────── */}
+            <Card
+              className="border-border/70 animate-slide-up"
+              style={{ animationDelay: "120ms", animationFillMode: "both" }}
+            >
+              <CardContent className="px-4 py-4">
+                {/* Controls row: pills left, legend right */}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex gap-1.5" aria-label="Chart filter pills">
+                    {CHART_FILTERS.map((filter) => (
+                      <ChartFilterPill
+                        key={filter.value}
+                        active={effectiveChartFilter === filter.value}
+                        label={filter.label}
+                        disabled={chartFilterLocked}
+                        onClick={() => setChartFilter(filter.value)}
+                      />
+                    ))}
+                  </div>
+                  <ChartLegend />
+                </div>
+
+                {chartFilterLocked && (
+                  <p className="mt-2 text-[11px] text-muted-foreground">
+                    Chart filter is set by Source: {getTrackerSourceLabel(sourceFilter)}
+                  </p>
+                )}
+
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                  Cumulative all-time · shaded band = normal variance
+                </p>
+
+                <div
+                  key={effectiveChartFilter}
+                  data-testid="stats-chart"
+                  data-chart-filter={effectiveChartFilter}
+                  data-point-count={chartPoints.length}
+                  data-final-profit={finalChartPoint?.cumulativeProfit.toFixed(2) ?? "0.00"}
+                  data-final-ev={finalChartPoint?.cumulativeEv.toFixed(2) ?? "0.00"}
+                  className="mt-3 animate-fade-in"
+                >
+                  {chartPoints.length > 0 ? (
+                    <ResponsiveContainer width="100%" height={220}>
+                      <ComposedChart data={chartPoints} margin={{ top: 4, right: 4, bottom: 4, left: 0 }}>
+                        <CartesianGrid
+                          strokeDasharray="3 4"
+                          stroke="hsl(var(--border))"
+                          strokeOpacity={0.45}
+                          vertical={false}
+                        />
+                        <XAxis
+                          dataKey="dateLabel"
+                          stroke="hsl(var(--muted-foreground))"
+                          fontSize={11}
+                          tickLine={false}
+                          axisLine={false}
+                          interval="preserveStartEnd"
+                          minTickGap={32}
+                          dy={4}
+                        />
+                        <YAxis
+                          stroke="hsl(var(--muted-foreground))"
+                          fontSize={11}
+                          tickFormatter={(v: number) => formatCurrency(v)}
+                          tickLine={false}
+                          axisLine={false}
+                          width={58}
+                        />
+                        <Tooltip
+                          content={<StatsChartTooltip />}
+                          cursor={{ stroke: "hsl(var(--border))", strokeWidth: 1, strokeDasharray: "4 3" }}
+                        />
+                        {/* Variance band — keep isAnimationActive=false, stacked areas
+                            animate from zero height which looks broken with this technique */}
+                        <Area
+                          type="monotone"
+                          dataKey="bandBase"
+                          stackId="vb"
+                          stroke="none"
+                          fill="transparent"
+                          isAnimationActive={false}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="bandSize"
+                          stackId="vb"
+                          stroke={CHART_THEME.varianceStroke}
+                          strokeWidth={1}
+                          fill={CHART_THEME.varianceFill}
+                          fillOpacity={1}
+                          isAnimationActive={false}
+                        />
+                        {/* Lines animate on — draws left-to-right like a pen tracing the data */}
+                        <Line
+                          type="monotone"
+                          dataKey="cumulativeEv"
+                          stroke={CHART_THEME.evStroke}
+                          strokeWidth={2}
+                          dot={false}
+                          isAnimationActive={true}
+                          animationDuration={600}
+                          animationEasing="ease-out"
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="cumulativeProfit"
+                          stroke={CHART_THEME.profitStroke}
+                          strokeWidth={2}
+                          dot={false}
+                          isAnimationActive={true}
+                          animationDuration={600}
+                          animationEasing="ease-out"
+                        />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex h-[220px] items-center justify-center rounded border border-dashed border-border/50 bg-muted/15 px-6 text-center">
+                      <p className="max-w-xs text-xs leading-relaxed text-muted-foreground">
+                        {effectiveChartFilter === "all"
+                          ? "Settle a few bets and this chart will compare your cumulative EV with your actual results."
+                          : `No settled ${activeChartFilterLabel.toLowerCase()} yet.`}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* ── Source breakdown ──────────────────────────────────── */}
+            <Card
+              data-testid="source-breakdown"
+              className="border-border/70 animate-slide-up"
+              style={{ animationDelay: "180ms", animationFillMode: "both" }}
+            >
+              <CardContent className="px-4 py-4">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Where it came from
+                </p>
+                <div className="mt-3 space-y-2">
+                  {sourceFilter !== "promos" && (
+                    <SourceBreakdownRow
+                      label="Core Bets"
+                      ev={model.sourceBreakdown.core.ev}
+                      profit={model.sourceBreakdown.core.profit}
+                      dotClass="bg-primary"
+                      href={`/bets?${buildTrackerViewQuery({ tab: "history", source: "core", sportsbook: selectedBook, search: "" })}`}
+                    />
+                  )}
+                  {sourceFilter !== "core" && (
+                    <SourceBreakdownRow
+                      label="Promos"
+                      ev={model.sourceBreakdown.promos.ev}
+                      profit={model.sourceBreakdown.promos.profit}
+                      dotClass="bg-profit"
+                      href={`/bets?${buildTrackerViewQuery({ tab: "history", source: "promos", sportsbook: selectedBook, search: "" })}`}
+                    />
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* ── Advanced details collapse ─────────────────────────── */}
+            {model.showProcessStatsRow ? (
+              <details
+                data-testid="process-stats"
+                className="group rounded-md border border-border/70 bg-card animate-slide-up"
+                style={{ animationDelay: "220ms", animationFillMode: "both" }}
+              >
+                <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3.5 select-none transition-colors hover:bg-muted/20">
+                  <div>
+                    <span className="text-sm font-semibold text-foreground">Process Stats</span>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">Advanced betting metrics</p>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform duration-200 group-open:rotate-90" />
+                </summary>
+                <div className="border-t border-border/60 px-4 py-2">
+                  <div className="divide-y divide-border/40">
+                    <ProcessStatRow
+                      label="Beat Close"
+                      subtitle="How often your price beat the market close"
+                      value={formatPercent(model.processStats.beatClosePct)}
+                    />
+                    <ProcessStatRow
+                      label="Avg CLV"
+                      subtitle="How much better your prices were than close, on average"
+                      value={formatPercent(model.processStats.avgClvPct)}
+                    />
+                    <ProcessStatRow
+                      label="Close Coverage"
+                      subtitle="How many bets had valid close data"
+                      value={`${model.processStats.validCloseCount} / ${model.processStats.trackedCloseCount} tracked`}
+                      secondaryValue={formatCoverage(model.processStats.closeCoveragePct)}
+                    />
+                    <ProcessStatRow
+                      label="Avg Edge"
+                      subtitle="Average expected edge on your logged core bets"
+                      value={formatPercent(model.processStats.avgEdgePct)}
+                    />
+                    <ProcessStatRow
+                      label="Win Rate"
+                      subtitle={
+                        model.processStats.winRateSampleCount > 0
+                          ? `${model.processStats.winRateSampleCount} tracked`
+                          : "No tracked sample yet"
+                      }
+                      value={
+                        model.processStats.expectedWinRatePct === null
+                          ? "-"
+                          : formatPercent(model.processStats.actualWinRatePct)
+                      }
+                      secondaryValue={
+                        model.processStats.expectedWinRatePct === null
+                          ? null
+                          : `Expected ${formatPercent(model.processStats.expectedWinRatePct)}`
+                      }
+                    />
+                  </div>
+                </div>
+              </details>
+            ) : null}
+
+          </div>
+        )}
+      </div>
+
+      <Sheet open={bankrollSheetOpen} onOpenChange={setBankrollSheetOpen}>
+        <SheetContent side="bottom" className="pb-6">
+          <SheetHeader className="px-6 pt-5 pb-3">
+            <SheetTitle className="text-base">Bankroll Details</SheetTitle>
+            <SheetDescription className="text-xs">
+              Your current balances and activity across sportsbooks
+            </SheetDescription>
+          </SheetHeader>
+          <div data-testid="bankroll-details-sheet" className="px-6 pb-4 pt-1">
+            {model.bankrollDetails.books.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="pb-2 pr-3 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Book
+                      </th>
+                      <th className="pb-2 px-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Deposits
+                      </th>
+                      <th className="pb-2 px-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Withdrawals
+                      </th>
+                      <th className="pb-2 px-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Profit
+                      </th>
+                      <th className="pb-2 px-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Pending
+                      </th>
+                      <th className="pb-2 pl-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Balance
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {model.bankrollDetails.books.map((book) => (
+                      <BankrollBookRow key={book.sportsbook} book={book} />
+                    ))}
+                    <tr className="border-t-2 border-border">
+                      <td className="pt-3 pr-3 text-sm font-bold text-foreground">
+                        Total
+                      </td>
+                      <td className="pt-3 px-2 text-right font-mono text-sm font-semibold tabular-nums text-foreground">
+                        {formatCurrency(model.bankrollDetails.books.reduce((sum, b) => sum + b.deposits, 0))}
+                      </td>
+                      <td className="pt-3 px-2 text-right font-mono text-sm font-semibold tabular-nums text-foreground">
+                        {formatCurrency(model.bankrollDetails.books.reduce((sum, b) => sum + b.withdrawals, 0))}
+                      </td>
+                      <td className={cn(
+                        "pt-3 px-2 text-right font-mono text-sm font-bold tabular-nums",
+                        (() => {
+                          const totalProfit = model.bankrollDetails.books.reduce((sum, b) => {
+                            const profit = b.balance - b.deposits + b.withdrawals;
+                            return sum + profit;
+                          }, 0);
+                          return totalProfit >= 0 ? "text-profit" : "text-loss";
+                        })()
+                      )}>
+                        {formatSignedCurrency(
+                          model.bankrollDetails.books.reduce((sum, b) => {
+                            const profit = b.balance - b.deposits + b.withdrawals;
+                            return sum + profit;
+                          }, 0)
+                        )}
+                      </td>
+                      <td className="pt-3 px-2 text-right font-mono text-sm font-semibold tabular-nums text-foreground">
+                        {formatCurrency(model.bankrollDetails.books.reduce((sum, b) => sum + b.pending, 0))}
+                      </td>
+                      <td className="pt-3 pl-2 text-right font-mono text-base font-bold tabular-nums text-foreground">
+                        {model.bankrollDetails.total === null ? "—" : formatCurrency(model.bankrollDetails.total)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="rounded-md border border-dashed border-border/50 bg-muted/10 px-4 py-8 text-center">
+                <p className="text-sm text-muted-foreground">No sportsbook balances yet</p>
+                <p className="mt-1 text-xs text-muted-foreground/70">Add balances in Settings</p>
+              </div>
+            )}
+
+            {model.bankrollDetails.sizingMode ? (
+              <div className="mt-4 rounded-md border border-border/50 bg-muted/10 px-4 py-3">
+                <p className="text-xs font-semibold text-foreground">
+                  Bankroll For Sizing
+                </p>
+                <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+                  {model.bankrollDetails.sizingMode === "computed"
+                    ? "Kelly sizing uses your computed bankroll from balances above."
+                    : `Kelly sizing uses a manual override of ${formatCurrency(model.bankrollDetails.bankrollOverride ?? 0)}.`}
+                </p>
+              </div>
+            ) : null}
+
+            <div className="mt-4 flex justify-end">
+              <Link
+                href="/settings"
+                className="text-xs font-semibold text-primary transition-colors hover:text-primary/80 underline underline-offset-2"
+              >
+                Manage in Settings →
+              </Link>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+    </main>
+  );
+}

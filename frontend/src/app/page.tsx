@@ -71,40 +71,40 @@ const PROMOS_SUBMODES: Array<{
     label: "All",
     description: "All promo-ready lines",
     icon: TrendingUp,
-    activeBg: "bg-[#F3F7F5] dark:bg-[#1A2A22]",
-    activeBorder: "border-[#B7D1C2] dark:border-[#2F5D45]",
-    activeText: "text-[#2E5D39] dark:text-[#9FD6B7]",
-    iconText: "text-[#2E5D39] dark:text-[#9FD6B7]",
+    activeBg: "bg-profit/8",
+    activeBorder: "border-profit/25",
+    activeText: "text-profit",
+    iconText: "text-profit",
   },
   {
     id: "boosts",
     label: "Boosts",
     description: "Rank by boosted EV",
     icon: Zap,
-    activeBg: "bg-[#FCF7EC] dark:bg-[#2B2417]",
-    activeBorder: "border-[#E9D7B9] dark:border-[#6D5A2A]",
-    activeText: "text-[#8B7A3E] dark:text-[#E5CF94]",
-    iconText: "text-[#8B7A3E] dark:text-[#E5CF94]",
+    activeBg: "bg-primary/8",
+    activeBorder: "border-primary/30",
+    activeText: "text-primary",
+    iconText: "text-primary",
   },
   {
     id: "bonus_bets",
     label: "Bonus Bets",
     description: "Rank by retention",
     icon: Gift,
-    activeBg: "bg-[#F4F7F5] dark:bg-[#182723]",
-    activeBorder: "border-[#B7CFC2] dark:border-[#2E6A55]",
-    activeText: "text-[#3B6C4C] dark:text-[#9FD3BE]",
-    iconText: "text-[#3B6C4C] dark:text-[#9FD3BE]",
+    activeBg: "bg-profit/8",
+    activeBorder: "border-profit/20",
+    activeText: "text-profit",
+    iconText: "text-profit",
   },
   {
     id: "qualifiers",
     label: "Qualifiers",
     description: "Rank by lowest hold",
     icon: ShieldCheck,
-    activeBg: "bg-[#FDF6F3] dark:bg-[#2A1D18]",
-    activeBorder: "border-[#E9C7B9] dark:border-[#6E3A2A]",
-    activeText: "text-[#8B3D20] dark:text-[#E2A58F]",
-    iconText: "text-[#8B3D20] dark:text-[#E2A58F]",
+    activeBg: "bg-loss/8",
+    activeBorder: "border-loss/25",
+    activeText: "text-loss",
+    iconText: "text-loss",
   },
 ];
 
@@ -129,8 +129,8 @@ const SPORT_KEY_TO_DISPLAY: Record<string, string> = {
 };
 
 const BOOK_COLORS: Record<string, string> = {
-  Bovada: "bg-[#B85C38]",
-  "BetOnline.ag": "bg-[#4A7C59]",
+  Bovada: "bg-color-loss",
+  "BetOnline.ag": "bg-color-profit",
   DraftKings: "bg-draftkings",
   FanDuel: "bg-fanduel",
   BetMGM: "bg-betmgm",
@@ -1527,28 +1527,28 @@ export default function MarketsPage() {
     <div className="container mx-auto max-w-2xl space-y-3 px-4 py-4">
 
       {/* ── Board header ─────────────────────────────────────────── */}
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <h1 className="text-base font-semibold text-foreground">Markets</h1>
+      <div className="flex min-w-0 items-baseline justify-between gap-2 animate-slide-up" style={{ animationDelay: "0ms", animationFillMode: "both" }}>
+        <h1 className="text-sm font-semibold text-foreground">Markets</h1>
         {isBoardLoading ? (
-          <p className="text-[11px] text-muted-foreground">Loading board…</p>
+          <p className="text-[11px] text-muted-foreground">Loading…</p>
         ) : boardAgeMinutes !== null ? (
           <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
             <Clock className="h-3 w-3 shrink-0" />
             <span>
-              Lines from {formatBoardAge(boardAgeMinutes)}
-              {scanWindowLabel ? ` • ${scanWindowLabel}` : ""}
-              {!scanWindowLabel ? ` • ${nextDropLabel}` : ""}
+              {formatBoardAge(boardAgeMinutes)}
+              {scanWindowLabel ? ` · ${scanWindowLabel}` : ""}
+              {!scanWindowLabel ? ` · ${nextDropLabel}` : ""}
             </span>
           </p>
         ) : isEmptyBoard && !isBoardLoading ? (
           <p className="text-[11px] text-muted-foreground">
-            No lines yet · scans daily ~10:30 AM / 3:30 PM AZ
+            Scans ~10:30 AM / 3:30 PM AZ
           </p>
         ) : null}
       </div>
 
       {/* ── Row 1: Primary mode ───────────────────────────────────── */}
-      <div className="flex gap-1 rounded-lg bg-muted p-1 w-fit">
+      <div className="flex gap-1 -mx-0 animate-slide-up" style={{ animationDelay: "40ms", animationFillMode: "both" }}>
         {([
           { id: "player_props", label: "Player Props" },
           { id: "straight_bets", label: "Game Lines" },
@@ -1558,10 +1558,8 @@ export default function MarketsPage() {
             key={item.id}
             onClick={() => handlePrimaryModeChange(item.id)}
             className={cn(
-              "rounded-md px-4 py-1.5 text-sm font-medium transition-colors",
-              primaryMode === item.id
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
+              "folder-tab flex-1 px-3 py-2 text-sm font-semibold transition-all duration-200",
+              primaryMode === item.id ? "folder-tab-active" : "folder-tab-inactive",
             )}
           >
             {item.label}
@@ -1570,7 +1568,10 @@ export default function MarketsPage() {
       </div>
 
       {/* ── Row 2: Contextual submode ─────────────────────────────── */}
-      <div className="flex gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
+      <div 
+        key={`submode-${primaryMode}`}
+        className="flex gap-1.5 overflow-x-auto pb-0.5 no-scrollbar animate-fade-in"
+      >
         {primaryMode !== "promos" &&
           VIEW_MODES
             .filter((mode) => mode.id !== "pickem" || primaryMode === "player_props")
@@ -1579,20 +1580,19 @@ export default function MarketsPage() {
                 key={mode.id}
                 onClick={() => handleViewModeChange(mode.id)}
                 className={cn(
-                  "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                  "shrink-0 rounded-md border px-3 py-1.5 text-xs font-medium transition-all duration-200 active:scale-95",
                   viewMode === mode.id
-                    ? "border-primary/40 bg-primary/10 text-foreground"
-                    : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
+                    ? "border-primary/40 bg-primary/12 text-primary shadow-sm"
+                    : "border-border/60 bg-card/60 text-muted-foreground hover:text-foreground hover:bg-muted/40 hover:border-border",
                 )}
               >
                 {mode.label}
               </button>
             ))}
         {primaryMode === "promos" && (
-          <div className="w-full space-y-2">
-            <p className="pl-0.5 text-xs font-medium text-muted-foreground">Lens</p>
+          <div className="w-full space-y-2 animate-fade-in">
             <div className="grid grid-cols-2 gap-2">
-              {PROMOS_SUBMODES.map((mode) => {
+              {PROMOS_SUBMODES.map((mode, index) => {
                 const Icon = mode.icon;
                 const isActive = promosSubmode === mode.id;
                 return (
@@ -1601,35 +1601,28 @@ export default function MarketsPage() {
                     type="button"
                     onClick={() => setPromosSubmode(mode.id)}
                     aria-pressed={isActive}
+                    style={{ animationDelay: `${index * 40}ms`, animationFillMode: "both" }}
                     className={cn(
-                      "rounded-lg border px-3 py-2.5 text-left transition-colors",
+                      "rounded border px-3 py-2.5 text-left transition-all duration-200 active:scale-[0.98] animate-slide-up",
                       isActive
-                        ? `${mode.activeBg} ${mode.activeBorder} ${mode.activeText}`
-                        : "border-border bg-background text-foreground hover:bg-muted dark:bg-card dark:hover:bg-muted/60",
+                        ? `${mode.activeBg} ${mode.activeBorder}`
+                        : "border-border/40 bg-card/60 hover:bg-muted/40",
                     )}
                   >
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <span className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                        {mode.id === "all" ? "Core View" : "Specialty"}
-                      </span>
-                      {isActive && (
-                        <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                          Active
-                        </span>
-                      )}
-                    </div>
                     <div className="flex items-center gap-2">
                       <span
                         className={cn(
-                          "inline-flex h-6 w-6 items-center justify-center rounded-md bg-background/70 dark:bg-background/40",
+                          "inline-flex h-5 w-5 items-center justify-center rounded transition-colors",
                           isActive ? mode.iconText : "text-muted-foreground",
                         )}
                       >
                         <Icon className="h-3.5 w-3.5" />
                       </span>
-                      <span className="text-xs font-semibold leading-tight md:text-sm">{mode.label}</span>
+                      <span className={cn("text-xs font-medium", isActive ? mode.activeText : "text-foreground")}>
+                        {mode.label}
+                      </span>
                     </div>
-                    <p className="mt-1 text-[11px] leading-tight text-muted-foreground">{mode.description}</p>
+                    <p className="mt-1 text-[11px] leading-tight text-muted-foreground/70">{mode.description}</p>
                   </button>
                 );
               })}
@@ -1640,34 +1633,36 @@ export default function MarketsPage() {
 
       {/* ── Search + single Filters control ───────────────────────── */}
       {activeScanData !== null && (
-        <div className="space-y-2">
+        <div className="space-y-2 animate-slide-up" style={{ animationDelay: "80ms", animationFillMode: "both" }}>
           <div className="flex items-center gap-2">
-            <input
-              type="search"
-              placeholder={
-                primaryMode === "player_props"
-                  ? "Search players, teams, events…"
-                  : "Search teams, events…"
-              }
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-            />
+            <div className="flex flex-1 items-center gap-2 rounded border border-border/60 bg-background/60 px-3 py-2 focus-within:border-border focus-within:bg-background transition-all duration-200">
+              <input
+                type="text"
+                placeholder={
+                  primaryMode === "player_props"
+                    ? "Search players, teams, events…"
+                    : "Search teams, events…"
+                }
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground/50 outline-none"
+              />
+            </div>
             <button
               type="button"
               onClick={() => setFiltersOpen((prev) => !prev)}
               className={cn(
-                "shrink-0 rounded-md border px-3 py-2 text-xs font-medium transition-colors",
+                "shrink-0 rounded border px-3 py-2 text-[11px] font-semibold uppercase tracking-wider transition-all duration-200 active:scale-95",
                 filtersOpen
-                  ? "border-primary/40 bg-primary/10 text-foreground"
-                  : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
+                  ? "border-primary/50 bg-primary/12 text-primary"
+                  : "border-border/60 text-muted-foreground hover:border-border hover:text-foreground",
               )}
             >
               Filters
             </button>
           </div>
           {filtersOpen && (
-            <div className="rounded-md border border-border bg-card p-3 space-y-3">
+            <div className="rounded-md border border-border bg-card p-3 space-y-3 animate-slide-up" style={{ animationDelay: "0ms", animationFillMode: "both" }}>
               <div>
                 <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Books</p>
                 <div className="flex flex-wrap gap-1.5">
@@ -1683,7 +1678,7 @@ export default function MarketsPage() {
                           )
                         }
                         className={cn(
-                          "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                          "rounded-md px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95",
                           selected
                             ? `${BOOK_COLORS[book] || "bg-foreground"} text-white`
                             : "bg-muted text-muted-foreground hover:text-foreground",
@@ -1717,7 +1712,7 @@ export default function MarketsPage() {
                       type="button"
                       onClick={() => setTimeFilter(option.id as BoardTimeFilter)}
                       className={cn(
-                        "rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
+                        "rounded-md border px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95",
                         timeFilter === option.id
                           ? "border-primary/40 bg-primary/10 text-foreground"
                           : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
@@ -1743,7 +1738,7 @@ export default function MarketsPage() {
                         type="button"
                         onClick={() => setStraightBetMarketFilter(option.id)}
                         className={cn(
-                          "rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
+                          "rounded-md border px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95",
                           straightBetMarketFilter === option.id
                             ? "border-primary/40 bg-primary/10 text-foreground"
                             : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
@@ -1763,7 +1758,7 @@ export default function MarketsPage() {
                       type="button"
                       onClick={() => setPropMarketFilter("all")}
                       className={cn(
-                        "rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
+                        "rounded-md border px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95",
                         propMarketFilter === "all"
                           ? "border-primary/40 bg-primary/10 text-foreground"
                           : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
@@ -1777,7 +1772,7 @@ export default function MarketsPage() {
                         type="button"
                         onClick={() => setPropMarketFilter(market)}
                         className={cn(
-                          "rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
+                          "rounded-md border px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95",
                           propMarketFilter === market
                             ? "border-primary/40 bg-primary/10 text-foreground"
                             : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
@@ -1799,7 +1794,7 @@ export default function MarketsPage() {
                         type="button"
                         onClick={() => setPropSideFilter(side)}
                         className={cn(
-                          "rounded-md border px-2.5 py-1 text-xs font-medium capitalize transition-colors",
+                          "rounded-md border px-2.5 py-1 text-xs font-medium capitalize transition-all duration-200 active:scale-95",
                           propSideFilter === side
                             ? "border-primary/40 bg-primary/10 text-foreground"
                             : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
@@ -1826,22 +1821,23 @@ export default function MarketsPage() {
       )}
 
       {!filtersOpen && activeFilterChips.length > 0 && (
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center justify-between gap-2 animate-fade-in">
           <div className="flex flex-wrap items-center gap-1.5">
             {activeLens === "profit_boost" && (
               <button
                 type="button"
                 onClick={() => setBoostSheetOpen(true)}
-                className="rounded-full border border-[#C4A35A]/35 bg-[#C4A35A]/12 px-2 py-0.5 text-[10px] font-medium text-[#5C4D2E] transition-colors hover:bg-[#C4A35A]/20 dark:border-[#6D5A2A]/60 dark:bg-[#2B2417]/80 dark:text-[#E5CF94]"
+                className="rounded border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary transition-all duration-200 active:scale-95 hover:bg-primary/15"
                 aria-label="Set profit boost percentage"
               >
-                Boost: {boostPercent}%
+                Boost {boostPercent}%
               </button>
             )}
-            {activeFilterChips.map((chip) => (
+            {activeFilterChips.map((chip, index) => (
               <span
                 key={chip}
-                className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] text-foreground"
+                style={{ animationDelay: `${index * 30}ms`, animationFillMode: "both" }}
+                className="rounded border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground animate-fade-in"
               >
                 {chip}
               </span>
@@ -1850,7 +1846,7 @@ export default function MarketsPage() {
           <button
             type="button"
             onClick={resetFilters}
-            className="text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2"
+            className="text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
           >
             Reset
           </button>
@@ -1875,10 +1871,10 @@ export default function MarketsPage() {
                     setBoostSheetOpen(false);
                   }}
                   className={cn(
-                    "rounded-md border px-2 py-1.5 text-xs font-medium transition-colors",
+                    "rounded-md border px-2 py-1.5 text-xs font-medium transition-all duration-200 active:scale-95",
                     boostPercent === preset && customBoostInput === ""
-                      ? "border-[#C4A35A]/40 bg-[#C4A35A]/25 text-[#5C4D2E] dark:text-[#E5CF94]"
-                      : "border-border bg-background text-foreground",
+                      ? "border-color-pending/40 bg-color-pending-subtle text-color-pending-fg"
+                      : "border-border bg-background text-foreground hover:bg-muted/40",
                   )}
                 >
                   {preset}%
@@ -1901,8 +1897,8 @@ export default function MarketsPage() {
                   }
                 }}
                 className={cn(
-                  "h-8 w-20 rounded-md border bg-background px-2 text-xs font-medium text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-[#C4A35A]/50",
-                  customBoostInput !== "" ? "border-[#C4A35A]/40" : "border-border",
+                  "h-8 w-20 rounded-md border bg-background px-2 text-xs font-medium text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50",
+                  customBoostInput !== "" ? "border-color-pending/40" : "border-border",
                 )}
               />
               <span className="text-xs text-muted-foreground">%</span>
@@ -1913,14 +1909,14 @@ export default function MarketsPage() {
 
       {/* ── Board error ───────────────────────────────────────────── */}
       {boardError && (
-        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-xs text-destructive">
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-xs text-destructive animate-slide-up">
           Failed to load board:{" "}
           {boardError instanceof Error ? boardError.message : "Unknown error"}
         </div>
       )}
 
       {!boardError && activeSurfaceError && (
-        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-xs text-destructive">
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-xs text-destructive animate-slide-up">
           Failed to load {primaryMode === "promos" ? "promo lines" : primaryMode === "straight_bets" ? "game lines" : isPickEmView ? "pick'em board" : "player props"}:{" "}
           {activeSurfaceError instanceof Error ? activeSurfaceError.message : "Unknown error"}
         </div>
@@ -1954,7 +1950,7 @@ export default function MarketsPage() {
 
       {/* 1. No board snapshot yet */}
       {!activeContentIsLoading && !isBoardLoading && isEmptyBoard && !boardError && !activeSurfaceError && activeScanData === null && (
-        <div className="rounded-lg border border-border bg-card px-4 py-10 text-center">
+        <div className="rounded-lg border border-border bg-card px-4 py-10 text-center animate-slide-up" style={{ animationDelay: "120ms", animationFillMode: "both" }}>
           <Layers className="mx-auto mb-3 h-8 w-8 text-muted-foreground/40" />
           <p className="text-sm font-medium text-foreground">No lines loaded yet</p>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -1965,7 +1961,7 @@ export default function MarketsPage() {
 
       {/* 2. Board exists but this surface has no data in today's snapshot */}
       {!activeContentIsLoading && !isBoardLoading && !isEmptyBoard && !boardError && !activeSurfaceError && activeScanData === null && (
-        <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
+        <div className="rounded-lg border border-border bg-card px-4 py-8 text-center animate-slide-up" style={{ animationDelay: "120ms", animationFillMode: "both" }}>
           <p className="text-sm font-medium text-foreground">
             No {primaryMode === "promos" ? "Promos" : primaryMode === "straight_bets" ? "Game Lines" : "Player Props"} in today&apos;s board
           </p>
@@ -1977,7 +1973,10 @@ export default function MarketsPage() {
 
       {/* 3. Results pane — any scan data present (scoped overlay or canonical) */}
       {activeScanData !== null && (
-        <>
+        <div 
+          key={`results-${primaryMode}-${viewMode}-${promosSubmode}`}
+          className="animate-fade-in"
+        >
           {(primaryMode !== "straight_bets" || allSides.length > 0) && (
             <ScannerResultsPane
               surface={primaryMode === "player_props" ? "player_props" : "straight_bets"}
@@ -2006,18 +2005,18 @@ export default function MarketsPage() {
             />
           )}
           {timeFilter === "today" && todayOpenCount === 0 && todayClosedCount > 0 && (
-            <div className="rounded-md border border-border bg-card px-3 py-2 text-center">
+            <div className="rounded-md border border-border bg-card px-3 py-2 text-center animate-slide-up">
               <p className="text-xs text-muted-foreground">No still-open markets today.</p>
               <button
                 type="button"
                 onClick={() => setTimeFilter("today_closed")}
-                className="mt-1 text-xs font-medium text-foreground underline underline-offset-2"
+                className="mt-1 text-xs font-medium text-foreground underline underline-offset-2 transition-colors hover:text-primary"
               >
                 View Closed Today
               </button>
             </div>
           )}
-        </>
+        </div>
       )}
 
       {/* 3b. Featured Game Lines

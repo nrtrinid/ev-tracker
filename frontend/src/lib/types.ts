@@ -48,6 +48,7 @@ export interface Bet {
   clv_team: string | null;
   clv_sport_key: string | null;
   clv_event_id: string | null;
+  true_prob_at_entry?: number | null;
   clv_ev_percent: number | null;  // computed: edge vs. Pinnacle close
   beat_close: boolean | null;
   // V1 paper experiment metadata

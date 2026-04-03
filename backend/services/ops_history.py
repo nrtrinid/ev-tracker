@@ -525,8 +525,38 @@ def _map_scan_run(row: dict[str, Any]) -> dict[str, Any]:
     if row.get("errors") is not None:
         mapped["errors"] = row.get("errors")
     meta = row.get("meta") if isinstance(row.get("meta"), dict) else None
+    if meta and isinstance(meta.get("scan_window"), dict):
+        mapped["scan_window"] = meta.get("scan_window")
     if meta and "autolog_summary" in meta:
         mapped["autolog_summary"] = meta.get("autolog_summary")
+    if meta:
+        board_alert = meta.get("board_alert") if isinstance(meta.get("board_alert"), dict) else None
+        if board_alert is not None:
+            mapped["board_alert"] = board_alert
+        if "board_alert_attempted" in meta or board_alert is not None:
+            mapped["board_alert_attempted"] = (
+                meta.get("board_alert_attempted")
+                if "board_alert_attempted" in meta
+                else board_alert.get("attempted")
+            )
+        if "board_alert_delivery_status" in meta or board_alert is not None:
+            mapped["board_alert_delivery_status"] = (
+                meta.get("board_alert_delivery_status")
+                if "board_alert_delivery_status" in meta
+                else board_alert.get("delivery_status")
+            )
+        if "board_alert_http_status" in meta or board_alert is not None:
+            mapped["board_alert_http_status"] = (
+                meta.get("board_alert_http_status")
+                if "board_alert_http_status" in meta
+                else board_alert.get("status_code")
+            )
+        if "board_alert_error" in meta or board_alert is not None:
+            mapped["board_alert_error"] = (
+                meta.get("board_alert_error")
+                if "board_alert_error" in meta
+                else board_alert.get("error")
+            )
     return mapped
 
 

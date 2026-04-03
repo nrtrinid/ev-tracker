@@ -1169,7 +1169,15 @@ def test_ops_trigger_test_discord_contract_shape(auth_client, monkeypatch):
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
 
     async def _fake_send_discord_webhook(_payload):
-        return None
+        return {
+            "ok": True,
+            "message_type": "test",
+            "route_kind": "debug_dedicated",
+            "webhook_source": "DISCORD_DEBUG_WEBHOOK_URL",
+            "delivery_status": "delivered",
+            "status_code": 204,
+            "response_text": None,
+        }
 
     monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
 
@@ -1180,6 +1188,7 @@ def test_ops_trigger_test_discord_contract_shape(auth_client, monkeypatch):
     assert body.get("ok") is True
     assert body.get("scheduled") is True
     assert isinstance(body.get("run_id"), str)
+    assert body.get("delivery_status") == "delivered"
 
 
 @pytest.mark.integration
@@ -1215,7 +1224,15 @@ def test_ops_trigger_test_discord_alert_contract_shape(auth_client, monkeypatch)
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
 
     async def _fake_send_discord_webhook(_payload, message_type="alert"):
-        return None
+        return {
+            "ok": True,
+            "message_type": message_type,
+            "route_kind": "alert_dedicated",
+            "webhook_source": "DISCORD_ALERT_WEBHOOK_URL",
+            "delivery_status": "delivered",
+            "status_code": 204,
+            "response_text": None,
+        }
 
     monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
 
@@ -1226,3 +1243,32 @@ def test_ops_trigger_test_discord_alert_contract_shape(auth_client, monkeypatch)
     assert body.get("ok") is True
     assert body.get("scheduled") is True
     assert isinstance(body.get("run_id"), str)
+    assert body.get("delivery_status") == "delivered"
+
+
+@pytest.mark.integration
+def test_ops_trigger_test_discord_alert_returns_config_diagnostics_when_unconfigured(auth_client, monkeypatch):
+    import services.discord_alerts as discord_alerts
+
+    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
+
+    async def _fake_send_discord_webhook(_payload, message_type="alert"):
+        return {
+            "ok": False,
+            "message_type": message_type,
+            "route_kind": "alert_unconfigured",
+            "webhook_source": None,
+            "delivery_status": "disabled_no_webhook",
+            "status_code": None,
+            "response_text": None,
+        }
+
+    monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
+
+    resp = auth_client.post("/api/ops/trigger/test-discord-alert", headers={"X-Ops-Token": "ops-secret"})
+    assert resp.status_code == 503
+
+    body = resp.json()
+    assert body["detail"]["error"] == "discord_webhook_not_configured"
+    assert body["detail"]["message_type"] == "alert"
+    assert body["detail"]["route_kind"] == "alert_unconfigured"
