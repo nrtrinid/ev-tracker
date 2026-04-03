@@ -101,9 +101,9 @@ export function ScannerResultsPane({
       </p>
 
       {(isPickEmView ? pickemCards.length === 0 : results.length === 0) ? (
-        <Card className="border-dashed border-border/60 bg-muted/10">
+        <Card className="border-dashed border-border/60 bg-muted/10 animate-slide-up" style={{ animationDelay: "120ms", animationFillMode: "both" }}>
           <CardContent className="py-10 text-center">
-            <p className="text-sm font-medium text-foreground">
+            <p className="text-sm font-medium text-foreground animate-fade-in" style={{ animationDelay: "180ms", animationFillMode: "both" }}>
               {scanExpiredOutOfPregame
                 ? isPickEmView
                   ? `${rawSourceCount} pick'em lines scanned — none still pregame.`
@@ -129,7 +129,7 @@ export function ScannerResultsPane({
                   ? `${sourceCount} props scanned — filters hiding all of them.`
                   : "Filters are hiding all available plays."}
             </p>
-            <p className="mt-2 text-xs text-muted-foreground">
+            <p className="mt-2 text-xs text-muted-foreground animate-fade-in" style={{ animationDelay: "230ms", animationFillMode: "both" }}>
               {scanExpiredOutOfPregame
                 ? "Started games are hidden by default. Refresh to load the current slate."
                 : isPickEmView && nullState === "backend_empty"
@@ -140,7 +140,7 @@ export function ScannerResultsPane({
                 : "Try Reset, loosen Safer Odds, or turn off Hide Logged to see more options."}
             </p>
             {nullState === "filter_empty" && (
-              <p className="mt-2 text-xs text-muted-foreground">{activeResultFilterSummary}</p>
+              <p className="mt-2 text-xs text-muted-foreground animate-fade-in" style={{ animationDelay: "280ms", animationFillMode: "both" }}>{activeResultFilterSummary}</p>
             )}
           </CardContent>
         </Card>

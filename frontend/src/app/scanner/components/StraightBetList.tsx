@@ -38,25 +38,38 @@ export function StraightBetList({
 }: StraightBetListProps) {
   return (
     <>
-      {results.map((side, idx) => (
-        <StraightBetCard
-          key={`${side.sportsbook}-${side.team}-${side.event}-${idx}`}
-          side={side}
-          activeLens={activeLens}
-          tutorialMode={tutorialMode}
-          kellyMultiplier={kellyMultiplier}
-          bankroll={bankroll}
-          boostPercent={boostPercent}
-          onLogBet={onLogBet}
-          onAddToCart={onAddToCart}
-          onStartPlaceFlow={onStartPlaceFlow}
-          bookColors={bookColors}
-          sportDisplayMap={sportDisplayMap}
-        />
-      ))}
+      <div className="space-y-2">
+        {results.map((side, idx) => (
+          <div
+            key={`${side.sportsbook}-${side.team}-${side.event}-${idx}`}
+            className="animate-slide-up"
+            style={{ animationDelay: `${idx * 40}ms` }}
+          >
+            <StraightBetCard
+              side={side}
+              activeLens={activeLens}
+              tutorialMode={tutorialMode}
+              kellyMultiplier={kellyMultiplier}
+              bankroll={bankroll}
+              boostPercent={boostPercent}
+              onLogBet={onLogBet}
+              onAddToCart={onAddToCart}
+              onStartPlaceFlow={onStartPlaceFlow}
+              bookColors={bookColors}
+              sportDisplayMap={sportDisplayMap}
+            />
+          </div>
+        ))}
+      </div>
 
       {canLoadMore && (
-        <Button type="button" variant="secondary" className="w-full" onClick={onLoadMore} disabled={isLoadingMore}>
+        <Button
+          type="button"
+          variant="secondary"
+          className="w-full active:scale-[0.98] transition-transform"
+          onClick={onLoadMore}
+          disabled={isLoadingMore}
+        >
           {isLoadingMore ? "Loading more..." : "Load more"}
         </Button>
       )}

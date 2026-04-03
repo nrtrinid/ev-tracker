@@ -142,7 +142,7 @@ export function PlayerPropCard({
 
   return (
     <Card
-      className="card-hover cursor-pointer"
+      className="card-hover cursor-pointer transition-shadow hover:shadow-soft"
       onClick={() => onLogBet(side)}
     >
       <CardContent className="px-3 py-2.5">
@@ -205,7 +205,7 @@ export function PlayerPropCard({
           <div className="mt-1.5 flex items-center gap-1.5 border-t border-border/60 pt-1.5">
             <Button
               asChild
-              className="h-8 flex-[0.9] text-xs font-medium"
+              className="h-8 flex-[0.9] text-xs font-medium active:scale-[0.98] transition-transform"
               onClick={(e) => e.stopPropagation()}
             >
               <a
@@ -222,7 +222,7 @@ export function PlayerPropCard({
               type="button"
               aria-label={isInCart ? "Remove from cart" : "Add to cart"}
               className={cn(
-                "flex h-8 w-8 shrink-0 items-center justify-center rounded border text-xs transition-colors",
+                "flex h-8 w-8 shrink-0 items-center justify-center rounded border text-xs transition-all active:scale-90",
                 isInCart
                   ? "border-primary/30 bg-primary/15 text-primary"
                   : "border-border bg-muted/40 text-muted-foreground hover:border-primary/30 hover:bg-primary/10 hover:text-primary"
@@ -237,7 +237,7 @@ export function PlayerPropCard({
             </button>
             <button
               type="button"
-              className="ml-auto flex shrink-0 items-center whitespace-nowrap text-xs text-muted-foreground"
+              className="ml-auto flex shrink-0 items-center whitespace-nowrap text-xs text-muted-foreground transition-colors hover:text-foreground active:scale-95"
               onClick={(e) => {
                 e.stopPropagation();
                 onLogBet(side);
@@ -250,7 +250,7 @@ export function PlayerPropCard({
           <div className="mt-1.5 flex items-center gap-1.5 border-t border-border/60 pt-1.5">
             <Button
               type="button"
-              className="h-8 flex-[0.9] text-xs font-medium"
+              className="h-8 flex-[0.9] text-xs font-medium active:scale-[0.98] transition-transform"
               onClick={(e) => {
                 e.stopPropagation();
                 onLogBet(side);
@@ -263,7 +263,7 @@ export function PlayerPropCard({
               type="button"
               aria-label={isInCart ? "Remove from cart" : "Add to cart"}
               className={cn(
-                "flex h-8 w-8 shrink-0 items-center justify-center rounded border text-xs transition-colors",
+                "flex h-8 w-8 shrink-0 items-center justify-center rounded border text-xs transition-all active:scale-90",
                 isInCart
                   ? "border-primary/30 bg-primary/15 text-primary"
                   : "border-border bg-muted/40 text-muted-foreground hover:border-primary/30 hover:bg-primary/10 hover:text-primary"
@@ -278,7 +278,7 @@ export function PlayerPropCard({
             </button>
             <button
               type="button"
-              className="ml-auto flex shrink-0 items-center whitespace-nowrap text-xs text-muted-foreground"
+              className="ml-auto flex shrink-0 items-center whitespace-nowrap text-xs text-muted-foreground transition-colors hover:text-foreground active:scale-95"
               onClick={(e) => {
                 e.stopPropagation();
                 onLogBet(side);

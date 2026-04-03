@@ -26,19 +26,32 @@ export function PickEmBoardList({
 }: PickEmBoardListProps) {
   return (
     <>
-      {cards.map((card) => (
-        <PickEmBoardCard
-          key={card.comparison_key}
-          card={card}
-          bookColors={bookColors}
-          sportDisplayMap={sportDisplayMap}
-          isAdded={addedComparisonKeys.includes(card.comparison_key)}
-          onAddToSlip={onAddToSlip}
-        />
-      ))}
+      <div className="space-y-2">
+        {cards.map((card, idx) => (
+          <div
+            key={card.comparison_key}
+            className="animate-slide-up"
+            style={{ animationDelay: `${idx * 40}ms` }}
+          >
+            <PickEmBoardCard
+              card={card}
+              bookColors={bookColors}
+              sportDisplayMap={sportDisplayMap}
+              isAdded={addedComparisonKeys.includes(card.comparison_key)}
+              onAddToSlip={onAddToSlip}
+            />
+          </div>
+        ))}
+      </div>
 
       {canLoadMore && (
-        <Button type="button" variant="secondary" className="w-full" onClick={onLoadMore} disabled={isLoadingMore}>
+        <Button
+          type="button"
+          variant="secondary"
+          className="w-full active:scale-[0.98] transition-transform"
+          onClick={onLoadMore}
+          disabled={isLoadingMore}
+        >
           {isLoadingMore ? "Loading more..." : "Load more"}
         </Button>
       )}

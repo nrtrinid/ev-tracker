@@ -37,25 +37,36 @@ export function PlayerPropList({
   return (
     <>
       <div className="space-y-2">
-        {results.map((side) => (
-          <PlayerPropCard
+        {results.map((side, idx) => (
+          <div
             key={`${side.selection_key}-${side.sportsbook}`}
-            side={side}
-            activeLens={activeLens}
-            boostPercent={boostPercent}
-            kellyMultiplier={kellyMultiplier}
-            bankroll={bankroll}
-            onLogBet={onLogBet}
-            onAddToCart={onAddToCart}
-            onStartPlaceFlow={onStartPlaceFlow}
-            bookColors={bookColors}
-            sportDisplayMap={sportDisplayMap}
-          />
+            className="animate-slide-up"
+            style={{ animationDelay: `${idx * 40}ms` }}
+          >
+            <PlayerPropCard
+              side={side}
+              activeLens={activeLens}
+              boostPercent={boostPercent}
+              kellyMultiplier={kellyMultiplier}
+              bankroll={bankroll}
+              onLogBet={onLogBet}
+              onAddToCart={onAddToCart}
+              onStartPlaceFlow={onStartPlaceFlow}
+              bookColors={bookColors}
+              sportDisplayMap={sportDisplayMap}
+            />
+          </div>
         ))}
       </div>
 
       {canLoadMore && (
-        <Button type="button" variant="secondary" className="w-full" onClick={onLoadMore} disabled={isLoadingMore}>
+        <Button
+          type="button"
+          variant="secondary"
+          className="w-full active:scale-[0.98] transition-transform"
+          onClick={onLoadMore}
+          disabled={isLoadingMore}
+        >
           {isLoadingMore ? "Loading more..." : "Load more"}
         </Button>
       )}
