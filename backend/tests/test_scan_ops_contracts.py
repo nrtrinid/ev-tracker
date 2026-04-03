@@ -748,6 +748,7 @@ def test_ops_clv_debug_contract_shape(auth_client, monkeypatch):
             "inventory": {"writers": [], "readers": [], "reason_codes": ["missing_identity"]},
             "scheduler": {"jit_clv": {"captured_at": "2026-04-02T17:45:00Z"}},
             "job_runs": {"recent": [], "by_source": [], "by_job_kind": [], "stale_jobs": {"jit_clv": {"is_stale": False}}},
+            "rescueability": {"rescue_eligible_count": 0, "rescue_from_latest_count": 0},
             "bets": {"tracked_count": 1, "valid_count": 0, "sample": {"pending": []}},
             "research_opportunities": {"tracked_count": 0, "valid_count": 0, "sample": {"pending": []}},
             "pickem_research": {"tracked_count": 0, "valid_count": 0, "sample": {"pending": []}},
@@ -763,6 +764,7 @@ def test_ops_clv_debug_contract_shape(auth_client, monkeypatch):
     body = resp.json()
     assert isinstance(body["inventory"], dict)
     assert isinstance(body["job_runs"], dict)
+    assert isinstance(body["rescueability"], dict)
     assert isinstance(body["bets"], dict)
     assert isinstance(body["research_opportunities"], dict)
     assert isinstance(body["pickem_research"], dict)

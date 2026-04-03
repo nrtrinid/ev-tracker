@@ -42,6 +42,7 @@ def build_empty_ops_status() -> dict[str, Any]:
     return {
         "last_scheduler_scan": None,
         "last_jit_clv": None,
+        "last_clv_finalize": None,
         "last_clv_daily": None,
         "last_clv_replay": None,
         "last_ops_trigger_scan": None,
@@ -550,6 +551,8 @@ def _map_last_jit_clv(row: dict[str, Any]) -> dict[str, Any]:
         "finished_at": row.get("finished_at"),
         "duration_ms": row.get("duration_ms"),
         "updated": meta.get("updated"),
+        "close_updated": meta.get("close_updated"),
+        "rescue_from_latest_count": meta.get("rescue_from_latest_count"),
         "captured_at": row.get("captured_at"),
         "status": row.get("status"),
     }
@@ -566,7 +569,7 @@ def load_recent_clv_job_runs(
         return []
 
     rows: list[dict[str, Any]] = []
-    for job_kind in ("jit_clv", "clv_daily", "clv_replay", "clv_piggyback"):
+    for job_kind in ("jit_clv", "clv_finalize", "clv_daily", "clv_replay", "clv_piggyback"):
         rows.extend(
             _select_recent_job_runs(
                 db=resolved_db,
@@ -595,11 +598,13 @@ def load_recent_clv_job_runs(
                 "duration_ms": row.get("duration_ms"),
                 "updated": meta.get("updated"),
                 "close_updated": meta.get("close_updated"),
+                "rescue_eligible_count": meta.get("rescue_eligible_count"),
+                "rescue_from_latest_count": meta.get("rescue_from_latest_count"),
                 "reason_counts": meta.get("reason_counts") if isinstance(meta.get("reason_counts"), dict) else {},
                 "meta": meta,
             }
         )
-    return serialized[: limit_per_kind * 4]
+    return serialized[: limit_per_kind * 5]
 
 
 def _map_last_auto_settle_summary(row: dict[str, Any]) -> dict[str, Any]:
@@ -631,6 +636,7 @@ def load_scheduler_job_snapshot(
         return {
             "scheduler_boot": None,
             "jit_clv": None,
+            "clv_finalize": None,
             "auto_settle": None,
             "scheduled_scan": None,
         }
@@ -638,6 +644,7 @@ def load_scheduler_job_snapshot(
     return {
         "scheduler_boot": _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="scheduler_boot"),
         "jit_clv": _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="jit_clv"),
+        "clv_finalize": _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="clv_finalize"),
         "auto_settle": _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="auto_settle"),
         "scheduled_scan": _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="scheduled_scan"),
     }
@@ -736,6 +743,7 @@ def load_ops_status_snapshot(
     try:
         manual = _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="manual_scan")
         jit_clv = _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="jit_clv")
+        clv_finalize = _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="clv_finalize")
         clv_daily = _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="clv_daily")
         clv_replay = _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="clv_replay")
         scheduler = _select_latest_job_run(
@@ -764,6 +772,8 @@ def load_ops_status_snapshot(
         ops["last_manual_scan"] = _map_last_manual_scan(manual)
     if jit_clv:
         ops["last_jit_clv"] = _map_last_jit_clv(jit_clv)
+    if clv_finalize:
+        ops["last_clv_finalize"] = _map_last_jit_clv(clv_finalize)
     if clv_daily:
         ops["last_clv_daily"] = _map_last_jit_clv(clv_daily)
     if clv_replay:

@@ -1231,6 +1231,105 @@ async def _run_jit_clv_snatcher_job():
         )
 
 
+async def _run_clv_finalize_job():
+    """Exact-only close finalizer: promote already-captured latest snapshots into close fields."""
+    from services.odds_api import finalize_recent_clv_closes
+
+    run_id = _new_run_id("clv_finalize")
+    started = _utc_now_iso()
+    started_at = time.monotonic()
+    _record_scheduler_heartbeat("clv_finalize", run_id, "started")
+    _log_event("scheduler.clv_finalize.started", run_id=run_id)
+    db = get_db()
+    try:
+        summary = await finalize_recent_clv_closes(db, include_summary=True)
+        updated = int((summary or {}).get("close_updated", 0))
+        finished = _utc_now_iso()
+        duration_ms = round((time.monotonic() - started_at) * 1000, 2)
+        _log_event(
+            "scheduler.clv_finalize.completed",
+            run_id=run_id,
+            updated=updated,
+            duration_ms=duration_ms,
+            summary=summary,
+        )
+        _record_scheduler_heartbeat(
+            "clv_finalize",
+            run_id,
+            "success",
+            duration_ms=duration_ms,
+        )
+        _set_ops_status(
+            "last_clv_finalize",
+            {
+                "source": "scheduler",
+                "run_id": run_id,
+                "started_at": started,
+                "finished_at": finished,
+                "duration_ms": duration_ms,
+                "updated": updated,
+                "captured_at": finished,
+                "status": "completed",
+                "summary": summary,
+            },
+        )
+        _persist_ops_job_run(
+            job_kind="clv_finalize",
+            source="scheduler",
+            status="completed",
+            run_id=run_id,
+            captured_at=finished,
+            started_at=started,
+            finished_at=finished,
+            duration_ms=duration_ms,
+            meta=summary or {"updated": updated},
+        )
+    except Exception as e:
+        finished = _utc_now_iso()
+        duration_ms = round((time.monotonic() - started_at) * 1000, 2)
+        _set_ops_status(
+            "last_clv_finalize",
+            {
+                "source": "scheduler",
+                "run_id": run_id,
+                "started_at": started,
+                "finished_at": finished,
+                "duration_ms": duration_ms,
+                "updated": 0,
+                "captured_at": finished,
+                "status": "failed",
+            },
+        )
+        _record_scheduler_heartbeat(
+            "clv_finalize",
+            run_id,
+            "failure",
+            duration_ms=duration_ms,
+            error=str(e),
+        )
+        _log_event(
+            "scheduler.clv_finalize.failed",
+            level="error",
+            run_id=run_id,
+            error_class=type(e).__name__,
+            error=str(e),
+            duration_ms=duration_ms,
+        )
+        _persist_ops_job_run(
+            job_kind="clv_finalize",
+            source="scheduler",
+            status="failed",
+            run_id=run_id,
+            captured_at=finished,
+            started_at=started,
+            finished_at=finished,
+            duration_ms=duration_ms,
+            error_count=1,
+            errors=[{"error_class": type(e).__name__, "error": str(e)}],
+            meta={"updated": 0},
+        )
+
+
 async def _run_auto_settler_job():
     """Auto-Settler: grade completed ML bets using The Odds API /scores endpoint."""
     from services.odds_api import run_auto_settler, get_last_auto_settler_summary
@@ -1710,9 +1809,12 @@ async def start_scheduler():
     from apscheduler.triggers.interval import IntervalTrigger
     _init_scheduler_heartbeats()
     scheduler = AsyncIOScheduler()
-    # Every 15 min: capture closing Pinnacle lines for games starting within 20 min
-    scheduler.add_job(_run_jit_clv_snatcher_job, IntervalTrigger(minutes=15))
-    _log_event("scheduler.job_registered", job="jit_clv_snatcher", trigger="interval:15m", **_boot_fields())
+    # Every 5 min: capture closing reference lines for games approaching lock.
+    scheduler.add_job(_run_jit_clv_snatcher_job, IntervalTrigger(minutes=5))
+    _log_event("scheduler.job_registered", job="jit_clv_snatcher", trigger="interval:5m", **_boot_fields())
+    # Every 5 min: promote exact latest snapshots already captured inside the close window.
+    scheduler.add_job(_run_clv_finalize_job, IntervalTrigger(minutes=5))
+    _log_event("scheduler.job_registered", job="clv_finalize", trigger="interval:5m", **_boot_fields())
     # 11:00 PM Phoenix catches most same-night finals; 4:00 AM cleans up stragglers.
     # Explicit timezone keeps scheduler behavior consistent across hosts.
     auto_settle_schedules = (

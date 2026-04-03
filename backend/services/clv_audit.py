@@ -9,7 +9,7 @@ from services.clv_tracking import CLV_AUDIT_REASON_CODES, CLOSE_WINDOW_MINUTES, 
 from services.pickem_research import is_missing_pickem_research_observations_error
 from services.research_opportunities import is_missing_scan_opportunities_error
 
-_SCHEDULED_CLV_STALE_MINUTES = {"jit_clv": 45}
+_SCHEDULED_CLV_STALE_MINUTES = {"jit_clv": 20, "clv_finalize": 20}
 
 
 def _coerce_datetime(value: Any) -> datetime | None:
@@ -126,7 +126,7 @@ def _build_breakdown(rows: list[dict[str, Any]], key_fn: Callable[[dict[str, Any
     ]
 
 
-def _build_identity_completeness(rows: list[dict[str, Any]], *, row_kind: str) -> dict[str, int]:
+def _build_identity_completeness(rows: list[dict[str, Any]], *, row_kind: str) -> dict[str, Any]:
     summary = {
         "complete_count": 0,
         "missing_event_id_count": 0,
@@ -134,7 +134,10 @@ def _build_identity_completeness(rows: list[dict[str, Any]], *, row_kind: str) -
         "missing_selection_side_count": 0,
         "missing_line_value_count": 0,
         "legacy_identity_count": 0,
+        "legacy_by_surface": [],
+        "legacy_by_market": [],
     }
+    legacy_rows: list[dict[str, Any]] = []
     for row in rows:
         surface = _normalize_text(row.get("surface")) or "straight_bets"
         has_event_id = bool(str(row.get("source_event_id") or row.get("event_id") or row.get("clv_event_id") or "").strip())
@@ -152,9 +155,12 @@ def _build_identity_completeness(rows: list[dict[str, Any]], *, row_kind: str) -
 
         if row_kind == "bets" and surface != "player_props" and not has_market_key and not has_selection_side and not has_line_value:
             summary["legacy_identity_count"] += 1
+            legacy_rows.append(row)
 
         if has_event_id and (surface != "player_props" or (has_market_key and has_selection_side and has_line_value)):
             summary["complete_count"] += 1
+    summary["legacy_by_surface"] = _build_breakdown(legacy_rows, lambda row: str(row.get("surface") or "straight_bets"))
+    summary["legacy_by_market"] = _build_breakdown(legacy_rows, _market_label)
     return summary
 
 
@@ -226,6 +232,12 @@ def _build_status_summary(
     latest_only_count = sum(1 for row in annotated if row.get("_status") == "latest_only")
     outside_window_count = sum(1 for row in annotated if row.get("_status") == "outside_window")
     valid_count = sum(1 for row in annotated if row.get("_status") == "valid")
+    rescue_eligible_count = sum(
+        1
+        for row in annotated
+        if row.get("_status") in {"missing_close", "latest_only", "outside_window"}
+        and has_valid_close_snapshot(row.get("commence_time"), row.get(latest_timestamp_field))
+    )
 
     return {
         "tracked_count": len(annotated),
@@ -235,6 +247,7 @@ def _build_status_summary(
         "missing_close_count": missing_close_count,
         "latest_only_count": latest_only_count,
         "outside_window_count": outside_window_count,
+        "rescue_eligible_count": rescue_eligible_count,
         "by_surface": _build_breakdown(annotated, lambda row: str(row.get("surface") or "straight_bets")),
         "by_market": _build_breakdown(annotated, _market_label),
         "by_sport": _build_breakdown(annotated, lambda row: str(row.get("sport") or row.get("clv_sport_key") or "Unknown")),
@@ -247,6 +260,7 @@ def _build_status_summary(
             "missing_close": _sample("missing_close"),
             "latest_only": _sample("latest_only"),
             "outside_window": _sample("outside_window"),
+            "rescue_eligible": _sample("missing_close", "latest_only", "outside_window"),
         },
     }
 
@@ -296,8 +310,14 @@ def _build_inventory() -> dict[str, Any]:
         "writers": [
             {
                 "job_kind": "jit_clv",
-                "trigger": "scheduler interval 15m or ops trigger",
+                "trigger": "scheduler interval 5m or ops trigger",
                 "candidate_scope": "pending bets + scan opportunities + pickem rows within close window",
+                "persistence_targets": ["bets", "scan_opportunities", "pickem_research_observations"],
+            },
+            {
+                "job_kind": "clv_finalize",
+                "trigger": "scheduler interval 5m",
+                "candidate_scope": "rows with exact latest snapshots and no valid close shortly after start",
                 "persistence_targets": ["bets", "scan_opportunities", "pickem_research_observations"],
             },
             {
@@ -328,6 +348,30 @@ def _build_inventory() -> dict[str, Any]:
         ],
         "reason_codes": list(CLV_AUDIT_REASON_CODES),
         "close_window_minutes": CLOSE_WINDOW_MINUTES,
+    }
+
+
+def _build_rescueability_summary(
+    *,
+    recent_job_runs: list[dict[str, Any]],
+    bets: dict[str, Any],
+    research: dict[str, Any],
+    pickem: dict[str, Any],
+) -> dict[str, Any]:
+    rescue_from_latest_count = 0
+    for row in recent_job_runs:
+        if str(row.get("job_kind") or "") != "clv_finalize":
+            continue
+        meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+        rescue_from_latest_count += int(meta.get("rescue_from_latest_count") or 0)
+    return {
+        "rescue_eligible_count": int(bets.get("rescue_eligible_count") or 0)
+        + int(research.get("rescue_eligible_count") or 0)
+        + int(pickem.get("rescue_eligible_count") or 0),
+        "rescue_from_latest_count": rescue_from_latest_count,
+        "legacy_identity_count": int((bets.get("identity_completeness") or {}).get("legacy_identity_count") or 0)
+        + int((research.get("identity_completeness") or {}).get("legacy_identity_count") or 0)
+        + int((pickem.get("identity_completeness") or {}).get("legacy_identity_count") or 0),
     }
 
 
@@ -405,39 +449,49 @@ def build_clv_audit_snapshot(
     if now_dt is None:
         now_dt = datetime.now(timezone.utc)
 
+    bets_summary = _build_status_summary(
+        list(bets_result.data or []),
+        classify_status=_classify_bet_status,
+        compute_clv_fields=_compute_bet_clv_fields,
+        id_field="id",
+        timestamp_field="created_at",
+        latest_timestamp_field="latest_pinnacle_updated_at",
+        close_timestamp_field="clv_updated_at",
+        row_kind="bets",
+    )
+    research_summary = _build_status_summary(
+        research_rows,
+        classify_status=_classify_research_status,
+        compute_clv_fields=_compute_research_clv_fields,
+        id_field="id",
+        timestamp_field="first_seen_at",
+        latest_timestamp_field="latest_reference_updated_at",
+        close_timestamp_field="close_captured_at",
+        row_kind="research",
+    )
+    pickem_summary = _build_status_summary(
+        pickem_rows,
+        classify_status=_classify_pickem_status,
+        compute_clv_fields=_compute_pickem_clv_fields,
+        id_field="id",
+        timestamp_field="created_at",
+        latest_timestamp_field="latest_reference_updated_at",
+        close_timestamp_field="close_captured_at",
+        row_kind="pickem",
+    )
+
     return {
         "generated_at": utc_now_iso() if callable(utc_now_iso) else None,
         "inventory": _build_inventory(),
         "scheduler": scheduler,
         "job_runs": _build_job_run_summary(recent_job_runs, scheduler, now_dt),
-        "bets": _build_status_summary(
-            list(bets_result.data or []),
-            classify_status=_classify_bet_status,
-            compute_clv_fields=_compute_bet_clv_fields,
-            id_field="id",
-            timestamp_field="created_at",
-            latest_timestamp_field="latest_pinnacle_updated_at",
-            close_timestamp_field="clv_updated_at",
-            row_kind="bets",
+        "rescueability": _build_rescueability_summary(
+            recent_job_runs=recent_job_runs,
+            bets=bets_summary,
+            research=research_summary,
+            pickem=pickem_summary,
         ),
-        "research_opportunities": _build_status_summary(
-            research_rows,
-            classify_status=_classify_research_status,
-            compute_clv_fields=_compute_research_clv_fields,
-            id_field="id",
-            timestamp_field="first_seen_at",
-            latest_timestamp_field="latest_reference_updated_at",
-            close_timestamp_field="close_captured_at",
-            row_kind="research",
-        ),
-        "pickem_research": _build_status_summary(
-            pickem_rows,
-            classify_status=_classify_pickem_status,
-            compute_clv_fields=_compute_pickem_clv_fields,
-            id_field="id",
-            timestamp_field="created_at",
-            latest_timestamp_field="latest_reference_updated_at",
-            close_timestamp_field="close_captured_at",
-            row_kind="pickem",
-        ),
+        "bets": bets_summary,
+        "research_opportunities": research_summary,
+        "pickem_research": pickem_summary,
     }

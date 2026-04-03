@@ -82,6 +82,12 @@ function parseStraightBetFallbackSelectionSide(side: Extract<MarketSide, { surfa
   return parts[2] ?? String(side.team ?? "").trim();
 }
 
+function parseStraightBetFallbackMarketKey(side: Extract<MarketSide, { surface: "straight_bets" }>): string {
+  if (side.market_key) return String(side.market_key).trim().toLowerCase();
+  const parts = parseStraightSelectionKeyParts(side.selection_key);
+  return parts[1] ?? "h2h";
+}
+
 export function formatStraightBetDisplay(side: Extract<MarketSide, { surface: "straight_bets" }>): string {
   const marketKey = String(side.market_key ?? "h2h").toLowerCase();
   if (marketKey === "spreads") {
@@ -176,7 +182,10 @@ export function buildScannerLogBetInitialValues(params: {
 
   const straightDisplay = formatStraightBetDisplay(side);
   const straightMarket = formatStraightBetMarketDisplay(side);
-  const straightSelectionSide = side.market_key === "totals" ? (side.selection_side ?? side.team) : side.team;
+  const straightMarketKey = parseStraightBetFallbackMarketKey(side);
+  const straightSelectionSide =
+    straightMarketKey === "totals" ? parseStraightBetFallbackSelectionSide(side) : side.team;
+  const straightLineValue = side.line_value ?? parseStraightBetFallbackLineValue(side) ?? undefined;
 
   return {
     surface: side.surface,
@@ -189,16 +198,16 @@ export function buildScannerLogBetInitialValues(params: {
     boost_percent: boostPct,
     pinnacle_odds_at_entry: side.pinnacle_odds,
     commence_time: side.commence_time,
-    clv_team: side.market_key === "totals" ? straightSelectionSide : side.team,
+    clv_team: straightMarketKey === "totals" ? straightSelectionSide : side.team,
     clv_sport_key: side.sport,
     clv_event_id: side.event_id ?? undefined,
     source_event_id: side.event_id ?? undefined,
-    source_market_key: side.market_key ?? "h2h",
+    source_market_key: straightMarketKey,
     source_selection_key: side.selection_key ?? undefined,
     selection_side: straightSelectionSide,
-    line_value: side.line_value ?? undefined,
+    line_value: straightLineValue,
     selection_meta: {
-      marketKey: side.market_key ?? "h2h",
+      marketKey: straightMarketKey,
       display: straightDisplay,
       sportsbookDeeplinkUrl: side.sportsbook_deeplink_url,
       sportsbookDeeplinkLevel: side.sportsbook_deeplink_level,

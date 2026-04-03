@@ -390,6 +390,70 @@ def test_update_clv_snapshots_repairs_invalid_early_close_inside_window():
     assert db.tables["bets"][0]["clv_updated_at"] == now.isoformat()
 
 
+def test_repair_recent_clv_tracking_identity_backfills_recent_rows():
+    mod = _reload_clv_tracking()
+    now = datetime(2026, 4, 2, 18, 0, tzinfo=timezone.utc)
+    db = _DB(
+        bets=[
+            {
+                "id": "bet-backfill",
+                "created_at": (now - timedelta(hours=1)).isoformat(),
+                "surface": "straight_bets",
+                "clv_event_id": "evt-total-backfill",
+                "source_event_id": None,
+                "source_market_key": None,
+                "source_selection_key": "evt-total-backfill|totals|over|221.5",
+                "selection_side": None,
+                "line_value": None,
+                "clv_team": "over",
+                "selection_meta": {"marketKey": "totals"},
+            }
+        ],
+        scan_opportunities=[
+            {
+                "id": "opp-backfill",
+                "first_seen_at": (now - timedelta(hours=1)).isoformat(),
+                "surface": "player_props",
+                "event_id": None,
+                "player_name": "Nikola Jokic",
+                "opportunity_key": "player_props|basketball_nba|id:evt-prop-backfill|player_points|nikola jokic|over|24.5|fanduel",
+                "source_market_key": None,
+                "selection_side": None,
+                "line_value": None,
+            }
+        ],
+        pickem_research_observations=[
+            {
+                "id": "pickem-backfill",
+                "created_at": (now - timedelta(hours=1)).isoformat(),
+                "surface": "player_props",
+                "observation_key": "board_pickem_consensus|2026-04-02|evt-prop-backfill|player_points|nikolajokic|24.5|under",
+                "comparison_key": "evt-prop-backfill|player_points|nikolajokic|24.5",
+                "event_id": None,
+                "market_key": None,
+                "selection_side": None,
+                "line_value": None,
+            }
+        ],
+    )
+
+    summary = mod.repair_recent_clv_tracking_identity(db, now=now)
+
+    assert summary["updated"] == 3
+    assert db.tables["bets"][0]["source_event_id"] == "evt-total-backfill"
+    assert db.tables["bets"][0]["source_market_key"] == "totals"
+    assert db.tables["bets"][0]["selection_side"] == "over"
+    assert db.tables["bets"][0]["line_value"] == 221.5
+    assert db.tables["scan_opportunities"][0]["event_id"] == "evt-prop-backfill"
+    assert db.tables["scan_opportunities"][0]["source_market_key"] == "player_points"
+    assert db.tables["scan_opportunities"][0]["selection_side"] == "over"
+    assert db.tables["scan_opportunities"][0]["line_value"] == 24.5
+    assert db.tables["pickem_research_observations"][0]["event_id"] == "evt-prop-backfill"
+    assert db.tables["pickem_research_observations"][0]["market_key"] == "player_points"
+    assert db.tables["pickem_research_observations"][0]["selection_side"] == "under"
+    assert db.tables["pickem_research_observations"][0]["line_value"] == 24.5
+
+
 def test_update_scan_opportunity_reference_snapshots_updates_latest_without_close_outside_window():
     mod = _reload_clv_tracking()
     now = datetime(2026, 3, 23, 12, 0, tzinfo=timezone.utc)
@@ -616,6 +680,149 @@ def test_update_scan_opportunity_reference_snapshots_prefers_paired_prop_close_w
     assert evaluation["close_quality"] == "paired"
     assert evaluation["first_brier_score"] is not None
     assert evaluation["first_log_loss"] is not None
+
+
+def test_finalize_tracked_clv_closes_from_latest_promotes_exact_latest_snapshots():
+    mod = _reload_clv_tracking()
+    commence_time = "2026-03-23T15:00:00Z"
+    now = datetime(2026, 3, 23, 15, 5, tzinfo=timezone.utc)
+    latest_at = "2026-03-23T14:55:00Z"
+    db = _DB(
+        bets=[
+            {
+                "id": "bet-finalize",
+                "result": "pending",
+                "surface": "straight_bets",
+                "commence_time": commence_time,
+                "created_at": "2026-03-23T12:00:00Z",
+                "clv_event_id": "evt-finalize",
+                "source_market_key": "h2h",
+                "clv_team": "Team Finalize",
+                "odds_american": -105,
+                "latest_pinnacle_odds": -112,
+                "latest_pinnacle_updated_at": latest_at,
+                "pinnacle_odds_at_close": None,
+                "clv_updated_at": None,
+            }
+        ],
+        scan_opportunities=[
+            {
+                "id": "opp-finalize",
+                "opportunity_key": "opp-finalize",
+                "surface": "player_props",
+                "sport": "basketball_nba",
+                "commence_time": commence_time,
+                "first_book_odds": 105,
+                "latest_reference_odds": -110,
+                "latest_reference_updated_at": latest_at,
+                "reference_odds_at_close": None,
+                "close_captured_at": None,
+            }
+        ],
+        pickem_research_observations=[
+            {
+                "id": "pickem-finalize",
+                "surface": "player_props",
+                "commence_time": commence_time,
+                "first_fair_odds_american": 105,
+                "latest_reference_odds": -108,
+                "latest_reference_updated_at": latest_at,
+                "close_reference_odds": None,
+                "close_captured_at": None,
+            }
+        ],
+    )
+
+    summary = mod.finalize_tracked_clv_closes_from_latest(db, now=now)
+
+    assert summary["close_updated"] == 3
+    assert summary["rescue_from_latest_count"] == 3
+    assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -112
+    assert db.tables["bets"][0]["clv_updated_at"] == latest_at
+    assert db.tables["scan_opportunities"][0]["reference_odds_at_close"] == -110
+    assert db.tables["scan_opportunities"][0]["close_captured_at"] == latest_at
+    assert db.tables["pickem_research_observations"][0]["close_reference_odds"] == -108
+    assert db.tables["pickem_research_observations"][0]["close_captured_at"] == latest_at
+
+
+def test_finalize_tracked_clv_closes_from_latest_skips_latest_outside_close_window():
+    mod = _reload_clv_tracking()
+    now = datetime(2026, 3, 23, 15, 5, tzinfo=timezone.utc)
+    db = _DB(
+        bets=[
+            {
+                "id": "bet-too-early",
+                "result": "pending",
+                "surface": "straight_bets",
+                "commence_time": "2026-03-23T15:00:00Z",
+                "created_at": "2026-03-23T12:00:00Z",
+                "clv_event_id": "evt-too-early",
+                "source_market_key": "h2h",
+                "clv_team": "Team Early",
+                "odds_american": -105,
+                "latest_pinnacle_odds": -112,
+                "latest_pinnacle_updated_at": "2026-03-23T14:00:00Z",
+                "pinnacle_odds_at_close": None,
+                "clv_updated_at": None,
+            }
+        ],
+    )
+
+    summary = mod.finalize_tracked_clv_closes_from_latest(db, now=now)
+
+    assert summary["close_updated"] == 0
+    assert summary["bet_updates"]["close_rejected_count"] == 1
+    assert summary["bet_updates"]["reason_counts"]["latest_not_in_close_window"] == 1
+    assert db.tables["bets"][0].get("pinnacle_odds_at_close") is None
+
+
+def test_update_bet_reference_snapshots_matches_prop_by_participant_id_when_name_differs():
+    mod = _reload_clv_tracking()
+    commence_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    db = _DB(
+        bets=[
+            {
+                "id": 44,
+                "result": "pending",
+                "surface": "player_props",
+                "clv_sport_key": "basketball_nba",
+                "source_event_id": "evt-prop-id-match",
+                "source_market_key": "player_points",
+                "participant_name": "N. Jokic",
+                "participant_id": "player-15",
+                "selection_side": "over",
+                "line_value": 24.5,
+                "odds_american": 105,
+                "commence_time": commence_time,
+                "pinnacle_odds_at_close": None,
+            }
+        ],
+    )
+
+    counts = mod.update_bet_reference_snapshots(
+        db,
+        sides=[
+            {
+                "surface": "player_props",
+                "sport": "basketball_nba",
+                "event_id": "evt-prop-id-match",
+                "commence_time": commence_time,
+                "player_name": "Nikola Jokic",
+                "participant_id": "player-15",
+                "market_key": "player_points",
+                "selection_side": "over",
+                "line_value": 24.5,
+                "reference_odds": -111,
+            }
+        ],
+        allow_close=True,
+        now=datetime.now(timezone.utc),
+    )
+
+    assert counts["latest_updated"] == 1
+    assert counts["close_updated"] == 1
+    assert db.tables["bets"][0]["latest_pinnacle_odds"] == -111
+    assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -111
 
 
 @pytest.mark.asyncio

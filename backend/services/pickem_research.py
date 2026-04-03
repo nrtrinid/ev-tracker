@@ -350,8 +350,10 @@ def update_pickem_research_close_snapshots(
         _build_reference_coverage,
         _diagnose_prop_reference_miss,
         _mark_snapshot_reason,
+        _mark_identity_backfill,
         _new_snapshot_update_summary,
         _normalize_snapshot_summary,
+        _repair_pickem_identity_row,
         build_prop_reference_pair_snapshots,
         build_prop_reference_snapshots,
         has_valid_close_snapshot,
@@ -388,31 +390,33 @@ def update_pickem_research_close_snapshots(
     summary = _new_snapshot_update_summary()
 
     for row in result.data or []:
+        repaired_row, repair_payload = _repair_pickem_identity_row(row)
         summary["row_count"] += 1
         _bump_counter(summary["candidate_surface_counts"], "player_props")
-        _bump_counter(summary["candidate_market_counts"], _normalize_text(row.get("market_key")) or "player_props")
+        _bump_counter(summary["candidate_market_counts"], _normalize_text(repaired_row.get("market_key")) or "player_props")
+        _mark_identity_backfill(summary, repair_payload)
         reference_odds = lookup_prop_reference_odds(
-            player_name=row.get("player_name"),
-            source_market_key=row.get("market_key"),
-            selection_side=row.get("selection_side"),
-            line_value=_coerce_float(row.get("line_value")),
-            commence_time=row.get("commence_time"),
-            event_id=row.get("event_id"),
+            player_name=repaired_row.get("player_name"),
+            source_market_key=repaired_row.get("market_key"),
+            selection_side=repaired_row.get("selection_side"),
+            line_value=_coerce_float(repaired_row.get("line_value")),
+            commence_time=repaired_row.get("commence_time"),
+            event_id=repaired_row.get("event_id"),
             snapshot_by_event=prop_snapshot_by_event,
             snapshot_by_time=prop_snapshot_by_time,
         )
         if reference_odds is None:
             summary["unmatched_count"] += 1
-            _mark_snapshot_reason(summary, _diagnose_prop_reference_miss(row, coverage, market_field="market_key"))
+            _mark_snapshot_reason(summary, _diagnose_prop_reference_miss(repaired_row, coverage, market_field="market_key"))
             continue
 
         opposing_reference_odds = lookup_prop_opposing_reference_odds(
-            player_name=row.get("player_name"),
-            source_market_key=row.get("market_key"),
-            selection_side=row.get("selection_side"),
-            line_value=_coerce_float(row.get("line_value")),
-            commence_time=row.get("commence_time"),
-            event_id=row.get("event_id"),
+            player_name=repaired_row.get("player_name"),
+            source_market_key=repaired_row.get("market_key"),
+            selection_side=repaired_row.get("selection_side"),
+            line_value=_coerce_float(repaired_row.get("line_value")),
+            commence_time=repaired_row.get("commence_time"),
+            event_id=repaired_row.get("event_id"),
             pair_snapshot_by_event=prop_pair_by_event,
             pair_snapshot_by_time=prop_pair_by_time,
         )
@@ -421,19 +425,21 @@ def update_pickem_research_close_snapshots(
             "latest_reference_odds": reference_odds,
             "latest_reference_updated_at": updated_at,
         }
+        if repair_payload:
+            payload.update(repair_payload)
         summary["matched_count"] += 1
         summary["latest_updated"] += 1
         _bump_counter(summary["matched_surface_counts"], "player_props")
-        _bump_counter(summary["matched_market_counts"], _normalize_text(row.get("market_key")) or "player_props")
+        _bump_counter(summary["matched_market_counts"], _normalize_text(repaired_row.get("market_key")) or "player_props")
 
         can_capture_close = allow_close and should_capture_close_snapshot(
-            row.get("commence_time"),
-            existing_close=row.get("close_reference_odds"),
-            captured_at=row.get("close_captured_at"),
+            repaired_row.get("commence_time"),
+            existing_close=repaired_row.get("close_reference_odds"),
+            captured_at=repaired_row.get("close_captured_at"),
             now=current,
         )
         if can_capture_close:
-            fair_odds = _coerce_float(row.get("first_fair_odds_american")) or _coerce_float(row.get("last_fair_odds_american"))
+            fair_odds = _coerce_float(repaired_row.get("first_fair_odds_american")) or _coerce_float(repaired_row.get("last_fair_odds_american"))
             close_eval = calculate_clv(
                 float(fair_odds if fair_odds is not None else reference_odds),
                 float(reference_odds),
@@ -451,8 +457,8 @@ def update_pickem_research_close_snapshots(
             )
             summary["close_updated"] += 1
         elif allow_close and (
-            row.get("close_reference_odds") is None
-            or not has_valid_close_snapshot(row.get("commence_time"), row.get("close_captured_at"))
+            repaired_row.get("close_reference_odds") is None
+            or not has_valid_close_snapshot(repaired_row.get("commence_time"), repaired_row.get("close_captured_at"))
         ):
             summary["close_rejected_count"] += 1
             _mark_snapshot_reason(summary, "outside_close_window")

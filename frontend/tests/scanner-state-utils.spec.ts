@@ -194,6 +194,9 @@ test.describe("scanner state utils", () => {
 
     expect(out.event).toBe("Lakers +4.5");
     expect(out.market).toBe("Spread");
+    expect(out.selection_side).toBe("Lakers");
+    expect(out.line_value).toBe(4.5);
+    expect(out.source_market_key).toBe("spreads");
   });
 
   test("buildScannerLogBetInitialValues recovers total line metadata from selection key", async () => {
@@ -212,6 +215,9 @@ test.describe("scanner state utils", () => {
 
     expect(out.event).toBe("Over 221.5");
     expect(out.market).toBe("Total");
+    expect(out.selection_side).toBe("over");
+    expect(out.line_value).toBe(221.5);
+    expect(out.source_market_key).toBe("totals");
   });
 
   test("buildParlayCartLeg builds stable ids for props", async () => {

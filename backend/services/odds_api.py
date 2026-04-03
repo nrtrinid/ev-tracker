@@ -1391,10 +1391,12 @@ def _build_clv_job_summary(
     bet_updates: dict[str, Any] | None = None,
     research_updates: dict[str, Any] | None = None,
     pickem_updates: dict[str, Any] | None = None,
+    identity_backfill: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     bet_updates = bet_updates or {}
     research_updates = research_updates or {}
     pickem_updates = pickem_updates or {}
+    identity_backfill = identity_backfill or {}
     return {
         "job_source": job_source,
         "candidate_fields": candidate_fields,
@@ -1406,12 +1408,19 @@ def _build_clv_job_summary(
         "bet_updates": bet_updates,
         "research_updates": research_updates,
         "pickem_updates": pickem_updates,
+        "identity_backfill": identity_backfill,
         "updated": int(bet_updates.get("latest_updated", 0))
         + int(research_updates.get("latest_updated", 0))
         + int(pickem_updates.get("latest_updated", 0)),
         "close_updated": int(bet_updates.get("close_updated", 0))
         + int(research_updates.get("close_updated", 0))
         + int(pickem_updates.get("close_updated", 0)),
+        "rescue_eligible_count": int(bet_updates.get("rescue_eligible_count", 0))
+        + int(research_updates.get("rescue_eligible_count", 0))
+        + int(pickem_updates.get("rescue_eligible_count", 0)),
+        "rescue_from_latest_count": int(bet_updates.get("rescue_from_latest_count", 0))
+        + int(research_updates.get("rescue_from_latest_count", 0))
+        + int(pickem_updates.get("rescue_from_latest_count", 0)),
         "reason_counts": {
             "bets": dict(bet_updates.get("reason_counts") or {}),
             "research": dict(research_updates.get("reason_counts") or {}),
@@ -1428,7 +1437,27 @@ async def fetch_clv_for_pending_bets(db, *, include_summary: bool = False) -> in
     and makes one fat fetch_odds call per active sport. Updates pinnacle_odds_at_close
     for all matched bets. Returns total bets updated.
     """
-    from services.clv_tracking import update_bet_reference_snapshots
+    from services.clv_tracking import (
+        finalize_tracked_clv_closes_from_latest,
+        repair_recent_clv_tracking_identity,
+        update_bet_reference_snapshots,
+    )
+
+    started_at = time.monotonic()
+    identity_backfill = repair_recent_clv_tracking_identity(db)
+
+    def _with_finalizer(summary: dict[str, Any]) -> dict[str, Any]:
+        finalizer_summary = finalize_tracked_clv_closes_from_latest(db)
+        summary["finalizer_updates"] = finalizer_summary
+        summary["close_updated"] = int(summary.get("close_updated", 0)) + int(finalizer_summary.get("close_updated", 0))
+        summary["updated"] = int(summary.get("updated", 0)) + int(finalizer_summary.get("updated", 0))
+        summary["rescue_eligible_count"] = int(summary.get("rescue_eligible_count", 0)) + int(
+            finalizer_summary.get("rescue_eligible_count", 0)
+        )
+        summary["rescue_from_latest_count"] = int(summary.get("rescue_from_latest_count", 0)) + int(
+            finalizer_summary.get("rescue_from_latest_count", 0)
+        )
+        return summary
 
     result = (
         db.table("bets")
@@ -1442,7 +1471,7 @@ async def fetch_clv_for_pending_bets(db, *, include_summary: bool = False) -> in
     )
 
     if not result.data:
-        empty_summary = _build_clv_job_summary(
+        empty_summary = _with_finalizer(_build_clv_job_summary(
             job_source="clv_daily",
             candidate_fields={
                 "bet_straight_candidates": 0,
@@ -1455,7 +1484,8 @@ async def fetch_clv_for_pending_bets(db, *, include_summary: bool = False) -> in
             fetched_side_surfaces={},
             fetched_side_markets={},
             bet_updates={},
-        )
+            identity_backfill=identity_backfill,
+        ))
         return empty_summary if include_summary else 0
 
     rows = list(result.data or [])
@@ -1479,7 +1509,7 @@ async def fetch_clv_for_pending_bets(db, *, include_summary: bool = False) -> in
     sport_keys = sorted(straight_sport_keys | set(prop_fetch_plan.keys()))
 
     if not sport_keys:
-        empty_summary = _build_clv_job_summary(
+        empty_summary = _with_finalizer(_build_clv_job_summary(
             job_source="clv_daily",
             candidate_fields={
                 "bet_straight_candidates": 0,
@@ -1492,7 +1522,8 @@ async def fetch_clv_for_pending_bets(db, *, include_summary: bool = False) -> in
             fetched_side_surfaces={},
             fetched_side_markets={},
             bet_updates={},
-        )
+            identity_backfill=identity_backfill,
+        ))
         return empty_summary if include_summary else 0
 
     total_bet_updates: dict[str, Any] = {
@@ -1511,7 +1542,6 @@ async def fetch_clv_for_pending_bets(db, *, include_summary: bool = False) -> in
     fetched_side_count = 0
     fetched_side_surfaces: dict[str, int] = {}
     fetched_side_markets: dict[str, int] = {}
-    started_at = time.monotonic()
     candidate_fields = {
         "bet_straight_candidates": sum(
             1
@@ -1525,6 +1555,7 @@ async def fetch_clv_for_pending_bets(db, *, include_summary: bool = False) -> in
     }
     _log_event(
         "clv_daily.snapshot_candidates",
+        identity_backfill=identity_backfill,
         **candidate_fields,
     )
 
@@ -1594,7 +1625,9 @@ async def fetch_clv_for_pending_bets(db, *, include_summary: bool = False) -> in
         fetched_side_surfaces=fetched_side_surfaces,
         fetched_side_markets=fetched_side_markets,
         bet_updates=total_bet_updates,
+        identity_backfill=identity_backfill,
     )
+    summary = _with_finalizer(summary)
     return summary if include_summary else int(summary["close_updated"])
 
 
@@ -1614,6 +1647,7 @@ async def run_jit_clv_snatcher(db, *, include_summary: bool = False) -> int | di
     from services.clv_tracking import (
         CLOSE_WINDOW_MINUTES,
         has_valid_close_snapshot,
+        repair_recent_clv_tracking_identity,
         update_bet_reference_snapshots,
         update_scan_opportunity_reference_snapshots,
     )
@@ -1627,6 +1661,7 @@ async def run_jit_clv_snatcher(db, *, include_summary: bool = False) -> int | di
     window_end = now + timedelta(minutes=CLOSE_WINDOW_MINUTES)
     now_iso = now.isoformat()
     window_end_iso = window_end.isoformat()
+    identity_backfill = repair_recent_clv_tracking_identity(db, now=now)
 
     bet_result = (
         db.table("bets")
@@ -1708,7 +1743,7 @@ async def run_jit_clv_snatcher(db, *, include_summary: bool = False) -> int | di
         "window_start": now_iso,
         "window_end": window_end_iso,
     }
-    _log_event("jit_clv.snapshot_candidates", **candidate_fields)
+    _log_event("jit_clv.snapshot_candidates", identity_backfill=identity_backfill, **candidate_fields)
 
     if not bet_candidates and not opportunity_candidates and not pickem_candidates:
         empty_summary = _build_clv_job_summary(
@@ -1722,6 +1757,7 @@ async def run_jit_clv_snatcher(db, *, include_summary: bool = False) -> int | di
             bet_updates={},
             research_updates={},
             pickem_updates={},
+            identity_backfill=identity_backfill,
         )
         return empty_summary if include_summary else 0
 
@@ -1902,6 +1938,7 @@ async def run_jit_clv_snatcher(db, *, include_summary: bool = False) -> int | di
         bet_updates=total_bet_updates,
         research_updates=total_research_updates,
         pickem_updates=total_pickem_updates,
+        identity_backfill=identity_backfill,
     )
     _log_event(
         "jit_clv.snapshot_completed",
@@ -1913,15 +1950,41 @@ async def run_jit_clv_snatcher(db, *, include_summary: bool = False) -> int | di
     return summary if include_summary else int(summary["close_updated"])
 
 
+async def finalize_recent_clv_closes(db, *, include_summary: bool = False) -> int | dict[str, Any]:
+    from services.clv_tracking import finalize_tracked_clv_closes_from_latest, repair_recent_clv_tracking_identity
+
+    now = datetime.now(timezone.utc)
+    started_at = time.monotonic()
+    identity_backfill = repair_recent_clv_tracking_identity(db, now=now)
+    summary = finalize_tracked_clv_closes_from_latest(db, now=now)
+    summary["duration_ms"] = round((time.monotonic() - started_at) * 1000, 2)
+    summary["identity_backfill"] = identity_backfill
+    _log_event(
+        "clv_finalize.completed",
+        close_updated=summary.get("close_updated"),
+        rescue_eligible_count=summary.get("rescue_eligible_count"),
+        rescue_from_latest_count=summary.get("rescue_from_latest_count"),
+        identity_backfill=identity_backfill,
+        reason_counts=summary.get("reason_counts"),
+        duration_ms=summary.get("duration_ms"),
+    )
+    return summary if include_summary else int(summary.get("close_updated", 0))
+
+
 async def replay_recent_clv_closes(
     db,
     *,
     lookback_hours: int = 8,
 ) -> dict[str, Any]:
-    from services.clv_tracking import has_valid_close_snapshot, update_bet_reference_snapshots
+    from services.clv_tracking import (
+        has_valid_close_snapshot,
+        repair_recent_clv_tracking_identity,
+        update_bet_reference_snapshots,
+    )
 
     now = datetime.now(timezone.utc)
     lookback_window_start = now - timedelta(hours=max(1, int(lookback_hours)))
+    identity_backfill = repair_recent_clv_tracking_identity(db, now=now)
 
     result = (
         db.table("bets")
@@ -2012,6 +2075,7 @@ async def replay_recent_clv_closes(
         bet_straight_candidates=len(bet_straight_candidates),
         bet_prop_candidates=len(bet_prop_candidates),
         sports=len(sport_keys),
+        identity_backfill=identity_backfill,
     )
 
     for sport_key in sport_keys:
@@ -2090,6 +2154,7 @@ async def replay_recent_clv_closes(
         "fetched_side_surfaces": fetched_side_surfaces,
         "fetched_side_markets": fetched_side_markets,
         "bet_updates": total_bet_updates,
+        "identity_backfill": identity_backfill,
         "reason_counts": {
             "bets": dict(total_bet_updates.get("reason_counts") or {}),
         },
