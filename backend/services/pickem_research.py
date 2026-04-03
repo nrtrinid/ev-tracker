@@ -15,6 +15,7 @@ from models import (
 OBSERVATION_KIND = "board_pickem_consensus"
 EV_BASIS_BEST_MARKET = "best_market_price"
 EV_BASIS_UNPRICED = "unpriced"
+OBSERVATION_QUERY_CHUNK_SIZE = 200
 
 PROBABILITY_BUCKET_ORDER = ["50-55%", "55-60%", "60-65%", "65-70%", "70%+", "Unknown"]
 BOOKS_MATCHED_BUCKET_ORDER = ["1 book", "2 books", "3 books", "4+ books", "Unknown"]
@@ -83,6 +84,12 @@ def _projected_edge_pct(probability: float | None, market_odds: float | None) ->
     except Exception:
         return None
     return round(((probability * market_decimal) - 1.0) * 100, 2)
+
+
+def _chunked(values: list[Any], size: int) -> list[list[Any]]:
+    if size <= 0:
+        return [values]
+    return [values[index:index + size] for index in range(0, len(values), size)]
 
 
 def _probability_bucket(probability: float | None) -> str:
@@ -256,13 +263,16 @@ def capture_pickem_research_observations(
         return {"eligible_seen": 0, "inserted": 0, "updated": 0}
 
     observation_keys = [observation_key for observation_key, _payload in prepared]
+    existing_rows: list[dict[str, Any]] = []
     try:
-        existing = (
-            db.table("pickem_research_observations")
-            .select("id,observation_key,surfaced_count")
-            .in_("observation_key", observation_keys)
-            .execute()
-        )
+        for key_chunk in _chunked(observation_keys, OBSERVATION_QUERY_CHUNK_SIZE):
+            existing = (
+                db.table("pickem_research_observations")
+                .select("id,observation_key,surfaced_count")
+                .in_("observation_key", key_chunk)
+                .execute()
+            )
+            existing_rows.extend(existing.data or [])
     except Exception as exc:
         if is_missing_pickem_research_observations_error(exc):
             return {"eligible_seen": len(prepared), "inserted": 0, "updated": 0}
@@ -270,7 +280,7 @@ def capture_pickem_research_observations(
 
     existing_by_key = {
         str(row.get("observation_key") or ""): row
-        for row in (existing.data or [])
+        for row in existing_rows
         if row.get("observation_key")
     }
 
@@ -317,7 +327,8 @@ def capture_pickem_research_observations(
         ).eq("id", existing_row["id"]).execute()
 
     if inserts:
-        db.table("pickem_research_observations").insert(inserts).execute()
+        for insert_chunk in _chunked(inserts, OBSERVATION_QUERY_CHUNK_SIZE):
+            db.table("pickem_research_observations").insert(insert_chunk).execute()
 
     return {"eligible_seen": len(prepared), "inserted": len(inserts), "updated": updated}
 

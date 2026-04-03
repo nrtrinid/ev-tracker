@@ -152,6 +152,37 @@ def test_capture_pickem_research_observations_inserts_then_updates_same_daily_ke
     assert row["calibration_bucket"] == "65-70%"
 
 
+def test_capture_pickem_research_observations_chunks_large_key_batches():
+    class _ChunkingQuery(_Query):
+        def in_(self, key, values):
+            assert len(list(values)) <= 200
+            return super().in_(key, values)
+
+    class _ChunkingDB(_DB):
+        def table(self, name):
+            assert name == "pickem_research_observations"
+            return _ChunkingQuery(self, name)
+
+    db = _ChunkingDB()
+    cards = [
+        _card(
+            comparison_key=f"evt-{idx}|nikola-jokic|player_points|24.5",
+            event_id=f"evt-{idx}",
+        )
+        for idx in range(205)
+    ]
+
+    summary = capture_pickem_research_observations(
+        db,
+        cards=cards,
+        source="cron_board_drop",
+        captured_at="2026-04-01T15:30:00Z",
+    )
+
+    assert summary == {"eligible_seen": 205, "inserted": 205, "updated": 0}
+    assert len(db.tables["pickem_research_observations"]) == 205
+
+
 def test_update_pickem_research_close_snapshots_populates_latest_and_close_metrics(monkeypatch):
     db = _DB(
         rows=[
