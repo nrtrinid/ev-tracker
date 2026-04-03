@@ -54,7 +54,9 @@ import {
   History,
   Target,
   ArrowRight,
+  Search,
 } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 
 const resultConfig: Record<
@@ -181,9 +183,9 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
 
 
   return (
-    <div className="border rounded-lg overflow-hidden flex card-hover bg-card">
+    <div className="border rounded-lg overflow-hidden flex card-hover bg-card transition-all duration-200 hover:shadow-soft">
       {/* Colored left border for sportsbook branding */}
-      <div className={cn("w-1 shrink-0", borderColor)} />
+      <div className={cn("w-1 shrink-0 transition-all duration-200", borderColor)} />
       
       <div className="flex-1 p-4 space-y-3">
         {/* Header: Event name as title + actions */}
@@ -294,7 +296,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
         <Button
           size="sm"
           variant="ghost"
-          className="w-full text-xs text-muted-foreground"
+          className="w-full text-xs text-muted-foreground hover:bg-muted/40 active:scale-[0.98] transition-all duration-150"
           onClick={() => setExpanded(!expanded)}
         >
           {expanded ? "Hide details" : "View details"}
@@ -302,7 +304,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
         </Button>
 
         {expanded && (
-          <div className="pt-3 border-t border-border space-y-4">
+          <div className="pt-3 border-t border-border space-y-4 animate-fade-in">
 
             {/* ── Row 1: CLV (all bets with a Pinnacle entry snapshot) ── */}
             {bet.pinnacle_odds_at_entry != null && (
@@ -403,10 +405,10 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
 
 function TutorialPracticeCard({ bet }: { bet: TutorialPracticeBet }) {
   return (
-    <div className="rounded-xl border border-primary/20 bg-primary/8 p-4">
+    <div className="rounded-xl border border-primary/20 bg-primary/8 p-4 animate-slide-up" style={{ animationFillMode: "both" }}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary animate-fade-in" style={{ animationDelay: "100ms", animationFillMode: "both" }}>
             Tutorial Practice Ticket
           </p>
           <p className="mt-1 text-sm font-semibold text-foreground">{bet.event}</p>
@@ -549,14 +551,14 @@ function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps
   const footer = (
     <div className="flex gap-2 pt-2 border-t border-border mt-1">
       <button
-        className="flex-1 h-8 min-h-[44px] flex items-center justify-center gap-1.5 text-sm font-medium rounded-md text-[#4A7C59] border border-[#4A7C59]/30 bg-[#4A7C59]/10 hover:bg-[#4A7C59]/20 active:bg-[#4A7C59]/25 transition-colors"
+        className="flex-1 h-8 min-h-[44px] flex items-center justify-center gap-1.5 text-sm font-medium rounded-md text-[#4A7C59] border border-[#4A7C59]/30 bg-[#4A7C59]/10 hover:bg-[#4A7C59]/20 active:bg-[#4A7C59]/25 active:scale-[0.98] transition-all duration-150"
         onClick={handleWin}
       >
         <Check className="h-4 w-4" />
         Mark Win
       </button>
       <button
-        className="flex-1 h-8 min-h-[44px] flex items-center justify-center gap-1.5 text-sm font-medium rounded-md text-[#B85C38] border border-[#B85C38]/30 bg-[#B85C38]/10 hover:bg-[#B85C38]/20 active:bg-[#B85C38]/25 transition-colors"
+        className="flex-1 h-8 min-h-[44px] flex items-center justify-center gap-1.5 text-sm font-medium rounded-md text-[#B85C38] border border-[#B85C38]/30 bg-[#B85C38]/10 hover:bg-[#B85C38]/20 active:bg-[#B85C38]/25 active:scale-[0.98] transition-all duration-150"
         onClick={handleLoss}
       >
         <X className="h-4 w-4" />
@@ -582,18 +584,29 @@ function HistoryCard({ bet, onEdit, onResultChange, onDelete }: HistoryCardProps
   
   // Random stamp rotation for realistic hand-stamped look - re-randomizes when result changes
   const [randomRotation, setRandomRotation] = useState(Math.floor(Math.random() * 7) - 3);
+  const [shouldAnimate, setShouldAnimate] = useState(false);
   
-  // Re-randomize when result changes (like applying a new stamp)
+  // Re-randomize and trigger animation when result changes (like applying a new stamp)
   useEffect(() => {
     setRandomRotation(Math.floor(Math.random() * 7) - 3);
+    setShouldAnimate(true);
+    const timer = setTimeout(() => setShouldAnimate(false), 400);
+    return () => clearTimeout(timer);
   }, [bet.result]);
 
   const headerRight = (
     <div className="flex items-center gap-2">
-      {/* Result Badge - Ink Stamp Style with random rotation */}
+      {/* Result Badge - Ink Stamp Style with random rotation and thunk animation */}
       <div 
-        className={cn(config.color, config.stampClass)}
-        style={{ transform: `rotate(${randomRotation}deg)` }}
+        className={cn(
+          config.color, 
+          config.stampClass,
+          shouldAnimate && "animate-stamp-thunk"
+        )}
+        style={{ 
+          transform: `rotate(${randomRotation}deg)`,
+          '--stamp-rotate': `${randomRotation}deg`
+        } as React.CSSProperties}
       >
         {config.label}
       </div>
@@ -696,6 +709,9 @@ export function BetList({
   const selectedBook = searchParams.get("sportsbook") ?? DEFAULT_TRACKER_VIEW_STATE.sportsbook;
   const sourceFilter = parseTrackerSourceFilter(searchParams.get("source"));
   const searchQuery = searchParams.get("search") ?? DEFAULT_TRACKER_VIEW_STATE.search;
+  
+  // Local search input state for debouncing
+  const [searchInput, setSearchInput] = useState(searchQuery);
 
   const updateTrackerView = (updates: Partial<{
     tab: "pending" | "history";
@@ -714,6 +730,21 @@ export function BetList({
   
   // Filter drawer state
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
+  
+  // Debounce search input - 400ms delay
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (searchInput !== searchQuery) {
+        updateTrackerView({ search: searchInput });
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [searchInput]); // eslint-disable-line react-hooks/exhaustive-deps
+  
+  // Sync search input when URL changes externally
+  useEffect(() => {
+    setSearchInput(searchQuery);
+  }, [searchQuery]);
 
   useEffect(() => {
     if (!tutorialPracticeBet || activeTab === "pending") return;
@@ -730,6 +761,7 @@ export function BetList({
   const activeFilterCount = [
     selectedBook !== "all",
     sourceFilter !== "all",
+    searchQuery.trim() !== "",
   ].filter(Boolean).length;
   
   // Get unique sportsbooks from bets
@@ -747,7 +779,8 @@ export function BetList({
   
   // Clear all filters
   const clearFilters = () => {
-    updateTrackerView({ sportsbook: "all", source: "all" });
+    setSearchInput("");
+    updateTrackerView({ sportsbook: "all", source: "all", search: "" });
   };
 
   // Handle result change with undo toast
@@ -1017,6 +1050,27 @@ export function BetList({
             </button>
           </div>
           
+          {/* Search Bar */}
+          <div className="relative mb-2">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <Input
+              type="text"
+              placeholder="Search bets by event, sport, or sportsbook..."
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              className="pl-9 h-9 bg-muted/30 border-border/60 focus:bg-background transition-colors"
+            />
+            {searchInput && (
+              <button
+                onClick={() => setSearchInput("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-muted-foreground/10 text-muted-foreground transition-colors"
+                aria-label="Clear search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          
           {/* Active Filter Summary (shows when filters applied) */}
           {activeFilterCount > 0 && (
             <div className="flex items-center gap-2 px-3 py-2 mb-2 rounded-lg bg-muted/50 border border-border">
@@ -1032,6 +1086,12 @@ export function BetList({
                 {sourceFilter !== "all" && (
                   <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-muted-foreground/20 text-muted-foreground">
                     {getTrackerSourceLabel(sourceFilter)}
+                  </span>
+                )}
+                {searchQuery.trim() && (
+                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-primary/15 text-primary flex items-center gap-1">
+                    <Search className="h-3 w-3" />
+                    &quot;{searchQuery.trim()}&quot;
                   </span>
                 )}
                 {selectedBook !== "all" && selectedBalance && (
@@ -1236,28 +1296,37 @@ export function BetList({
         <CardContent className="space-y-3">
           {activeTab === "pending" && (
             <>
-              {tutorialPracticeBet && <TutorialPracticeCard bet={tutorialPracticeBet} />}
+              {tutorialPracticeBet && (
+                <div className="animate-slide-up" style={{ animationFillMode: "both" }}>
+                  <TutorialPracticeCard bet={tutorialPracticeBet} />
+                </div>
+              )}
               {hasPendingFilterEmpty ? (
-                <div className="text-center py-10">
-                  <Target className="h-8 w-8 mx-auto mb-3 text-muted-foreground/40" />
-                  <p className="text-muted-foreground font-medium">No open bets match this filter</p>
-                  <p className="text-sm text-muted-foreground/60 mt-1">Clear filters or switch books to see the rest of your tickets</p>
+                <div className="text-center py-10 animate-fade-in">
+                  <Target className="h-8 w-8 mx-auto mb-3 text-muted-foreground/40 animate-fade-in" style={{ animationDelay: "100ms", animationFillMode: "both" }} />
+                  <p className="text-muted-foreground font-medium animate-fade-in" style={{ animationDelay: "150ms", animationFillMode: "both" }}>No open bets match this filter</p>
+                  <p className="text-sm text-muted-foreground/60 mt-1 animate-fade-in" style={{ animationDelay: "200ms", animationFillMode: "both" }}>Clear filters or switch books to see the rest of your tickets</p>
                 </div>
               ) : pendingBets.length === 0 && !tutorialPracticeBet ? (
-                <div className="text-center py-10">
-                  <Clock className="h-8 w-8 mx-auto mb-3 text-muted-foreground/40" />
-                  <p className="text-muted-foreground font-medium">No open bets right now</p>
-                  <p className="text-sm text-muted-foreground/60 mt-1">Log a play and it will stay here until the result is in</p>
+                <div className="text-center py-10 animate-fade-in">
+                  <Clock className="h-8 w-8 mx-auto mb-3 text-muted-foreground/40 animate-fade-in" style={{ animationDelay: "100ms", animationFillMode: "both" }} />
+                  <p className="text-muted-foreground font-medium animate-fade-in" style={{ animationDelay: "150ms", animationFillMode: "both" }}>No open bets right now</p>
+                  <p className="text-sm text-muted-foreground/60 mt-1 animate-fade-in" style={{ animationDelay: "200ms", animationFillMode: "both" }}>Log a play and it will stay here until the result is in</p>
                 </div>
               ) : (
-                pendingBets.map((bet) => (
-                  <PendingCard
+                pendingBets.map((bet, index) => (
+                  <div
                     key={bet.id}
-                    bet={bet}
-                    onEdit={setEditingBet}
-                    onResultChange={handleResultChange}
-                    onDelete={handleDeleteWithUndo}
-                  />
+                    className="animate-slide-up"
+                    style={{ animationDelay: `${index * 40}ms`, animationFillMode: "both" }}
+                  >
+                    <PendingCard
+                      bet={bet}
+                      onEdit={setEditingBet}
+                      onResultChange={handleResultChange}
+                      onDelete={handleDeleteWithUndo}
+                    />
+                  </div>
                 ))
               )}
             </>
@@ -1266,26 +1335,31 @@ export function BetList({
           {activeTab === "history" && (
             <>
               {hasHistoryFilterEmpty ? (
-                <div className="text-center py-10">
-                  <Target className="h-8 w-8 mx-auto mb-3 text-muted-foreground/40" />
-                  <p className="text-muted-foreground font-medium">No past bets match this filter</p>
-                  <p className="text-sm text-muted-foreground/60 mt-1">Clear filters or adjust them to see more of your record</p>
+                <div className="text-center py-10 animate-fade-in">
+                  <Target className="h-8 w-8 mx-auto mb-3 text-muted-foreground/40 animate-fade-in" style={{ animationDelay: "100ms", animationFillMode: "both" }} />
+                  <p className="text-muted-foreground font-medium animate-fade-in" style={{ animationDelay: "150ms", animationFillMode: "both" }}>No past bets match this filter</p>
+                  <p className="text-sm text-muted-foreground/60 mt-1 animate-fade-in" style={{ animationDelay: "200ms", animationFillMode: "both" }}>Clear filters or adjust them to see more of your record</p>
                 </div>
               ) : settledBets.length === 0 ? (
-                <div className="text-center py-10">
-                  <History className="h-8 w-8 mx-auto mb-3 text-muted-foreground/40" />
-                  <p className="text-muted-foreground font-medium">No past bets yet</p>
-                  <p className="text-sm text-muted-foreground/60 mt-1">Settled tickets will appear here after you mark a result</p>
+                <div className="text-center py-10 animate-fade-in">
+                  <History className="h-8 w-8 mx-auto mb-3 text-muted-foreground/40 animate-fade-in" style={{ animationDelay: "100ms", animationFillMode: "both" }} />
+                  <p className="text-muted-foreground font-medium animate-fade-in" style={{ animationDelay: "150ms", animationFillMode: "both" }}>No past bets yet</p>
+                  <p className="text-sm text-muted-foreground/60 mt-1 animate-fade-in" style={{ animationDelay: "200ms", animationFillMode: "both" }}>Settled tickets will appear here after you mark a result</p>
                 </div>
               ) : (
-                settledBets.map((bet) => (
-                  <HistoryCard
+                settledBets.map((bet, index) => (
+                  <div
                     key={bet.id}
-                    bet={bet}
-                    onEdit={setEditingBet}
-                    onResultChange={handleResultChange}
-                    onDelete={handleDeleteWithUndo}
-                  />
+                    className="animate-slide-up"
+                    style={{ animationDelay: `${index * 40}ms`, animationFillMode: "both" }}
+                  >
+                    <HistoryCard
+                      bet={bet}
+                      onEdit={setEditingBet}
+                      onResultChange={handleResultChange}
+                      onDelete={handleDeleteWithUndo}
+                    />
+                  </div>
                 ))
               )}
             </>
