@@ -153,8 +153,9 @@ async def test_scheduled_scan_job_piggybacks_clv_for_fresh_board_sides(monkeypat
             "fresh_prop_sides": [{"surface": "player_props", "player_name": "Nikola Jokic"}],
         }
 
-    async def _fake_piggyback_clv(sides):
+    async def _fake_piggyback_clv(sides, *, source="unknown"):
         seen["sides"] = list(sides)
+        seen["source"] = source
 
     import services.daily_board as daily_board
     monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
@@ -163,6 +164,7 @@ async def test_scheduled_scan_job_piggybacks_clv_for_fresh_board_sides(monkeypat
     await main._run_scheduled_scan_job()
 
     assert len(seen["sides"]) == 2
+    assert seen["source"] == "scheduled_board_drop"
     snapshot = main.app.state.ops_status["last_scheduler_scan"]
     assert "fresh_straight_sides" not in (snapshot.get("result") or {})
     assert "fresh_prop_sides" not in (snapshot.get("result") or {})

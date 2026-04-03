@@ -42,6 +42,8 @@ def build_empty_ops_status() -> dict[str, Any]:
     return {
         "last_scheduler_scan": None,
         "last_jit_clv": None,
+        "last_clv_daily": None,
+        "last_clv_replay": None,
         "last_ops_trigger_scan": None,
         "last_manual_scan": None,
         "last_auto_settle": None,
@@ -451,6 +453,27 @@ def _select_latest_job_run(
     return rows[0]
 
 
+def _select_recent_job_runs(
+    *,
+    db: Any,
+    retry_supabase: Callable[[Callable[[], Any]], Any] | None,
+    job_kind: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    result = _run_query(
+        lambda: (
+            db.table(OPS_JOB_RUNS_TABLE)
+            .select("*")
+            .eq("job_kind", job_kind)
+            .order("captured_at", desc=True)
+            .limit(limit)
+            .execute()
+        ),
+        retry_supabase=retry_supabase,
+    )
+    return list(getattr(result, "data", None) or [])
+
+
 def _select_recent_activity_rows(
     *,
     db: Any,
@@ -530,6 +553,53 @@ def _map_last_jit_clv(row: dict[str, Any]) -> dict[str, Any]:
         "captured_at": row.get("captured_at"),
         "status": row.get("status"),
     }
+
+
+def load_recent_clv_job_runs(
+    *,
+    db: Any | None,
+    retry_supabase: Callable[[Callable[[], Any]], Any] | None = None,
+    limit_per_kind: int = 5,
+) -> list[dict[str, Any]]:
+    resolved_db = _resolve_db(db)
+    if resolved_db is None:
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for job_kind in ("jit_clv", "clv_daily", "clv_replay", "clv_piggyback"):
+        rows.extend(
+            _select_recent_job_runs(
+                db=resolved_db,
+                retry_supabase=retry_supabase,
+                job_kind=job_kind,
+                limit=limit_per_kind,
+            )
+        )
+
+    def _sort_key(row: dict[str, Any]) -> str:
+        return str(row.get("captured_at") or "")
+
+    rows.sort(key=_sort_key, reverse=True)
+    serialized: list[dict[str, Any]] = []
+    for row in rows:
+        meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+        serialized.append(
+            {
+                "job_kind": row.get("job_kind"),
+                "source": row.get("source"),
+                "status": row.get("status"),
+                "run_id": row.get("run_id"),
+                "captured_at": row.get("captured_at"),
+                "started_at": row.get("started_at"),
+                "finished_at": row.get("finished_at"),
+                "duration_ms": row.get("duration_ms"),
+                "updated": meta.get("updated"),
+                "close_updated": meta.get("close_updated"),
+                "reason_counts": meta.get("reason_counts") if isinstance(meta.get("reason_counts"), dict) else {},
+                "meta": meta,
+            }
+        )
+    return serialized[: limit_per_kind * 4]
 
 
 def _map_last_auto_settle_summary(row: dict[str, Any]) -> dict[str, Any]:
@@ -666,6 +736,8 @@ def load_ops_status_snapshot(
     try:
         manual = _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="manual_scan")
         jit_clv = _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="jit_clv")
+        clv_daily = _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="clv_daily")
+        clv_replay = _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="clv_replay")
         scheduler = _select_latest_job_run(
             db=resolved_db, retry_supabase=retry_supabase, job_kind="scheduled_scan"
         )
@@ -692,6 +764,10 @@ def load_ops_status_snapshot(
         ops["last_manual_scan"] = _map_last_manual_scan(manual)
     if jit_clv:
         ops["last_jit_clv"] = _map_last_jit_clv(jit_clv)
+    if clv_daily:
+        ops["last_clv_daily"] = _map_last_jit_clv(clv_daily)
+    if clv_replay:
+        ops["last_clv_replay"] = _map_last_jit_clv(clv_replay)
     if scheduler:
         ops["last_scheduler_scan"] = _map_scan_run(scheduler)
     if ops_trigger:

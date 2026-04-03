@@ -715,7 +715,7 @@ async def _apply_fresh_straight_scan_followups(result: dict, *, source: str) -> 
     if not sides or result.get("cache_hit"):
         return
     _capture_research_opportunities(sides, source=source)
-    await _piggyback_clv(sides)
+    await _piggyback_clv(sides, source=source)
 
 
 async def _apply_fresh_board_drop_followups(result: dict, *, source: str) -> None:
@@ -728,7 +728,7 @@ async def _apply_fresh_board_drop_followups(result: dict, *, source: str) -> Non
     ]
     if not fresh_sides:
         return
-    await _piggyback_clv(fresh_sides)
+    await _piggyback_clv(fresh_sides, source=source)
 
 
 def _schedule_board_drop_alert(*, result: dict | None, window_label: str, anchor_time_mst: str | None) -> None:
@@ -1125,7 +1125,8 @@ async def _run_jit_clv_snatcher_job():
     _log_event("scheduler.jit_clv.started", run_id=run_id)
     db = get_db()
     try:
-        updated = await run_jit_clv_snatcher(db)
+        summary = await run_jit_clv_snatcher(db, include_summary=True)
+        updated = int((summary or {}).get("close_updated", 0))
         finished = _utc_now_iso()
         duration_ms = round((time.monotonic() - started_at) * 1000, 2)
         _log_event(
@@ -1133,6 +1134,7 @@ async def _run_jit_clv_snatcher_job():
             run_id=run_id,
             updated=updated,
             duration_ms=duration_ms,
+            summary=summary,
         )
         _record_scheduler_heartbeat(
             "jit_clv",
@@ -1151,6 +1153,7 @@ async def _run_jit_clv_snatcher_job():
                 "updated": updated,
                 "captured_at": finished,
                 "status": "completed",
+                "summary": summary,
             },
         )
         _persist_ops_job_run(
@@ -1162,7 +1165,7 @@ async def _run_jit_clv_snatcher_job():
             started_at=started,
             finished_at=finished,
             duration_ms=duration_ms,
-            meta={"updated": updated},
+            meta=summary or {"updated": updated},
         )
         if updated:
             print(f"[JIT CLV] Captured closing lines for {updated} bet(s).")
@@ -1618,7 +1621,7 @@ async def _run_early_look_scan_job():
     )
 
 
-async def _piggyback_clv(sides: list[dict]):
+async def _piggyback_clv(sides: list[dict], *, source: str = "unknown"):
     """
     Fire-and-forget task: update CLV reference snapshots for pending bets and
     open research opportunities from the just-completed fresh scan. Errors are
@@ -1630,25 +1633,63 @@ async def _piggyback_clv(sides: list[dict]):
     )
     from services.pickem_research import update_pickem_research_close_snapshots
     started_at = time.monotonic()
+    run_id = _new_run_id("clv_piggyback")
+    started = _utc_now_iso()
     try:
         db = get_db()
         bet_updates = update_bet_reference_snapshots(db, sides=sides, allow_close=True)
         opportunity_updates = update_scan_opportunity_reference_snapshots(db, sides=sides, allow_close=True)
         pickem_updates = update_pickem_research_close_snapshots(db, sides=sides, allow_close=True)
+        finished = _utc_now_iso()
+        duration_ms = round((time.monotonic() - started_at) * 1000, 2)
+        summary = {
+            "source": source,
+            "fetched_side_count": len(sides),
+            "bet_updates": bet_updates,
+            "research_updates": opportunity_updates,
+            "pickem_updates": pickem_updates,
+            "updated": int(bet_updates.get("latest_updated", 0))
+            + int(opportunity_updates.get("latest_updated", 0))
+            + int(pickem_updates.get("latest_updated", 0)),
+            "close_updated": int(bet_updates.get("close_updated", 0))
+            + int(opportunity_updates.get("close_updated", 0))
+            + int(pickem_updates.get("close_updated", 0)),
+        }
         _log_event(
             "clv.piggyback.completed",
-            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+            run_id=run_id,
+            source=source,
+            duration_ms=duration_ms,
             bet_latest_updated=bet_updates.get("latest_updated") if isinstance(bet_updates, dict) else None,
             bet_close_updated=bet_updates.get("close_updated") if isinstance(bet_updates, dict) else None,
+            bet_close_rejected=bet_updates.get("close_rejected_count") if isinstance(bet_updates, dict) else None,
+            bet_reason_counts=bet_updates.get("reason_counts") if isinstance(bet_updates, dict) else None,
             research_latest_updated=opportunity_updates.get("latest_updated") if isinstance(opportunity_updates, dict) else None,
             research_close_updated=opportunity_updates.get("close_updated") if isinstance(opportunity_updates, dict) else None,
+            research_close_rejected=opportunity_updates.get("close_rejected_count") if isinstance(opportunity_updates, dict) else None,
+            research_reason_counts=opportunity_updates.get("reason_counts") if isinstance(opportunity_updates, dict) else None,
             pickem_latest_updated=pickem_updates.get("latest_updated") if isinstance(pickem_updates, dict) else None,
             pickem_close_updated=pickem_updates.get("close_updated") if isinstance(pickem_updates, dict) else None,
+            pickem_close_rejected=pickem_updates.get("close_rejected_count") if isinstance(pickem_updates, dict) else None,
+            pickem_reason_counts=pickem_updates.get("reason_counts") if isinstance(pickem_updates, dict) else None,
+        )
+        _persist_ops_job_run(
+            job_kind="clv_piggyback",
+            source=source,
+            status="completed",
+            run_id=run_id,
+            captured_at=finished,
+            started_at=started,
+            finished_at=finished,
+            duration_ms=duration_ms,
+            meta=summary,
         )
     except Exception as e:
         _log_event(
             "clv.piggyback.failed",
             level="warning",
+            run_id=run_id,
+            source=source,
             duration_ms=round((time.monotonic() - started_at) * 1000, 2),
             error_class=type(e).__name__,
             error=str(e),

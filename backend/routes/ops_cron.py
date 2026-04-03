@@ -292,9 +292,11 @@ async def cron_run_jit_clv_impl(
     db = get_db()
     started = utc_now_iso_z()
     updated = 0
+    summary: dict[str, Any] | None = None
     try:
-        updated = await run_jit_clv_snatcher(db)
-        log_event(f"{log_prefix}.completed", run_id=run_id, updated=updated)
+        summary = await run_jit_clv_snatcher(db, include_summary=True)
+        updated = int((summary or {}).get("close_updated", 0))
+        log_event(f"{log_prefix}.completed", run_id=run_id, updated=updated, summary=summary)
     except Exception as e:
         log_event(
             f"{log_prefix}.failed",
@@ -320,6 +322,7 @@ async def cron_run_jit_clv_impl(
             "duration_ms": duration_ms,
             "updated": updated,
             "captured_at": finished,
+            "summary": summary,
         },
     )
     persist_ops_job_run(
@@ -331,7 +334,7 @@ async def cron_run_jit_clv_impl(
         started_at=started,
         finished_at=finished,
         duration_ms=duration_ms,
-        meta={"updated": updated},
+        meta=summary or {"updated": updated},
     )
 
     return {
@@ -341,6 +344,90 @@ async def cron_run_jit_clv_impl(
         "finished_at": finished,
         "duration_ms": duration_ms,
         "updated": updated,
+        "summary": summary,
+    }
+
+
+async def cron_run_clv_daily_impl(
+    x_cron_token: str | None,
+    *,
+    require_valid_cron_token: Callable[[str | None], None],
+    new_run_id: Callable[[str], str],
+    log_event: Callable[..., None],
+    set_ops_status: Callable[[str, dict], None],
+    persist_ops_job_run: Callable[..., None],
+    get_db: Callable[[], Any],
+    run_id_prefix: str = "cron_clv_daily",
+    log_prefix: str = "cron.clv_daily",
+    ops_status_source: str = "cron",
+) -> dict[str, Any]:
+    require_valid_cron_token(x_cron_token)
+
+    run_id = new_run_id(run_id_prefix)
+    started_clock = time.monotonic()
+    log_event(f"{log_prefix}.started", run_id=run_id)
+
+    from services.odds_api import fetch_clv_for_pending_bets
+
+    db = get_db()
+    started = utc_now_iso_z()
+    summary: dict[str, Any] | None = None
+    try:
+        summary = await fetch_clv_for_pending_bets(db, include_summary=True)
+        log_event(
+            f"{log_prefix}.completed",
+            run_id=run_id,
+            updated=int((summary or {}).get("close_updated", 0)),
+            summary=summary,
+        )
+    except Exception as e:
+        log_event(
+            f"{log_prefix}.failed",
+            level="error",
+            run_id=run_id,
+            error_class=type(e).__name__,
+            error=str(e),
+            duration_ms=round((time.monotonic() - started_clock) * 1000, 2),
+        )
+        raise HTTPException(status_code=502, detail=f"Daily CLV safety-net error: {e}")
+    finally:
+        finished = utc_now_iso_z()
+
+    duration_ms = round((time.monotonic() - started_clock) * 1000, 2)
+    updated = int((summary or {}).get("close_updated", 0))
+    set_ops_status(
+        "last_clv_daily",
+        {
+            "source": ops_status_source,
+            "run_id": run_id,
+            "started_at": started,
+            "finished_at": finished,
+            "duration_ms": duration_ms,
+            "updated": updated,
+            "captured_at": finished,
+            "summary": summary,
+        },
+    )
+    persist_ops_job_run(
+        job_kind="clv_daily",
+        source=ops_status_source,
+        status="completed",
+        run_id=run_id,
+        captured_at=finished,
+        started_at=started,
+        finished_at=finished,
+        duration_ms=duration_ms,
+        meta=summary or {"updated": updated},
+    )
+
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "started_at": started,
+        "finished_at": finished,
+        "duration_ms": duration_ms,
+        "updated": updated,
+        "summary": summary,
     }
 
 
@@ -440,6 +527,7 @@ def ops_clv_debug_impl(
     retry_supabase: Callable[[Callable[[], Any]], Any],
     load_snapshot: Callable[..., dict[str, Any]],
     load_scheduler_job_snapshot: Callable[..., dict[str, Any]],
+    load_recent_clv_job_runs: Callable[..., list[dict[str, Any]]],
     utc_now_iso: Callable[[], str],
 ) -> dict[str, Any]:
     require_valid_cron_token(x_cron_token)
@@ -447,6 +535,7 @@ def ops_clv_debug_impl(
         get_db(),
         retry_supabase=retry_supabase,
         load_scheduler_job_snapshot=load_scheduler_job_snapshot,
+        load_recent_clv_job_runs=load_recent_clv_job_runs,
         utc_now_iso=utc_now_iso,
     )
 
@@ -455,12 +544,48 @@ async def ops_replay_recent_clv_impl(
     x_cron_token: str | None,
     *,
     require_valid_cron_token: Callable[[str | None], None],
+    new_run_id: Callable[[str], str],
+    log_event: Callable[..., None],
+    set_ops_status: Callable[[str, dict], None],
+    persist_ops_job_run: Callable[..., None],
     get_db: Callable[[], Any],
     replay_recent_closes: Callable[..., Any],
     lookback_hours: int,
 ) -> dict[str, Any]:
     require_valid_cron_token(x_cron_token)
-    return await replay_recent_closes(get_db(), lookback_hours=lookback_hours)
+    run_id = new_run_id("ops_clv_replay")
+    started = utc_now_iso_z()
+    started_clock = time.monotonic()
+    log_event("ops.trigger.clv_replay.started", run_id=run_id, lookback_hours=lookback_hours)
+    summary = await replay_recent_closes(get_db(), lookback_hours=lookback_hours)
+    finished = utc_now_iso_z()
+    duration_ms = round((time.monotonic() - started_clock) * 1000, 2)
+    set_ops_status(
+        "last_clv_replay",
+        {
+            "source": "ops",
+            "run_id": run_id,
+            "started_at": started,
+            "finished_at": finished,
+            "duration_ms": duration_ms,
+            "updated": int((summary or {}).get("close_updated", 0)),
+            "captured_at": finished,
+            "summary": summary,
+        },
+    )
+    persist_ops_job_run(
+        job_kind="clv_replay",
+        source="ops",
+        status="completed",
+        run_id=run_id,
+        captured_at=finished,
+        started_at=started,
+        finished_at=finished,
+        duration_ms=duration_ms,
+        meta=summary,
+    )
+    log_event("ops.trigger.clv_replay.completed", run_id=run_id, duration_ms=duration_ms, summary=summary)
+    return summary
 
 
 async def cron_test_discord_impl(
@@ -757,7 +882,7 @@ def ops_clv_debug(
 ):
     import main
     from services.clv_audit import build_clv_audit_snapshot
-    from services.ops_history import load_scheduler_job_snapshot
+    from services.ops_history import load_recent_clv_job_runs, load_scheduler_job_snapshot
 
     return ops_clv_debug_impl(
         x_cron_token=x_ops_token or x_cron_token,
@@ -766,7 +891,30 @@ def ops_clv_debug(
         retry_supabase=main._retry_supabase,
         load_snapshot=build_clv_audit_snapshot,
         load_scheduler_job_snapshot=load_scheduler_job_snapshot,
+        load_recent_clv_job_runs=load_recent_clv_job_runs,
         utc_now_iso=main._utc_now_iso,
+    )
+
+
+@router.post("/api/ops/trigger/clv-daily")
+async def ops_trigger_clv_daily(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    import main
+
+    return await cron_run_clv_daily_impl(
+        x_cron_token=x_ops_token or x_cron_token,
+        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        new_run_id=main._new_run_id,
+        log_event=main._log_event,
+        set_ops_status=main._set_ops_status,
+        persist_ops_job_run=main._persist_ops_job_run,
+        get_db=main.get_db,
+        run_id_prefix="ops_clv_daily",
+        log_prefix="ops.trigger.clv_daily",
+        ops_status_source="ops",
     )
 
 
@@ -783,6 +931,10 @@ async def ops_trigger_clv_replay(
     return await ops_replay_recent_clv_impl(
         x_cron_token=x_ops_token or x_cron_token,
         require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        new_run_id=main._new_run_id,
+        log_event=main._log_event,
+        set_ops_status=main._set_ops_status,
+        persist_ops_job_run=main._persist_ops_job_run,
         get_db=main.get_db,
         replay_recent_closes=replay_recent_clv_closes,
         lookback_hours=lookback_hours,

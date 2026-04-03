@@ -95,14 +95,21 @@ class _DB:
         bets=None,
         scan_opportunities=None,
         scan_opportunity_model_evaluations=None,
+        pickem_research_observations=None,
         missing_scan_opportunities=False,
     ):
         self.tables = {
             "bets": list(bets or []),
             "scan_opportunities": list(scan_opportunities or []),
             "scan_opportunity_model_evaluations": list(scan_opportunity_model_evaluations or []),
+            "pickem_research_observations": list(pickem_research_observations or []),
         }
-        self.updates = {"bets": [], "scan_opportunities": [], "scan_opportunity_model_evaluations": []}
+        self.updates = {
+            "bets": [],
+            "scan_opportunities": [],
+            "scan_opportunity_model_evaluations": [],
+            "pickem_research_observations": [],
+        }
         self.missing_scan_opportunities = missing_scan_opportunities
 
     def table(self, name):
@@ -284,6 +291,64 @@ def test_update_clv_snapshots_can_capture_close_inside_window():
     assert db.tables["bets"][0]["clv_updated_at"] is not None
 
 
+def test_update_bet_reference_snapshots_reports_line_mismatch_reason_for_totals():
+    mod = _reload_clv_tracking()
+    commence_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    db = _DB(
+        bets=[
+            {
+                "id": 260,
+                "result": "pending",
+                "surface": "straight_bets",
+                "clv_team": "over",
+                "commence_time": commence_time,
+                "clv_event_id": "evt_total_mismatch",
+                "source_event_id": "evt_total_mismatch",
+                "source_market_key": "totals",
+                "line_value": 220.5,
+                "clv_sport_key": "basketball_nba",
+                "pinnacle_odds_at_close": None,
+                "clv_updated_at": None,
+            }
+        ]
+    )
+
+    summary = mod.update_bet_reference_snapshots(
+        db,
+        sides=[
+            {
+                "surface": "straight_bets",
+                "sport": "basketball_nba",
+                "event_id": "evt_total_mismatch",
+                "commence_time": commence_time,
+                "market_key": "totals",
+                "team": "over",
+                "selection_side": "over",
+                "line_value": 221.5,
+                "pinnacle_odds": -110,
+            },
+            {
+                "surface": "straight_bets",
+                "sport": "basketball_nba",
+                "event_id": "evt_total_mismatch",
+                "commence_time": commence_time,
+                "market_key": "totals",
+                "team": "under",
+                "selection_side": "under",
+                "line_value": 221.5,
+                "pinnacle_odds": -110,
+            },
+        ],
+        allow_close=True,
+        now=datetime.now(timezone.utc),
+    )
+
+    assert summary["latest_updated"] == 0
+    assert summary["close_updated"] == 0
+    assert summary["unmatched_count"] == 1
+    assert summary["reason_counts"]["line_mismatch"] == 1
+
+
 def test_update_clv_snapshots_repairs_invalid_early_close_inside_window():
     mod = _reload_clv_tracking()
     now = datetime(2026, 3, 23, 18, 35, tzinfo=timezone.utc)
@@ -358,7 +423,8 @@ def test_update_scan_opportunity_reference_snapshots_updates_latest_without_clos
         now=now,
     )
 
-    assert counts == {"latest_updated": 1, "close_updated": 0}
+    assert counts["latest_updated"] == 1
+    assert counts["close_updated"] == 0
     assert db.tables["scan_opportunities"][0]["latest_reference_odds"] == 135
     assert db.tables["scan_opportunities"][0]["reference_odds_at_close"] is None
 
@@ -405,7 +471,8 @@ def test_update_scan_opportunity_reference_snapshots_updates_prop_latest_without
         now=now,
     )
 
-    assert counts == {"latest_updated": 1, "close_updated": 0}
+    assert counts["latest_updated"] == 1
+    assert counts["close_updated"] == 0
     assert db.tables["scan_opportunities"][0]["latest_reference_odds"] == -112
     assert db.tables["scan_opportunities"][0]["reference_odds_at_close"] is None
 
@@ -463,7 +530,8 @@ def test_update_scan_opportunity_reference_snapshots_captures_prop_close_inside_
         now=now,
     )
 
-    assert counts == {"latest_updated": 1, "close_updated": 1}
+    assert counts["latest_updated"] == 1
+    assert counts["close_updated"] == 1
     assert db.tables["scan_opportunities"][0]["latest_reference_odds"] == -110
     assert db.tables["scan_opportunities"][0]["reference_odds_at_close"] == -110
     assert db.tables["scan_opportunities"][0]["clv_ev_percent"] is not None
@@ -535,7 +603,8 @@ def test_update_scan_opportunity_reference_snapshots_prefers_paired_prop_close_w
         now=now,
     )
 
-    assert counts == {"latest_updated": 1, "close_updated": 1}
+    assert counts["latest_updated"] == 1
+    assert counts["close_updated"] == 1
     parent = db.tables["scan_opportunities"][0]
     assert parent["reference_odds_at_close"] == -112
     assert parent["close_opposing_reference_odds"] == -108

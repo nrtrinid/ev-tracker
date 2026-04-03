@@ -339,13 +339,22 @@ def update_pickem_research_close_snapshots(
     sides: list[dict[str, Any]],
     allow_close: bool,
     now: datetime | None = None,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     if not sides:
-        return {"latest_updated": 0, "close_updated": 0}
+        from services.clv_tracking import _new_snapshot_update_summary, _normalize_snapshot_summary
+
+        return _normalize_snapshot_summary(_new_snapshot_update_summary())
 
     from services.clv_tracking import (
+        _bump_counter,
+        _build_reference_coverage,
+        _diagnose_prop_reference_miss,
+        _mark_snapshot_reason,
+        _new_snapshot_update_summary,
+        _normalize_snapshot_summary,
         build_prop_reference_pair_snapshots,
         build_prop_reference_snapshots,
+        has_valid_close_snapshot,
         lookup_prop_opposing_reference_odds,
         lookup_prop_reference_odds,
         should_capture_close_snapshot,
@@ -353,8 +362,9 @@ def update_pickem_research_close_snapshots(
 
     prop_snapshot_by_event, prop_snapshot_by_time = build_prop_reference_snapshots(sides)
     prop_pair_by_event, prop_pair_by_time = build_prop_reference_pair_snapshots(sides)
+    coverage = _build_reference_coverage(sides)
     if not prop_snapshot_by_event and not prop_snapshot_by_time:
-        return {"latest_updated": 0, "close_updated": 0}
+        return _normalize_snapshot_summary(_new_snapshot_update_summary())
 
     sports = sorted({str(side.get("sport") or "").strip() for side in sides if side.get("sport")})
     try:
@@ -370,15 +380,17 @@ def update_pickem_research_close_snapshots(
         result = query.execute()
     except Exception as exc:
         if is_missing_pickem_research_observations_error(exc):
-            return {"latest_updated": 0, "close_updated": 0}
+            return _normalize_snapshot_summary(_new_snapshot_update_summary())
         raise
 
     current = now or _utc_now()
     updated_at = current.isoformat()
-    latest_updated = 0
-    close_updated = 0
+    summary = _new_snapshot_update_summary()
 
     for row in result.data or []:
+        summary["row_count"] += 1
+        _bump_counter(summary["candidate_surface_counts"], "player_props")
+        _bump_counter(summary["candidate_market_counts"], _normalize_text(row.get("market_key")) or "player_props")
         reference_odds = lookup_prop_reference_odds(
             player_name=row.get("player_name"),
             source_market_key=row.get("market_key"),
@@ -390,6 +402,8 @@ def update_pickem_research_close_snapshots(
             snapshot_by_time=prop_snapshot_by_time,
         )
         if reference_odds is None:
+            summary["unmatched_count"] += 1
+            _mark_snapshot_reason(summary, _diagnose_prop_reference_miss(row, coverage, market_field="market_key"))
             continue
 
         opposing_reference_odds = lookup_prop_opposing_reference_odds(
@@ -407,14 +421,18 @@ def update_pickem_research_close_snapshots(
             "latest_reference_odds": reference_odds,
             "latest_reference_updated_at": updated_at,
         }
-        latest_updated += 1
+        summary["matched_count"] += 1
+        summary["latest_updated"] += 1
+        _bump_counter(summary["matched_surface_counts"], "player_props")
+        _bump_counter(summary["matched_market_counts"], _normalize_text(row.get("market_key")) or "player_props")
 
-        if allow_close and should_capture_close_snapshot(
+        can_capture_close = allow_close and should_capture_close_snapshot(
             row.get("commence_time"),
             existing_close=row.get("close_reference_odds"),
             captured_at=row.get("close_captured_at"),
             now=current,
-        ):
+        )
+        if can_capture_close:
             fair_odds = _coerce_float(row.get("first_fair_odds_american")) or _coerce_float(row.get("last_fair_odds_american"))
             close_eval = calculate_clv(
                 float(fair_odds if fair_odds is not None else reference_odds),
@@ -431,11 +449,21 @@ def update_pickem_research_close_snapshots(
                     "close_edge_pct": close_eval.get("clv_ev_percent"),
                 }
             )
-            close_updated += 1
+            summary["close_updated"] += 1
+        elif allow_close and (
+            row.get("close_reference_odds") is None
+            or not has_valid_close_snapshot(row.get("commence_time"), row.get("close_captured_at"))
+        ):
+            summary["close_rejected_count"] += 1
+            _mark_snapshot_reason(summary, "outside_close_window")
 
-        db.table("pickem_research_observations").update(payload).eq("id", row["id"]).execute()
+        try:
+            db.table("pickem_research_observations").update(payload).eq("id", row["id"]).execute()
+        except Exception:
+            _mark_snapshot_reason(summary, "write_failed")
+            raise
 
-    return {"latest_updated": latest_updated, "close_updated": close_updated}
+    return _normalize_snapshot_summary(summary)
 
 
 async def settle_pickem_research_observations(

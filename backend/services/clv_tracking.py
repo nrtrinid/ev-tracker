@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -9,6 +10,17 @@ from calculations import calculate_clv
 from services.model_calibration import update_scan_opportunity_model_evaluations_close_snapshot
 
 CLOSE_WINDOW_MINUTES = 20
+CLV_AUDIT_REASON_CODES = (
+    "missing_identity",
+    "outside_close_window",
+    "event_not_returned",
+    "market_not_returned",
+    "selection_not_returned",
+    "line_mismatch",
+    "participant_mismatch",
+    "write_failed",
+    "db_schema_mismatch",
+)
 
 
 def _utc_now() -> datetime:
@@ -92,6 +104,163 @@ def _normalize_line_value(value: Any) -> float | None:
         return float(value)
     except Exception:
         return None
+
+
+def _new_snapshot_update_summary() -> dict[str, Any]:
+    return {
+        "row_count": 0,
+        "matched_count": 0,
+        "unmatched_count": 0,
+        "latest_updated": 0,
+        "close_updated": 0,
+        "close_rejected_count": 0,
+        "candidate_surface_counts": {},
+        "candidate_market_counts": {},
+        "matched_surface_counts": {},
+        "matched_market_counts": {},
+        "reason_counts": {},
+    }
+
+
+def _bump_counter(counter: dict[str, int], key: Any, amount: int = 1) -> None:
+    normalized_key = str(key or "unknown").strip() or "unknown"
+    counter[normalized_key] = int(counter.get(normalized_key, 0)) + amount
+
+
+def _mark_snapshot_reason(summary: dict[str, Any], reason: str) -> None:
+    if reason not in CLV_AUDIT_REASON_CODES:
+        reason = "write_failed"
+    _bump_counter(summary["reason_counts"], reason)
+
+
+def _normalize_snapshot_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(summary)
+    for key in (
+        "candidate_surface_counts",
+        "candidate_market_counts",
+        "matched_surface_counts",
+        "matched_market_counts",
+        "reason_counts",
+    ):
+        bucket = normalized.get(key) or {}
+        normalized[key] = {str(name): int(value) for name, value in bucket.items() if int(value) > 0}
+    return normalized
+
+
+def _context_keys(event_id: Any, commence_time: Any) -> list[str]:
+    keys: list[str] = []
+    raw_event_id = str(event_id or "").strip()
+    raw_commence_time = str(commence_time or "").strip()
+    if raw_event_id:
+        keys.append(f"event:{raw_event_id}")
+    if raw_commence_time:
+        keys.append(f"time:{raw_commence_time}")
+    return keys
+
+
+def _build_reference_coverage(sides: list[dict[str, Any]]) -> dict[str, Any]:
+    coverage: dict[str, Any] = {
+        "straight_events": set(),
+        "straight_markets": defaultdict(set),
+        "straight_lines": defaultdict(set),
+        "straight_selections": defaultdict(set),
+        "prop_events": set(),
+        "prop_markets": defaultdict(set),
+        "prop_players": defaultdict(set),
+        "prop_lines": defaultdict(set),
+        "prop_sides": defaultdict(set),
+    }
+
+    for side in sides:
+        surface = str(side.get("surface") or "straight_bets").strip().lower()
+        contexts = _context_keys(side.get("event_id"), side.get("commence_time"))
+        if not contexts:
+            continue
+        if surface == "player_props":
+            market_key = _normalize_text(side.get("market_key"))
+            player_name = _normalize_text(side.get("player_name"))
+            selection_side = _normalize_text(side.get("selection_side"))
+            line_value = _normalize_line_value(side.get("line_value"))
+            for context in contexts:
+                coverage["prop_events"].add(context)
+                if market_key:
+                    coverage["prop_markets"][context].add(market_key)
+                if market_key and player_name:
+                    coverage["prop_players"][(context, market_key)].add(player_name)
+                if market_key and player_name and line_value is not None:
+                    coverage["prop_lines"][(context, market_key, player_name)].add(line_value)
+                if market_key and player_name and line_value is not None and selection_side:
+                    coverage["prop_sides"][(context, market_key, player_name, line_value)].add(selection_side)
+            continue
+
+        market_key = _normalize_text(side.get("market_key")) or "h2h"
+        team = _normalize_text(side.get("team"))
+        line_value = _normalize_line_value(side.get("line_value"))
+        line_key = line_value if market_key in {"spreads", "totals"} else None
+        for context in contexts:
+            coverage["straight_events"].add(context)
+            coverage["straight_markets"][context].add(market_key)
+            if market_key in {"spreads", "totals"} and line_key is not None:
+                coverage["straight_lines"][(context, market_key)].add(line_key)
+            if team:
+                coverage["straight_selections"][(context, market_key, line_key)].add(team)
+
+    return coverage
+
+
+def _straight_market_label(row: dict[str, Any]) -> str:
+    market_key = _normalize_text(row.get("source_market_key"))
+    return market_key or "h2h"
+
+
+def _diagnose_straight_reference_miss(row: dict[str, Any], coverage: dict[str, Any]) -> str:
+    team = _normalize_text(row.get("clv_team"))
+    contexts = _context_keys(row.get("source_event_id") or row.get("clv_event_id"), row.get("commence_time"))
+    market_key = _straight_market_label(row)
+    line_value = _normalize_line_value(row.get("line_value"))
+
+    if not team or not contexts:
+        return "missing_identity"
+    if market_key in {"spreads", "totals"} and line_value is None:
+        return "missing_identity"
+    if not any(context in coverage["straight_events"] for context in contexts):
+        return "event_not_returned"
+    if not any(market_key in coverage["straight_markets"].get(context, set()) for context in contexts):
+        return "market_not_returned"
+    if market_key in {"spreads", "totals"}:
+        if not any(line_value in coverage["straight_lines"].get((context, market_key), set()) for context in contexts):
+            return "line_mismatch"
+        if not any(team in coverage["straight_selections"].get((context, market_key, line_value), set()) for context in contexts):
+            return "selection_not_returned"
+        return "selection_not_returned"
+    if not any(team in coverage["straight_selections"].get((context, market_key, None), set()) for context in contexts):
+        return "selection_not_returned"
+    return "selection_not_returned"
+
+
+def _diagnose_prop_reference_miss(row: dict[str, Any], coverage: dict[str, Any], *, market_field: str) -> str:
+    player_name = _normalize_text(row.get("participant_name") or row.get("player_name"))
+    market_key = _normalize_text(row.get(market_field))
+    selection_side = _normalize_text(row.get("selection_side"))
+    line_value = _normalize_line_value(row.get("line_value"))
+    contexts = _context_keys(row.get("source_event_id") or row.get("event_id") or row.get("clv_event_id"), row.get("commence_time"))
+
+    if not player_name or not market_key or not selection_side or line_value is None or not contexts:
+        return "missing_identity"
+    if not any(context in coverage["prop_events"] for context in contexts):
+        return "event_not_returned"
+    if not any(market_key in coverage["prop_markets"].get(context, set()) for context in contexts):
+        return "market_not_returned"
+    if not any(player_name in coverage["prop_players"].get((context, market_key), set()) for context in contexts):
+        return "participant_mismatch"
+    if not any(line_value in coverage["prop_lines"].get((context, market_key, player_name), set()) for context in contexts):
+        return "line_mismatch"
+    if not any(
+        selection_side in coverage["prop_sides"].get((context, market_key, player_name, line_value), set())
+        for context in contexts
+    ):
+        return "selection_not_returned"
+    return "selection_not_returned"
 
 
 def _is_missing_scan_opportunities_column_error(error: Exception, *columns: str) -> bool:
@@ -601,9 +770,9 @@ def update_bet_reference_snapshots(
     allow_close: bool,
     now: datetime | None = None,
     allow_retroactive_close_capture: bool = False,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     if not sides:
-        return {"latest_updated": 0, "close_updated": 0}
+        return _normalize_snapshot_summary(_new_snapshot_update_summary())
 
     straight_snapshot_by_event, straight_snapshot_by_time = build_reference_snapshots(sides)
     straight_exact_snapshot_by_event, straight_exact_snapshot_by_time = build_straight_exact_reference_snapshots(sides)
@@ -611,6 +780,7 @@ def update_bet_reference_snapshots(
     straight_pair_by_event, straight_pair_by_time = build_reference_pair_snapshots(sides)
     straight_exact_pair_by_event, straight_exact_pair_by_time = build_straight_exact_pair_snapshots(sides)
     prop_pair_by_event, prop_pair_by_time = build_prop_reference_pair_snapshots(sides)
+    coverage = _build_reference_coverage(sides)
 
     if (
         not straight_snapshot_by_event
@@ -620,7 +790,7 @@ def update_bet_reference_snapshots(
         and not prop_snapshot_by_event
         and not prop_snapshot_by_time
     ):
-        return {"latest_updated": 0, "close_updated": 0}
+        return _normalize_snapshot_summary(_new_snapshot_update_summary())
 
     sports = sorted({str(side.get("sport") or "").strip() for side in sides if side.get("sport")})
     sports_set = {s for s in sports if s}
@@ -640,11 +810,16 @@ def update_bet_reference_snapshots(
 
     current = now or _utc_now()
     updated_at = current.isoformat()
-    latest_updated = 0
-    close_updated = 0
+    summary = _new_snapshot_update_summary()
 
     for row in result.data or []:
         surface = str(row.get("surface") or "straight_bets").strip().lower()
+        market_label = (
+            _normalize_text(row.get("source_market_key")) if surface == "player_props" else _straight_market_label(row)
+        ) or ("player_props" if surface == "player_props" else "h2h")
+        summary["row_count"] += 1
+        _bump_counter(summary["candidate_surface_counts"], surface)
+        _bump_counter(summary["candidate_market_counts"], market_label)
 
         if surface == "player_props":
             reference_odds = lookup_prop_reference_odds(
@@ -669,6 +844,8 @@ def update_bet_reference_snapshots(
             )
         else:
             if not row.get("clv_team"):
+                summary["unmatched_count"] += 1
+                _mark_snapshot_reason(summary, "missing_identity")
                 continue
             market_key = _normalize_text(row.get("source_market_key"))
             line_value = _normalize_line_value(row.get("line_value"))
@@ -708,30 +885,49 @@ def update_bet_reference_snapshots(
                 )
 
         if reference_odds is None:
+            summary["unmatched_count"] += 1
+            if surface == "player_props":
+                _mark_snapshot_reason(summary, _diagnose_prop_reference_miss(row, coverage, market_field="source_market_key"))
+            else:
+                _mark_snapshot_reason(summary, _diagnose_straight_reference_miss(row, coverage))
             continue
 
         payload: dict[str, Any] = {
             "latest_pinnacle_odds": reference_odds,
             "latest_pinnacle_updated_at": updated_at,
         }
-        latest_updated += 1
+        summary["matched_count"] += 1
+        summary["latest_updated"] += 1
+        _bump_counter(summary["matched_surface_counts"], surface)
+        _bump_counter(summary["matched_market_counts"], market_label)
 
-        if allow_close and should_capture_close_snapshot(
+        can_capture_close = allow_close and should_capture_close_snapshot(
             row.get("commence_time"),
             existing_close=row.get("pinnacle_odds_at_close"),
             captured_at=row.get("clv_updated_at"),
             now=current,
             allow_retroactive_close_capture=allow_retroactive_close_capture,
-        ):
+        )
+        if can_capture_close:
             payload.update(
                 {
                     "pinnacle_odds_at_close": reference_odds,
                     "clv_updated_at": updated_at,
                 }
             )
-            close_updated += 1
+            summary["close_updated"] += 1
+        elif allow_close and (
+            row.get("pinnacle_odds_at_close") is None
+            or not has_valid_close_snapshot(row.get("commence_time"), row.get("clv_updated_at"))
+        ):
+            summary["close_rejected_count"] += 1
+            _mark_snapshot_reason(summary, "outside_close_window")
 
-        db.table("bets").update(payload).eq("id", row["id"]).execute()
+        try:
+            db.table("bets").update(payload).eq("id", row["id"]).execute()
+        except Exception:
+            _mark_snapshot_reason(summary, "write_failed")
+            raise
 
     p_latest, p_close = _update_parlay_bet_leg_snapshots(
         db,
@@ -747,10 +943,10 @@ def update_bet_reference_snapshots(
         updated_at=updated_at,
         allow_retroactive_close_capture=allow_retroactive_close_capture,
     )
-    latest_updated += p_latest
-    close_updated += p_close
+    summary["latest_updated"] += p_latest
+    summary["close_updated"] += p_close
 
-    return {"latest_updated": latest_updated, "close_updated": close_updated}
+    return _normalize_snapshot_summary(summary)
 
 def update_scan_opportunity_reference_snapshots(
     db,
@@ -758,9 +954,9 @@ def update_scan_opportunity_reference_snapshots(
     sides: list[dict[str, Any]],
     allow_close: bool,
     now: datetime | None = None,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     if not sides:
-        return {"latest_updated": 0, "close_updated": 0}
+        return _normalize_snapshot_summary(_new_snapshot_update_summary())
 
     straight_snapshot_by_event, straight_snapshot_by_time = build_reference_snapshots(sides)
     straight_exact_snapshot_by_event, straight_exact_snapshot_by_time = build_straight_exact_reference_snapshots(sides)
@@ -768,6 +964,7 @@ def update_scan_opportunity_reference_snapshots(
     straight_pair_by_event, straight_pair_by_time = build_reference_pair_snapshots(sides)
     straight_exact_pair_by_event, straight_exact_pair_by_time = build_straight_exact_pair_snapshots(sides)
     prop_pair_by_event, prop_pair_by_time = build_prop_reference_pair_snapshots(sides)
+    coverage = _build_reference_coverage(sides)
     if (
         not straight_snapshot_by_event
         and not straight_snapshot_by_time
@@ -776,7 +973,7 @@ def update_scan_opportunity_reference_snapshots(
         and not prop_snapshot_by_event
         and not prop_snapshot_by_time
     ):
-        return {"latest_updated": 0, "close_updated": 0}
+        return _normalize_snapshot_summary(_new_snapshot_update_summary())
 
     from services.research_opportunities import is_missing_scan_opportunities_error
 
@@ -795,16 +992,23 @@ def update_scan_opportunity_reference_snapshots(
         result = query.execute()
     except Exception as e:
         if is_missing_scan_opportunities_error(e):
-            return {"latest_updated": 0, "close_updated": 0}
+            return _normalize_snapshot_summary(_new_snapshot_update_summary())
         raise
 
     current = now or _utc_now()
     updated_at = current.isoformat()
-    latest_updated = 0
-    close_updated = 0
+    summary = _new_snapshot_update_summary()
 
     for row in result.data or []:
-        if str(row.get("surface") or "straight_bets").strip().lower() == "player_props":
+        surface = str(row.get("surface") or "straight_bets").strip().lower()
+        market_label = (
+            _normalize_text(row.get("source_market_key")) if surface == "player_props" else _straight_market_label(row)
+        ) or ("player_props" if surface == "player_props" else "h2h")
+        summary["row_count"] += 1
+        _bump_counter(summary["candidate_surface_counts"], surface)
+        _bump_counter(summary["candidate_market_counts"], market_label)
+
+        if surface == "player_props":
             reference_odds = lookup_prop_reference_odds(
                 player_name=row.get("player_name"),
                 source_market_key=row.get("source_market_key"),
@@ -863,20 +1067,34 @@ def update_scan_opportunity_reference_snapshots(
                     pair_snapshot_by_time=straight_pair_by_time,
                 )
         if reference_odds is None:
+            summary["unmatched_count"] += 1
+            if surface == "player_props":
+                _mark_snapshot_reason(summary, _diagnose_prop_reference_miss(row, coverage, market_field="source_market_key"))
+            else:
+                _mark_snapshot_reason(summary, _diagnose_straight_reference_miss({
+                    **row,
+                    "clv_team": row.get("team"),
+                    "clv_event_id": row.get("event_id"),
+                    "source_event_id": row.get("event_id"),
+                }, coverage))
             continue
 
         payload: dict[str, Any] = {
             "latest_reference_odds": reference_odds,
             "latest_reference_updated_at": updated_at,
         }
-        latest_updated += 1
+        summary["matched_count"] += 1
+        summary["latest_updated"] += 1
+        _bump_counter(summary["matched_surface_counts"], surface)
+        _bump_counter(summary["matched_market_counts"], market_label)
 
-        if allow_close and should_capture_close_snapshot(
+        can_capture_close = allow_close and should_capture_close_snapshot(
             row.get("commence_time"),
             existing_close=row.get("reference_odds_at_close"),
             captured_at=row.get("close_captured_at"),
             now=current,
-        ):
+        )
+        if can_capture_close:
             clv_result = calculate_clv(float(row.get("first_book_odds")), reference_odds, opposing_reference_odds)
             payload.update(
                 {
@@ -897,7 +1115,13 @@ def update_scan_opportunity_reference_snapshots(
                     close_opposing_reference_odds=opposing_reference_odds,
                     close_captured_at=updated_at,
                 )
-            close_updated += 1
+            summary["close_updated"] += 1
+        elif allow_close and (
+            row.get("reference_odds_at_close") is None
+            or not has_valid_close_snapshot(row.get("commence_time"), row.get("close_captured_at"))
+        ):
+            summary["close_rejected_count"] += 1
+            _mark_snapshot_reason(summary, "outside_close_window")
 
         try:
             db.table("scan_opportunities").update(payload).eq("id", row["id"]).execute()
@@ -913,7 +1137,9 @@ def update_scan_opportunity_reference_snapshots(
                 legacy_payload.pop("close_quality", None)
                 legacy_payload.pop("close_opposing_reference_odds", None)
                 db.table("scan_opportunities").update(legacy_payload).eq("id", row["id"]).execute()
+                _mark_snapshot_reason(summary, "db_schema_mismatch")
             else:
+                _mark_snapshot_reason(summary, "write_failed")
                 raise
 
-    return {"latest_updated": latest_updated, "close_updated": close_updated}
+    return _normalize_snapshot_summary(summary)

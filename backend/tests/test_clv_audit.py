@@ -41,15 +41,18 @@ class _TableQuery:
 
 
 class _DB:
-    def __init__(self, *, bets, research):
+    def __init__(self, *, bets, research, pickem=None):
         self._bets = bets
         self._research = research
+        self._pickem = pickem or []
 
     def table(self, name):
         if name == "bets":
             return _TableQuery(self._bets)
         if name == "scan_opportunities":
             return _TableQuery(self._research)
+        if name == "pickem_research_observations":
+            return _TableQuery(self._pickem)
         raise AssertionError(name)
 
 
@@ -152,6 +155,8 @@ def test_build_clv_audit_snapshot_counts_pending_valid_and_invalid_rows():
     )
 
     assert snapshot["generated_at"] == "2026-03-31T22:05:00Z"
+    assert snapshot["inventory"]["reason_codes"]
+    assert snapshot["job_runs"]["stale_jobs"]["jit_clv"]["scheduled"] is True
     assert snapshot["bets"]["tracked_count"] == 4
     assert snapshot["bets"]["pending_count"] == 2
     assert snapshot["bets"]["valid_count"] == 1
@@ -159,7 +164,9 @@ def test_build_clv_audit_snapshot_counts_pending_valid_and_invalid_rows():
     assert snapshot["bets"]["missing_close_count"] == 1
     assert snapshot["bets"]["latest_only_count"] == 1
     assert snapshot["bets"]["outside_window_count"] == 1
+    assert snapshot["bets"]["by_surface"][0]["count"] >= 1
     assert snapshot["bets"]["sample"]["latest_only"][0]["id"] == "bet-latest-only"
     assert snapshot["bets"]["sample"]["valid"][0]["clv_ev_percent"] is not None
     assert snapshot["research_opportunities"]["valid_count"] == 1
     assert snapshot["research_opportunities"]["latest_only_count"] == 1
+    assert snapshot["pickem_research"]["tracked_count"] == 0

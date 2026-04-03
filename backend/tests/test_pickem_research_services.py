@@ -231,7 +231,8 @@ def test_update_pickem_research_close_snapshots_populates_latest_and_close_metri
         allow_close=True,
     )
 
-    assert updated == {"latest_updated": 1, "close_updated": 1}
+    assert updated["latest_updated"] == 1
+    assert updated["close_updated"] == 1
     row = db.tables["pickem_research_observations"][0]
     assert row["latest_reference_odds"] == -110.0
     assert row["close_reference_odds"] == -110.0

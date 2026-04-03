@@ -190,7 +190,7 @@ def test_scan_markets_contract_shape_with_duplicate_fields(auth_client, auth_hea
     monkeypatch.setattr(main, "_retry_supabase", lambda f: f(), raising=True)
     monkeypatch.setattr(main, "_annotate_sides_with_duplicate_state", lambda _db, _uid, sides: sides, raising=True)
 
-    async def _fake_piggyback_clv(_sides):
+    async def _fake_piggyback_clv(_sides, *, source="unknown"):
         return None
 
     monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
@@ -733,6 +733,42 @@ def test_ops_status_contract_shape_degraded(monkeypatch, auth_client):
 
 
 @pytest.mark.integration
+def test_ops_clv_debug_contract_shape(auth_client, monkeypatch):
+    import main
+    import services.clv_audit as clv_audit
+    import services.ops_history as ops_history
+
+    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
+    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+    monkeypatch.setattr(
+        clv_audit,
+        "build_clv_audit_snapshot",
+        lambda _db, **_kwargs: {
+            "generated_at": "2026-04-02T18:00:00Z",
+            "inventory": {"writers": [], "readers": [], "reason_codes": ["missing_identity"]},
+            "scheduler": {"jit_clv": {"captured_at": "2026-04-02T17:45:00Z"}},
+            "job_runs": {"recent": [], "by_source": [], "by_job_kind": [], "stale_jobs": {"jit_clv": {"is_stale": False}}},
+            "bets": {"tracked_count": 1, "valid_count": 0, "sample": {"pending": []}},
+            "research_opportunities": {"tracked_count": 0, "valid_count": 0, "sample": {"pending": []}},
+            "pickem_research": {"tracked_count": 0, "valid_count": 0, "sample": {"pending": []}},
+        },
+        raising=True,
+    )
+    monkeypatch.setattr(ops_history, "load_scheduler_job_snapshot", lambda **_: {}, raising=True)
+    monkeypatch.setattr(ops_history, "load_recent_clv_job_runs", lambda **_: [], raising=True)
+
+    resp = auth_client.get("/api/ops/clv-debug", headers={"X-Ops-Token": "ops-secret"})
+    assert resp.status_code == 200
+
+    body = resp.json()
+    assert isinstance(body["inventory"], dict)
+    assert isinstance(body["job_runs"], dict)
+    assert isinstance(body["bets"], dict)
+    assert isinstance(body["research_opportunities"], dict)
+    assert isinstance(body["pickem_research"], dict)
+
+
+@pytest.mark.integration
 def test_ops_trigger_scan_contract_shape(auth_client, monkeypatch):
     import services.daily_board as daily_board
 
@@ -763,6 +799,45 @@ def test_ops_trigger_scan_contract_shape(auth_client, monkeypatch):
     assert isinstance(body.get("errors"), list)
     assert (isinstance(body.get("total_sides"), int) or body.get("total_sides") is None)
     assert isinstance(body.get("alerts_scheduled"), int)
+
+
+@pytest.mark.integration
+def test_ops_trigger_clv_daily_contract_shape(auth_client, monkeypatch):
+    import main
+    import services.odds_api as odds_api
+
+    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
+    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+
+    async def _fake_fetch_clv_for_pending_bets(_db, *, include_summary: bool = False):
+        assert include_summary is True
+        return {
+            "job_source": "clv_daily",
+            "candidate_fields": {"bet_straight_candidates": 1, "bet_prop_candidates": 1, "sports": 1},
+            "sports_processed": 1,
+            "duration_ms": 12.5,
+            "fetched_side_count": 4,
+            "fetched_side_surfaces": {"straight_bets": 2, "player_props": 2},
+            "fetched_side_markets": {"h2h": 2, "player_points": 2},
+            "bet_updates": {"latest_updated": 2, "close_updated": 2, "reason_counts": {}},
+            "research_updates": {},
+            "pickem_updates": {},
+            "updated": 2,
+            "close_updated": 2,
+            "reason_counts": {"bets": {}, "research": {}, "pickem": {}},
+        }
+
+    monkeypatch.setattr(odds_api, "fetch_clv_for_pending_bets", _fake_fetch_clv_for_pending_bets, raising=True)
+
+    resp = auth_client.post("/api/ops/trigger/clv-daily", headers={"X-Ops-Token": "ops-secret"})
+    assert resp.status_code == 200
+
+    body = resp.json()
+    assert body["ok"] is True
+    assert isinstance(body["run_id"], str)
+    assert isinstance(body["updated"], int)
+    assert isinstance(body["summary"], dict)
+    assert body["summary"]["job_source"] == "clv_daily"
 
 
 @pytest.mark.integration

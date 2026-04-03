@@ -1364,7 +1364,63 @@ async def _build_clv_reference_sides_for_sport(
     return sides
 
 
-async def fetch_clv_for_pending_bets(db) -> int:
+def _summarize_clv_fetched_sides(sides: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    surface_counts: dict[str, int] = {}
+    market_counts: dict[str, int] = {}
+    for side in sides:
+        surface = str(side.get("surface") or "straight_bets").strip().lower()
+        market = str(side.get("market_key") or ("h2h" if surface == "straight_bets" else "")).strip().lower()
+        surface_counts[surface] = int(surface_counts.get(surface, 0)) + 1
+        if market:
+            market_counts[market] = int(market_counts.get(market, 0)) + 1
+    return {
+        "surface_counts": surface_counts,
+        "market_counts": market_counts,
+    }
+
+
+def _build_clv_job_summary(
+    *,
+    job_source: str,
+    candidate_fields: dict[str, Any],
+    sports_processed: int,
+    duration_ms: float,
+    fetched_side_count: int,
+    fetched_side_surfaces: dict[str, int],
+    fetched_side_markets: dict[str, int],
+    bet_updates: dict[str, Any] | None = None,
+    research_updates: dict[str, Any] | None = None,
+    pickem_updates: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    bet_updates = bet_updates or {}
+    research_updates = research_updates or {}
+    pickem_updates = pickem_updates or {}
+    return {
+        "job_source": job_source,
+        "candidate_fields": candidate_fields,
+        "sports_processed": sports_processed,
+        "duration_ms": round(float(duration_ms), 2),
+        "fetched_side_count": fetched_side_count,
+        "fetched_side_surfaces": fetched_side_surfaces,
+        "fetched_side_markets": fetched_side_markets,
+        "bet_updates": bet_updates,
+        "research_updates": research_updates,
+        "pickem_updates": pickem_updates,
+        "updated": int(bet_updates.get("latest_updated", 0))
+        + int(research_updates.get("latest_updated", 0))
+        + int(pickem_updates.get("latest_updated", 0)),
+        "close_updated": int(bet_updates.get("close_updated", 0))
+        + int(research_updates.get("close_updated", 0))
+        + int(pickem_updates.get("close_updated", 0)),
+        "reason_counts": {
+            "bets": dict(bet_updates.get("reason_counts") or {}),
+            "research": dict(research_updates.get("reason_counts") or {}),
+            "pickem": dict(pickem_updates.get("reason_counts") or {}),
+        },
+    }
+
+
+async def fetch_clv_for_pending_bets(db, *, include_summary: bool = False) -> int | dict[str, Any]:
     """
     Layer 3 — Daily safety-net job. Called by APScheduler.
 
@@ -1372,6 +1428,8 @@ async def fetch_clv_for_pending_bets(db) -> int:
     and makes one fat fetch_odds call per active sport. Updates pinnacle_odds_at_close
     for all matched bets. Returns total bets updated.
     """
+    from services.clv_tracking import update_bet_reference_snapshots
+
     result = (
         db.table("bets")
         .select(
@@ -1384,7 +1442,21 @@ async def fetch_clv_for_pending_bets(db) -> int:
     )
 
     if not result.data:
-        return 0
+        empty_summary = _build_clv_job_summary(
+            job_source="clv_daily",
+            candidate_fields={
+                "bet_straight_candidates": 0,
+                "bet_prop_candidates": 0,
+                "sports": 0,
+            },
+            sports_processed=0,
+            duration_ms=0.0,
+            fetched_side_count=0,
+            fetched_side_surfaces={},
+            fetched_side_markets={},
+            bet_updates={},
+        )
+        return empty_summary if include_summary else 0
 
     rows = list(result.data or [])
     straight_sport_keys = {
@@ -1407,20 +1479,53 @@ async def fetch_clv_for_pending_bets(db) -> int:
     sport_keys = sorted(straight_sport_keys | set(prop_fetch_plan.keys()))
 
     if not sport_keys:
-        return 0
+        empty_summary = _build_clv_job_summary(
+            job_source="clv_daily",
+            candidate_fields={
+                "bet_straight_candidates": 0,
+                "bet_prop_candidates": 0,
+                "sports": 0,
+            },
+            sports_processed=0,
+            duration_ms=0.0,
+            fetched_side_count=0,
+            fetched_side_surfaces={},
+            fetched_side_markets={},
+            bet_updates={},
+        )
+        return empty_summary if include_summary else 0
 
-    total_updated = 0
-    _log_event(
-        "clv_daily.snapshot_candidates",
-        bet_straight_candidates=sum(
+    total_bet_updates: dict[str, Any] = {
+        "row_count": 0,
+        "matched_count": 0,
+        "unmatched_count": 0,
+        "latest_updated": 0,
+        "close_updated": 0,
+        "close_rejected_count": 0,
+        "candidate_surface_counts": {},
+        "candidate_market_counts": {},
+        "matched_surface_counts": {},
+        "matched_market_counts": {},
+        "reason_counts": {},
+    }
+    fetched_side_count = 0
+    fetched_side_surfaces: dict[str, int] = {}
+    fetched_side_markets: dict[str, int] = {}
+    started_at = time.monotonic()
+    candidate_fields = {
+        "bet_straight_candidates": sum(
             1
             for row in rows
             if str(row.get("surface") or "straight_bets").strip().lower() != "player_props"
         ),
-        bet_prop_candidates=sum(
+        "bet_prop_candidates": sum(
             1 for row in rows if str(row.get("surface") or "straight_bets").strip().lower() == "player_props"
         ),
-        sports=len(sport_keys),
+        "sports": len(sport_keys),
+    }
+    _log_event(
+        "clv_daily.snapshot_candidates",
+        **candidate_fields,
     )
 
     for sport_key in sport_keys:
@@ -1435,23 +1540,65 @@ async def fetch_clv_for_pending_bets(db) -> int:
             if not sides:
                 continue
 
-            updated = update_clv_snapshots(sides, db)
-            total_updated += updated
+            fetched_summary = _summarize_clv_fetched_sides(sides)
+            fetched_side_count += len(sides)
+            for key, value in (fetched_summary.get("surface_counts") or {}).items():
+                fetched_side_surfaces[key] = int(fetched_side_surfaces.get(key, 0)) + int(value)
+            for key, value in (fetched_summary.get("market_counts") or {}).items():
+                fetched_side_markets[key] = int(fetched_side_markets.get(key, 0)) + int(value)
+
+            bet_updates = update_bet_reference_snapshots(db, sides=sides, allow_close=True)
+            for bucket_key in (
+                "row_count",
+                "matched_count",
+                "unmatched_count",
+                "latest_updated",
+                "close_updated",
+                "close_rejected_count",
+            ):
+                total_bet_updates[bucket_key] = int(total_bet_updates.get(bucket_key, 0)) + int(
+                    bet_updates.get(bucket_key, 0)
+                )
+            for bucket_key in (
+                "candidate_surface_counts",
+                "candidate_market_counts",
+                "matched_surface_counts",
+                "matched_market_counts",
+                "reason_counts",
+            ):
+                combined = total_bet_updates.setdefault(bucket_key, {})
+                for key, value in (bet_updates.get(bucket_key) or {}).items():
+                    combined[key] = int(combined.get(key, 0)) + int(value)
             _log_event(
                 "clv_daily.sport_completed",
                 sport=sport_key,
                 fetched_sides=len(sides),
-                updated=updated,
+                fetched_surface_counts=fetched_summary.get("surface_counts"),
+                fetched_market_counts=fetched_summary.get("market_counts"),
+                bet_latest_updated=bet_updates.get("latest_updated"),
+                bet_close_updated=bet_updates.get("close_updated"),
+                bet_close_rejected=bet_updates.get("close_rejected_count"),
+                bet_reason_counts=bet_updates.get("reason_counts"),
             )
 
         except Exception as e:
             # Never let a single sport failure break the entire job
             print(f"[CLV daily job] Error processing sport '{sport_key}': {e}")
 
-    return total_updated
+    summary = _build_clv_job_summary(
+        job_source="clv_daily",
+        candidate_fields=candidate_fields,
+        sports_processed=len(sport_keys),
+        duration_ms=(time.monotonic() - started_at) * 1000,
+        fetched_side_count=fetched_side_count,
+        fetched_side_surfaces=fetched_side_surfaces,
+        fetched_side_markets=fetched_side_markets,
+        bet_updates=total_bet_updates,
+    )
+    return summary if include_summary else int(summary["close_updated"])
 
 
-async def run_jit_clv_snatcher(db) -> int:
+async def run_jit_clv_snatcher(db, *, include_summary: bool = False) -> int | dict[str, Any]:
     """
     JIT CLV Snatcher — runs every 15 minutes via APScheduler.
 
@@ -1552,19 +1699,31 @@ async def run_jit_clv_snatcher(db) -> int:
         or not has_valid_close_snapshot(row.get("commence_time"), row.get("close_captured_at"))
     ]
 
-    _log_event(
-        "jit_clv.snapshot_candidates",
-        bet_straight_candidates=len(bet_straight_candidates),
-        bet_prop_candidates=len(bet_prop_candidates),
-        research_straight_candidates=len(research_straight_candidates),
-        research_prop_candidates=len(research_prop_candidates),
-        pickem_prop_candidates=len(pickem_candidates),
-        window_start=now_iso,
-        window_end=window_end_iso,
-    )
+    candidate_fields = {
+        "bet_straight_candidates": len(bet_straight_candidates),
+        "bet_prop_candidates": len(bet_prop_candidates),
+        "research_straight_candidates": len(research_straight_candidates),
+        "research_prop_candidates": len(research_prop_candidates),
+        "pickem_prop_candidates": len(pickem_candidates),
+        "window_start": now_iso,
+        "window_end": window_end_iso,
+    }
+    _log_event("jit_clv.snapshot_candidates", **candidate_fields)
 
     if not bet_candidates and not opportunity_candidates and not pickem_candidates:
-        return 0
+        empty_summary = _build_clv_job_summary(
+            job_source="jit_clv",
+            candidate_fields=candidate_fields,
+            sports_processed=0,
+            duration_ms=(time.monotonic() - started_at) * 1000,
+            fetched_side_count=0,
+            fetched_side_surfaces={},
+            fetched_side_markets={},
+            bet_updates={},
+            research_updates={},
+            pickem_updates={},
+        )
+        return empty_summary if include_summary else 0
 
     straight_sport_keys = {
         str(row.get("clv_sport_key") or "").strip()
@@ -1603,7 +1762,48 @@ async def run_jit_clv_snatcher(db) -> int:
 
     sport_keys = sorted(straight_sport_keys | set(prop_fetch_plan.keys()))
 
-    total_close_updated = 0
+    total_bet_updates = {
+        "row_count": 0,
+        "matched_count": 0,
+        "unmatched_count": 0,
+        "latest_updated": 0,
+        "close_updated": 0,
+        "close_rejected_count": 0,
+        "candidate_surface_counts": {},
+        "candidate_market_counts": {},
+        "matched_surface_counts": {},
+        "matched_market_counts": {},
+        "reason_counts": {},
+    }
+    total_research_updates = {
+        "row_count": 0,
+        "matched_count": 0,
+        "unmatched_count": 0,
+        "latest_updated": 0,
+        "close_updated": 0,
+        "close_rejected_count": 0,
+        "candidate_surface_counts": {},
+        "candidate_market_counts": {},
+        "matched_surface_counts": {},
+        "matched_market_counts": {},
+        "reason_counts": {},
+    }
+    total_pickem_updates = {
+        "row_count": 0,
+        "matched_count": 0,
+        "unmatched_count": 0,
+        "latest_updated": 0,
+        "close_updated": 0,
+        "close_rejected_count": 0,
+        "candidate_surface_counts": {},
+        "candidate_market_counts": {},
+        "matched_surface_counts": {},
+        "matched_market_counts": {},
+        "reason_counts": {},
+    }
+    fetched_side_count = 0
+    fetched_side_surfaces: dict[str, int] = {}
+    fetched_side_markets: dict[str, int] = {}
 
     for sport_key in sport_keys:
         try:
@@ -1618,6 +1818,13 @@ async def run_jit_clv_snatcher(db) -> int:
             if not sides:
                 continue
 
+            fetched_summary = _summarize_clv_fetched_sides(sides)
+            fetched_side_count += len(sides)
+            for key, value in (fetched_summary.get("surface_counts") or {}).items():
+                fetched_side_surfaces[key] = int(fetched_side_surfaces.get(key, 0)) + int(value)
+            for key, value in (fetched_summary.get("market_counts") or {}).items():
+                fetched_side_markets[key] = int(fetched_side_markets.get(key, 0)) + int(value)
+
             bet_updates = update_bet_reference_snapshots(db, sides=sides, allow_close=True, now=now)
             opportunity_updates = update_scan_opportunity_reference_snapshots(
                 db,
@@ -1631,19 +1838,48 @@ async def run_jit_clv_snatcher(db) -> int:
                 allow_close=True,
                 now=now,
             )
-            total_close_updated += (
-                bet_updates["close_updated"]
-                + opportunity_updates["close_updated"]
-                + pickem_updates["close_updated"]
-            )
+            for total_bucket, partial in (
+                (total_bet_updates, bet_updates),
+                (total_research_updates, opportunity_updates),
+                (total_pickem_updates, pickem_updates),
+            ):
+                for bucket_key in (
+                    "row_count",
+                    "matched_count",
+                    "unmatched_count",
+                    "latest_updated",
+                    "close_updated",
+                    "close_rejected_count",
+                ):
+                    total_bucket[bucket_key] = int(total_bucket.get(bucket_key, 0)) + int(partial.get(bucket_key, 0))
+                for bucket_key in (
+                    "candidate_surface_counts",
+                    "candidate_market_counts",
+                    "matched_surface_counts",
+                    "matched_market_counts",
+                    "reason_counts",
+                ):
+                    combined = total_bucket.setdefault(bucket_key, {})
+                    for key, value in (partial.get(bucket_key) or {}).items():
+                        combined[key] = int(combined.get(key, 0)) + int(value)
             _log_event(
                 "jit_clv.sport_completed",
                 sport=sport_key,
                 fetched_sides=len(sides),
+                fetched_surface_counts=fetched_summary.get("surface_counts"),
+                fetched_market_counts=fetched_summary.get("market_counts"),
                 bet_latest_updated=bet_updates["latest_updated"],
                 bet_close_updated=bet_updates["close_updated"],
+                bet_close_rejected=bet_updates.get("close_rejected_count"),
+                bet_reason_counts=bet_updates.get("reason_counts"),
+                research_latest_updated=opportunity_updates.get("latest_updated"),
                 research_close_updated=opportunity_updates["close_updated"],
+                research_close_rejected=opportunity_updates.get("close_rejected_count"),
+                research_reason_counts=opportunity_updates.get("reason_counts"),
+                pickem_latest_updated=pickem_updates.get("latest_updated"),
                 pickem_close_updated=pickem_updates["close_updated"],
+                pickem_close_rejected=pickem_updates.get("close_rejected_count"),
+                pickem_reason_counts=pickem_updates.get("reason_counts"),
             )
 
         except Exception as e:
@@ -1655,13 +1891,26 @@ async def run_jit_clv_snatcher(db) -> int:
                 error=str(e),
             )
 
+    summary = _build_clv_job_summary(
+        job_source="jit_clv",
+        candidate_fields=candidate_fields,
+        sports_processed=len(sport_keys),
+        duration_ms=(time.monotonic() - started_at) * 1000,
+        fetched_side_count=fetched_side_count,
+        fetched_side_surfaces=fetched_side_surfaces,
+        fetched_side_markets=fetched_side_markets,
+        bet_updates=total_bet_updates,
+        research_updates=total_research_updates,
+        pickem_updates=total_pickem_updates,
+    )
     _log_event(
         "jit_clv.snapshot_completed",
-        updated=total_close_updated,
+        updated=summary["close_updated"],
         duration_ms=round((time.monotonic() - started_at) * 1000, 2),
         sports_processed=len(sport_keys),
+        reason_counts=summary["reason_counts"],
     )
-    return total_close_updated
+    return summary if include_summary else int(summary["close_updated"])
 
 
 async def replay_recent_clv_closes(
@@ -1740,8 +1989,22 @@ async def replay_recent_clv_closes(
         )
 
     sport_keys = sorted(straight_sport_keys | set(prop_fetch_plan.keys()))
-    total_updated = 0
-    total_close_updated = 0
+    total_bet_updates = {
+        "row_count": 0,
+        "matched_count": 0,
+        "unmatched_count": 0,
+        "latest_updated": 0,
+        "close_updated": 0,
+        "close_rejected_count": 0,
+        "candidate_surface_counts": {},
+        "candidate_market_counts": {},
+        "matched_surface_counts": {},
+        "matched_market_counts": {},
+        "reason_counts": {},
+    }
+    fetched_side_count = 0
+    fetched_side_surfaces: dict[str, int] = {}
+    fetched_side_markets: dict[str, int] = {}
 
     _log_event(
         "clv_replay.snapshot_candidates",
@@ -1762,6 +2025,12 @@ async def replay_recent_clv_closes(
             )
             if not sides:
                 continue
+            fetched_summary = _summarize_clv_fetched_sides(sides)
+            fetched_side_count += len(sides)
+            for key, value in (fetched_summary.get("surface_counts") or {}).items():
+                fetched_side_surfaces[key] = int(fetched_side_surfaces.get(key, 0)) + int(value)
+            for key, value in (fetched_summary.get("market_counts") or {}).items():
+                fetched_side_markets[key] = int(fetched_side_markets.get(key, 0)) + int(value)
             bet_updates = update_bet_reference_snapshots(
                 db,
                 sides=sides,
@@ -1769,14 +2038,35 @@ async def replay_recent_clv_closes(
                 now=now,
                 allow_retroactive_close_capture=True,
             )
-            total_updated += bet_updates["latest_updated"]
-            total_close_updated += bet_updates["close_updated"]
+            for bucket_key in (
+                "row_count",
+                "matched_count",
+                "unmatched_count",
+                "latest_updated",
+                "close_updated",
+                "close_rejected_count",
+            ):
+                total_bet_updates[bucket_key] = int(total_bet_updates.get(bucket_key, 0)) + int(bet_updates.get(bucket_key, 0))
+            for bucket_key in (
+                "candidate_surface_counts",
+                "candidate_market_counts",
+                "matched_surface_counts",
+                "matched_market_counts",
+                "reason_counts",
+            ):
+                combined = total_bet_updates.setdefault(bucket_key, {})
+                for key, value in (bet_updates.get(bucket_key) or {}).items():
+                    combined[key] = int(combined.get(key, 0)) + int(value)
             _log_event(
                 "clv_replay.sport_completed",
                 sport=sport_key,
                 fetched_sides=len(sides),
+                fetched_surface_counts=fetched_summary.get("surface_counts"),
+                fetched_market_counts=fetched_summary.get("market_counts"),
                 bet_latest_updated=bet_updates["latest_updated"],
                 bet_close_updated=bet_updates["close_updated"],
+                bet_close_rejected=bet_updates.get("close_rejected_count"),
+                bet_reason_counts=bet_updates.get("reason_counts"),
             )
         except Exception as exc:
             _log_event(
@@ -1793,9 +2083,16 @@ async def replay_recent_clv_closes(
         "candidate_count": len(candidate_rows),
         "bet_straight_candidates": len(bet_straight_candidates),
         "bet_prop_candidates": len(bet_prop_candidates),
-        "updated": total_updated,
-        "close_updated": total_close_updated,
+        "updated": total_bet_updates["latest_updated"],
+        "close_updated": total_bet_updates["close_updated"],
         "sports_processed": len(sport_keys),
+        "fetched_side_count": fetched_side_count,
+        "fetched_side_surfaces": fetched_side_surfaces,
+        "fetched_side_markets": fetched_side_markets,
+        "bet_updates": total_bet_updates,
+        "reason_counts": {
+            "bets": dict(total_bet_updates.get("reason_counts") or {}),
+        },
     }
     _log_event(
         "clv_replay.completed",
