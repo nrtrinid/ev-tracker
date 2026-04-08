@@ -3,7 +3,7 @@ import { Check, ChevronRight, ExternalLink, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import type { PlayerPropMarketSide } from "@/lib/types";
-import { cn, formatOdds } from "@/lib/utils";
+import { calculateStealthStake, cn, formatCurrency, formatOdds } from "@/lib/utils";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
 import {
   calculateLensBoostedEV,
@@ -114,6 +114,8 @@ export function PlayerPropCard({
   const boostedEV = side._boostedEV ?? calculateLensBoostedEV(side, boostPercent);
   const retention = side._retention ?? calculateLensRetention(side);
   const hold = side._qualifierHold ?? calculateLensQualifierHold(side);
+  const rawKellyStake = Math.max(0, side.base_kelly_fraction * kellyMultiplier * bankroll);
+  const stealthKellyStake = calculateStealthStake(rawKellyStake);
 
   const metric =
     activeLens === "bonus_bet"
@@ -134,8 +136,6 @@ export function PlayerPropCard({
   } else if (activeLens === "qualifier") {
     metricColorClass = hold <= 3 ? "text-profit" : hold <= 6 ? "text-foreground" : "text-muted-foreground";
   }
-
-  void (kellyMultiplier * bankroll);
 
   const legId = `${side.surface}:${side.selection_key}:${side.sportsbook}`;
   const isInCart = isHydrated && cart.some((leg) => leg.id === legId);
@@ -175,8 +175,15 @@ export function PlayerPropCard({
           </div>
         </div>
 
-        {/* Row 1: player name */}
-        <p className="line-clamp-1 text-sm font-semibold leading-snug">{side.display_name}</p>
+        {/* Row 1: player name + suggested stake */}
+        <div className="flex items-start justify-between gap-2">
+          <p className="line-clamp-1 text-sm font-semibold leading-snug">{side.display_name}</p>
+          {activeLens === "standard" && (
+            <p className="shrink-0 whitespace-nowrap text-[10px] text-muted-foreground">
+              Suggested: <span className="font-mono text-foreground">{formatCurrency(stealthKellyStake)}</span>
+            </p>
+          )}
+        </div>
 
         {/* Row 2: matchup + game time */}
         <p className="mt-0.5 text-xs text-muted-foreground">

@@ -27,7 +27,7 @@ export const ONBOARDING_HIGHLIGHT_MESSAGES: Record<OnboardingHighlightTarget, On
   },
   [ONBOARDING_HIGHLIGHT_TARGETS.MARKETS_PRACTICE_PLACE]: {
     title: "Practice this action",
-    body: "Tap Practice Place on a simulated line to continue.",
+    body: "Tap Practice Log Ticket on a simulated line to continue.",
   },
   [ONBOARDING_HIGHLIGHT_TARGETS.DRAWER_SAVE_PRACTICE_TICKET]: {
     title: "Save your practice ticket",

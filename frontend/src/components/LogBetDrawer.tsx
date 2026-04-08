@@ -423,7 +423,7 @@ export function LogBetDrawer({
           <SheetTitle className="text-left">Log Bet</SheetTitle>
           <p className="text-left text-sm text-muted-foreground">
             {isTutorialPracticeFlow
-              ? "Practice the final step here. This ticket stays local to the tutorial and will not touch your real stats or bankroll."
+              ? "This is where you would normally confirm after placing at the book. For the tutorial, just log this practice ticket. It stays local and will not touch real stats or bankroll."
               : isScannerFlow
               ? "Step 3 of 3: confirm what you placed, then log it."
               : "Quick Log starts with the essentials. We assume a standard moneyline bet unless you change the setup."}
@@ -488,7 +488,7 @@ export function LogBetDrawer({
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
                 {isTutorialPracticeFlow
-                  ? "Use this practice ticket to learn where scanner plays get confirmed. Saving it here keeps everything local to the tutorial."
+                  ? "In a live flow, this follows your sportsbook placement. In this walkthrough, logging here completes the practice step without placing a real wager."
                   : "Only change the odds or stake below if your bet slip differed from the scanner card."}
               </p>
             </div>

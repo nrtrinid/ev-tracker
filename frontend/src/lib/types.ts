@@ -786,6 +786,103 @@ export interface OpsTriggerAutoSettleResponse {
   settled: number;
 }
 
+export interface AnalyticsSummaryDailyRow {
+  date: string;
+  counts: Record<string, number>;
+}
+
+export interface AnalyticsSummary {
+  window_days: number;
+  generated_at: string;
+  since: string;
+  totals: {
+    events: number;
+    sessions: number;
+    users: number;
+  };
+  event_counts: Record<string, number>;
+  funnel: {
+    sessions_with_board_viewed: number;
+    sessions_with_log_bet_opened: number;
+    sessions_with_bet_logged: number;
+    board_to_log_open_rate_pct: number | null;
+    log_open_to_bet_logged_rate_pct: number | null;
+  };
+  reliability: {
+    scanner_failed: number;
+    rate_limit_hit: number;
+    stale_data_banner_seen: number;
+    bet_log_failed: number;
+    bet_log_failed_rate_pct: number | null;
+  };
+  return_usage: {
+    returning_users: number;
+    returning_user_rate_pct: number | null;
+    avg_sessions_per_known_user: number | null;
+  };
+  daily: AnalyticsSummaryDailyRow[];
+}
+
+export interface AnalyticsUserTimelineEvent {
+  captured_at: string;
+  event_name: string;
+  session_id: string | null;
+  route: string | null;
+  app_area: string | null;
+  is_failure: boolean;
+}
+
+export interface AnalyticsUserLatestSession {
+  session_id: string | null;
+  event_count: number;
+  last_event_at: string | null;
+}
+
+export interface AnalyticsUserDrilldownRow {
+  actor_key: string;
+  user_id: string | null;
+  user_label: string;
+  is_anonymous: boolean;
+  joined_at: string;
+  last_seen_at: string;
+  tutorial_status: "not_started" | "started" | "completed" | "skipped";
+  tutorial_started_at: string | null;
+  tutorial_completed_at: string | null;
+  tutorial_skipped_at: string | null;
+  first_board_view_at: string | null;
+  first_log_open_at: string | null;
+  first_bet_logged_at: string | null;
+  latest_session: AnalyticsUserLatestSession;
+  total_sessions: number;
+  total_bets_logged: number;
+  failures_hit: number;
+  last_error_event: string | null;
+  last_error_at: string | null;
+  follow_up_tag: "active" | "high_signal_tester" | "stuck_pre_bet" | "recent_failure" | "inactive";
+  follow_up_reason: string;
+  activity_status: "active" | "stuck" | "silent";
+  timeline: AnalyticsUserTimelineEvent[];
+}
+
+export interface AnalyticsUserDrilldown {
+  window_days: number;
+  generated_at: string;
+  since: string;
+  totals: {
+    tracked_users: number;
+    identified_users: number;
+    anonymous_users: number;
+    active_last_24h: number;
+    needs_follow_up: number;
+    stuck_users: number;
+    silent_users: number;
+    users_with_recent_failures: number;
+  };
+  returned_users: number;
+  has_more: boolean;
+  users: AnalyticsUserDrilldownRow[];
+}
+
 export interface ResearchOpportunitySummary {
   captured_count: number;
   open_count: number;

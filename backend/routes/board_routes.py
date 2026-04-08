@@ -58,6 +58,23 @@ _EMPTY_META = BoardSnapshotMeta(
 )
 
 
+def _noop_log_event(*_args, **_kwargs) -> None:
+    return None
+
+
+def _resolve_main_runtime_hooks():
+    """Best-effort access to main runtime helpers without hard crashing routes."""
+    try:
+        import main as main_module
+
+        log_event = getattr(main_module, "_log_event", _noop_log_event)
+        boot_id = getattr(main_module, "_BOOT_ID", None)
+        sync_pickem = getattr(main_module, "_sync_pickem_research_from_props_payload", lambda *_args, **_kwargs: None)
+        return log_event, boot_id, sync_pickem
+    except Exception:
+        return _noop_log_event, None, (lambda *_args, **_kwargs: None)
+
+
 def _empty_surface(surface: str) -> FullScanResponse:
     return FullScanResponse(
         surface=surface,  # type: ignore[arg-type]
@@ -147,7 +164,7 @@ def get_board_latest(user: dict = Depends(get_current_user)):
     when the canonical board is absent or missing a surface.
     Returns an empty board only if no data exists anywhere.
     """
-    from main import _BOOT_ID, _log_event
+    _log_event, _BOOT_ID, _ = _resolve_main_runtime_hooks()
 
     request_id = f"board_latest_{uuid4().hex[:10]}"
     rss_before = rss_mb()
@@ -203,7 +220,30 @@ def get_board_latest(user: dict = Depends(get_current_user)):
         )
         return JSONResponse(status_code=200, content=encoded)
 
-    db = get_db()
+    try:
+        db = get_db()
+    except Exception as e:
+        _log_event(
+            "board.latest.mode",
+            level="error",
+            request_id=request_id,
+            mode=mode,
+            status="db_init_failed",
+            error_class=type(e).__name__,
+            error=str(e),
+            rss_mb_before=rss_before,
+            rss_mb_after=rss_mb(),
+        )
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": "board_db_init_failed",
+                "request_id": request_id,
+                "message": "Failed to initialize board database client.",
+                "error_class": type(e).__name__,
+            },
+        )
+
     try:
         raw = load_board_snapshot(db=db, retry_supabase=_retry_supabase)
     except Exception as e:
@@ -364,7 +404,7 @@ def get_board_latest_surface(
     user: dict = Depends(get_current_user),
 ):
     """Load a per-surface latest payload from global_scan_cache (surface:latest)."""
-    from main import _log_event
+    _log_event, _boot_id, _ = _resolve_main_runtime_hooks()
     from services.scan_cache import load_latest_scan_payload
 
     request_id = f"board_surface_{uuid4().hex[:10]}"
@@ -380,8 +420,8 @@ def get_board_latest_surface(
     if surface not in ("straight_bets", "player_props"):
         raise HTTPException(status_code=400, detail="surface must be straight_bets or player_props")
 
-    db = get_db()
     try:
+        db = get_db()
         if surface == "player_props":
             payload = load_player_prop_board_legacy_surface(db=db, retry_supabase=_retry_supabase)
         else:
@@ -440,24 +480,28 @@ def _build_player_prop_board_page_response(
     page_size: int,
     tz_offset_minutes: int | None,
 ):
-    db = get_db()
-    meta, paged_items, filtered_total, source_total, has_more = load_player_prop_board_filtered_page(
-        db=db,
-        retry_supabase=_retry_supabase,
-        view=view,  # type: ignore[arg-type]
-        page=page,
-        page_size=page_size,
-        filter_item=lambda item: (
-            is_player_prop_board_opportunity(item) if view == BOARD_VIEW_OPPORTUNITIES else True
-        ) and matches_player_prop_board_item(
-            item,
-            books=books,
-            time_filter=time_filter,
-            market=market,
-            search=search,
-            tz_offset_minutes=tz_offset_minutes,
-        ),
-    )
+    try:
+        db = get_db()
+        meta, paged_items, filtered_total, source_total, has_more = load_player_prop_board_filtered_page(
+            db=db,
+            retry_supabase=_retry_supabase,
+            view=view,  # type: ignore[arg-type]
+            page=page,
+            page_size=page_size,
+            filter_item=lambda item: (
+                is_player_prop_board_opportunity(item) if view == BOARD_VIEW_OPPORTUNITIES else True
+            ) and matches_player_prop_board_item(
+                item,
+                books=books,
+                time_filter=time_filter,
+                market=market,
+                search=search,
+                tz_offset_minutes=tz_offset_minutes,
+            ),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to load player-props board page: {e}")
+
     if meta is None:
         return None
 
@@ -594,7 +638,7 @@ def get_board_latest_promos(
 
     Loads per-surface latest payloads and returns a capped combined sides list.
     """
-    from main import _log_event
+    _log_event, _boot_id, _ = _resolve_main_runtime_hooks()
     from services.scan_cache import load_latest_scan_payload
 
     request_id = f"board_promos_{uuid4().hex[:10]}"
@@ -607,17 +651,20 @@ def get_board_latest_promos(
         limit=limit,
     )
 
-    db = get_db()
-    board = load_board_snapshot(db=db, retry_supabase=_retry_supabase)
-    meta = board.get("meta") if isinstance(board, dict) and isinstance(board.get("meta"), dict) else _EMPTY_META.model_dump()
-    game_context = board.get("game_context") if isinstance(board, dict) and isinstance(board.get("game_context"), dict) else None
+    try:
+        db = get_db()
+        board = load_board_snapshot(db=db, retry_supabase=_retry_supabase)
+        meta = board.get("meta") if isinstance(board, dict) and isinstance(board.get("meta"), dict) else _EMPTY_META.model_dump()
+        game_context = board.get("game_context") if isinstance(board, dict) and isinstance(board.get("game_context"), dict) else None
 
-    straight = load_latest_scan_payload(db=db, retry_supabase=_retry_supabase, surface="straight_bets") or {}
-    _props_meta, props_items = load_player_prop_board_artifact(
-        db=db,
-        retry_supabase=_retry_supabase,
-        view=BOARD_VIEW_OPPORTUNITIES,
-    )
+        straight = load_latest_scan_payload(db=db, retry_supabase=_retry_supabase, surface="straight_bets") or {}
+        _props_meta, props_items = load_player_prop_board_artifact(
+            db=db,
+            retry_supabase=_retry_supabase,
+            view=BOARD_VIEW_OPPORTUNITIES,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to load promos board payload: {e}")
 
     straight_sides = straight.get("sides") if isinstance(straight, dict) else None
     straight_list = straight_sides if isinstance(straight_sides, list) else []
@@ -701,7 +748,10 @@ async def refresh_board_scope(
     if scope not in ("straight_bets", "player_props"):
         raise HTTPException(status_code=400, detail="scope must be straight_bets or player_props")
 
-    db = get_db()
+    try:
+        db = get_db()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to initialize database client: {e}")
 
     try:
         if scope == "player_props":
@@ -750,7 +800,7 @@ async def refresh_board_scope(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to build response: {e}")
 
-    from main import _log_event, _sync_pickem_research_from_props_payload
+    _log_event, _boot_id, _sync_pickem_research_from_props_payload = _resolve_main_runtime_hooks()
     refreshed_at = persist_scoped_refresh(
         db=db,
         surface=scope,

@@ -31,8 +31,11 @@ import type {
   PickEmResearchSummary,
   OpsTriggerScanResponse,
   OpsTriggerAutoSettleResponse,
+  AnalyticsSummary,
+  AnalyticsUserDrilldown,
   ScannerSurface,
 } from "./types";
+import { getSessionId as getAnalyticsSessionId } from "./analytics";
 import { createClient } from "./supabase";
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -75,11 +78,13 @@ async function fetchAPI<T>(
   } = await supabase.auth.getSession();
 
   const correlationId = getCorrelationId();
+  const analyticsSessionId = getAnalyticsSessionId();
   const res = await fetch(`${API_URL}${endpoint}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
       "X-Correlation-ID": correlationId,
+      ...(analyticsSessionId && { "X-Session-ID": analyticsSessionId }),
       ...(session?.access_token && {
         Authorization: `Bearer ${session.access_token}`,
       }),
@@ -531,11 +536,13 @@ export async function getResearchOpportunitySummary(params?: {
   model_version?: string;
   capture_class?: string;
   cohort_mode?: string;
+  scope?: "all" | "board_default";
 }): Promise<ResearchOpportunitySummary> {
   const qs = new URLSearchParams();
   if (params?.model_version) qs.set("model_version", params.model_version);
   if (params?.capture_class) qs.set("capture_class", params.capture_class);
   if (params?.cohort_mode) qs.set("cohort_mode", params.cohort_mode);
+  if (params?.scope) qs.set("scope", params.scope);
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return fetchInternalAPI<ResearchOpportunitySummary>(`/api/ops/research-opportunities/summary${suffix}`);
 }
@@ -546,6 +553,24 @@ export async function getModelCalibrationSummary(): Promise<ModelCalibrationSumm
 
 export async function getPickEmResearchSummary(): Promise<PickEmResearchSummary> {
   return fetchInternalAPI<PickEmResearchSummary>("/api/ops/pickem-research/summary");
+}
+
+export async function getAnalyticsSummary(windowDays: number = 7): Promise<AnalyticsSummary> {
+  const safeWindowDays = Math.max(1, Math.min(30, Math.trunc(windowDays || 7)));
+  return fetchInternalAPI<AnalyticsSummary>(`/api/ops/analytics/summary?window_days=${safeWindowDays}`);
+}
+
+export async function getAnalyticsUserDrilldown(
+  windowDays: number = 7,
+  maxUsers: number = 25,
+  timelineLimit: number = 12,
+): Promise<AnalyticsUserDrilldown> {
+  const safeWindowDays = Math.max(1, Math.min(30, Math.trunc(windowDays || 7)));
+  const safeMaxUsers = Math.max(1, Math.min(100, Math.trunc(maxUsers || 25)));
+  const safeTimelineLimit = Math.max(1, Math.min(30, Math.trunc(timelineLimit || 12)));
+  return fetchInternalAPI<AnalyticsUserDrilldown>(
+    `/api/ops/analytics/users?window_days=${safeWindowDays}&max_users=${safeMaxUsers}&timeline_limit=${safeTimelineLimit}`
+  );
 }
 
 // ============ Parlay Slips API ============

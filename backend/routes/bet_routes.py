@@ -4,7 +4,7 @@ Extracted from main.py to reduce monolith size.
 All business logic lives in services/bet_crud.py.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 
 from auth import get_current_user
 from database import get_db
@@ -22,9 +22,13 @@ router = APIRouter()
 
 
 @router.post("/bets", response_model=BetResponse, status_code=201)
-def create_bet(bet: BetCreate, user: dict = Depends(get_current_user)):
+def create_bet(
+    bet: BetCreate,
+    user: dict = Depends(get_current_user),
+    x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
+):
     """Create a new bet."""
-    return create_bet_impl(get_db(), user, bet)
+    return create_bet_impl(get_db(), user, bet, session_id=x_session_id)
 
 
 @router.get("/bets", response_model=list[BetResponse])

@@ -45,9 +45,6 @@ function getActionTarget(command?: JourneyCoachActionCommand) {
   if (command === "start_tutorial") {
     return ONBOARDING_HIGHLIGHT_TARGETS.COACH_START_WALKTHROUGH;
   }
-  if (command === "review_scanner_pick") {
-    return ONBOARDING_HIGHLIGHT_TARGETS.COACH_REVIEW_SAVED_PICK;
-  }
   return undefined;
 }
 
@@ -151,18 +148,13 @@ export function JourneyCoach({
       if (tutorialSession?.has_seeded_scan) {
         highlight(ONBOARDING_HIGHLIGHT_TARGETS.MARKETS_PRACTICE_PLACE);
       } else {
-        highlight(ONBOARDING_HIGHLIGHT_TARGETS.COACH_START_WALKTHROUGH);
+        clearHighlight();
       }
       return;
     }
 
     if (route === "home" && candidate.key === "home-tutorial-review") {
       highlight(ONBOARDING_HIGHLIGHT_TARGETS.NAV_BETS_TAB);
-      return;
-    }
-
-    if (route === "home" && candidate.key.startsWith("home-review-")) {
-      highlight(ONBOARDING_HIGHLIGHT_TARGETS.COACH_REVIEW_SAVED_PICK);
       return;
     }
 

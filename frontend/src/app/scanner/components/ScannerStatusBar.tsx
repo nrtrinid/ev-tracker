@@ -1,5 +1,7 @@
+import { useEffect, useRef } from "react";
 import { Clock, Loader2, Radar } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { sendAnalyticsEvent } from "@/lib/analytics";
 
 interface ScannerStatusBarProps {
   hasScanData: boolean;
@@ -8,6 +10,7 @@ interface ScannerStatusBarProps {
   onScan: () => void;
   scanError: string | null;
   scanAgeMinutes: number | null;
+  scanCapturedAt?: string | null;
   eventsFetched: number;
   tutorialMode?: boolean;
   showBackendHint: boolean;
@@ -21,12 +24,39 @@ export function ScannerStatusBar({
   onScan,
   scanError,
   scanAgeMinutes,
+  scanCapturedAt,
   eventsFetched,
   tutorialMode = false,
   showBackendHint,
   backendHint,
 }: ScannerStatusBarProps) {
   const isStale = (scanAgeMinutes ?? 0) > 5;
+  const staleEventKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!hasScanData || tutorialMode || !isStale) {
+      return;
+    }
+
+    const dedupeKey = scanCapturedAt
+      ? `stale-banner:${scanCapturedAt}`
+      : `stale-banner:${scanAgeMinutes ?? "unknown"}`;
+
+    if (staleEventKeyRef.current === dedupeKey) {
+      return;
+    }
+    staleEventKeyRef.current = dedupeKey;
+
+    void sendAnalyticsEvent({
+      eventName: "stale_data_banner_seen",
+      route: "/scanner",
+      appArea: "scanner",
+      properties: {
+        scan_age_minutes: scanAgeMinutes,
+      },
+      dedupeKey,
+    });
+  }, [hasScanData, tutorialMode, isStale, scanCapturedAt, scanAgeMinutes]);
 
   return (
     <div className="space-y-1.5">

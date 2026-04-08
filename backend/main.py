@@ -1428,20 +1428,24 @@ from database import get_db
 
 # Route modules (APIRouter)
 from routes.scan_routes import router as scan_router
+from routes.board_routes import router as board_router
 from routes.ops_cron import router as ops_router
 from routes.settings_routes import router as settings_router
 from routes.transactions_routes import router as transactions_router
 from routes.parlay_routes import router as parlay_router
 from routes.utility_routes import router as utility_router
 from routes.admin_routes import router as admin_router
+from routes.analytics_routes import router as analytics_router
 
 app.include_router(scan_router)
+app.include_router(board_router, prefix="/api")
 app.include_router(ops_router)
 app.include_router(settings_router)
 app.include_router(transactions_router)
 app.include_router(parlay_router)
 app.include_router(utility_router)
 app.include_router(admin_router)
+app.include_router(analytics_router)
 
 # ---------- Scan rate limit ----------
 # 12 full scans per 15 minutes per user; uses shared state when REDIS_URL is configured.
@@ -1850,58 +1854,15 @@ def _lock_ev_for_row(db, bet_id: str, user_id: str, row: dict, settings: dict) -
 # ============ Bets CRUD ============
 
 @app.post("/bets", response_model=BetResponse, status_code=201)
-def create_bet(bet: BetCreate, user: dict = Depends(get_current_user)):
+def create_bet(
+    bet: BetCreate,
+    user: dict = Depends(get_current_user),
+    x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
+):
     """Create a new bet."""
-    db = get_db()
-    settings = get_user_settings(db, user["id"])
+    from services.bet_crud import create_bet_impl
 
-    data = {
-        "user_id": user["id"],
-        "sport": bet.sport,
-        "event": bet.event,
-        "market": bet.market,
-        "surface": bet.surface,
-        "sportsbook": bet.sportsbook,
-        "promo_type": bet.promo_type.value,
-        "odds_american": bet.odds_american,
-        "stake": bet.stake,
-        "boost_percent": bet.boost_percent,
-        "winnings_cap": bet.winnings_cap,
-        "notes": bet.notes,
-        "payout_override": bet.payout_override,
-        "opposing_odds": bet.opposing_odds,
-        "result": BetResult.PENDING.value,
-        # CLV tracking fields (None when betting manually, set when logging from scanner)
-        "pinnacle_odds_at_entry": bet.pinnacle_odds_at_entry,
-        "commence_time": bet.commence_time,
-        "clv_team": bet.clv_team,
-        "clv_sport_key": bet.clv_sport_key,
-        "clv_event_id": bet.clv_event_id,
-        "true_prob_at_entry": bet.true_prob_at_entry,
-        "source_event_id": bet.source_event_id,
-        "source_market_key": bet.source_market_key,
-        "source_selection_key": bet.source_selection_key,
-        "participant_name": bet.participant_name,
-        "participant_id": bet.participant_id,
-        "selection_side": bet.selection_side,
-        "line_value": bet.line_value,
-        "selection_meta": bet.selection_meta,
-    }
-
-    # Only include event_date if provided, otherwise let DB default to today
-    if bet.event_date:
-        data["event_date"] = bet.event_date.isoformat()
-
-    result = db.table("bets").insert(data).execute()
-
-    if not result.data:
-        raise HTTPException(status_code=500, detail="Failed to create bet")
-
-    row = result.data[0]
-    _lock_ev_for_row(db, row["id"], user["id"], row, settings)
-    # Re-fetch so locked fields are included in the response
-    fresh = db.table("bets").select("*").eq("id", row["id"]).execute()
-    return build_bet_response(fresh.data[0] if fresh.data else row, settings["k_factor"])
+    return create_bet_impl(get_db(), user, bet, session_id=x_session_id)
 
 
 @app.get("/bets", response_model=list[BetResponse])

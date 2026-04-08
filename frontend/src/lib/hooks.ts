@@ -1,33 +1,27 @@
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api";
+import { sendAnalyticsEvent } from "@/lib/analytics";
 import {
   markParlaySlipLoggedInCache,
   removeParlaySlipFromCache,
   upsertParlaySlipCache,
 } from "@/lib/parlay-slip-cache";
 import type {
-  Balance,
-  Bet,
   BetCreate,
-  BetResult,
   BetUpdate,
-  BoardPromosResponse,
+  BetResult,
+  PlayerPropBoardItem,
+  PlayerPropBoardPageResponse,
+  PlayerPropBoardPickEmCard,
   ParlaySlip,
   ParlaySlipCreate,
   ParlaySlipLogRequest,
   ParlaySlipUpdate,
-  PlayerPropBoardDetail,
-  PlayerPropBoardItem,
-  PlayerPropBoardPageResponse,
-  PlayerPropBoardPickEmCard,
   PromoType,
-  ScannerSurface,
   Settings,
-  OnboardingState,
-  Summary,
+  ScannerSurface,
   TransactionCreate,
 } from "@/lib/types";
-// BoardResponse / ScopedRefreshResponse used via api return types (inferred)
 
 // Query keys
 export const queryKeys = {
@@ -36,7 +30,10 @@ export const queryKeys = {
   summary: ["summary"] as const,
   backendReadiness: ["backend-readiness"] as const,
   operatorStatus: ["operator-status"] as const,
-  researchOpportunitySummary: ["research-opportunity-summary"] as const,
+  analyticsSummary: (windowDays: number) => ["analytics-summary", windowDays] as const,
+  analyticsUserDrilldown: (windowDays: number, maxUsers: number, timelineLimit: number) =>
+    ["analytics-user-drilldown", windowDays, maxUsers, timelineLimit] as const,
+  researchOpportunitySummary: (scope: "all" | "board_default") => ["research-opportunity-summary", scope] as const,
   modelCalibrationSummary: ["model-calibration-summary"] as const,
   pickEmResearchSummary: ["pickem-research-summary"] as const,
   parlaySlips: ["parlay-slips"] as const,
@@ -60,7 +57,6 @@ export const queryKeys = {
   ) => ["board_player_props", view, params] as const,
   boardPlayerPropDetail: (selectionKey: string, sportsbook: string) =>
     ["board_player_prop_detail", selectionKey, sportsbook] as const,
-  boardPromos: (limit: number) => ["board_promos", limit] as const,
 };
 
 function invalidateBetDerivedQueries(queryClient: QueryClient, betId?: string) {
@@ -75,136 +71,6 @@ function invalidateBetDerivedQueries(queryClient: QueryClient, betId?: string) {
 function invalidateTransactionDerivedQueries(queryClient: QueryClient) {
   queryClient.invalidateQueries({ queryKey: queryKeys.transactions });
   queryClient.invalidateQueries({ queryKey: queryKeys.balances });
-}
-
-type BetListFilters = {
-  sport?: string;
-  sportsbook?: string;
-  result?: BetResult;
-};
-
-let createBetInvalidateTimer: ReturnType<typeof setTimeout> | null = null;
-
-function roundTo(value: number, digits: number = 2) {
-  return Number(value.toFixed(digits));
-}
-
-function readBetListFilters(queryKey: readonly unknown[]): BetListFilters | null {
-  if (queryKey.length !== 2) return null;
-
-  const raw = queryKey[1];
-  if (raw == null) return {};
-  if (typeof raw !== "object" || Array.isArray(raw)) return null;
-
-  const candidate = raw as {
-    sport?: unknown;
-    sportsbook?: unknown;
-    result?: unknown;
-  };
-
-  return {
-    sport: typeof candidate.sport === "string" ? candidate.sport : undefined,
-    sportsbook: typeof candidate.sportsbook === "string" ? candidate.sportsbook : undefined,
-    result: typeof candidate.result === "string" ? (candidate.result as BetResult) : undefined,
-  };
-}
-
-function matchesBetListFilters(bet: Bet, filters: BetListFilters) {
-  if (filters.sport && bet.sport !== filters.sport) return false;
-  if (filters.sportsbook && bet.sportsbook !== filters.sportsbook) return false;
-  if (filters.result && bet.result !== filters.result) return false;
-  return true;
-}
-
-function applyCreatedBetToBetCaches(queryClient: QueryClient, createdBet: Bet) {
-  queryClient.setQueryData(queryKeys.bet(createdBet.id), createdBet);
-
-  for (const [queryKey, cached] of queryClient.getQueriesData<Bet[]>({ queryKey: queryKeys.bets })) {
-    if (!Array.isArray(queryKey) || !Array.isArray(cached)) continue;
-    const filters = readBetListFilters(queryKey);
-    if (filters === null || !matchesBetListFilters(createdBet, filters)) continue;
-
-    queryClient.setQueryData<Bet[]>(queryKey, (current) => {
-      if (!Array.isArray(current)) return current;
-      const withoutDuplicate = current.filter((bet) => bet.id !== createdBet.id);
-      return [createdBet, ...withoutDuplicate];
-    });
-  }
-}
-
-function applyCreatedBetToSummaryCache(queryClient: QueryClient, createdBet: Bet) {
-  queryClient.setQueryData<Summary>(queryKeys.summary, (current) => {
-    if (!current) return current;
-
-    const totalEv = roundTo(current.total_ev + createdBet.ev_total);
-    const totalRealProfit = current.total_real_profit;
-
-    return {
-      ...current,
-      total_bets: current.total_bets + 1,
-      pending_bets: createdBet.result === "pending" ? current.pending_bets + 1 : current.pending_bets,
-      total_ev: totalEv,
-      total_real_profit: totalRealProfit,
-      variance: roundTo(totalRealProfit - totalEv),
-      ev_by_sportsbook: {
-        ...current.ev_by_sportsbook,
-        [createdBet.sportsbook]: roundTo((current.ev_by_sportsbook[createdBet.sportsbook] ?? 0) + createdBet.ev_total),
-      },
-      ev_by_sport: {
-        ...current.ev_by_sport,
-        [createdBet.sport]: roundTo((current.ev_by_sport[createdBet.sport] ?? 0) + createdBet.ev_total),
-      },
-    };
-  });
-}
-
-function applyCreatedBetToBalancesCache(queryClient: QueryClient, createdBet: Bet) {
-  const pendingDelta = createdBet.result === "pending" && createdBet.promo_type !== "bonus_bet"
-    ? createdBet.stake
-    : 0;
-  if (pendingDelta === 0) return;
-
-  queryClient.setQueryData<Balance[]>(queryKeys.balances, (current) => {
-    if (!Array.isArray(current)) return current;
-
-    let found = false;
-    const next = current.map((balance) => {
-      if (balance.sportsbook !== createdBet.sportsbook) return balance;
-      found = true;
-      const pending = roundTo(balance.pending + pendingDelta);
-      return {
-        ...balance,
-        pending,
-        balance: roundTo(balance.net_deposits + balance.profit - pending),
-      };
-    });
-
-    if (!found) {
-      next.push({
-        sportsbook: createdBet.sportsbook,
-        deposits: 0,
-        withdrawals: 0,
-        net_deposits: 0,
-        profit: 0,
-        pending: roundTo(pendingDelta),
-        balance: roundTo(-pendingDelta),
-      });
-      next.sort((a, b) => a.sportsbook.localeCompare(b.sportsbook));
-    }
-
-    return next;
-  });
-}
-
-function scheduleCreateBetRevalidation(queryClient: QueryClient, betId: string) {
-  if (createBetInvalidateTimer) {
-    clearTimeout(createBetInvalidateTimer);
-  }
-
-  createBetInvalidateTimer = setTimeout(() => {
-    invalidateBetDerivedQueries(queryClient, betId);
-    createBetInvalidateTimer = null;
-  }, 1200);
 }
 
 // ============ Bets Hooks ============
@@ -234,10 +100,21 @@ export function useCreateBet() {
   return useMutation({
     mutationFn: (bet: BetCreate) => api.createBet(bet),
     onSuccess: (createdBet) => {
-      applyCreatedBetToBetCaches(queryClient, createdBet);
-      applyCreatedBetToSummaryCache(queryClient, createdBet);
-      applyCreatedBetToBalancesCache(queryClient, createdBet);
-      scheduleCreateBetRevalidation(queryClient, createdBet.id);
+      const route = typeof window !== "undefined" ? window.location.pathname : "/";
+      const betId = typeof createdBet?.id === "string" ? createdBet.id : null;
+      void sendAnalyticsEvent({
+        eventName: "bet_logged",
+        route,
+        appArea: "tracker",
+        properties: {
+          sport: createdBet?.sport,
+          market: createdBet?.market,
+          sportsbook: createdBet?.sportsbook,
+        },
+        ...(betId ? { dedupeKey: `bet-logged:${betId}` } : {}),
+      });
+
+      invalidateBetDerivedQueries(queryClient);
     },
   });
 }
@@ -328,39 +205,63 @@ export function useOperatorStatus() {
   });
 }
 
-export function useResearchOpportunitySummary(filters?: {
-  model_version?: string;
-  capture_class?: string;
-  cohort_mode?: string;
-}) {
+export function useAnalyticsSummary(windowDays: number = 7) {
   return useQuery({
-    queryKey: [
-      ...queryKeys.researchOpportunitySummary,
-      filters?.model_version ?? null,
-      filters?.capture_class ?? null,
-      filters?.cohort_mode ?? null,
-    ],
-    queryFn: () => api.getResearchOpportunitySummary(filters),
+    queryKey: queryKeys.analyticsSummary(windowDays),
+    queryFn: () => api.getAnalyticsSummary(windowDays),
     refetchInterval: 60_000,
     staleTime: 30_000,
     retry: 1,
   });
 }
 
-export function useModelCalibrationSummary() {
+export function useAnalyticsUserDrilldown(
+  windowDays: number = 7,
+  maxUsers: number = 25,
+  timelineLimit: number = 12,
+) {
+  return useQuery({
+    queryKey: queryKeys.analyticsUserDrilldown(windowDays, maxUsers, timelineLimit),
+    queryFn: () => api.getAnalyticsUserDrilldown(windowDays, maxUsers, timelineLimit),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    retry: 1,
+  });
+}
+
+export function useResearchOpportunitySummary(options?: {
+  enabled?: boolean;
+  scope?: "all" | "board_default";
+}) {
+  const enabled = options?.enabled ?? true;
+  const scope = options?.scope ?? "all";
+
+  return useQuery({
+    queryKey: queryKeys.researchOpportunitySummary(scope),
+    queryFn: () => api.getResearchOpportunitySummary({ scope }),
+    enabled,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    retry: 1,
+  });
+}
+
+export function useModelCalibrationSummary(enabled: boolean = true) {
   return useQuery({
     queryKey: queryKeys.modelCalibrationSummary,
     queryFn: api.getModelCalibrationSummary,
+    enabled,
     refetchInterval: 60_000,
     staleTime: 30_000,
     retry: 1,
   });
 }
 
-export function usePickEmResearchSummary() {
+export function usePickEmResearchSummary(enabled: boolean = true) {
   return useQuery({
     queryKey: queryKeys.pickEmResearchSummary,
     queryFn: api.getPickEmResearchSummary,
+    enabled,
     refetchInterval: 60_000,
     staleTime: 30_000,
     retry: 1,
@@ -436,13 +337,10 @@ export function useLogParlaySlip() {
 
 // ============ Settings Hooks ============
 
-export function useSettings(enabled: boolean = true) {
-  const readiness = useBackendReadiness();
-  const backendOk = readiness.data?.status === "ready";
+export function useSettings() {
   return useQuery({
     queryKey: queryKeys.settings,
     queryFn: api.getSettings,
-    enabled: enabled && backendOk,
   });
 }
 
@@ -460,13 +358,10 @@ export function useUpdateSettings() {
   });
 }
 
-export function useOnboardingState(enabled: boolean = true) {
-  const readiness = useBackendReadiness();
-  const backendOk = readiness.data?.status === "ready";
-  return useQuery<OnboardingState>({
+export function useOnboardingState() {
+  return useQuery({
     queryKey: queryKeys.onboardingState,
     queryFn: api.getOnboardingState,
-    enabled: enabled && backendOk,
   });
 }
 
@@ -487,6 +382,7 @@ export function useApplyOnboardingEvent() {
     },
   });
 }
+
 // ============ EV Calculator Hook ============
 
 export function useEVCalculation(params: {
@@ -563,26 +459,21 @@ export function useDeleteTransaction() {
 
 // ============ Balances Hook ============
 
-export function useBalances(enabled: boolean = true) {
-  const readiness = useBackendReadiness();
-  const backendOk = readiness.data?.status === "ready";
+export function useBalances() {
   return useQuery({
     queryKey: queryKeys.balances,
     queryFn: api.getBalances,
-    enabled: enabled && backendOk,
   });
 }
 
 // ============ Board Hooks ============
 
-/** Load the canonical board snapshot. staleTime: Infinity — invalidated by Supabase realtime or explicit refresh. */
+/** Load the canonical board snapshot. staleTime: Infinity - invalidated by explicit refresh/realtime. */
 export function useBoard(enabled: boolean = true) {
-  const readiness = useBackendReadiness();
-  const backendOk = readiness.data?.status === "ready";
   return useQuery({
     queryKey: queryKeys.board,
     queryFn: api.getBoard,
-    enabled: enabled && backendOk,
+    enabled,
     staleTime: Infinity,
     gcTime: 60 * 60 * 1000,
     refetchOnMount: false,
@@ -593,12 +484,10 @@ export function useBoard(enabled: boolean = true) {
 }
 
 export function useBoardSurface(surface: ScannerSurface, enabled: boolean) {
-  const readiness = useBackendReadiness();
-  const backendOk = readiness.data?.status === "ready";
   return useQuery({
     queryKey: queryKeys.boardSurface(surface),
     queryFn: () => api.getBoardSurface(surface),
-    enabled: enabled && backendOk,
+    enabled,
     staleTime: Infinity,
     gcTime: 60 * 60 * 1000,
     refetchOnMount: false,
@@ -618,8 +507,6 @@ export function useInfiniteBoardPlayerPropsView(params: {
   tzOffsetMinutes: number;
   enabled: boolean;
 }) {
-  const readiness = useBackendReadiness();
-  const backendOk = readiness.data?.status === "ready";
   const queryParams = {
     pageSize: params.pageSize,
     books: [...params.books].sort(),
@@ -628,6 +515,7 @@ export function useInfiniteBoardPlayerPropsView(params: {
     search: params.search,
     tzOffsetMinutes: params.tzOffsetMinutes,
   };
+
   return useInfiniteQuery<
     PlayerPropBoardPageResponse<PlayerPropBoardItem> | PlayerPropBoardPageResponse<PlayerPropBoardPickEmCard> | null
   >({
@@ -650,7 +538,7 @@ export function useInfiniteBoardPlayerPropsView(params: {
       if (!lastPage?.has_more) return undefined;
       return allPages.length + 1;
     },
-    enabled: params.enabled && backendOk,
+    enabled: params.enabled,
     staleTime: Infinity,
     gcTime: 60 * 60 * 1000,
     placeholderData: (previousData) => previousData,
@@ -660,49 +548,3 @@ export function useInfiniteBoardPlayerPropsView(params: {
     retry: 0,
   });
 }
-
-export function useBoardPromos(limit: number, enabled: boolean = true) {
-  const readiness = useBackendReadiness();
-  const backendOk = readiness.data?.status === "ready";
-  return useQuery<BoardPromosResponse>({
-    queryKey: queryKeys.boardPromos(limit),
-    queryFn: () => api.getBoardPromos(limit),
-    enabled: enabled && backendOk,
-    staleTime: Infinity,
-    gcTime: 60 * 60 * 1000,
-    refetchOnMount: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    retry: 0,
-  });
-}
-
-export function useBoardPlayerPropDetail(
-  selectionKey: string,
-  sportsbook: string,
-  enabled: boolean = true,
-) {
-  const readiness = useBackendReadiness();
-  const backendOk = readiness.data?.status === "ready";
-  return useQuery<PlayerPropBoardDetail>({
-    queryKey: queryKeys.boardPlayerPropDetail(selectionKey, sportsbook),
-    queryFn: () => api.getBoardPlayerPropDetail({ selectionKey, sportsbook }),
-    enabled: enabled && backendOk && !!selectionKey && !!sportsbook,
-    staleTime: Infinity,
-    gcTime: 60 * 60 * 1000,
-    refetchOnMount: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    retry: 0,
-  });
-}
-
-/** Scoped manual refresh - does NOT overwrite the canonical board:latest. */
-export function useRefreshBoard() {
-  return useMutation({
-    mutationFn: (scope: ScannerSurface) => api.refreshBoard(scope),
-  });
-}
-
-
-

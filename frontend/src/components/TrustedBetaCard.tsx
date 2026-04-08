@@ -3,6 +3,7 @@
 import { ExternalLink, MessageSquare, ShieldCheck } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { sendAnalyticsEvent } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 
 const DISCORD_INVITE_URL = process.env.NEXT_PUBLIC_DISCORD_INVITE_URL?.trim() || "";
@@ -47,7 +48,21 @@ export function TrustedBetaCard({ className, compact = false }: TrustedBetaCardP
         <div className="flex flex-wrap items-center gap-2">
           {hasInvite ? (
             <Button asChild size="sm">
-              <a href={DISCORD_INVITE_URL} target="_blank" rel="noreferrer">
+              <a
+                href={DISCORD_INVITE_URL}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => {
+                  void sendAnalyticsEvent({
+                    eventName: "feedback_submitted",
+                    route: window.location.pathname,
+                    appArea: "feedback",
+                    properties: {
+                      channel: "discord",
+                    },
+                  });
+                }}
+              >
                 <MessageSquare className="mr-1.5 h-4 w-4" />
                 Join Beta Discord
                 <ExternalLink className="ml-1.5 h-3.5 w-3.5" />

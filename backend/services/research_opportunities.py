@@ -716,6 +716,7 @@ def get_research_opportunities_summary(
     model_version: str | None = None,
     capture_class: str | None = None,
     cohort_mode: str | None = None,
+    scope: str | None = None,
 ) -> ResearchOpportunitySummaryResponse:
     normalized_model_version = (model_version or "").strip().lower()
     if not normalized_model_version or normalized_model_version == "all":
@@ -745,6 +746,14 @@ def get_research_opportunities_summary(
             selected_cohort_mode = None
     else:
         selected_cohort_mode = None
+
+    normalized_scope = (scope or "").strip().lower()
+    if not normalized_scope or normalized_scope == "all":
+        normalized_scope = "all"
+    elif normalized_scope in {"displayed", "displayed_set", "board_default"}:
+        normalized_scope = "board_default"
+    else:
+        normalized_scope = "all"
 
     def _derive_model_version(source: str | None) -> str:
         s = (source or "").strip().lower()
@@ -857,6 +866,10 @@ def get_research_opportunities_summary(
 
     if normalized_capture_class is not None:
         rows = [row for row in rows if row.get("_capture_class") == normalized_capture_class]
+
+    # Mirror the default Opportunities board guardrail (displayed lines only).
+    if normalized_scope == "board_default":
+        rows = [row for row in rows if (_coerce_float(row.get("first_ev_percentage")) or 0.0) > 1.0]
 
     cohort_trend: list[ResearchOpportunityCohortTrendRow] = []
     selected_cohort_key: str | None = None

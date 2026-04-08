@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { sendAnalyticsEvent } from "@/lib/analytics";
 import { createClient } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,7 +29,17 @@ export default function LoginPage() {
       if (isSignUp) {
         const { error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
-        setMessage("Check your email for a confirmation link.");
+        void sendAnalyticsEvent({
+          eventName: "signup_completed",
+          route: "/login",
+          appArea: "auth",
+          properties: {
+            method: "email_password",
+          },
+        });
+        setMessage(
+          "Your beta account is ready. No email confirmation is required during private beta. Please use a real email for support, updates, and password recovery."
+        );
       } else {
         const { error } = await supabase.auth.signInWithPassword({
           email,

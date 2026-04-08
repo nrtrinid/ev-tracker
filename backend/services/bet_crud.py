@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 from fastapi import HTTPException
 
+from services.analytics_events import capture_backend_event
 from calculations import (
     american_to_decimal,
     calculate_clv,
@@ -429,7 +430,7 @@ def build_bet_response(row: dict, k_factor: float) -> BetResponse:
 
 # ── Bet CRUD implementations ──────────────────────────────────────────────────
 
-def create_bet_impl(db, user: dict, bet: BetCreate) -> BetResponse:
+def create_bet_impl(db, user: dict, bet: BetCreate, session_id: str | None = None) -> BetResponse:
     settings = get_user_settings(db, user["id"])
 
     data = {
@@ -474,6 +475,18 @@ def create_bet_impl(db, user: dict, bet: BetCreate) -> BetResponse:
     )
 
     if not result.data:
+        capture_backend_event(
+            db,
+            event_name="bet_log_failed",
+            user_id=str(user.get("id") or ""),
+            session_id=session_id,
+            properties={
+                "route": "/bets",
+                "app_area": "tracker",
+                "failure_stage": "insert_empty",
+            },
+            dedupe_key=f"bet-log-failed:{user.get('id')}:{get_request_id()}",
+        )
         raise HTTPException(status_code=500, detail="Failed to create bet")
 
     row = result.data[0]
@@ -485,6 +498,20 @@ def create_bet_impl(db, user: dict, bet: BetCreate) -> BetResponse:
         duration_ms=round((time.monotonic() - started_at) * 1000, 2),
         sportsbook=row.get("sportsbook"),
         sport=row.get("sport"),
+    )
+    capture_backend_event(
+        db,
+        event_name="bet_logged",
+        user_id=str(user.get("id") or ""),
+        session_id=session_id,
+        properties={
+            "route": "/bets",
+            "app_area": "tracker",
+            "sport": row.get("sport"),
+            "market": row.get("market"),
+            "sportsbook": row.get("sportsbook"),
+        },
+        dedupe_key=f"bet-logged:{row.get('id')}",
     )
     return build_bet_response(row, settings["k_factor"])
 

@@ -1,10 +1,11 @@
 import time
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 
 from dependencies import require_scan_rate_limit
 from models import FullScanResponse, ScanResponse
+from services.analytics_events import capture_backend_event
 from services.scan_cache import (
     DEFAULT_SURFACE,
     resolve_scan_latest_response,
@@ -16,6 +17,7 @@ from services.scan_markets import (
     run_single_sport_manual_scan,
     scan_exception_to_http_exception,
 )
+from utils.request_context import get_request_id
 
 
 router = APIRouter()
@@ -51,6 +53,7 @@ async def scan_markets_impl(
     surface: str,
     sport: str | None,
     user: dict,
+    session_id: str | None = None,
     get_db,
     supported_sports: list[str],
     get_cached_or_scan,
@@ -216,6 +219,20 @@ async def scan_markets_impl(
         )
         return _finalize_manual_scan_bundle(all_sports)
     except Exception as e:
+        capture_backend_event(
+            db,
+            event_name="scanner_failed",
+            user_id=str(user.get("id") or ""),
+            session_id=session_id,
+            properties={
+                "route": "/api/scan-markets",
+                "app_area": "scanner",
+                "surface": surface,
+                "requested_sport": sport,
+                "error_type": type(e).__name__,
+            },
+            dedupe_key=f"scanner-failed:{scan_session_id}:{get_request_id()}",
+        )
         raise map_error(e)
 
 
@@ -272,6 +289,7 @@ async def scan_markets(
     sport: str | None = None,
     surface: str = DEFAULT_SURFACE,
     user: dict = Depends(require_scan_rate_limit),
+    session_id: str | None = Header(default=None, alias="X-Session-ID"),
 ):
     import main
 
@@ -279,6 +297,7 @@ async def scan_markets(
         surface=surface,
         sport=sport,
         user=user,
+        session_id=session_id,
         get_db=main.get_db,
         supported_sports=main._scanner_supported_sports(surface),
         get_cached_or_scan=lambda sport_key, source="manual_scan": main._get_cached_or_scan_for_surface(surface, sport_key, source=source),

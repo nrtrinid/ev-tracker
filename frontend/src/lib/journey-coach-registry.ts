@@ -99,7 +99,7 @@ const JOURNEY_COACH_CANDIDATES: readonly JourneyCoachCandidateDefinition[] = [
       body: "No auto-redirect. Tap the highlighted Bets button in the nav to continue the final step there.",
       steps: [
         { label: "Start Tutorial", complete: true, active: false },
-        { label: "Practice Place", complete: true, active: false },
+        { label: "Practice Log", complete: true, active: false },
         { label: "Review in Bets", complete: false, active: true },
       ],
       detailTitle: context.tutorialPracticeBet!.event,
@@ -125,7 +125,7 @@ const JOURNEY_COACH_CANDIDATES: readonly JourneyCoachCandidateDefinition[] = [
       body: "Review your local practice ticket below, then tap Finish Tutorial when you are ready.",
       steps: [
         { label: "Start Tutorial", complete: true, active: false },
-        { label: "Practice Place", complete: true, active: false },
+        { label: "Practice Log", complete: true, active: false },
         { label: "Review in Bets", complete: false, active: true },
       ],
       detailTitle: context.tutorialPracticeBet!.event,
@@ -153,10 +153,10 @@ const JOURNEY_COACH_CANDIDATES: readonly JourneyCoachCandidateDefinition[] = [
       persistStep: ONBOARDING_STEPS.TUTORIAL_SCANNER_STRAIGHT_BETS,
       eyebrow: "Daily Drops Tutorial",
       title: context.tutorialHasSeededScan
-        ? "Step 2: Practice the place flow on simulated lines"
+        ? "Step 2: Open a practice log from a sample line"
         : "Step 1: Start the simulated Daily Drops tutorial",
       body: context.tutorialHasSeededScan
-        ? "Use one sample line below. The place flow is simulated, no real sportsbook links or live odds are used."
+        ? "Use one sample line below. Normally you would place at the book first; for this walkthrough you can jump straight into Practice Log."
         : "This walkthrough runs on a populated sample board so new users can learn safely without touching live lines.",
       steps: [
         {
@@ -165,7 +165,7 @@ const JOURNEY_COACH_CANDIDATES: readonly JourneyCoachCandidateDefinition[] = [
           active: !context.tutorialHasSeededScan,
         },
         {
-          label: "Practice Place",
+          label: "Practice Log",
           complete: false,
           active: context.tutorialHasSeededScan,
         },

@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { JourneyCoach } from "@/components/JourneyCoach";
 import { LogBetDrawer } from "@/components/LogBetDrawer";
 import { getLatestScan, scanMarkets } from "@/lib/api";
+import { sendAnalyticsEvent } from "@/lib/analytics";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
 import { useBalances, useBackendReadiness, useSettings, queryKeys } from "@/lib/hooks";
 import { hasUserFacingSyncIssue } from "@/lib/readiness-ui";
@@ -549,6 +550,16 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
     });
 
   const openLogDrawer = (betData: ScannedBetData, mode: "standard" | "tutorial_practice" = "standard") => {
+    void sendAnalyticsEvent({
+      eventName: "log_bet_opened",
+      route: "/scanner",
+      appArea: "scanner",
+      properties: {
+        surface,
+        drawer_mode: mode,
+        tutorial_mode: tutorialScannerActive,
+      },
+    });
     setDrawerInitialValues(betData);
     setDrawerMode(mode);
     setDrawerKey(Date.now());
@@ -732,6 +743,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
           onScan={handleScan}
           scanError={scanError}
           scanAgeMinutes={scanAgeMinutes}
+          scanCapturedAt={effectiveScanData?.scanned_at ?? null}
           eventsFetched={effectiveScanData?.events_fetched ?? 0}
           tutorialMode={tutorialScannerActive}
           showBackendHint={!tutorialScannerActive && showBackendHint}

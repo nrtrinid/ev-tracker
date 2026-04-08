@@ -218,7 +218,6 @@ export function OnboardingHighlightProvider({ children }: { children: ReactNode 
       {children}
       {state.target && spotlightStyle && (
         <div className="pointer-events-none fixed inset-0 z-[90]">
-          {!isNonModalTarget && <div className="absolute inset-0 bg-black/45" />}
           <div
             className="absolute rounded-xl border border-primary/70 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)] transition-all duration-200"
             style={

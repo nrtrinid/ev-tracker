@@ -445,12 +445,82 @@ class FullScanResponse(BaseModel):
     prizepicks_cards: list[PrizePicksComparisonCard] | None = None
 
 
+class BoardSnapshotMeta(BaseModel):
+    """Metadata for the canonical board snapshot."""
+
+    snapshot_id: str
+    snapshot_type: Literal["scheduled", "manual"]
+    scanned_at: str
+    surfaces_included: list[ScannerSurface]
+    sports_included: list[str]
+    next_scheduled_drop: str | None = None
+    events_scanned: int
+    total_sides: int
+    degraded: bool = False
+
+
+class BoardResponse(BaseModel):
+    """Canonical board payload combining straight bets and player props."""
+
+    meta: BoardSnapshotMeta
+    game_context: dict[str, Any] | None = None
+    straight_bets: FullScanResponse | None = None
+    player_props: FullScanResponse | None = None
+
+
+class PlayerPropBoardPageResponse(BaseModel):
+    """Paginated player-prop board response."""
+
+    items: list[dict[str, Any]]
+    page: int
+    page_size: int
+    total: int
+    source_total: int
+    has_more: bool
+    scanned_at: str | None = None
+    available_books: list[str] = Field(default_factory=list)
+    available_markets: list[str] = Field(default_factory=list)
+
+
+class PlayerPropBoardPickEmPageResponse(PlayerPropBoardPageResponse):
+    """Paginated player-prop pick'em board response."""
+
+
+class PlayerPropBoardDetail(BaseModel):
+    """Board detail lookup for a specific player-prop selection."""
+
+    selection_key: str
+    sportsbook: str
+    reference_bookmakers: list[str]
+    reference_bookmaker_count: int | None = None
+
+
+class ScopedRefreshResponse(BaseModel):
+    """Response for manual scoped board refresh."""
+
+    surface: ScannerSurface
+    refreshed_at: str
+    data: FullScanResponse
+
+
 class ResearchOpportunityBreakdownItem(BaseModel):
     """Aggregate summary row for research-opportunity breakdowns."""
 
     key: str
     captured_count: int
+    pending_close_count: int = 0
     clv_ready_count: int
+    valid_close_count: int = 0
+    invalid_close_count: int = 0
+    aggregate_status: Literal[
+        "not_captured",
+        "pending_close",
+        "invalid_only",
+        "pending_and_invalid",
+        "sample_too_small",
+        "aggregate_available",
+    ] = "not_captured"
+    suppressed_by_sample_size: bool = False
     beat_close_pct: float | None = None
     avg_clv_percent: float | None = None
 
@@ -482,6 +552,25 @@ class ResearchOpportunityRecentRow(BaseModel):
     reference_odds_at_close: float | None = None
     clv_ev_percent: float | None = None
     beat_close: bool | None = None
+    close_status: Literal["pending", "valid", "invalid"] = "pending"
+
+
+class ResearchOpportunityStatusBucket(BaseModel):
+    """Count and sample rows for a close-status bucket."""
+
+    status: Literal["pending", "valid", "invalid"]
+    count: int
+    sample: list[ResearchOpportunityRecentRow]
+
+
+class ResearchOpportunityCohortTrendRow(BaseModel):
+    """Trend snapshot for a daily research cohort."""
+
+    cohort_key: str
+    captured_count: int
+    valid_close_count: int
+    beat_close_pct: float | None = None
+    avg_clv_percent: float | None = None
 
 
 class ResearchOpportunitySummaryResponse(BaseModel):
@@ -490,7 +579,24 @@ class ResearchOpportunitySummaryResponse(BaseModel):
     captured_count: int
     open_count: int
     close_captured_count: int
+    pending_close_count: int = 0
+    valid_close_count: int = 0
+    invalid_close_count: int = 0
+    valid_close_coverage_pct: float | None = None
+    invalid_close_rate_pct: float | None = None
+    selected_cohort_key: str | None = None
+    cohort_trend: list[ResearchOpportunityCohortTrendRow] = Field(default_factory=list)
     clv_ready_count: int
+    aggregate_status: Literal[
+        "not_captured",
+        "pending_close",
+        "invalid_only",
+        "pending_and_invalid",
+        "sample_too_small",
+        "aggregate_available",
+    ] = "not_captured"
+    suppressed_by_sample_size: bool = False
+    min_valid_close_threshold: int = 10
     beat_close_pct: float | None = None
     avg_clv_percent: float | None = None
     by_surface: list[ResearchOpportunityBreakdownItem]
@@ -498,7 +604,171 @@ class ResearchOpportunitySummaryResponse(BaseModel):
     by_sportsbook: list[ResearchOpportunityBreakdownItem]
     by_edge_bucket: list[ResearchOpportunityBreakdownItem]
     by_odds_bucket: list[ResearchOpportunityBreakdownItem]
+    status_buckets: list[ResearchOpportunityStatusBucket] = Field(default_factory=list)
     recent_opportunities: list[ResearchOpportunityRecentRow]
+
+
+class ModelCalibrationBreakdownItem(BaseModel):
+    """Aggregate summary row for model-calibration breakdowns."""
+
+    key: str
+    captured_count: int
+    valid_close_count: int
+    paired_close_count: int
+    avg_brier_score: float | None = None
+    avg_log_loss: float | None = None
+    avg_clv_percent: float | None = None
+    beat_close_pct: float | None = None
+
+
+class ModelCalibrationCohortTrendRow(BaseModel):
+    """Trend row for model-calibration daily cohorts."""
+
+    cohort_key: str
+    captured_count: int
+    valid_close_count: int
+    avg_brier_score: float | None = None
+    avg_log_loss: float | None = None
+    avg_clv_percent: float | None = None
+    beat_close_pct: float | None = None
+
+
+class ModelCalibrationRecentComparisonRow(BaseModel):
+    """Recent baseline/candidate model comparison row."""
+
+    opportunity_key: str
+    surface: ScannerSurface = "player_props"
+    first_seen_at: datetime
+    sport: str
+    event: str
+    sportsbook: str
+    market: str
+    player_name: str | None = None
+    selection_side: str | None = None
+    line_value: float | None = None
+    close_quality: str | None = None
+    close_true_prob: float | None = None
+    baseline_model_key: str | None = None
+    baseline_true_prob: float | None = None
+    baseline_ev_percentage: float | None = None
+    baseline_clv_ev_percent: float | None = None
+    candidate_model_key: str | None = None
+    candidate_true_prob: float | None = None
+    candidate_ev_percentage: float | None = None
+    candidate_clv_ev_percent: float | None = None
+
+
+class ModelCalibrationReleaseGate(BaseModel):
+    """Release-gate verdict comparing candidate against baseline model."""
+
+    candidate_model_key: str
+    baseline_model_key: str
+    candidate_valid_close_count: int
+    baseline_valid_close_count: int
+    candidate_avg_brier_score: float | None = None
+    baseline_avg_brier_score: float | None = None
+    candidate_avg_log_loss: float | None = None
+    baseline_avg_log_loss: float | None = None
+    candidate_avg_clv_percent: float | None = None
+    baseline_avg_clv_percent: float | None = None
+    candidate_beat_close_pct: float | None = None
+    baseline_beat_close_pct: float | None = None
+    eligible: bool
+    passes: bool
+    reasons: list[str]
+
+
+class ModelCalibrationSummaryResponse(BaseModel):
+    """Operator summary for model-calibration diagnostics."""
+
+    captured_count: int
+    valid_close_count: int
+    paired_close_count: int
+    fallback_close_count: int
+    paired_close_pct: float | None = None
+    by_model: list[ModelCalibrationBreakdownItem]
+    by_market: list[ModelCalibrationBreakdownItem]
+    by_sportsbook: list[ModelCalibrationBreakdownItem]
+    by_interpolation_mode: list[ModelCalibrationBreakdownItem]
+    cohort_trend: list[ModelCalibrationCohortTrendRow]
+    recent_comparisons: list[ModelCalibrationRecentComparisonRow]
+    release_gate: ModelCalibrationReleaseGate
+
+
+class PickEmResearchBreakdownItem(BaseModel):
+    """Aggregate summary row for pick'em validation breakdowns."""
+
+    key: str
+    captured_count: int
+    close_ready_count: int
+    settled_count: int
+    decisive_count: int
+    push_count: int
+    expected_hit_rate_pct: float | None = None
+    actual_hit_rate_pct: float | None = None
+    hit_rate_delta_pct_points: float | None = None
+    avg_close_drift_pct_points: float | None = None
+    avg_close_edge_pct: float | None = None
+    avg_brier_score: float | None = None
+    avg_log_loss: float | None = None
+
+
+class PickEmResearchRecentRow(BaseModel):
+    """Recent pick'em observation row for validation checks."""
+
+    observation_key: str
+    comparison_key: str
+    first_seen_at: datetime
+    last_seen_at: datetime
+    sport: str
+    event: str
+    commence_time: str
+    market: str
+    player_name: str
+    selection_side: str
+    line_value: float
+    displayed_probability: float
+    fair_odds_american: float | None = None
+    books_matched_count: int
+    confidence_label: str | None = None
+    ev_basis: str
+    selected_sportsbook: str | None = None
+    selected_market_odds: float | None = None
+    projected_edge_pct: float | None = None
+    close_true_prob: float | None = None
+    close_quality: str | None = None
+    close_edge_pct: float | None = None
+    close_drift_pct_points: float | None = None
+    actual_result: Literal["win", "loss", "push"] | None = None
+    settled_at: datetime | None = None
+    calibration_bucket: str
+    first_source: str
+    surfaced_count: int
+
+
+class PickEmResearchSummaryResponse(BaseModel):
+    """Operator summary for pick'em research validation."""
+
+    captured_count: int
+    close_ready_count: int
+    settled_count: int
+    decisive_count: int
+    push_count: int
+    pending_result_count: int
+    avg_display_probability_pct: float | None = None
+    expected_hit_rate_pct: float | None = None
+    actual_hit_rate_pct: float | None = None
+    hit_rate_delta_pct_points: float | None = None
+    avg_close_probability_pct: float | None = None
+    avg_close_drift_pct_points: float | None = None
+    avg_close_edge_pct: float | None = None
+    avg_brier_score: float | None = None
+    avg_log_loss: float | None = None
+    by_probability_bucket: list[PickEmResearchBreakdownItem]
+    by_market: list[PickEmResearchBreakdownItem]
+    by_books_matched: list[PickEmResearchBreakdownItem]
+    by_ev_basis: list[PickEmResearchBreakdownItem]
+    recent_observations: list[PickEmResearchRecentRow]
 
 
 class ParlayWarning(BaseModel):

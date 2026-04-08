@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -14,6 +14,7 @@ import {
 import type { PickEmBoardCard } from "@/app/scanner/pickem-board";
 import { rankScannerSidesByLens, type RankedScannerSide } from "@/app/scanner/scanner-lenses";
 import { getBoardPlayerPropDetail } from "@/lib/api";
+import { sendAnalyticsEvent } from "@/lib/analytics";
 import {
   buildParlayCartLeg,
   buildParlayCartLegFromPickEmCard,
@@ -930,6 +931,29 @@ export default function MarketsPage() {
 
   const boardMeta = board?.meta;
   const isEmptyBoard = !boardMeta || boardMeta.snapshot_id === "none";
+  const boardViewedSnapshotRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const snapshotId = boardMeta?.snapshot_id;
+    if (!snapshotId || snapshotId === "none") {
+      return;
+    }
+    if (boardViewedSnapshotRef.current === snapshotId) {
+      return;
+    }
+    boardViewedSnapshotRef.current = snapshotId;
+
+    void sendAnalyticsEvent({
+      eventName: "board_viewed",
+      route: "/",
+      appArea: "markets",
+      properties: {
+        snapshot_id: snapshotId,
+        scanned_at: boardMeta?.scanned_at ?? null,
+      },
+      dedupeKey: `board-viewed:${snapshotId}`,
+    });
+  }, [boardMeta?.snapshot_id, boardMeta?.scanned_at]);
 
   const activePlayerPropsListPage = useMemo(() => {
     const data =
@@ -1502,6 +1526,16 @@ export default function MarketsPage() {
         kellyMultiplier,
         bankroll,
       });
+      void sendAnalyticsEvent({
+        eventName: "log_bet_opened",
+        route: "/",
+        appArea: "scanner",
+        properties: {
+          surface: actionSide.surface,
+          drawer_mode: tutorialBoardActive ? "tutorial_practice" : "standard",
+          tutorial_mode: tutorialBoardActive,
+        },
+      });
       setDrawerInitialValues(betData);
       setDrawerPracticeMode(tutorialBoardActive);
       setDrawerKey(Date.now());
@@ -1524,6 +1558,17 @@ export default function MarketsPage() {
 
   const handleReviewSavedCandidate = () => {
     if (!scannerReviewCandidate) return;
+    void sendAnalyticsEvent({
+      eventName: "log_bet_opened",
+      route: "/",
+      appArea: "scanner",
+      properties: {
+        surface: scannerReviewCandidate.surface,
+        drawer_mode: tutorialBoardActive ? "tutorial_practice" : "standard",
+        tutorial_mode: tutorialBoardActive,
+        source: "saved_candidate",
+      },
+    });
     setDrawerInitialValues(scannerReviewCandidate.bet);
     setDrawerPracticeMode(tutorialBoardActive);
     setDrawerKey(Date.now());

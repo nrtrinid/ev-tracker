@@ -1,19 +1,18 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, HelpCircle, RefreshCcw, XCircle } from "lucide-react";
 
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { useOperatorStatus, useResearchOpportunitySummary } from "@/lib/hooks";
+import { useAnalyticsSummary, useAnalyticsUserDrilldown, useOperatorStatus } from "@/lib/hooks";
 import type {
   OddsApiActivityCall,
   OddsApiActivityScanDetail,
   OddsApiActivityScanSession,
   OddsApiActivitySummary,
   OperatorStatusResponse,
-  ResearchOpportunityBreakdownItem,
-  ResearchOpportunityRecentRow,
 } from "@/lib/types";
 
 type HealthState = "healthy" | "warning" | "degraded" | "unknown";
@@ -117,23 +116,38 @@ function formatPercentValue(value: number | null | undefined, digits: number = 1
   return `${value.toFixed(digits)}%`;
 }
 
-function yesNoUnknown(value: boolean | undefined): string {
-  if (value === undefined) return "Unknown";
-  return value ? "Yes" : "No";
+function formatIsoWithRelative(value?: string | null): string {
+  if (!value) return "-";
+  const parsed = parseOpsTimestamp(value);
+  if (!parsed) return "-";
+  return `${parsed.toLocaleString()} (${formatRelativeTime(value)})`;
 }
 
-function normalizeSettleSource(source: string | undefined): "Scheduler" | "Cron" | "Manual" | "Unknown" {
-  if (!source) return "Unknown";
-  const normalized = source.trim().toLowerCase();
-  if (normalized === "scheduler") return "Scheduler";
-  if (normalized === "cron" || normalized === "ops_trigger") return "Manual";
-  if (normalized === "manual") return "Manual";
-  return "Unknown";
+function formatTutorialStatusLabel(value: string | null | undefined): string {
+  if (value === "completed") return "Completed";
+  if (value === "started") return "Started";
+  if (value === "skipped") return "Skipped";
+  return "Not started";
 }
 
-function schedulerFreshnessLabel(data: OperatorStatusResponse | undefined): string {
-  if (!data?.checks) return "Unknown";
-  return data.checks.scheduler_freshness ? "Fresh" : "Stale";
+function followUpTagClass(tag: string): string {
+  if (tag === "recent_failure") return "border-[#B85C38]/35 bg-[#B85C38]/12 text-[#8B3D20]";
+  if (tag === "stuck_pre_bet") return "border-[#C4A35A]/35 bg-[#C4A35A]/15 text-[#5C4D2E]";
+  if (tag === "inactive") return "border-border bg-muted/40 text-muted-foreground";
+  if (tag === "high_signal_tester") return "border-[#4A7C59]/35 bg-[#4A7C59]/12 text-[#2C5235]";
+  return "border-border bg-muted/20 text-muted-foreground";
+}
+
+function formatFollowUpTagLabel(tag: string): string {
+  if (tag === "recent_failure") return "Recent failure";
+  if (tag === "stuck_pre_bet") return "Stuck pre-bet";
+  if (tag === "inactive") return "Inactive";
+  if (tag === "high_signal_tester") return "High signal";
+  return "Active";
+}
+
+function formatAnalyticsEventLabel(eventName: string): string {
+  return eventName.replaceAll("_", " ");
 }
 
 function deriveScannerState(data: OperatorStatusResponse | undefined): HealthState {
@@ -144,10 +158,11 @@ function deriveScannerState(data: OperatorStatusResponse | undefined): HealthSta
   const schedulerAge = ageMinutes(scheduler?.finished_at || scheduler?.captured_at);
   const cronAge = ageMinutes(cron?.finished_at || cron?.captured_at);
   const manualAge = ageMinutes(manual?.captured_at);
-  const checks = data.checks;
+  const schedulerErrors = Number(scheduler?.hard_errors || 0);
+  const cronErrors = Number(cron?.error_count || 0);
 
-  if (checks && checks.scheduler_freshness === false) return "degraded";
   if (schedulerAge === null && cronAge === null && manualAge === null) return "unknown";
+  if (schedulerErrors > 0 || cronErrors > 0) return "warning";
   if ((schedulerAge !== null && schedulerAge > 180) || (cronAge !== null && cronAge > 180)) return "warning";
   if (manualAge !== null && manualAge > 180) return "warning";
   return "healthy";
@@ -177,15 +192,6 @@ function deriveSettlementState(data: OperatorStatusResponse | undefined): Health
   // A no_match-only run is common when no pending bets map to completed events yet.
   if (actionableSkips > 0) return "warning";
   if (skipCount > 0 && Number(skipTotals?.no_match || 0) !== skipCount) return "warning";
-  return "healthy";
-}
-
-function deriveReadinessState(data: OperatorStatusResponse | undefined): HealthState {
-  if (!data) return "unknown";
-  const checks = data.checks;
-  if (!checks) return "unknown";
-  if (checks.db_connectivity === false || checks.scheduler_freshness === false) return "degraded";
-  if (data.ops?.last_readiness_failure) return "warning";
   return "healthy";
 }
 
@@ -477,116 +483,25 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-function BreakdownChips({
-  title,
-  rows,
-}: {
-  title: string;
-  rows: ResearchOpportunityBreakdownItem[];
-}) {
-  return (
-    <div className="space-y-1.5">
-      <p className="text-xs text-muted-foreground">{title}</p>
-      {rows.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No data yet.</p>
-      ) : (
-        <div className="flex flex-wrap gap-1.5">
-          {rows.map((row) => (
-            <span key={`${title}-${row.key}`} className="rounded bg-muted px-2 py-1 text-[11px] font-mono">
-              {row.key}: {row.captured_count} captured | {formatPercentValue(row.beat_close_pct)}
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function formatAmericanOdds(value: number | null | undefined): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return "Unknown";
-  return value > 0 ? `+${value}` : String(value);
-}
-
-function formatMarketLabel(value?: string | null): string {
-  if (!value) return "Unknown market";
-  return value.replace(/_/g, " ");
-}
-
-function formatPropLine(value?: number | null): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return "";
-  return Number.isInteger(value) ? String(value) : String(value);
-}
-
-function formatResearchPrimaryLabel(row: ResearchOpportunityRecentRow): string {
-  if (row.surface === "player_props") {
-    const player = row.player_name || row.team || "Unknown player";
-    const side = row.selection_side ? row.selection_side.toLowerCase() : "line";
-    const line = formatPropLine(row.line_value);
-    const market = formatMarketLabel(row.market || row.source_market_key);
-    return `${player} ${side}${line ? ` ${line}` : ""} ${market} @ ${row.sportsbook}`;
-  }
-  return `${row.team} @ ${row.sportsbook}`;
-}
-
-function formatResearchCloseLabel(row: ResearchOpportunityRecentRow): string {
-  if (row.reference_odds_at_close === null || row.reference_odds_at_close === undefined) {
-    return "pending";
-  }
-  return formatAmericanOdds(row.reference_odds_at_close);
-}
-
-function ResearchRecentList({
-  title,
-  rows,
-}: {
-  title: string;
-  rows: ResearchOpportunityRecentRow[];
-}) {
-  if (rows.length === 0) return null;
-
-  return (
-    <div className="space-y-1.5">
-      <p className="text-xs text-muted-foreground">{title}</p>
-      <div className="space-y-1.5">
-        {rows.map((row) => (
-          <div key={row.opportunity_key} className="rounded border border-border/70 bg-muted/20 px-2 py-1.5 text-xs">
-            <p className="leading-relaxed">
-              {formatCompactTime(row.first_seen_at)} • {row.first_source} • {row.sport} • {formatResearchPrimaryLabel(row)}
-              {" • "}
-              EV {formatPercentValue(row.first_ev_percentage)}
-              {" • "}
-              Odds {formatAmericanOdds(row.first_book_odds)}
-              {" • "}
-              Close {formatResearchCloseLabel(row)}
-              {" • "}
-              CLV {formatPercentValue(row.clv_ev_percent)}
-            </p>
-            <p className="mt-1 text-[11px] text-muted-foreground">{row.event}</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 export function OpsDashboard() {
   const query = useOperatorStatus();
-  const researchQuery = useResearchOpportunitySummary();
+  const analyticsQuery = useAnalyticsSummary(7);
+  const analyticsUserQuery = useAnalyticsUserDrilldown(7, 25, 12);
   const [showAllOddsScans, setShowAllOddsScans] = useState(false);
   const [showAllOddsCalls, setShowAllOddsCalls] = useState(false);
   const queryErrorMessage = query.error instanceof Error ? query.error.message : null;
-  const researchErrorMessage = researchQuery.error instanceof Error ? researchQuery.error.message : null;
+  const analyticsErrorMessage = analyticsQuery.error instanceof Error ? analyticsQuery.error.message : null;
+  const analyticsUsersErrorMessage = analyticsUserQuery.error instanceof Error ? analyticsUserQuery.error.message : null;
+  const isAnyFetching = query.isFetching || analyticsQuery.isFetching || analyticsUserQuery.isFetching;
 
   const automationState = useMemo(() => deriveScannerState(query.data), [query.data]);
   const settlementState = useMemo(() => deriveSettlementState(query.data), [query.data]);
-  const readinessState = useMemo(() => deriveReadinessState(query.data), [query.data]);
   const oddsApiState = useMemo(() => deriveOddsApiState(query.data), [query.data]);
 
   const schedulerScan = query.data?.ops?.last_scheduler_scan;
   const cronScan = query.data?.ops?.last_ops_trigger_scan;
   const manualScan = query.data?.ops?.last_manual_scan;
   const autoSettle = query.data?.ops?.last_auto_settle;
-  const readinessFailure = query.data?.ops?.last_readiness_failure;
   const settleSummary = query.data?.ops?.last_auto_settle_summary;
   const oddsApiActivity = query.data?.ops?.odds_api_activity;
   const oddsFallback = useMemo(() => buildFallbackOddsActivity(query.data), [query.data]);
@@ -601,18 +516,14 @@ export function OpsDashboard() {
   const oddsCallsDefaultVisible = 4;
   const oddsVisibleScans = showAllOddsScans ? oddsRecentScans : oddsRecentScans.slice(0, oddsScansDefaultVisible);
   const oddsVisibleCalls = showAllOddsCalls ? oddsRecentCalls : oddsRecentCalls.slice(0, oddsCallsDefaultVisible);
-  const schedulerExpected = query.data?.runtime?.scheduler_expected;
+  const primaryScanMode = query.data?.runtime?.scheduler_expected === false ? "Ops trigger / manual" : "Scheduler";
   const noScanRunsYet = !schedulerScan && !cronScan && !manualScan;
   const noSettlementRunsYet = !autoSettle && !settleSummary;
 
   const skippedTotals = settleSummary?.skipped_totals || {};
   const skippedEntries = Object.entries(skippedTotals);
-  const settleSource = normalizeSettleSource(autoSettle?.source);
-  const fallbackAvailable = yesNoUnknown(query.data?.runtime?.cron_token_configured);
-  const research = researchQuery.data;
-  const recentResearch = research?.recent_opportunities ?? [];
-  const recentStraightResearch = recentResearch.filter((row) => row.surface !== "player_props");
-  const recentPropResearch = recentResearch.filter((row) => row.surface === "player_props");
+  const analytics = analyticsQuery.data;
+  const analyticsUsers = analyticsUserQuery.data;
 
   return (
     <main className="min-h-screen bg-background">
@@ -621,25 +532,31 @@ export function OpsDashboard() {
           <div>
             <h1 className="text-xl font-semibold">Operator Status</h1>
             <p className="text-sm text-muted-foreground mt-0.5">
-              Internal runtime and automation visibility for scanner and settlement health.
+              Focused health view for active scanner, settlement, odds, and beta-decision systems.
             </p>
             <p className="text-xs text-muted-foreground mt-1">
               Last snapshot: {formatTime(query.data?.timestamp)}
             </p>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              query.refetch();
-              researchQuery.refetch();
-            }}
-            disabled={query.isFetching || researchQuery.isFetching}
-          >
-            <RefreshCcw className={`h-4 w-4 mr-1.5 ${(query.isFetching || researchQuery.isFetching) ? "animate-spin" : ""}`} />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button asChild variant="outline" size="sm">
+              <Link href="/admin/ops/research">Research diagnostics</Link>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                query.refetch();
+                analyticsQuery.refetch();
+                analyticsUserQuery.refetch();
+              }}
+              disabled={isAnyFetching}
+            >
+              <RefreshCcw className={`h-4 w-4 mr-1.5 ${isAnyFetching ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+          </div>
         </div>
 
         {query.isError && (
@@ -657,23 +574,19 @@ export function OpsDashboard() {
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <h2 className="font-semibold">Automation Health</h2>
+                <h2 className="font-semibold">Scanner Automation</h2>
                 <StatusBadge state={automationState} />
               </div>
             </CardHeader>
             <CardContent className="space-y-2">
-              <Row label="Primary mode" value="Scheduler" />
-              <Row label="Last scheduler scan" value={formatTime(schedulerScan?.finished_at || schedulerScan?.captured_at)} />
-              <Row label="Scheduler freshness" value={schedulerFreshnessLabel(query.data)} />
-              <Row label="Last settle run" value={formatTime(autoSettle?.finished_at || autoSettle?.captured_at)} />
-              <Row label="Last settle source" value={settleSource} />
-
-              <div className="mt-3 rounded-md border border-border/60 bg-muted/30 p-2.5 space-y-1.5">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Fallback Trigger Path</p>
-                <Row label="Available" value={fallbackAvailable} />
-                <Row label="Last ops-triggered run" value={formatTime(cronScan?.finished_at || cronScan?.captured_at)} />
-                <p className="text-[11px] text-muted-foreground">Note: backup/manual use only</p>
-              </div>
+              <Row label="Primary mode" value={primaryScanMode} />
+              <Row label="Last scheduled scan" value={formatTime(schedulerScan?.finished_at || schedulerScan?.captured_at)} />
+              <Row label="Last ops-triggered scan" value={formatTime(cronScan?.finished_at || cronScan?.captured_at)} />
+              <Row label="Last manual scan" value={formatTime(manualScan?.captured_at)} />
+              <Row
+                label="Recent run errors"
+                value={String(Number(schedulerScan?.hard_errors || 0) + Number(cronScan?.error_count || 0))}
+              />
 
               {noScanRunsYet && (
                 <p className="text-xs text-muted-foreground pt-1">
@@ -716,41 +629,7 @@ export function OpsDashboard() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <h2 className="font-semibold">Readiness / Runtime Health</h2>
-                <StatusBadge state={readinessState} />
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <Row
-                label="DB connectivity"
-                value={query.data?.checks?.db_connectivity === undefined
-                  ? "Unknown"
-                  : query.data.checks.db_connectivity
-                    ? "OK"
-                    : "Failing"}
-              />
-              <Row
-                label="Scheduler freshness"
-                value={query.data?.checks?.scheduler_freshness === undefined
-                  ? "Unknown"
-                  : query.data.checks.scheduler_freshness
-                    ? "Fresh"
-                    : "Stale"}
-              />
-              <Row label="Environment" value={query.data?.runtime?.environment || "Unknown"} />
-              <Row label="Redis configured" value={yesNoUnknown(query.data?.runtime?.redis_configured)} />
-              {schedulerExpected === false && (
-                <p className="text-xs text-muted-foreground pt-1">
-                  Scheduler is disabled in this environment. Scan and settlement snapshots update when cron endpoints are called.
-                </p>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
+          <Card className="md:col-span-2">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <h2 className="font-semibold">Odds API Activity</h2>
@@ -919,88 +798,194 @@ export function OpsDashboard() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="md:col-span-2">
             <CardHeader className="pb-3">
-              <h2 className="font-semibold">Recent Failures / Warnings</h2>
+              <h2 className="font-semibold">Beta Analytics Summary (7d)</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Aggregate health snapshot for product decisions: counts, funnel rates, reliability, and return usage.
+              </p>
             </CardHeader>
-            <CardContent className="space-y-2">
-              <Row label="Last readiness failure" value={formatTime(readinessFailure?.captured_at)} />
-              <Row label="Last readiness DB error" value={readinessFailure?.db_error || "None"} />
-              <Row label="Auto-settle source" value={autoSettle?.source || "Unknown"} />
-              <Row label="Auto-settle run id" value={autoSettle?.run_id || "Unknown"} />
+            <CardContent className="space-y-3">
+              {analyticsQuery.isError ? (
+                <p className="text-sm text-muted-foreground">
+                  Analytics summary unavailable{analyticsErrorMessage ? `: ${analyticsErrorMessage}` : "."}
+                </p>
+              ) : (
+                <>
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Aggregate Counts</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Events</p>
+                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(analytics?.totals?.events)}</p>
+                    </div>
+                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Sessions</p>
+                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(analytics?.totals?.sessions)}</p>
+                    </div>
+                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Users</p>
+                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(analytics?.totals?.users)}</p>
+                    </div>
+                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Bet Logged</p>
+                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(analytics?.event_counts?.bet_logged)}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2 text-xs">
+                    <div className="rounded border border-border/60 bg-muted/15 px-2.5 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Funnel Rates</p>
+                      <p>
+                        Board -&gt; Log-open conversion: <span className="font-semibold">{formatPercentValue(analytics?.funnel?.board_to_log_open_rate_pct)}</span>
+                      </p>
+                      <p className="mt-1">
+                        Log-open -&gt; Bet-logged conversion: <span className="font-semibold">{formatPercentValue(analytics?.funnel?.log_open_to_bet_logged_rate_pct)}</span>
+                      </p>
+                    </div>
+                    <div className="rounded border border-border/60 bg-muted/15 px-2.5 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Reliability Signals</p>
+                      <p>
+                        Bet log failed rate: <span className="font-semibold">{formatPercentValue(analytics?.reliability?.bet_log_failed_rate_pct)}</span>
+                      </p>
+                      <p className="mt-1 text-muted-foreground">
+                        scanner_failed={scalarOrUnknown(analytics?.reliability?.scanner_failed)} | rate_limit_hit={scalarOrUnknown(analytics?.reliability?.rate_limit_hit)} | stale_data_banner_seen={scalarOrUnknown(analytics?.reliability?.stale_data_banner_seen)}
+                      </p>
+                    </div>
+                    <div className="rounded border border-border/60 bg-muted/15 px-2.5 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Return Usage</p>
+                      <p>
+                        Returning users: <span className="font-semibold">{scalarOrUnknown(analytics?.return_usage?.returning_users)}</span>
+                      </p>
+                      <p className="mt-1">
+                        Returning user rate: <span className="font-semibold">{formatPercentValue(analytics?.return_usage?.returning_user_rate_pct)}</span>
+                      </p>
+                      <p className="mt-1">
+                        Avg sessions per known user: <span className="font-semibold">{scalarOrUnknown(analytics?.return_usage?.avg_sessions_per_known_user)}</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <p className="text-xs text-muted-foreground">Key events</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      <span className="rounded bg-muted px-2 py-1 text-[11px] font-mono">signup_completed: {scalarOrUnknown(analytics?.event_counts?.signup_completed)}</span>
+                      <span className="rounded bg-muted px-2 py-1 text-[11px] font-mono">tutorial_started: {scalarOrUnknown(analytics?.event_counts?.tutorial_started)}</span>
+                      <span className="rounded bg-muted px-2 py-1 text-[11px] font-mono">board_viewed: {scalarOrUnknown(analytics?.event_counts?.board_viewed)}</span>
+                      <span className="rounded bg-muted px-2 py-1 text-[11px] font-mono">log_bet_opened: {scalarOrUnknown(analytics?.event_counts?.log_bet_opened)}</span>
+                      <span className="rounded bg-muted px-2 py-1 text-[11px] font-mono">feedback_submitted: {scalarOrUnknown(analytics?.event_counts?.feedback_submitted)}</span>
+                    </div>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
 
           <Card className="md:col-span-2">
             <CardHeader className="pb-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="font-semibold">Research Tracker</h2>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Fresh scanner opportunities captured into the internal research ledger.
-                  </p>
-                </div>
-                {research && (
-                  <span className="rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium">
-                    {research.captured_count} captured
-                  </span>
-                )}
-              </div>
+              <h2 className="font-semibold">User Drilldown (7d)</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Support view for beta follow-up: timeline, latest session, tutorial status, board/log/bet milestones, failures, and last seen.
+              </p>
             </CardHeader>
-            <CardContent className="space-y-4">
-              {researchQuery.isError ? (
+            <CardContent className="space-y-3">
+              {analyticsUserQuery.isError ? (
                 <p className="text-sm text-muted-foreground">
-                  Research summary unavailable{researchErrorMessage ? `: ${researchErrorMessage}` : "."}
+                  User drilldown unavailable{analyticsUsersErrorMessage ? `: ${analyticsUsersErrorMessage}` : "."}
                 </p>
               ) : (
                 <>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                     <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Captured</p>
-                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(research?.captured_count)}</p>
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Tracked users</p>
+                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(analyticsUsers?.totals?.tracked_users)}</p>
                     </div>
                     <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Open</p>
-                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(research?.open_count)}</p>
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Need follow-up</p>
+                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(analyticsUsers?.totals?.needs_follow_up)}</p>
                     </div>
                     <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Close Captured</p>
-                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(research?.close_captured_count)}</p>
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Stuck users</p>
+                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(analyticsUsers?.totals?.stuck_users)}</p>
                     </div>
                     <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">CLV Ready</p>
-                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(research?.clv_ready_count)}</p>
-                    </div>
-                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Beat Close</p>
-                      <p className="text-sm font-semibold mt-0.5">{formatPercentValue(research?.beat_close_pct)}</p>
-                    </div>
-                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Avg CLV</p>
-                      <p className="text-sm font-semibold mt-0.5">{formatPercentValue(research?.avg_clv_percent)}</p>
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Active 24h</p>
+                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(analyticsUsers?.totals?.active_last_24h)}</p>
                     </div>
                   </div>
 
-                  <BreakdownChips title="By Surface" rows={research?.by_surface ?? []} />
-                  <BreakdownChips title="By Source" rows={research?.by_source ?? []} />
-                  <BreakdownChips title="By Sportsbook" rows={research?.by_sportsbook ?? []} />
-                  <BreakdownChips title="By Edge Bucket" rows={research?.by_edge_bucket ?? []} />
-                  <BreakdownChips title="By Odds Bucket" rows={research?.by_odds_bucket ?? []} />
-
-                  <div className="space-y-1.5">
-                    <p className="text-xs text-muted-foreground">Recent opportunities</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      Close pending means the final reference is still waiting for the last 20-minute pregame window.
-                    </p>
-                    {recentResearch.length === 0 ? (
-                      <p className="text-xs text-muted-foreground">No captured opportunities yet.</p>
-                    ) : (
-                      <div className="space-y-3">
-                        <ResearchRecentList title="Straight Bets" rows={recentStraightResearch} />
-                        <ResearchRecentList title="Player Props" rows={recentPropResearch} />
+                  {!analyticsUsers?.users?.length ? (
+                    <p className="text-xs text-muted-foreground">No user activity captured in this window yet.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="hidden md:grid md:grid-cols-[1.5fr_1.2fr_1fr_1fr_0.7fr_0.8fr_1fr_1fr] gap-2 rounded border border-border/70 bg-muted/20 px-2.5 py-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+                        <span>User</span>
+                        <span>Last seen</span>
+                        <span>Tutorial</span>
+                        <span>First bet</span>
+                        <span>Sessions</span>
+                        <span>Bets</span>
+                        <span>Last error</span>
+                        <span>Follow-up tag</span>
                       </div>
-                    )}
-                  </div>
+
+                      {analyticsUsers.users.map((user) => (
+                        <details
+                          key={user.actor_key}
+                          className="rounded border border-border/70 bg-muted/10 px-2.5 py-2 text-xs [&_summary::-webkit-details-marker]:hidden"
+                        >
+                          <summary className="cursor-pointer list-none">
+                            <div className="md:grid md:grid-cols-[1.5fr_1.2fr_1fr_1fr_0.7fr_0.8fr_1fr_1fr] md:gap-2 space-y-1 md:space-y-0">
+                              <div>
+                                <p className="font-mono text-[11px] text-foreground">{user.user_label}</p>
+                                <p className="text-[11px] text-muted-foreground">{user.user_id ? "user_id" : "anonymous session"}</p>
+                              </div>
+                              <p className="text-[11px] text-muted-foreground">{formatIsoWithRelative(user.last_seen_at)}</p>
+                              <p className="text-[11px]">{formatTutorialStatusLabel(user.tutorial_status)}</p>
+                              <p className="text-[11px] text-muted-foreground">{user.first_bet_logged_at ? formatRelativeTime(user.first_bet_logged_at) : "-"}</p>
+                              <p className="text-[11px] font-mono">{user.total_sessions}</p>
+                              <p className="text-[11px] font-mono">{user.total_bets_logged}</p>
+                              <p className="text-[11px] text-muted-foreground">
+                                {user.last_error_event ? `${formatAnalyticsEventLabel(user.last_error_event)} (${formatRelativeTime(user.last_error_at)})` : "-"}
+                              </p>
+                              <div>
+                                <span className={`inline-flex rounded border px-1.5 py-0.5 text-[11px] ${followUpTagClass(user.follow_up_tag)}`}>
+                                  {formatFollowUpTagLabel(user.follow_up_tag)}
+                                </span>
+                              </div>
+                            </div>
+                          </summary>
+
+                          <div className="mt-2 border-t border-border/60 pt-2 space-y-1.5">
+                            <p className="text-[11px] text-muted-foreground">Follow-up reason: {user.follow_up_reason}</p>
+                            <p className="text-[11px] text-muted-foreground">
+                              Latest session: <span className="font-mono">{user.latest_session.session_id || "-"}</span> • events: {user.latest_session.event_count}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              Milestones: tutorial_started={formatRelativeTime(user.tutorial_started_at)} | tutorial_completed={formatRelativeTime(user.tutorial_completed_at)} | board_viewed={formatRelativeTime(user.first_board_view_at)} | log_open={formatRelativeTime(user.first_log_open_at)} | first_bet={formatRelativeTime(user.first_bet_logged_at)} | failures={user.failures_hit}
+                            </p>
+
+                            <div className="space-y-1">
+                              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Activity timeline</p>
+                              {user.timeline.length === 0 ? (
+                                <p className="text-[11px] text-muted-foreground">No timeline events in this window.</p>
+                              ) : (
+                                user.timeline.map((event, idx) => (
+                                  <div key={`${user.actor_key}-${event.captured_at}-${event.event_name}-${idx}`} className="rounded border border-border/60 bg-background/60 px-2 py-1 text-[11px]">
+                                    <span className="font-mono">{formatCompactTime(event.captured_at)}</span>
+                                    {" • "}
+                                    <span>{formatAnalyticsEventLabel(event.event_name)}</span>
+                                    {event.session_id ? <span>{` • session ${event.session_id}`}</span> : null}
+                                    {event.route ? <span>{` • ${event.route}`}</span> : null}
+                                    {event.is_failure ? <span className="text-[#8B3D20]"> • failure</span> : null}
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        </details>
+                      ))}
+                    </div>
+                  )}
                 </>
               )}
             </CardContent>

@@ -1,6 +1,6 @@
 from typing import Any, Callable
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 
 from dependencies import require_current_user
 from models import (
@@ -9,6 +9,8 @@ from models import (
     SettingsResponse,
     SettingsUpdate,
 )
+from services.analytics_events import capture_backend_event
+from utils.request_context import get_request_id
 from services.onboarding_state import (
     apply_onboarding_event as apply_onboarding_event_transition,
     is_valid_onboarding_event,
@@ -141,6 +143,7 @@ def apply_onboarding_event_impl(
     *,
     event: OnboardingEventRequest,
     user: dict,
+    session_id: str | None = None,
     get_db: Callable[[], Any],
     get_user_settings: Callable[[Any, str], dict],
     utc_now_iso: Callable[[], str],
@@ -179,6 +182,26 @@ def apply_onboarding_event_impl(
                 "updated_at": now_iso,
             }
         ).eq("user_id", user["id"]).execute()
+
+        analytics_event_name = None
+        if event.event == "complete_step":
+            analytics_event_name = "tutorial_step_completed"
+        elif event.event == "dismiss_step":
+            analytics_event_name = "tutorial_skipped"
+
+        if analytics_event_name:
+            capture_backend_event(
+                db,
+                event_name=analytics_event_name,
+                user_id=str(user.get("id") or ""),
+                session_id=session_id,
+                properties={
+                    "route": "/onboarding/events",
+                    "app_area": "tutorial",
+                    "step": event.step,
+                },
+                dedupe_key=f"onboarding:{event.event}:{event.step or 'none'}:{user.get('id')}:{get_request_id()}",
+            )
 
     return next_state
 
@@ -233,12 +256,14 @@ def get_onboarding_state(user: dict = Depends(require_current_user)):
 def apply_onboarding_event(
     event: OnboardingEventRequest,
     user: dict = Depends(require_current_user),
+    session_id: str | None = Header(default=None, alias="X-Session-ID"),
 ):
     import main
 
     return apply_onboarding_event_impl(
         event=event,
         user=user,
+        session_id=session_id,
         get_db=main.get_db,
         get_user_settings=main.get_user_settings,
         utc_now_iso=main._utc_now_iso,

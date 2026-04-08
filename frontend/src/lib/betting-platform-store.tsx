@@ -1,7 +1,8 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
+import { sendAnalyticsEvent } from "@/lib/analytics";
 
 import { isPickEmParlayLeg } from "@/lib/parlay-utils";
 import { sanitizeOnboardingSteps } from "@/lib/onboarding";
@@ -81,6 +82,7 @@ export function BettingPlatformProvider({ children }: { children: React.ReactNod
   const storageKey = `${STORAGE_KEY_PREFIX}:${user?.id ?? "guest"}`;
   const [state, setState] = useState<BettingPlatformState>(defaultState);
   const [isHydrated, setIsHydrated] = useState(false);
+  const lastTrackedTutorialStartRef = useRef<string | null>(null);
 
   const persistBettingPlatformState = useCallback((nextState: BettingPlatformState) => {
     if (typeof window === "undefined" || loading || !isHydrated) return;
@@ -129,6 +131,24 @@ export function BettingPlatformProvider({ children }: { children: React.ReactNod
     if (typeof window === "undefined") return;
     window.localStorage.setItem(storageKey, JSON.stringify(state));
   }, [isHydrated, loading, state, storageKey]);
+
+  useEffect(() => {
+    if (!isHydrated) return;
+    const startedAt = state.tutorialSession?.started_at ?? null;
+    if (!startedAt) return;
+    if (lastTrackedTutorialStartRef.current === startedAt) return;
+
+    lastTrackedTutorialStartRef.current = startedAt;
+    void sendAnalyticsEvent({
+      eventName: "tutorial_started",
+      route: "/scanner",
+      appArea: "tutorial",
+      properties: {
+        surface: state.tutorialSession?.surface ?? "straight_bets",
+      },
+      dedupeKey: `tutorial-started:${startedAt}`,
+    });
+  }, [isHydrated, state.tutorialSession?.started_at, state.tutorialSession?.surface]);
 
   const addCartLeg = useCallback((leg: ParlayCartLeg) => {
     let result: { added: boolean; reason?: string } = { added: true };
