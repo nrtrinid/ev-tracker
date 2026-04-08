@@ -3,6 +3,34 @@ import { calculateStealthStake, decimalToAmerican } from "@/lib/utils";
 
 import type { ScannerLens } from "./scanner-ui-model";
 
+type PickEmParlayCard = {
+  comparison_key: string;
+  event_id?: string | null;
+  sport: string;
+  event: string;
+  commence_time: string;
+  player_name: string;
+  participant_id?: string | null;
+  team?: string | null;
+  opponent?: string | null;
+  market_key: string;
+  market: string;
+  line_value?: number | null;
+  prizepicks_line?: number | null;
+  exact_line_bookmakers: string[];
+  exact_line_bookmaker_count: number;
+  consensus_over_prob: number;
+  consensus_under_prob: number;
+  consensus_side: "over" | "under";
+  confidence_label: string;
+  best_over_sportsbook?: string | null;
+  best_over_odds?: number | null;
+  best_over_deeplink_url?: string | null;
+  best_under_sportsbook?: string | null;
+  best_under_odds?: number | null;
+  best_under_deeplink_url?: string | null;
+};
+
 export function toggleScannerBookSelection(current: string[], book: string): string[] {
   if (current.includes(book)) {
     if (current.length === 1) {
@@ -186,6 +214,61 @@ export function buildParlayCartLeg(side: MarketSide): ParlayCartLeg {
       rawPinnacleOdds: side.pinnacle_odds,
       sportsbookDeeplinkUrl: side.sportsbook_deeplink_url,
       sportsbookDeeplinkLevel: side.sportsbook_deeplink_level,
+    },
+  };
+}
+
+export function buildParlayCartLegFromPickEmCard(card: PickEmParlayCard): ParlayCartLeg | null {
+  const isOver = card.consensus_side === "over";
+  const sportsbook = isOver ? card.best_over_sportsbook : card.best_under_sportsbook;
+  const oddsAmerican = isOver ? card.best_over_odds : card.best_under_odds;
+  const sportsbookDeeplinkUrl = isOver ? card.best_over_deeplink_url : card.best_under_deeplink_url;
+  if (!sportsbook || oddsAmerican == null || !Number.isFinite(oddsAmerican)) {
+    return null;
+  }
+
+  const selectionSide = isOver ? "over" : "under";
+  const selectionKey = `${card.comparison_key}:${selectionSide}`;
+  const lineValue = card.line_value ?? card.prizepicks_line ?? null;
+  const displayLine = lineValue == null ? "" : ` ${lineValue}`;
+  const trueProbability = isOver ? card.consensus_over_prob : card.consensus_under_prob;
+
+  return {
+    id: `pickem:${card.comparison_key}:${selectionSide}:${sportsbook}`,
+    surface: "player_props",
+    eventId: card.event_id ?? undefined,
+    marketKey: card.market_key,
+    selectionKey,
+    sportsbook,
+    oddsAmerican,
+    referenceOddsAmerican: null,
+    referenceTrueProbability: Number.isFinite(trueProbability) ? trueProbability : null,
+    referenceSource: "pickem_consensus",
+    display: `${card.player_name} ${selectionSide === "over" ? "Over" : "Under"}${displayLine}`,
+    event: card.event,
+    sport: card.sport,
+    commenceTime: card.commence_time,
+    correlationTags: [card.event_id ?? card.event, card.player_name, card.market_key],
+    team: card.team ?? undefined,
+    participantName: card.player_name,
+    participantId: card.participant_id ?? undefined,
+    selectionSide,
+    lineValue,
+    marketDisplay: card.market,
+    sourceEventId: card.event_id ?? undefined,
+    sourceMarketKey: card.market_key,
+    sourceSelectionKey: selectionKey,
+    selectionMeta: {
+      pickEmComparisonKey: card.comparison_key,
+      consensusSide: card.consensus_side,
+      consensusOverProb: card.consensus_over_prob,
+      consensusUnderProb: card.consensus_under_prob,
+      confidenceLabel: card.confidence_label,
+      exactLineBookmakers: card.exact_line_bookmakers,
+      exactLineBookmakerCount: card.exact_line_bookmaker_count,
+      opponent: card.opponent ?? null,
+      sportsbookDeeplinkUrl: sportsbookDeeplinkUrl ?? null,
+      sportsbookDeeplinkLevel: sportsbookDeeplinkUrl ? "selection" : null,
     },
   };
 }
