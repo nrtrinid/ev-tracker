@@ -5,7 +5,8 @@ import { useEffect } from "react";
 
 import { Button } from "@/components/ui/button";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
-import { useSettings, useUpdateSettings } from "@/lib/hooks";
+import { useApplyOnboardingEvent, useSettings } from "@/lib/hooks";
+import type { OnboardingStepId } from "@/lib/types";
 
 interface OnboardingBannerAction {
   label: string;
@@ -16,7 +17,7 @@ interface OnboardingBannerAction {
 }
 
 interface OnboardingBannerProps {
-  step: string;
+  step: OnboardingStepId;
   title: string;
   body: string;
   eyebrow?: string;
@@ -31,7 +32,7 @@ export function OnboardingBanner({
   action,
 }: OnboardingBannerProps) {
   const { data: settings } = useSettings();
-  const updateSettings = useUpdateSettings();
+  const applyOnboardingEvent = useApplyOnboardingEvent();
   const {
     isHydrated,
     onboardingCompleted,
@@ -54,32 +55,14 @@ export function OnboardingBanner({
     return null;
   }
 
-  const persist = (completed: string[], dismissed: string[]) => {
-    updateSettings.mutate({
-      onboarding_state: {
-        ...(settings?.onboarding_state ?? {}),
-        version: 1,
-        completed,
-        dismissed,
-        last_seen_at: new Date().toISOString(),
-      },
-    });
-  };
-
-  const appendUnique = (items: string[], value: string) => (
-    items.includes(value) ? items : [...items, value]
-  );
-
   const handleComplete = () => {
-    const completed = appendUnique(onboardingCompleted, step);
     markOnboardingCompleted(step);
-    persist(completed, onboardingDismissed);
+    applyOnboardingEvent.mutate({ event: "complete_step", step });
   };
 
   const handleDismiss = () => {
-    const dismissed = appendUnique(onboardingDismissed, step);
     dismissOnboardingStep(step);
-    persist(onboardingCompleted, dismissed);
+    applyOnboardingEvent.mutate({ event: "dismiss_step", step });
   };
 
   const handleAction = () => {

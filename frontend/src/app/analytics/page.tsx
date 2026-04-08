@@ -139,27 +139,29 @@ function SummaryCard({
   ariaLabel?: string;
   triggerTestId?: string;
 }) {
-  const card = (
-    <Card data-testid="summary-card" className="border-border/50">
-      <CardContent className="px-3 py-3">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-[11px] text-muted-foreground">{label}</p>
-          {affordance}
-        </div>
-        <p className={cn("mt-1.5 font-mono text-lg font-semibold tabular-nums leading-none", valueClass)}>
-          {value}
+  const inner = (
+    <CardContent className="px-3 py-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] text-muted-foreground">{label}</p>
+        {affordance}
+      </div>
+      <p className={cn("mt-1.5 font-mono text-lg font-semibold tabular-nums leading-none", valueClass)}>
+        {value}
+      </p>
+      {secondary ? (
+        <p className="mt-1.5 font-mono text-[11px] tabular-nums text-muted-foreground/70">
+          {secondary}
         </p>
-        {secondary ? (
-          <p className="mt-1.5 font-mono text-[11px] tabular-nums text-muted-foreground/70">
-            {secondary}
-          </p>
-        ) : null}
-      </CardContent>
-    </Card>
+      ) : null}
+    </CardContent>
   );
 
   if (!onClick) {
-    return card;
+    return (
+      <Card data-testid="summary-card" className="border-border/50">
+        {inner}
+      </Card>
+    );
   }
 
   return (
@@ -168,9 +170,14 @@ function SummaryCard({
       data-testid={triggerTestId}
       aria-label={ariaLabel ?? `${label} details`}
       onClick={onClick}
-      className="w-full rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background"
+      className="w-full rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background active:scale-[0.97] transition-transform duration-100"
     >
-      {card}
+      <Card
+        data-testid="summary-card"
+        className="border-border/50 transition-colors hover:border-border hover:bg-muted/20 active:bg-muted/30"
+      >
+        {inner}
+      </Card>
     </button>
   );
 }
@@ -344,7 +351,7 @@ function SourceBreakdownRow({
         href={href}
         data-testid="source-row"
         aria-label={`View ${label} bets`}
-        className="group block rounded border border-border/40 bg-background/30 px-3 py-3 transition-colors hover:border-border/70 hover:bg-muted/15"
+        className="group block rounded border border-border/40 bg-background/30 px-3 py-3 transition-colors hover:border-border/70 hover:bg-muted/15 active:scale-[0.98] active:bg-muted/25"
       >
         {inner}
       </Link>
@@ -621,7 +628,12 @@ function AnalyticsPageContent() {
                 onClick={() => setBankrollSheetOpen(true)}
                 ariaLabel="Open bankroll details"
                 triggerTestId="bankroll-summary-trigger"
-                affordance={<ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40" />}
+                affordance={
+                  <span className="flex items-center gap-0.5 rounded bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                    Details
+                    <ChevronRight className="h-3 w-3" />
+                  </span>
+                }
               />
               <SummaryCard
                 label="Bets Logged"
@@ -805,12 +817,20 @@ function AnalyticsPageContent() {
                 className="group rounded-md border border-border/70 bg-card animate-slide-up"
                 style={{ animationDelay: "220ms", animationFillMode: "both" }}
               >
-                <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3.5 select-none transition-colors hover:bg-muted/20">
+                <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-4 select-none rounded-md transition-colors hover:bg-muted/20 active:bg-muted/30 active:scale-[0.99]">
                   <div>
                     <span className="text-sm font-semibold text-foreground">Process Stats</span>
                     <p className="mt-0.5 text-[11px] text-muted-foreground">Advanced betting metrics</p>
                   </div>
-                  <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform duration-200 group-open:rotate-90" />
+                  <div className="flex items-center gap-2">
+                    <span className="rounded bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground group-open:hidden">
+                      Show
+                    </span>
+                    <span className="hidden rounded bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground group-open:inline">
+                      Hide
+                    </span>
+                    <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform duration-200 group-open:rotate-90" />
+                  </div>
                 </summary>
                 <div className="border-t border-border/60 px-4 py-2">
                   <div className="divide-y divide-border/40">

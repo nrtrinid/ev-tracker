@@ -9,7 +9,6 @@ interface SmartOddsInputProps {
   onChange: (value: string) => void;
   placeholder?: string;
   defaultSign?: "+" | "-";
-  americanOddsSeed?: number | null;
   inputRef?: React.RefObject<HTMLInputElement>;
   className?: string;
   label?: string;
@@ -18,7 +17,6 @@ interface SmartOddsInputProps {
 export interface SmartOddsInputRef {
   getSignedValue: () => number;
   isPositive: boolean;
-  focus: () => void;
 }
 
 export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>(
@@ -28,7 +26,6 @@ export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>
       onChange,
       placeholder = "150",
       defaultSign = "+",
-      americanOddsSeed = null,
       inputRef,
       className,
       label,
@@ -46,25 +43,24 @@ export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>
         return isPositive ? Math.abs(num) : -Math.abs(num);
       },
       isPositive,
-      focus: () => {
-        inputElementRef.current?.focus();
-      },
     }));
 
-    // Only infer sign when the parent gives us an explicitly signed value or when the field resets.
+    // Parse current value to extract sign and number on mount or when value changes from outside
     useEffect(() => {
-      const trimmedValue = value.trim();
-      if (trimmedValue.startsWith("-") || trimmedValue.startsWith("+")) {
-        setIsPositive(!trimmedValue.startsWith("-"));
-        onChange(trimmedValue.replace(/^[+-]/, ""));
-      } else {
-        if (typeof americanOddsSeed === "number" && americanOddsSeed !== 0) {
-          setIsPositive(americanOddsSeed >= 0);
-        } else {
-          setIsPositive(defaultSign === "+");
+      if (value) {
+        // If value already has sign, parse it
+        const num = parseFloat(value);
+        if (!isNaN(num) && num !== 0) {
+          setIsPositive(num >= 0);
+          // Store absolute value
+          if (num < 0) {
+            onChange(Math.abs(num).toString());
+          }
         }
+      } else {
+        setIsPositive(defaultSign === "+");
       }
-    }, [americanOddsSeed, defaultSign, onChange, value]);
+    }, [defaultSign, onChange, value]); // Add missing dependencies
 
     const handleToggleSign = () => {
       setIsPositive(!isPositive);
@@ -96,7 +92,7 @@ export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>
     };
 
     return (
-      <div className={cn("min-w-0 space-y-1.5", className)}>
+      <div className={cn("space-y-1.5", className)}>
         {label && (
           <label className="text-xs font-medium text-muted-foreground block">
             {label}
@@ -127,7 +123,7 @@ export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>
             value={value}
             onChange={handleInputChange}
             className={cn(
-              "min-w-0 h-12 text-lg font-mono text-center rounded-l-none border-l-0",
+              "h-12 text-lg font-mono text-center rounded-l-none border-l-0",
               className
             )}
           />

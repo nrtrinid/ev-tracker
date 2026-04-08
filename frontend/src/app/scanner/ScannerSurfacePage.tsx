@@ -379,18 +379,10 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
   const handleScan = async () => {
     if (cooldown > 0 || isRunningScan) return;
     if (tutorialScannerActive) {
-      if (tutorialSession?.step === "home_review") {
-        toast("Practice ticket ready on Home", {
-          description: "Use the Home prompt when you are ready to review and finish the tutorial.",
-        });
-        return;
-      }
+      if (tutorialSession?.step === "home_review") return;
       applyTutorialScannerDefaults();
       startTutorialSession(surface);
       markTutorialScanSeeded();
-      toast("Tutorial scan loaded", {
-        description: "Sample straight bets are ready. Pick one practice line and we will walk it back to Home.",
-      });
       return;
     }
     setIsRunningScan(true);
@@ -584,9 +576,11 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
       bet: betData,
       createdAt: new Date().toISOString(),
     });
-    toast("Step 2 of 3 saved", {
-      description: `Place it at ${side.sportsbook}, then come back here to review and log it.`,
-    });
+    if (!tutorialScannerActive) {
+      toast("Step 2 of 3 saved", {
+        description: `Place it at ${side.sportsbook}, then come back here to review and log it.`,
+      });
+    }
   };
 
   const handleReviewSavedCandidate = () => {
@@ -622,7 +616,9 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
       toast.error(msg);
       return;
     }
-    toast.success(`Added to parlay cart (${cart.length + 1})`);
+    if (!tutorialScannerActive) {
+      toast.success(`Added to parlay cart (${cart.length + 1})`);
+    }
   };
 
   const handleAddPickEmToSlip = (card: PickEmBoardCard) => {
@@ -653,9 +649,11 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
       (card.consensus_side === "over" ? card.consensus_over_prob : card.consensus_under_prob) * 100,
     );
     const sideLabel = card.consensus_side === "over" ? "Over" : "Under";
-    toast.success(`Added to parlay cart (${cart.length + 1})`, {
-      description: `${card.player_name} ${sideLabel} ${card.line_value} (${pct}%)`,
-    });
+    if (!tutorialScannerActive) {
+      toast.success(`Added to parlay cart (${cart.length + 1})`, {
+        description: `${card.player_name} ${sideLabel} ${card.line_value} (${pct}%)`,
+      });
+    }
   };
 
   return (

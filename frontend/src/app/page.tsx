@@ -1,11 +1,16 @@
 "use client";
 
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Clock, Gift, Layers, ShieldCheck, TrendingUp, Zap } from "lucide-react";
 
 import { ScannerResultsPane } from "@/app/scanner/components/ScannerResultsPane";
+import {
+  isStraightBetsTutorialActive,
+  STRAIGHT_BETS_TUTORIAL_SCAN,
+} from "@/app/scanner/scanner-tutorial";
 import type { PickEmBoardCard } from "@/app/scanner/pickem-board";
 import { rankScannerSidesByLens, type RankedScannerSide } from "@/app/scanner/scanner-lenses";
 import { getBoardPlayerPropDetail } from "@/lib/api";
@@ -17,11 +22,16 @@ import {
 } from "@/app/scanner/scanner-state-utils";
 import { canAddScannerLensToParlayCart } from "@/app/scanner/scanner-ui-model";
 import { classifyScannerNullState } from "@/lib/scanner-contract";
-import { useBoard, useBoardSurface, useBalances, useSettings, queryKeys, useInfiniteBoardPlayerPropsView } from "@/lib/hooks";
+import { useApplyOnboardingEvent, useBoard, useBoardSurface, useBalances, useSettings, queryKeys, useInfiniteBoardPlayerPropsView } from "@/lib/hooks";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
+import { getDailyDropWindowsLocal } from "@/lib/drop-windows";
 import { useKellySettings } from "@/lib/kelly-context";
+import { useOnboardingHighlight } from "@/lib/onboarding-highlight";
+import { ONBOARDING_HIGHLIGHT_TARGETS } from "@/lib/onboarding-guidance";
 import { createClient } from "@/lib/supabase";
+import { JourneyCoach } from "@/components/JourneyCoach";
 import { LogBetDrawer } from "@/components/LogBetDrawer";
+import { ONBOARDING_STEPS } from "@/lib/onboarding";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Sheet,
@@ -39,6 +49,7 @@ import type {
   PlayerPropMarketSide,
   ScanResult,
   ScannedBetData,
+  TutorialPracticeBet,
 } from "@/lib/types";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -681,13 +692,45 @@ function MarketsPaneSkeleton(props: {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function MarketsPage() {
+  const router = useRouter();
   const queryClient = useQueryClient();
+  const applyOnboardingEvent = useApplyOnboardingEvent();
+  const { highlight } = useOnboardingHighlight();
   const { data: board, isLoading: isBoardLoading, error: boardError } = useBoard();
   const { data: balances } = useBalances();
   useSettings(); // ensure settings are warmed in cache for LogBetDrawer
 
   const { useComputedBankroll, bankrollOverride, kellyMultiplier } = useKellySettings();
-  const { cart, addCartLeg } = useBettingPlatformStore();
+  const {
+    cart,
+    addCartLeg,
+    onboardingCompleted,
+    onboardingDismissed,
+    scannerReviewCandidate,
+    setScannerReviewCandidate,
+    clearScannerReviewCandidate,
+    tutorialSession,
+    saveTutorialPracticeBet,
+  } = useBettingPlatformStore();
+  const tutorialMode = isStraightBetsTutorialActive({
+    surface: "straight_bets",
+    completed: onboardingCompleted,
+    dismissed: onboardingDismissed,
+  });
+  const tutorialBoardActive = tutorialMode && Boolean(tutorialSession?.has_seeded_scan);
+  const [completionQueryFlag, setCompletionQueryFlag] = useState(false);
+  const [showCompletionCard, setShowCompletionCard] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const hasCompletionFlag = new URLSearchParams(window.location.search).get("onboarding") === "complete";
+    setCompletionQueryFlag(hasCompletionFlag);
+  }, []);
+
+  useEffect(() => {
+    if (!completionQueryFlag) return;
+    setShowCompletionCard(true);
+  }, [completionQueryFlag]);
 
   // ── UI state ─────────────────────────────────────────────────────────────
   const [primaryMode, setPrimaryMode] = useState<PrimaryMode>("player_props");
@@ -871,6 +914,7 @@ export default function MarketsPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerKey, setDrawerKey] = useState(0);
   const [drawerInitialValues, setDrawerInitialValues] = useState<ScannedBetData | undefined>();
+  const [drawerPracticeMode, setDrawerPracticeMode] = useState(false);
 
   // Pick'em slip state
   const [pickEmSlipKeys, setPickEmSlipKeys] = useState<string[]>([]);
@@ -969,6 +1013,12 @@ export default function MarketsPage() {
     }
 
     if (primaryMode === "straight_bets") {
+      if (tutorialBoardActive) {
+        return {
+          ...STRAIGHT_BETS_TUTORIAL_SCAN,
+          scanned_at: new Date().toISOString(),
+        };
+      }
       return straightSurface.data ?? null;
     }
 
@@ -990,6 +1040,7 @@ export default function MarketsPage() {
     boardMeta?.scanned_at,
     primaryMode,
     straightSurface.data,
+    tutorialBoardActive,
     viewMode,
   ]);
   const activeSurfaceError = useMemo(() => {
@@ -1047,6 +1098,8 @@ export default function MarketsPage() {
     return null;
   }, [boardMeta?.scanned_at]);
 
+  const dailyDropWindows = useMemo(() => getDailyDropWindowsLocal(), []);
+
   const nextDropLabel = useMemo(() => {
     try {
       const nextDropUtcMs = getNextPhoenixDropUtcMs(new Date());
@@ -1058,9 +1111,9 @@ export default function MarketsPage() {
       });
       return `Next scan: ${localTime}`;
     } catch {
-      return "Next scan: 10:30 AM / 3:30 PM";
+      return `Next scan: ${dailyDropWindows.localLabel}`;
     }
-  }, []);
+  }, [dailyDropWindows.localLabel]);
 
   const scanWindowLabel = useMemo(() => {
     const gc = board?.game_context as Record<string, unknown> | undefined;
@@ -1093,8 +1146,11 @@ export default function MarketsPage() {
     if (primaryMode === "player_props") {
       return (activePlayerPropsListPage?.items as MarketSide[]) ?? [];
     }
+    if (tutorialBoardActive) {
+      return (activeScanData?.sides as MarketSide[] | undefined) ?? [];
+    }
     return mergeMarketSides((activeScanData?.sides as MarketSide[] | undefined) ?? [], featuredDerivedSides);
-  }, [activePlayerPropsListPage?.items, activeScanData, featuredDerivedSides, primaryMode]);
+  }, [activePlayerPropsListPage?.items, activeScanData, featuredDerivedSides, primaryMode, tutorialBoardActive]);
 
   const activeLens = useMemo(() => {
     if (primaryMode !== "promos") return "standard";
@@ -1447,6 +1503,7 @@ export default function MarketsPage() {
         bankroll,
       });
       setDrawerInitialValues(betData);
+      setDrawerPracticeMode(tutorialBoardActive);
       setDrawerKey(Date.now());
       setDrawerOpen(true);
     })();
@@ -1456,6 +1513,86 @@ export default function MarketsPage() {
     queryClient.invalidateQueries({ queryKey: queryKeys.boardSurface("straight_bets") });
     queryClient.invalidateQueries({ queryKey: ["board_player_props"] });
     queryClient.invalidateQueries({ queryKey: ["board_promos"] });
+    clearScannerReviewCandidate();
+    if (tutorialMode) {
+      applyOnboardingEvent.mutate({
+        event: "complete_step",
+        step: ONBOARDING_STEPS.TUTORIAL_SCANNER_STRAIGHT_BETS,
+      });
+    }
+  };
+
+  const handleReviewSavedCandidate = () => {
+    if (!scannerReviewCandidate) return;
+    setDrawerInitialValues(scannerReviewCandidate.bet);
+    setDrawerPracticeMode(tutorialBoardActive);
+    setDrawerKey(Date.now());
+    setDrawerOpen(true);
+    window.setTimeout(() => {
+      highlight(ONBOARDING_HIGHLIGHT_TARGETS.DRAWER_SAVE_PRACTICE_TICKET);
+    }, 120);
+  };
+
+  const handlePracticeLogged = (bet: TutorialPracticeBet) => {
+    saveTutorialPracticeBet(bet);
+    clearScannerReviewCandidate();
+    setDrawerPracticeMode(false);
+  };
+
+  const handleDrawerOpenChange = (open: boolean) => {
+    setDrawerOpen(open);
+    if (!open) {
+      setDrawerPracticeMode(false);
+    }
+  };
+
+  const handleStartTutorial = () => {
+    setPrimaryMode("straight_bets");
+    setViewMode("opportunities");
+    setTimeFilter("today");
+    setSearchQuery("");
+  };
+
+  const handleDismissCompletionCard = () => {
+    setShowCompletionCard(false);
+    if (completionQueryFlag) {
+      router.replace("/", { scroll: false });
+    }
+  };
+
+  const handleStartPlaceFlow = (side: MarketSide) => {
+    void (async () => {
+      let actionSide = side;
+      if (side.surface === "player_props") {
+        try {
+          actionSide = await enrichPlayerPropSideForActions(side);
+        } catch {
+          toast.error("Could not load prop detail for the place flow.");
+          return;
+        }
+      }
+
+      const betData = buildScannerLogBetInitialValues({
+        side: actionSide,
+        activeLens,
+        boostPercent,
+        sportDisplayMap: SPORT_KEY_TO_DISPLAY,
+        kellyMultiplier,
+        bankroll,
+      });
+
+      setScannerReviewCandidate({
+        surface: actionSide.surface,
+        bet: betData,
+        createdAt: new Date().toISOString(),
+      });
+
+      if (!tutorialBoardActive) {
+        toast("Step 2 of 3 saved", {
+          description: `Place it at ${actionSide.sportsbook}, then come back to Markets and tap Review Saved Pick.`,
+        });
+      }
+    })();
   };
 
   const handleAddToCart = (side: MarketSide) => {
@@ -1484,7 +1621,9 @@ export default function MarketsPage() {
         toast.error(msg);
         return;
       }
-      toast.success(`Added to slip (${cart.length + 1} ${cart.length + 1 === 1 ? "leg" : "legs"})`);
+      if (!tutorialMode) {
+        toast.success(`Added to slip (${cart.length + 1} ${cart.length + 1 === 1 ? "leg" : "legs"})`);
+      }
     })();
   };
 
@@ -1516,15 +1655,53 @@ export default function MarketsPage() {
     const pct = Math.round(
       (card.consensus_side === "over" ? card.consensus_over_prob : card.consensus_under_prob) * 100,
     );
-    toast.success(`Added to slip (${cart.length + 1} ${cart.length + 1 === 1 ? "leg" : "legs"})`, {
-      description: `${card.player_name} ${sideLabel} ${card.line_value} (${pct}%)`,
-    });
+    if (!tutorialMode) {
+      toast.success(`Added to slip (${cart.length + 1} ${cart.length + 1 === 1 ? "leg" : "legs"})`, {
+        description: `${card.player_name} ${sideLabel} ${card.line_value} (${pct}%)`,
+      });
+    }
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="container mx-auto max-w-2xl space-y-3 px-4 py-4">
+
+      <JourneyCoach
+        route="home"
+        tutorialMode={tutorialMode}
+        onReviewScannerPick={handleReviewSavedCandidate}
+        onStartTutorial={handleStartTutorial}
+      />
+
+      {showCompletionCard && (
+        <div className="rounded-lg border border-sky-500/35 bg-sky-100/45 px-4 py-3 text-sm text-sky-950">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em]">Tutorial Complete</p>
+          <p className="mt-1 font-medium">You are all set. Good luck out there.</p>
+          <p className="mt-1 text-xs text-sky-900/85">
+            Your onboarding walkthrough is finished and you are now on the live Markets workflow.
+          </p>
+          <button
+            type="button"
+            className="mt-3 inline-flex h-9 items-center rounded-md border border-sky-700/25 bg-background/90 px-3 text-xs font-medium text-sky-900 transition-colors hover:bg-background"
+            onClick={handleDismissCompletionCard}
+          >
+            I&apos;m all set
+          </button>
+        </div>
+      )}
+
+      {tutorialBoardActive && primaryMode === "straight_bets" && (
+        <div className="rounded-lg border border-sky-400/45 bg-sky-100/40 px-4 py-3 text-sm text-sky-950">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em]">Simulated Daily Drops Board</p>
+          <p className="mt-1">
+            These lines are tutorial-only samples. No live odds, no real sportsbook deep links, and no real bet logging.
+          </p>
+          <p className="mt-1 text-xs text-sky-900/90">
+            Live board windows are {dailyDropWindows.mstLabel}, which is about {dailyDropWindows.localLabel} in your timezone.
+          </p>
+        </div>
+      )}
 
       {/* ── Board header ─────────────────────────────────────────── */}
       <div className="flex min-w-0 items-baseline justify-between gap-2 animate-slide-up" style={{ animationDelay: "0ms", animationFillMode: "both" }}>
@@ -1542,7 +1719,7 @@ export default function MarketsPage() {
           </p>
         ) : isEmptyBoard && !isBoardLoading ? (
           <p className="text-[11px] text-muted-foreground">
-            Scans ~10:30 AM / 3:30 PM AZ
+            Scans around {dailyDropWindows.localLabel}
           </p>
         ) : null}
       </div>
@@ -1954,7 +2131,7 @@ export default function MarketsPage() {
           <Layers className="mx-auto mb-3 h-8 w-8 text-muted-foreground/40" />
           <p className="text-sm font-medium text-foreground">No lines loaded yet</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Lines are loaded daily around 10:30 AM and 3:30 PM Arizona time.
+            Daily Drops post at {dailyDropWindows.mstLabel}, which is about {dailyDropWindows.localLabel} for you.
           </p>
         </div>
       )}
@@ -1982,6 +2159,7 @@ export default function MarketsPage() {
               surface={primaryMode === "player_props" ? "player_props" : "straight_bets"}
               playerPropsView={isPickEmView ? "pickem" : "sportsbooks"}
               activeLens={activeLens}
+              tutorialMode={tutorialBoardActive && primaryMode === "straight_bets"}
               results={results}
               pickemCards={isPickEmView ? visiblePickEmCards : []}
               sourceCount={sourceCount}
@@ -1998,7 +2176,7 @@ export default function MarketsPage() {
               onLoadMore={handleLoadMore}
               onLogBet={handleLogBet}
               onAddToCart={handleAddToCart}
-              onStartPlaceFlow={handleLogBet}
+              onStartPlaceFlow={handleStartPlaceFlow}
               onAddPickEmToSlip={handleAddPickEmToSlip}
               bookColors={BOOK_COLORS}
               sportDisplayMap={SPORT_KEY_TO_DISPLAY}
@@ -2143,8 +2321,10 @@ export default function MarketsPage() {
       <LogBetDrawer
         key={drawerKey}
         open={drawerOpen}
-        onOpenChange={setDrawerOpen}
+        onOpenChange={handleDrawerOpenChange}
         initialValues={drawerInitialValues}
+        practiceMode={drawerPracticeMode}
+        onPracticeLogged={handlePracticeLogged}
         onLogged={handleBetLogged}
       />
     </div>

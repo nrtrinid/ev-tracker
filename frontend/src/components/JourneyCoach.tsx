@@ -8,40 +8,18 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { STRAIGHT_BETS_TUTORIAL_STEP } from "@/app/scanner/scanner-tutorial";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
-import { useBets, useSettings, useUpdateSettings } from "@/lib/hooks";
-import type { ScannerSurface } from "@/lib/types";
+import { useApplyOnboardingEvent, useBets, useSettings } from "@/lib/hooks";
+import { useOnboardingHighlight } from "@/lib/onboarding-highlight";
+import { ONBOARDING_HIGHLIGHT_TARGETS } from "@/lib/onboarding-guidance";
+import {
+  selectJourneyCoachCandidate,
+  type JourneyCoachAction,
+  type JourneyCoachActionCommand,
+  type JourneyCoachRoute,
+  type JourneyCoachStep,
+} from "@/lib/journey-coach-registry";
+import type { OnboardingStepId, ScannerSurface } from "@/lib/types";
 import { cn } from "@/lib/utils";
-
-type JourneyCoachRoute = "home" | "scanner" | "parlay";
-
-interface JourneyCoachAction {
-  label: string;
-  href?: string;
-  onClick?: () => void;
-  variant?: "default" | "outline" | "secondary" | "ghost";
-  icon?: "arrow" | "check";
-  hideOnClick?: boolean;
-  completeStepOnClick?: boolean;
-}
-
-interface JourneyCoachStep {
-  label: string;
-  complete: boolean;
-  active: boolean;
-}
-
-interface JourneyCoachCandidate {
-  key: string;
-  persistStep?: string;
-  dismissStep?: string;
-  eyebrow: string;
-  title: string;
-  body: string;
-  actions?: JourneyCoachAction[];
-  steps?: JourneyCoachStep[];
-  detailTitle?: string;
-  detailBody?: string;
-}
 
 interface JourneyCoachProps {
   route: JourneyCoachRoute;
@@ -49,6 +27,8 @@ interface JourneyCoachProps {
   scannerDrawerOpen?: boolean;
   tutorialMode?: boolean;
   onReviewScannerPick?: () => void;
+  onStartTutorial?: () => void;
+  onFinishTutorial?: () => void;
 }
 
 function renderActionIcon(icon: JourneyCoachAction["icon"]) {
@@ -61,16 +41,29 @@ function renderActionIcon(icon: JourneyCoachAction["icon"]) {
   return null;
 }
 
+function getActionTarget(command?: JourneyCoachActionCommand) {
+  if (command === "start_tutorial") {
+    return ONBOARDING_HIGHLIGHT_TARGETS.COACH_START_WALKTHROUGH;
+  }
+  if (command === "review_scanner_pick") {
+    return ONBOARDING_HIGHLIGHT_TARGETS.COACH_REVIEW_SAVED_PICK;
+  }
+  return undefined;
+}
+
 export function JourneyCoach({
   route,
   scannerSurface,
   scannerDrawerOpen = false,
   tutorialMode = false,
   onReviewScannerPick,
+  onStartTutorial,
+  onFinishTutorial,
 }: JourneyCoachProps) {
   const { data: bets } = useBets();
   const { data: settings } = useSettings();
-  const updateSettings = useUpdateSettings();
+  const applyOnboardingEvent = useApplyOnboardingEvent();
+  const { highlight, clear: clearHighlight } = useOnboardingHighlight();
   const {
     isHydrated,
     cart,
@@ -80,6 +73,7 @@ export function JourneyCoach({
     onboardingDismissed,
     hydrateOnboarding,
     startTutorialSession,
+    markTutorialScanSeeded,
     clearTutorialSession,
     markOnboardingCompleted,
     dismissOnboardingStep,
@@ -92,292 +86,151 @@ export function JourneyCoach({
 
   const hasLoggedBet = (bets?.length ?? 0) > 0;
   const tutorialDismissed = onboardingDismissed.includes(STRAIGHT_BETS_TUTORIAL_STEP);
-  const activeScannerReviewCandidate =
-    route === "scanner" && scannerReviewCandidate?.surface === scannerSurface
-      ? scannerReviewCandidate
-      : null;
   const tutorialPracticeBet = tutorialSession?.practice_bet ?? null;
 
   const homeSteps = useMemo<JourneyCoachStep[]>(() => {
     const hasSavedScannerPick = Boolean(scannerReviewCandidate);
     return [
       {
-        label: "Find a play",
+        label: "Open Markets",
         complete: hasSavedScannerPick || hasLoggedBet,
         active: !hasSavedScannerPick && !hasLoggedBet,
       },
       {
-        label: "Place it",
+        label: "Place at Book",
         complete: hasSavedScannerPick || hasLoggedBet,
         active: hasSavedScannerPick,
       },
       {
-        label: "Log it",
+        label: "Review & Log",
         complete: hasLoggedBet && !hasSavedScannerPick,
         active: hasSavedScannerPick,
       },
     ];
   }, [hasLoggedBet, scannerReviewCandidate]);
 
-  const candidate = useMemo<JourneyCoachCandidate | null>(() => {
-    if (route === "home") {
-      if (tutorialMode && tutorialPracticeBet) {
-        return {
-          key: "home-tutorial-review",
-          persistStep: STRAIGHT_BETS_TUTORIAL_STEP,
-          eyebrow: "Step 3 of 3",
-          title: "Review your practice ticket on Home",
-          body: "Nice work. This local practice ticket is now sitting above your real Open Bets so you can see where scanner plays land in the tracker.",
-          steps: [
-            { label: "Open tutorial", complete: true, active: false },
-            { label: "Run scan", complete: true, active: false },
-            { label: "Review on Home", complete: false, active: true },
-          ],
-          detailTitle: tutorialPracticeBet.event,
-          detailBody: `${tutorialPracticeBet.market} / ${tutorialPracticeBet.sportsbook}`,
-          actions: [
-            {
-              label: "Finish Tutorial",
-              icon: "check",
-              onClick: clearTutorialSession,
-              completeStepOnClick: true,
-            },
-          ],
-        };
-      }
-
-      if (tutorialMode) {
-        return {
-          key: "home-tutorial-intro",
-          persistStep: STRAIGHT_BETS_TUTORIAL_STEP,
-          eyebrow: "Straight-Bets Tutorial",
-          title: "Learn the scanner with one practice ticket",
-          body: "Start on Home, run one guided tutorial scan, practice logging a sample bet, then come right back here to see where it appears in your tracker.",
-          steps: [
-            { label: "Open tutorial", complete: false, active: true },
-            { label: "Run scan", complete: false, active: false },
-            { label: "Review on Home", complete: false, active: false },
-          ],
-          actions: [
-            {
-              label: "Open Tutorial Scanner",
-              href: "/scanner/straight_bets",
-              icon: "arrow",
-              onClick: () => startTutorialSession("straight_bets"),
-            },
-          ],
-        };
-      }
-
-      if (scannerReviewCandidate) {
-        return {
-          key: `home-review-${scannerReviewCandidate.createdAt}`,
-          dismissStep: "home_scanner_review",
-          eyebrow: "Step 3 of 3",
-          title: "Finish the ticket you already placed",
-          body: "Your last scanner pick is saved here. Review it now so it lands in Open Bets and stays easy to track.",
-          steps: homeSteps,
-          actions: [
-            {
-              label: "Review Saved Pick",
-              onClick: onReviewScannerPick,
-              icon: "check",
-            },
-            {
-              label: "Not Now",
-              variant: "outline",
-              hideOnClick: true,
-            },
-          ],
-          detailTitle: scannerReviewCandidate.bet.event,
-          detailBody: `${scannerReviewCandidate.bet.market} / ${scannerReviewCandidate.bet.sportsbook}`,
-        };
-      }
-
-      if (tutorialDismissed) {
-        return null;
-      }
-
-      return null;
-    }
-
-    if (route === "scanner") {
-      if (tutorialMode && scannerSurface === "straight_bets") {
-        if (tutorialPracticeBet) {
-          return {
-            key: "scanner-tutorial-return-home",
-            eyebrow: "Tutorial Complete",
-            title: "Head back Home to finish the practice loop",
-            body: "Your practice ticket is waiting in the tracker. That Home review is the last step before the live scanner takes over.",
-            actions: [
-              {
-                label: "Go to Home",
-                href: "/",
-                icon: "arrow",
-              },
-            ],
-          };
-        }
-
-        if (!tutorialSession?.has_seeded_scan) {
-          return {
-            key: "scanner-tutorial-empty",
-            persistStep: STRAIGHT_BETS_TUTORIAL_STEP,
-            eyebrow: "Step 1 of 3",
-            title: "Run one tutorial scan",
-            body: "Start from an empty scanner so the workflow feels real. Tap the tutorial scan button once and we will populate sample straight bets for practice.",
-            steps: [
-              { label: "Open tutorial", complete: true, active: false },
-              { label: "Run scan", complete: false, active: true },
-              { label: "Review on Home", complete: false, active: false },
-            ],
-          };
-        }
-
-        return {
-          key: "scanner-tutorial-ready",
-          persistStep: STRAIGHT_BETS_TUTORIAL_STEP,
-          eyebrow: "Step 2 of 3",
-          title: "Pick one sample line and practice logging it",
-          body: "Open one sample card and save a practice ticket. When it is ready, use the Home prompt to review the final step there.",
-          steps: [
-            { label: "Open tutorial", complete: true, active: false },
-            { label: "Run scan", complete: true, active: false },
-            { label: "Review on Home", complete: false, active: true },
-          ],
-          detailTitle: "Tutorial reminder",
-          detailBody: "Practice tickets stay local to this walkthrough and never affect your real stats or bankroll.",
-        };
-      }
-
-      if (activeScannerReviewCandidate && !scannerDrawerOpen) {
-        return {
-          key: `scanner-review-${activeScannerReviewCandidate.createdAt}`,
-          dismissStep: "scanner_review_prompt",
-          eyebrow: "Step 3 of 3",
-          title: `Placed it at ${activeScannerReviewCandidate.bet.sportsbook}? Review and log it.`,
-          body: "We saved your last scanner pick so you can come back and confirm the bet in a few taps.",
-          detailTitle: activeScannerReviewCandidate.bet.event,
-          detailBody: `${activeScannerReviewCandidate.bet.market} / ${activeScannerReviewCandidate.bet.sportsbook}`,
-          actions: [
-            {
-              label: "Review & Log Bet",
-              onClick: onReviewScannerPick,
-              icon: "check",
-            },
-            {
-              label: "Keep Scanning",
-              variant: "outline",
-              hideOnClick: true,
-            },
-          ],
-        };
-      }
-
-      if (tutorialDismissed) {
-        return null;
-      }
-
-      return null;
-    }
-
-    if (route === "parlay") {
-      if (tutorialDismissed) {
-        return null;
-      }
-
-      if (cart.length === 0) {
-        return {
-          key: "parlay_builder",
-          persistStep: "parlay_builder",
-          eyebrow: "Optional Step",
-          title: "Build parlays later, after you find the plays",
-          body: "The simplest beginner path is still one ticket at a time. When you want a multi-leg preview, add a couple of plays in Scanner first.",
-          actions: [
-            {
-              label: "Find Legs in Scanner",
-              href: "/scanner/straight_bets",
-              icon: "arrow",
-              completeStepOnClick: true,
-            },
-          ],
-        };
-      }
-
-      if (cart.length === 1) {
-        return {
-          key: "parlay-one-leg",
-          dismissStep: "parlay_one_leg_prompt",
-          eyebrow: "Optional Step",
-          title: "Add one more leg to complete the preview",
-          body: "You have one leg saved so far. Grab one more in Scanner, then come back here to compare the combined payout.",
-          actions: [
-            {
-              label: "Add Another Leg",
-              href: "/scanner/straight_bets",
-              icon: "arrow",
-            },
-            {
-              label: "Not Now",
-              variant: "outline",
-              hideOnClick: true,
-            },
-          ],
-        };
-      }
-    }
-
-    return null;
-  }, [
-    activeScannerReviewCandidate,
-    cart.length,
-    homeSteps,
-    onReviewScannerPick,
-    route,
-    scannerDrawerOpen,
-    scannerReviewCandidate,
-    scannerSurface,
-    startTutorialSession,
-    clearTutorialSession,
-    tutorialDismissed,
-    tutorialPracticeBet,
-    tutorialSession?.has_seeded_scan,
-    tutorialMode,
-  ]);
+  const candidate = useMemo(
+    () =>
+      selectJourneyCoachCandidate({
+        route,
+        scannerSurface,
+        scannerDrawerOpen,
+        tutorialMode,
+        tutorialDismissed,
+        scannerReviewCandidate,
+        tutorialPracticeBet,
+        tutorialHasSeededScan: Boolean(tutorialSession?.has_seeded_scan),
+        cartLength: cart.length,
+        homeSteps,
+      }),
+    [
+      cart.length,
+      homeSteps,
+      route,
+      scannerDrawerOpen,
+      scannerReviewCandidate,
+      scannerSurface,
+      tutorialDismissed,
+      tutorialMode,
+      tutorialPracticeBet,
+      tutorialSession?.has_seeded_scan,
+    ]
+  );
 
   useEffect(() => {
     setTemporarilyHiddenKey(null);
   }, [candidate?.key]);
 
-  const persist = (completed: string[], dismissed: string[]) => {
-    updateSettings.mutate({
-      onboarding_state: {
-        ...(settings?.onboarding_state ?? {}),
-        version: 1,
-        completed,
-        dismissed,
-        last_seen_at: new Date().toISOString(),
-      },
-    });
-  };
+  useEffect(() => {
+    if (!isHydrated || !candidate) {
+      clearHighlight();
+      return;
+    }
 
-  const appendUnique = (items: string[], value: string) => (
-    items.includes(value) ? items : [...items, value]
-  );
+    if (route === "home" && candidate.key === "home-tutorial-intro") {
+      if (tutorialSession?.has_seeded_scan) {
+        highlight(ONBOARDING_HIGHLIGHT_TARGETS.MARKETS_PRACTICE_PLACE);
+      } else {
+        highlight(ONBOARDING_HIGHLIGHT_TARGETS.COACH_START_WALKTHROUGH);
+      }
+      return;
+    }
 
-  const handleComplete = (step: string) => {
-    const completed = appendUnique(onboardingCompleted, step);
+    if (route === "home" && candidate.key === "home-tutorial-review") {
+      highlight(ONBOARDING_HIGHLIGHT_TARGETS.NAV_BETS_TAB);
+      return;
+    }
+
+    if (route === "home" && candidate.key.startsWith("home-review-")) {
+      highlight(ONBOARDING_HIGHLIGHT_TARGETS.COACH_REVIEW_SAVED_PICK);
+      return;
+    }
+
+    if (route === "scanner" && candidate.key.startsWith("scanner-tutorial")) {
+      highlight(ONBOARDING_HIGHLIGHT_TARGETS.NAV_MARKETS_TAB);
+      return;
+    }
+
+    if (route === "bets" && candidate.key === "bets-tutorial-review") {
+      clearHighlight();
+      return;
+    }
+
+    clearHighlight();
+  }, [
+    candidate,
+    clearHighlight,
+    highlight,
+    isHydrated,
+    route,
+    tutorialSession?.has_seeded_scan,
+  ]);
+
+  const handleComplete = (step: OnboardingStepId) => {
     markOnboardingCompleted(step);
-    persist(completed, onboardingDismissed);
+    clearHighlight();
+    applyOnboardingEvent.mutate({ event: "complete_step", step });
   };
 
-  const handleDismiss = (step: string) => {
-    const dismissed = appendUnique(onboardingDismissed, step);
+  const handleDismiss = (step: OnboardingStepId) => {
     dismissOnboardingStep(step);
     if (step === STRAIGHT_BETS_TUTORIAL_STEP) {
       clearTutorialSession();
     }
-    persist(onboardingCompleted, dismissed);
+    clearHighlight();
+    applyOnboardingEvent.mutate({ event: "dismiss_step", step });
+  };
+
+  const handleActionCommand = (command?: JourneyCoachActionCommand) => {
+    if (!command) {
+      return;
+    }
+
+    if (command === "start_tutorial") {
+      startTutorialSession("straight_bets");
+      markTutorialScanSeeded();
+      onStartTutorial?.();
+      return;
+    }
+
+    if (command === "clear_tutorial") {
+      clearTutorialSession();
+      clearHighlight();
+      return;
+    }
+
+    if (command === "review_scanner_pick") {
+      onReviewScannerPick?.();
+      window.setTimeout(() => {
+        highlight(ONBOARDING_HIGHLIGHT_TARGETS.DRAWER_SAVE_PRACTICE_TICKET);
+      }, 120);
+      return;
+    }
+
+    if (command === "finish_tutorial") {
+      clearHighlight();
+      onFinishTutorial?.();
+    }
   };
 
   if (!isHydrated || !candidate) {
@@ -468,9 +321,11 @@ export function JourneyCoach({
         {candidate.actions && candidate.actions.length > 0 ? (
           <div className="flex flex-col gap-2 sm:flex-row">
             {candidate.actions.map((action) => {
+              const actionTarget = getActionTarget(action.command);
               const handleClick = () => {
-                action.onClick?.();
+                handleActionCommand(action.command);
                 if (action.hideOnClick) {
+                  clearHighlight();
                   if (candidate.dismissStep) {
                     handleDismiss(candidate.dismissStep);
                   } else {
@@ -490,7 +345,11 @@ export function JourneyCoach({
                     variant={action.variant ?? "default"}
                     className="h-11 flex-1"
                   >
-                    <Link href={action.href} onClick={handleClick}>
+                    <Link
+                      href={action.href}
+                      data-onboarding-target={actionTarget}
+                      onClick={handleClick}
+                    >
                       {action.label}
                       {renderActionIcon(action.icon)}
                     </Link>
@@ -504,6 +363,7 @@ export function JourneyCoach({
                   type="button"
                   variant={action.variant ?? "default"}
                   className="h-11 flex-1"
+                  data-onboarding-target={actionTarget}
                   onClick={handleClick}
                 >
                   {action.label}

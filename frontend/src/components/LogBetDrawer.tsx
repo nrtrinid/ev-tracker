@@ -7,7 +7,6 @@ import { SmartOddsInput, type SmartOddsInputRef } from "@/components/SmartOddsIn
 import {
   Sheet,
   SheetContent,
-  SheetDescription,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
@@ -30,6 +29,7 @@ import {
   calculateHoldFromOdds,
   calculateStealthStake,
 } from "@/lib/utils";
+import { ONBOARDING_HIGHLIGHT_TARGETS } from "@/lib/onboarding-guidance";
 import { Loader2, Plus, ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
 
@@ -235,7 +235,8 @@ export function LogBetDrawer({
       setFormState(buildInitialFormState(initialValues));
       setShowManualSetup((initialValues?.promo_type ?? getStickyPromoType()) !== "standard");
       setTimeout(() => {
-        oddsInputRef.current?.focus();
+        const input = document.querySelector('[data-odds-input]') as HTMLInputElement;
+        input?.focus();
       }, 300);
     }
   }, [open, initialValues]);
@@ -292,17 +293,6 @@ export function LogBetDrawer({
 
   const bestLoggedOdds = initialValues?.best_logged_odds_american;
   const currentOdds = initialValues?.current_odds_american ?? initialValues?.odds_american;
-  const suggestedStake = (() => {
-    if (!isScannerFlow || !initialValues) return null;
-    const stealth =
-      initialValues.stealth_kelly_stake ??
-      (initialValues.raw_kelly_stake != null
-        ? calculateStealthStake(initialValues.raw_kelly_stake)
-        : undefined);
-    const fallback = initialValues.kelly_suggestion;
-    const stake = stealth ?? fallback;
-    return stake != null && stake > 0 ? stake : null;
-  })();
 
   const updateField = (field: keyof FormState, value: string) => {
     setFormState(prev => ({ ...prev, [field]: value }));
@@ -340,9 +330,6 @@ export function LogBetDrawer({
         ev_per_dollar: stakeNum > 0 ? ev.evTotal / stakeNum : 0,
       };
 
-      toast.success("Practice ticket saved", {
-        description: "This tutorial ticket is local only. We are taking you back Home to review where it appears in the tracker.",
-      });
       onOpenChange(false);
       onPracticeLogged?.(tutorialBet);
       return;
@@ -380,10 +367,7 @@ export function LogBetDrawer({
         await createBet.mutateAsync(payload);
       }
 
-      toast.success("Bet logged!", {
-        id: toastId,
-        description: `${ev.evTotal >= 0 ? "+" : ""}${formatCurrency(ev.evTotal)} EV on ${formState.sportsbook}`,
-      });
+      toast.dismiss(toastId);
       onLogged?.();
 
       if (keepOpen) {
@@ -400,7 +384,8 @@ export function LogBetDrawer({
           notes: "",
         }));
         setTimeout(() => {
-          oddsInputRef.current?.focus();
+          const input = document.querySelector('[data-odds-input]') as HTMLInputElement;
+          input?.focus();
         }, 50);
       } else {
         // Single mode: Close drawer and reset
@@ -436,19 +421,26 @@ export function LogBetDrawer({
         {/* Header */}
         <SheetHeader className="px-4 pt-4 pb-2">
           <SheetTitle className="text-left">Log Bet</SheetTitle>
-          <SheetDescription className="text-left">
+          <p className="text-left text-sm text-muted-foreground">
             {isTutorialPracticeFlow
               ? "Practice the final step here. This ticket stays local to the tutorial and will not touch your real stats or bankroll."
               : isScannerFlow
               ? "Step 3 of 3: confirm what you placed, then log it."
               : "Quick Log starts with the essentials. We assume a standard moneyline bet unless you change the setup."}
-          </SheetDescription>
+          </p>
         </SheetHeader>
 
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto px-4 pb-32">
           {hasDuplicateExposure && (
-            <div className="mb-4 rounded-lg border border-[#B85C38]/30 bg-[#B85C38]/10 px-3 py-2 text-xs text-[#8B3D20]">
+            <div
+              className={cn(
+                "mb-4 rounded-lg border px-3 py-2 text-xs",
+                isTutorialPracticeFlow
+                  ? "border-sky-300/50 bg-sky-100/45 text-sky-900"
+                  : "border-[#B85C38]/30 bg-[#B85C38]/10 text-[#8B3D20]"
+              )}
+            >
               {duplicateState === "better_now" ? (
                 <>
                   <p className="font-semibold">You already placed this side at a lower price.</p>
@@ -568,13 +560,12 @@ export function LogBetDrawer({
               value={formState.odds}
               onChange={(value) => updateField("odds", value)}
               placeholder="150"
-              defaultSign={(initialValues?.odds_american ?? 0) < 0 ? "-" : "+"}
-              americanOddsSeed={initialValues?.odds_american ?? null}
+              defaultSign="+"
               label={isScannerFlow ? "Placed Odds" : "Odds"}
               className="[&_input]:h-12 [&_input]:text-lg"
             />
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground block">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
                 {isScannerFlow ? "Stake Placed" : "Stake"}
               </label>
               <Input
@@ -603,11 +594,6 @@ export function LogBetDrawer({
                   </button>
                 ))}
               </div>
-              {suggestedStake != null && (
-                <p className="mt-2 text-[11px] text-muted-foreground text-center">
-                  Suggested Kelly stake: <span className="font-medium text-foreground">{formatCurrency(suggestedStake)}</span>
-                </p>
-              )}
             </div>
           </div>
 
@@ -819,7 +805,6 @@ export function LogBetDrawer({
                     onChange={(value) => updateField("opposing_odds", value)}
                     placeholder="180"
                     defaultSign="-"
-                    americanOddsSeed={initialValues?.opposing_odds ?? null}
                     label="Opposing Odds"
                     className="[&_input]:h-10"
                   />
@@ -1046,6 +1031,11 @@ export function LogBetDrawer({
               </Button>
               <Button
                 className="flex-1 h-12"
+                data-onboarding-target={
+                  isTutorialPracticeFlow
+                    ? ONBOARDING_HIGHLIGHT_TARGETS.DRAWER_SAVE_PRACTICE_TICKET
+                    : undefined
+                }
                 onClick={() => handleLogBet(false)}
                 disabled={!isValid || invalidBoost || isSubmitting}
               >

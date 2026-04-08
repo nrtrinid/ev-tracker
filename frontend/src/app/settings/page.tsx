@@ -9,6 +9,7 @@ import { cn, formatCurrency } from "@/lib/utils";
 import { Plus, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, Target as TargetIcon } from "lucide-react";
 import { TrustedBetaCard } from "@/components/TrustedBetaCard";
 import {
+  useApplyOnboardingEvent,
   useTransactions,
   useCreateTransaction,
   useDeleteTransaction,
@@ -17,6 +18,7 @@ import {
   useUpdateSettings,
 } from "@/lib/hooks";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
+import { ONBOARDING_CORE_FLOW, ONBOARDING_OPTIONAL_FLOW } from "@/lib/onboarding";
 import { SPORTSBOOKS } from "@/lib/types";
 import type { Transaction, TransactionType } from "@/lib/types";
 import { useKellySettings } from "@/lib/kelly-context";
@@ -37,6 +39,10 @@ export default function SettingsPage() {
   const createTransaction = useCreateTransaction();
   const deleteTransaction = useDeleteTransaction();
   const updateSettings = useUpdateSettings();
+  const applyOnboardingEvent = useApplyOnboardingEvent();
+  const completedOnboardingSteps = settings?.onboarding_state?.completed ?? [];
+  const completedCoreSteps = ONBOARDING_CORE_FLOW.filter((step) => completedOnboardingSteps.includes(step)).length;
+  const completedOptionalSteps = ONBOARDING_OPTIONAL_FLOW.filter((step) => completedOnboardingSteps.includes(step)).length;
 
   // Transaction form state
   const [showTxForm, setShowTxForm] = useState(false);
@@ -523,10 +529,9 @@ export default function SettingsPage() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">
-                  Completed steps:{" "}
-                  <span className="font-medium text-foreground">
-                    {settings?.onboarding_state?.completed?.length ?? 0}
-                  </span>
+                  Core workflow: <span className="font-medium text-foreground">{completedCoreSteps}</span> / {ONBOARDING_CORE_FLOW.length}
+                  <br />
+                  Optional parlay branch: <span className="font-medium text-foreground">{completedOptionalSteps}</span> / {ONBOARDING_OPTIONAL_FLOW.length}
                 </div>
                 <Button
                   variant="outline"
@@ -534,16 +539,9 @@ export default function SettingsPage() {
                     clearTutorialSession();
                     clearScannerReviewCandidate();
                     hydrateOnboarding({ completed: [], dismissed: [] });
-                    updateSettings.mutate({
-                      onboarding_state: {
-                        version: 1,
-                        completed: [],
-                        dismissed: [],
-                        last_seen_at: new Date().toISOString(),
-                      },
-                    });
+                    applyOnboardingEvent.mutate({ event: "reset" });
                   }}
-                  disabled={updateSettings.isPending}
+                  disabled={applyOnboardingEvent.isPending}
                 >
                   Reset onboarding
                 </Button>

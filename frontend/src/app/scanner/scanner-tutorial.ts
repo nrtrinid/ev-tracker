@@ -1,6 +1,8 @@
 import type { ScanResult } from "@/lib/types";
+import { ONBOARDING_STEPS } from "@/lib/onboarding";
+import type { OnboardingStepId } from "@/lib/onboarding";
 
-export const STRAIGHT_BETS_TUTORIAL_STEP = "tutorial_scanner_straight_bets";
+export const STRAIGHT_BETS_TUTORIAL_STEP = ONBOARDING_STEPS.TUTORIAL_SCANNER_STRAIGHT_BETS;
 
 function futureIso(minutesFromNow: number) {
   return new Date(Date.now() + minutesFromNow * 60_000).toISOString();
@@ -8,8 +10,8 @@ function futureIso(minutesFromNow: number) {
 
 export function isStraightBetsTutorialActive(params: {
   surface: string;
-  completed: string[];
-  dismissed: string[];
+  completed: OnboardingStepId[];
+  dismissed: OnboardingStepId[];
 }) {
   const { surface, completed, dismissed } = params;
   if (surface !== "straight_bets") return false;

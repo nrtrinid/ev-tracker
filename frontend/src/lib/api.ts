@@ -19,6 +19,8 @@ import type {
   PlayerPropBoardPickEmCard,
   ScopedRefreshResponse,
   BackendReadiness,
+  OnboardingEventRequest,
+  OnboardingState,
   OperatorStatusResponse,
   ParlaySlip,
   ParlaySlipCreate,
@@ -205,6 +207,19 @@ export async function updateSettings(
   return fetchAPI<Settings>("/settings", {
     method: "PATCH",
     body: JSON.stringify(settings),
+  });
+}
+
+export async function getOnboardingState(): Promise<OnboardingState> {
+  return fetchAPI<OnboardingState>("/onboarding/state");
+}
+
+export async function applyOnboardingEvent(
+  payload: OnboardingEventRequest
+): Promise<OnboardingState> {
+  return fetchAPI<OnboardingState>("/onboarding/events", {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 }
 

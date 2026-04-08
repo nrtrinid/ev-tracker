@@ -7,7 +7,7 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 
 class PromoType(str, Enum):
@@ -36,6 +36,14 @@ class BetResult(str, Enum):
 ScannerSurface = Literal["straight_bets", "player_props"]
 BetSurface = Literal["straight_bets", "player_props", "parlay"]
 ScannerDeeplinkLevel = Literal["selection", "market", "event", "homepage"]
+OnboardingStepId = Literal[
+    "tutorial_scanner_straight_bets",
+    "home_scanner_review",
+    "scanner_review_prompt",
+    "parlay_builder",
+    "parlay_one_leg_prompt",
+]
+OnboardingEventType = Literal["complete_step", "dismiss_step", "reset"]
 
 
 class BetCreate(BaseModel):
@@ -109,7 +117,6 @@ class BetResponse(BaseModel):
     stake: float
     boost_percent: float | None
     winnings_cap: float | None
-    payout_override: float | None = None
     notes: str | None
     opposing_odds: float | None
     result: BetResult
@@ -187,6 +194,22 @@ class SettingsResponse(BaseModel):
     k_factor_effective: float
     k_factor_bonus_stake_settled: float
     onboarding_state: dict[str, Any] | None = None
+
+
+class OnboardingStateResponse(BaseModel):
+    """Canonical onboarding state returned by onboarding endpoints."""
+
+    version: int = 2
+    completed: list[OnboardingStepId] = Field(default_factory=list)
+    dismissed: list[OnboardingStepId] = Field(default_factory=list)
+    last_seen_at: str | None = None
+
+
+class OnboardingEventRequest(BaseModel):
+    """Onboarding mutation event consumed by backend transition logic."""
+
+    event: OnboardingEventType
+    step: OnboardingStepId | None = None
 
 
 class SummaryResponse(BaseModel):
@@ -309,21 +332,18 @@ class PlayerPropSide(BaseModel):
     sportsbook_deeplink_level: ScannerDeeplinkLevel | None = None
     sport: str
     event: str
-    event_short: str | None = None
     commence_time: str
     market: str
     player_name: str
     participant_id: str | None = None
     team: str | None = None
-    team_short: str | None = None
     opponent: str | None = None
-    opponent_short: str | None = None
     selection_side: str
     line_value: float | None = None
     display_name: str
     reference_odds: float
     reference_source: str
-    reference_bookmakers: list[str] = Field(default_factory=list)
+    reference_bookmakers: list[str]
     reference_bookmaker_count: int | None = None
     confidence_label: str | None = None
     book_odds: float
@@ -331,8 +351,6 @@ class PlayerPropSide(BaseModel):
     base_kelly_fraction: float
     book_decimal: float
     ev_percentage: float
-    confidence_score: float | None = None
-    prob_std: float | None = None
     scanner_duplicate_state: Literal["new", "logged_elsewhere", "already_logged", "better_now"] | None = None
     best_logged_odds_american: float | None = None
     current_odds_american: float | None = None
@@ -426,221 +444,13 @@ class FullScanResponse(BaseModel):
     diagnostics: PlayerPropScanDiagnostics | None = None
     prizepicks_cards: list[PrizePicksComparisonCard] | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def _inject_surface_into_sides(cls, data: Any) -> Any:
-        """Inject the response-level surface tag into any side dict that lacks it.
-
-        The scanner services return raw dicts whose side entries don't carry a
-        'surface' key.  Pydantic's discriminated union (ScannerSide) requires that
-        tag to be present before it can choose StraightBetSide vs PlayerPropSide.
-        This validator stamps the response's own surface value onto each side so
-        both the canonical-board load path and the scoped-refresh path work
-        regardless of whether the stored/returned data includes the field.
-        """
-        if isinstance(data, dict):
-            surface = data.get("surface")
-            raw_sides = data.get("sides")
-            if surface and isinstance(raw_sides, list):
-                data = {
-                    **data,
-                    "sides": [
-                        {**s, "surface": surface} if isinstance(s, dict) and "surface" not in s else s
-                        for s in raw_sides
-                    ],
-                }
-        return data
-
-
-class PlayerPropBoardItem(BaseModel):
-    """Lean player-prop board row used by the homepage board views."""
-
-    surface: Literal["player_props"] = "player_props"
-    event_id: str | None = None
-    market_key: str
-    selection_key: str
-    sportsbook: str
-    sportsbook_deeplink_url: str | None = None
-    sportsbook_deeplink_level: ScannerDeeplinkLevel | None = None
-    sport: str
-    event: str
-    event_short: str | None = None
-    commence_time: str
-    market: str
-    player_name: str
-    participant_id: str | None = None
-    team: str | None = None
-    team_short: str | None = None
-    opponent: str | None = None
-    opponent_short: str | None = None
-    selection_side: str
-    line_value: float | None = None
-    display_name: str
-    reference_odds: float
-    reference_source: str
-    reference_bookmaker_count: int | None = None
-    confidence_label: str | None = None
-    book_odds: float
-    true_prob: float
-    base_kelly_fraction: float
-    book_decimal: float
-    ev_percentage: float
-    scanner_duplicate_state: Literal["new", "logged_elsewhere", "already_logged", "better_now"] | None = None
-    best_logged_odds_american: float | None = None
-    current_odds_american: float | None = None
-    matched_pending_bet_id: str | None = None
-
-
-class PlayerPropBoardDetail(BaseModel):
-    """Lazy-loaded player-prop board detail for review/log/cart enrichment."""
-
-    selection_key: str
-    sportsbook: str
-    reference_bookmakers: list[str]
-    reference_bookmaker_count: int | None = None
-
-
-class PlayerPropBoardPickEmCard(BaseModel):
-    """Lean consensus pick'em board card derived from sportsbook prop rows."""
-
-    comparison_key: str
-    event_id: str | None = None
-    sport: str
-    event: str
-    event_short: str | None = None
-    commence_time: str
-    player_name: str
-    participant_id: str | None = None
-    team: str | None = None
-    team_short: str | None = None
-    opponent: str | None = None
-    opponent_short: str | None = None
-    market_key: str
-    market: str
-    line_value: float
-    exact_line_bookmakers: list[str]
-    exact_line_bookmaker_count: int
-    consensus_over_prob: float
-    consensus_under_prob: float
-    consensus_side: Literal["over", "under"]
-    confidence_label: str
-    best_over_sportsbook: str | None = None
-    best_over_odds: float | None = None
-    best_over_deeplink_url: str | None = None
-    best_under_sportsbook: str | None = None
-    best_under_odds: float | None = None
-    best_under_deeplink_url: str | None = None
-
-
-class PlayerPropBoardPageMeta(BaseModel):
-    """Shared paging metadata for lean player-prop board routes."""
-
-    page: int
-    page_size: int
-    total: int
-    source_total: int
-    has_more: bool
-    scanned_at: str | None = None
-    available_books: list[str] = Field(default_factory=list)
-    available_markets: list[str] = Field(default_factory=list)
-
-
-class PlayerPropBoardPageResponse(BaseModel):
-    """Paged lean player-prop board response for Opportunities/Browse."""
-
-    items: list[PlayerPropBoardItem]
-    page: int
-    page_size: int
-    total: int
-    source_total: int
-    has_more: bool
-    scanned_at: str | None = None
-    available_books: list[str] = Field(default_factory=list)
-    available_markets: list[str] = Field(default_factory=list)
-
-
-class PlayerPropBoardPickEmPageResponse(BaseModel):
-    """Paged lean player-prop Pick'em response."""
-
-    items: list[PlayerPropBoardPickEmCard]
-    page: int
-    page_size: int
-    total: int
-    source_total: int
-    has_more: bool
-    scanned_at: str | None = None
-    available_books: list[str] = Field(default_factory=list)
-    available_markets: list[str] = Field(default_factory=list)
-
-
-class AdminMarketRefreshSurfaceSummary(BaseModel):
-    """Compact result from an admin-triggered full market scan (one surface)."""
-
-    surface: ScannerSurface
-    sport: str
-    events_fetched: int
-    events_with_both_books: int
-    total_sides: int
-    scanned_at: str | None = None
-    api_requests_remaining: str | None = None
-
-
-class AdminMarketRefreshResponse(BaseModel):
-    """Admin full refresh across one or both scanner surfaces."""
-
-    results: list[AdminMarketRefreshSurfaceSummary]
-
-
-# ── Board snapshot models ─────────────────────────────────────────────────────
-
-class BoardSnapshotMeta(BaseModel):
-    """Metadata attached to a canonical board snapshot."""
-
-    snapshot_id: str
-    snapshot_type: Literal["scheduled", "manual"]
-    scanned_at: str
-    surfaces_included: list[ScannerSurface]
-    sports_included: list[str]
-    next_scheduled_drop: str | None = None
-    events_scanned: int
-    total_sides: int
-
-
-class BoardResponse(BaseModel):
-    """Unified board response containing both surfaces from the latest snapshot."""
-
-    meta: BoardSnapshotMeta
-    game_context: dict[str, Any] | None = None
-    straight_bets: FullScanResponse | None = None
-    player_props: FullScanResponse | None = None
-
-
-class ScopedRefreshResponse(BaseModel):
-    """Response from a scoped manual refresh — does not overwrite the canonical board."""
-
-    surface: ScannerSurface
-    refreshed_at: str
-    data: FullScanResponse
-
 
 class ResearchOpportunityBreakdownItem(BaseModel):
     """Aggregate summary row for research-opportunity breakdowns."""
 
     key: str
     captured_count: int
-    pending_close_count: int = 0
     clv_ready_count: int
-    valid_close_count: int
-    invalid_close_count: int = 0
-    aggregate_status: Literal[
-        "not_captured",
-        "pending_close",
-        "invalid_only",
-        "pending_and_invalid",
-        "sample_too_small",
-        "aggregate_available",
-    ] = "not_captured"
-    suppressed_by_sample_size: bool = False
     beat_close_pct: float | None = None
     avg_clv_percent: float | None = None
 
@@ -672,25 +482,6 @@ class ResearchOpportunityRecentRow(BaseModel):
     reference_odds_at_close: float | None = None
     clv_ev_percent: float | None = None
     beat_close: bool | None = None
-    close_status: Literal["pending", "valid", "invalid"] = "pending"
-
-
-class ResearchOpportunityCohortTrendRow(BaseModel):
-    """Beat-close / CLV trend for a cohort bucket (typically daily-board captures)."""
-
-    cohort_key: str
-    captured_count: int
-    valid_close_count: int
-    beat_close_pct: float | None = None
-    avg_clv_percent: float | None = None
-
-
-class ResearchOpportunityStatusBucket(BaseModel):
-    """Counts plus a small sample of recent opportunities for one CLV state."""
-
-    status: Literal["pending", "valid", "invalid"]
-    count: int
-    sample: list[ResearchOpportunityRecentRow] = Field(default_factory=list)
 
 
 class ResearchOpportunitySummaryResponse(BaseModel):
@@ -699,24 +490,7 @@ class ResearchOpportunitySummaryResponse(BaseModel):
     captured_count: int
     open_count: int
     close_captured_count: int
-    pending_close_count: int
-    valid_close_count: int
-    invalid_close_count: int
-    valid_close_coverage_pct: float | None = None
-    invalid_close_rate_pct: float | None = None
-    selected_cohort_key: str | None = None
-    cohort_trend: list[ResearchOpportunityCohortTrendRow] = Field(default_factory=list)
     clv_ready_count: int
-    aggregate_status: Literal[
-        "not_captured",
-        "pending_close",
-        "invalid_only",
-        "pending_and_invalid",
-        "sample_too_small",
-        "aggregate_available",
-    ] = "not_captured"
-    suppressed_by_sample_size: bool = False
-    min_valid_close_threshold: int = 10
     beat_close_pct: float | None = None
     avg_clv_percent: float | None = None
     by_surface: list[ResearchOpportunityBreakdownItem]
@@ -724,171 +498,7 @@ class ResearchOpportunitySummaryResponse(BaseModel):
     by_sportsbook: list[ResearchOpportunityBreakdownItem]
     by_edge_bucket: list[ResearchOpportunityBreakdownItem]
     by_odds_bucket: list[ResearchOpportunityBreakdownItem]
-    status_buckets: list[ResearchOpportunityStatusBucket] = Field(default_factory=list)
     recent_opportunities: list[ResearchOpportunityRecentRow]
-
-
-class ModelCalibrationBreakdownItem(BaseModel):
-    """Aggregate calibration metrics for a grouping dimension."""
-
-    key: str
-    captured_count: int
-    valid_close_count: int
-    paired_close_count: int
-    avg_brier_score: float | None = None
-    avg_log_loss: float | None = None
-    avg_clv_percent: float | None = None
-    beat_close_pct: float | None = None
-
-
-class ModelCalibrationCohortTrendRow(BaseModel):
-    """Daily calibration trend row for the props model tracker."""
-
-    cohort_key: str
-    captured_count: int
-    valid_close_count: int
-    avg_brier_score: float | None = None
-    avg_log_loss: float | None = None
-    avg_clv_percent: float | None = None
-    beat_close_pct: float | None = None
-
-
-class ModelCalibrationRecentComparisonRow(BaseModel):
-    """Side-by-side baseline vs candidate model snapshot for a recent opportunity."""
-
-    opportunity_key: str
-    surface: ScannerSurface = "player_props"
-    first_seen_at: datetime
-    sport: str
-    event: str
-    sportsbook: str
-    market: str
-    player_name: str | None = None
-    selection_side: str | None = None
-    line_value: float | None = None
-    close_quality: str | None = None
-    close_true_prob: float | None = None
-    baseline_model_key: str | None = None
-    baseline_true_prob: float | None = None
-    baseline_ev_percentage: float | None = None
-    baseline_clv_ev_percent: float | None = None
-    candidate_model_key: str | None = None
-    candidate_true_prob: float | None = None
-    candidate_ev_percentage: float | None = None
-    candidate_clv_ev_percent: float | None = None
-
-
-class ModelCalibrationReleaseGate(BaseModel):
-    """Promotion gate summary for the shadow props model."""
-
-    candidate_model_key: str
-    baseline_model_key: str
-    candidate_valid_close_count: int
-    baseline_valid_close_count: int
-    candidate_avg_brier_score: float | None = None
-    baseline_avg_brier_score: float | None = None
-    candidate_avg_log_loss: float | None = None
-    baseline_avg_log_loss: float | None = None
-    candidate_avg_clv_percent: float | None = None
-    baseline_avg_clv_percent: float | None = None
-    candidate_beat_close_pct: float | None = None
-    baseline_beat_close_pct: float | None = None
-    eligible: bool
-    passes: bool
-    reasons: list[str] = Field(default_factory=list)
-
-
-class ModelCalibrationSummaryResponse(BaseModel):
-    """Operator summary for live/shadow props model calibration."""
-
-    captured_count: int
-    valid_close_count: int
-    paired_close_count: int
-    fallback_close_count: int
-    paired_close_pct: float | None = None
-    by_model: list[ModelCalibrationBreakdownItem] = Field(default_factory=list)
-    by_market: list[ModelCalibrationBreakdownItem] = Field(default_factory=list)
-    by_sportsbook: list[ModelCalibrationBreakdownItem] = Field(default_factory=list)
-    by_interpolation_mode: list[ModelCalibrationBreakdownItem] = Field(default_factory=list)
-    cohort_trend: list[ModelCalibrationCohortTrendRow] = Field(default_factory=list)
-    recent_comparisons: list[ModelCalibrationRecentComparisonRow] = Field(default_factory=list)
-    release_gate: ModelCalibrationReleaseGate
-
-
-class PickEmResearchBreakdownItem(BaseModel):
-    """Aggregate row for pick'em validation buckets and breakdowns."""
-
-    key: str
-    captured_count: int
-    close_ready_count: int
-    settled_count: int
-    decisive_count: int
-    push_count: int = 0
-    expected_hit_rate_pct: float | None = None
-    actual_hit_rate_pct: float | None = None
-    hit_rate_delta_pct_points: float | None = None
-    avg_close_drift_pct_points: float | None = None
-    avg_close_edge_pct: float | None = None
-    avg_brier_score: float | None = None
-    avg_log_loss: float | None = None
-
-
-class PickEmResearchRecentRow(BaseModel):
-    """Recent pick'em shadow-tracked observation for operator review."""
-
-    observation_key: str
-    comparison_key: str
-    first_seen_at: datetime
-    last_seen_at: datetime
-    sport: str
-    event: str
-    commence_time: str
-    market: str
-    player_name: str
-    selection_side: str
-    line_value: float
-    displayed_probability: float
-    fair_odds_american: float | None = None
-    books_matched_count: int
-    confidence_label: str | None = None
-    ev_basis: str
-    selected_sportsbook: str | None = None
-    selected_market_odds: float | None = None
-    projected_edge_pct: float | None = None
-    close_true_prob: float | None = None
-    close_quality: str | None = None
-    close_edge_pct: float | None = None
-    close_drift_pct_points: float | None = None
-    actual_result: Literal["win", "loss", "push"] | None = None
-    settled_at: datetime | None = None
-    calibration_bucket: str
-    first_source: str
-    surfaced_count: int = 1
-
-
-class PickEmResearchSummaryResponse(BaseModel):
-    """Operator summary for pick'em board validation against close and settled results."""
-
-    captured_count: int
-    close_ready_count: int
-    settled_count: int
-    decisive_count: int
-    push_count: int = 0
-    pending_result_count: int = 0
-    avg_display_probability_pct: float | None = None
-    expected_hit_rate_pct: float | None = None
-    actual_hit_rate_pct: float | None = None
-    hit_rate_delta_pct_points: float | None = None
-    avg_close_probability_pct: float | None = None
-    avg_close_drift_pct_points: float | None = None
-    avg_close_edge_pct: float | None = None
-    avg_brier_score: float | None = None
-    avg_log_loss: float | None = None
-    by_probability_bucket: list[PickEmResearchBreakdownItem] = Field(default_factory=list)
-    by_market: list[PickEmResearchBreakdownItem] = Field(default_factory=list)
-    by_books_matched: list[PickEmResearchBreakdownItem] = Field(default_factory=list)
-    by_ev_basis: list[PickEmResearchBreakdownItem] = Field(default_factory=list)
-    recent_observations: list[PickEmResearchRecentRow] = Field(default_factory=list)
 
 
 class ParlayWarning(BaseModel):
@@ -904,11 +514,10 @@ class ParlayWarning(BaseModel):
 class ParlayPricingPreview(BaseModel):
     """Saved pricing snapshot for an active/saved parlay slip."""
 
-    slipMode: Literal["standard", "pickem_notes"] = "standard"
     legCount: int
     sportsbook: str | None = None
-    combinedDecimalOdds: float | None = None
-    combinedAmericanOdds: float | None = None
+    combinedDecimalOdds: float
+    combinedAmericanOdds: float
     stake: float | None = None
     totalPayout: float | None = None
     profit: float | None = None

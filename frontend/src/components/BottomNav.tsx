@@ -8,6 +8,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useBackendReadiness } from "@/lib/hooks";
 import { hasUserFacingSyncIssue } from "@/lib/readiness-ui";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
+import { ONBOARDING_HIGHLIGHT_TARGETS } from "@/lib/onboarding-guidance";
 
 const tabs = [
   { href: "/", label: "Markets", icon: Grid2X2 },
@@ -88,6 +89,13 @@ export function BottomNav() {
                 <Link
                   key={tab.href}
                   href={tab.href}
+                  data-onboarding-target={
+                    tab.href === "/"
+                      ? ONBOARDING_HIGHLIGHT_TARGETS.NAV_MARKETS_TAB
+                      : tab.href === "/bets"
+                        ? ONBOARDING_HIGHLIGHT_TARGETS.NAV_BETS_TAB
+                        : undefined
+                  }
                   className={cn(
                     "relative flex flex-1 flex-col items-center justify-center gap-1 py-3 text-[11px] font-medium transition-colors",
                     active

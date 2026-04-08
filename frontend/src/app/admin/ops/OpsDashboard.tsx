@@ -1,33 +1,22 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, HelpCircle, RefreshCcw, XCircle } from "lucide-react";
-import { toast } from "sonner";
 
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import * as api from "@/lib/api";
-import { useModelCalibrationSummary, useOperatorStatus, usePickEmResearchSummary, useResearchOpportunitySummary } from "@/lib/hooks";
+import { useOperatorStatus, useResearchOpportunitySummary } from "@/lib/hooks";
 import type {
-  ModelCalibrationBreakdownItem,
-  ModelCalibrationRecentComparisonRow,
-  ModelCalibrationSummary,
   OddsApiActivityCall,
   OddsApiActivityScanDetail,
   OddsApiActivityScanSession,
   OddsApiActivitySummary,
   OperatorStatusResponse,
-  PickEmResearchBreakdownItem,
-  PickEmResearchRecentRow,
-  PickEmResearchSummary,
   ResearchOpportunityBreakdownItem,
   ResearchOpportunityRecentRow,
-  ResearchOpportunitySummary,
 } from "@/lib/types";
 
 type HealthState = "healthy" | "warning" | "degraded" | "unknown";
-type InsightView = "research" | "calibration" | "pickem";
 
 function parseOpsTimestamp(value?: string | null): Date | null {
   if (!value) return null;
@@ -126,34 +115,6 @@ function scalarOrUnknown(value: number | string | null | undefined): string {
 function formatPercentValue(value: number | null | undefined, digits: number = 1): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "Unknown";
   return `${value.toFixed(digits)}%`;
-}
-
-function formatProbabilityValue(value: number | null | undefined, digits: number = 1): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return "Unknown";
-  return formatPercentValue(value * 100, digits);
-}
-
-function researchAggregateStatusLabel(status: string | null | undefined): string {
-  if (status === "aggregate_available") return "Aggregate available";
-  if (status === "sample_too_small") return "Sample too small";
-  if (status === "pending_close") return "Close still pending";
-  if (status === "invalid_only") return "Invalid closes only";
-  if (status === "pending_and_invalid") return "Pending + invalid mix";
-  return "Not captured yet";
-}
-
-function breakdownAggregateLabel(status: string | null | undefined): string {
-  if (status === "aggregate_available") return "agg ready";
-  if (status === "sample_too_small") return "sample small";
-  if (status === "pending_close") return "pending";
-  if (status === "invalid_only") return "invalid";
-  if (status === "pending_and_invalid") return "mixed";
-  return "not tracked";
-}
-
-function formatDecimalValue(value: number | null | undefined, digits: number = 3): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return "Unknown";
-  return value.toFixed(digits);
 }
 
 function yesNoUnknown(value: boolean | undefined): string {
@@ -516,93 +477,6 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-function OpsMetricTile({
-  label,
-  value,
-  helper,
-  className = "",
-}: {
-  label: string;
-  value: string;
-  helper?: string | null;
-  className?: string;
-}) {
-  return (
-    <div className={`rounded border border-border/70 bg-muted/20 px-2.5 py-2 ${className}`}>
-      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="text-sm font-semibold mt-0.5">{value}</p>
-      {helper ? <p className="mt-1 text-[11px] text-muted-foreground">{helper}</p> : null}
-    </div>
-  );
-}
-
-function InsightActionCard({
-  title,
-  summary,
-  helper,
-  state,
-}: {
-  title: string;
-  summary: string;
-  helper?: string | null;
-  state: HealthState;
-}) {
-  return (
-    <div className="rounded border border-border/70 bg-muted/10 px-3 py-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">{title}</p>
-          <p className="mt-1 text-sm font-medium">{summary}</p>
-          {helper ? <p className="mt-1.5 text-[11px] text-muted-foreground">{helper}</p> : null}
-        </div>
-        <StatusBadge state={state} />
-      </div>
-    </div>
-  );
-}
-
-function InsightSelectorButton({
-  title,
-  description,
-  metric,
-  metricLabel,
-  detail,
-  active,
-  onClick,
-}: {
-  title: string;
-  description: string;
-  metric: string;
-  metricLabel: string;
-  detail: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-lg border px-3 py-3 text-left transition-colors ${
-        active
-          ? "border-foreground/20 bg-muted/70 shadow-sm"
-          : "border-border/70 bg-background hover:bg-muted/40"
-      }`}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-semibold">{title}</p>
-          <p className="mt-1 text-[11px] text-muted-foreground">{description}</p>
-        </div>
-        <div className="shrink-0 rounded border border-border/70 bg-background px-2 py-1 text-right">
-          <p className="text-[12px] font-mono font-semibold">{metric}</p>
-          <p className="mt-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">{metricLabel}</p>
-        </div>
-      </div>
-      <p className="mt-3 text-[11px] text-muted-foreground">{detail}</p>
-    </button>
-  );
-}
-
 function BreakdownChips({
   title,
   rows,
@@ -619,32 +493,7 @@ function BreakdownChips({
         <div className="flex flex-wrap gap-1.5">
           {rows.map((row) => (
             <span key={`${title}-${row.key}`} className="rounded bg-muted px-2 py-1 text-[11px] font-mono">
-              {row.key}: {row.captured_count} captured | {row.valid_close_count} valid | {row.pending_close_count} pending | {row.invalid_close_count} invalid | {breakdownAggregateLabel(row.aggregate_status)}
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CalibrationBreakdownChips({
-  title,
-  rows,
-}: {
-  title: string;
-  rows: ModelCalibrationBreakdownItem[];
-}) {
-  return (
-    <div className="space-y-1.5">
-      <p className="text-xs text-muted-foreground">{title}</p>
-      {rows.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No data yet.</p>
-      ) : (
-        <div className="flex flex-wrap gap-1.5">
-          {rows.map((row) => (
-            <span key={`${title}-${row.key}`} className="rounded bg-muted px-2 py-1 text-[11px] font-mono">
-              {row.key}: {row.valid_close_count} valid | Brier {formatDecimalValue(row.avg_brier_score)}
+              {row.key}: {row.captured_count} captured | {formatPercentValue(row.beat_close_pct)}
             </span>
           ))}
         </div>
@@ -686,195 +535,6 @@ function formatResearchCloseLabel(row: ResearchOpportunityRecentRow): string {
   return formatAmericanOdds(row.reference_odds_at_close);
 }
 
-function formatCloseQuality(value?: string | null): string {
-  if (value === "paired") return "paired";
-  if (value === "single") return "fallback";
-  return "pending";
-}
-
-function formatPickEmEvBasis(value?: string | null): string {
-  if (value === "best_market_price") return "best market";
-  if (value === "unpriced") return "unpriced";
-  return value || "Unknown";
-}
-
-function formatPickEmResult(value?: string | null): string {
-  if (value === "win") return "win";
-  if (value === "loss") return "loss";
-  if (value === "push") return "push";
-  return "pending";
-}
-
-function deriveCalibrationGateState(passes: boolean | undefined, eligible: boolean | undefined): HealthState {
-  if (passes) return "healthy";
-  if (eligible) return "warning";
-  if (eligible === false) return "unknown";
-  return "unknown";
-}
-
-function deriveResearchAction(
-  research: ResearchOpportunitySummary | undefined,
-): { state: HealthState; summary: string; helper: string } {
-  if (!research) {
-    return {
-      state: "unknown",
-      summary: "Research summary unavailable.",
-      helper: "Refresh the panel once the backend summary is reachable.",
-    };
-  }
-  if ((research.valid_close_count || 0) <= 0) {
-    return {
-      state: research.open_count > 0 ? "warning" : "unknown",
-      summary: "Wait for valid closes before judging CLV.",
-      helper: `${scalarOrUnknown(research.captured_count)} tracked and ${scalarOrUnknown(research.open_count)} still open.`,
-    };
-  }
-  if (research.suppressed_by_sample_size) {
-    return {
-      state: "warning",
-      summary: "Close capture is working, but the CLV sample is still small.",
-      helper: `Need ${research.min_valid_close_threshold} valid closes before beat-close and avg CLV are decision-grade.`,
-    };
-  }
-  if ((research.invalid_close_count || 0) > (research.valid_close_count || 0)) {
-    return {
-      state: "degraded",
-      summary: "Close capture quality needs attention.",
-      helper: `${scalarOrUnknown(research.invalid_close_count)} invalid closes vs ${scalarOrUnknown(research.valid_close_count)} valid.`,
-    };
-  }
-  return {
-    state: "healthy",
-    summary: "CLV sample is large enough to read directionally.",
-    helper: `Beat close ${formatPercentValue(research.beat_close_pct)} across ${scalarOrUnknown(research.valid_close_count)} valid closes.`,
-  };
-}
-
-function derivePickEmAction(
-  pickemResearch: PickEmResearchSummary | undefined,
-): { state: HealthState; summary: string; helper: string } {
-  if (!pickemResearch) {
-    return {
-      state: "unknown",
-      summary: "Pick'em validation summary unavailable.",
-      helper: "Refresh the panel once the backend summary is reachable.",
-    };
-  }
-  if ((pickemResearch.settled_count || 0) <= 0) {
-    return {
-      state: pickemResearch.captured_count > 0 ? "warning" : "unknown",
-      summary: "Wait for settled results before judging probability quality.",
-      helper: `${scalarOrUnknown(pickemResearch.captured_count)} tracked and ${scalarOrUnknown(pickemResearch.pending_result_count)} still pending.`,
-    };
-  }
-  const delta = Math.abs(Number(pickemResearch.hit_rate_delta_pct_points || 0));
-  if ((pickemResearch.settled_count || 0) < 20) {
-    return {
-      state: "warning",
-      summary: "Early read only; settlement sample is still thin.",
-      helper: `${scalarOrUnknown(pickemResearch.settled_count)} settled so far. Watch delta and Brier as the sample grows.`,
-    };
-  }
-  if (delta >= 7) {
-    return {
-      state: "degraded",
-      summary: "Displayed probabilities look materially miscalibrated.",
-      helper: `Expected ${formatPercentValue(pickemResearch.expected_hit_rate_pct)} vs actual ${formatPercentValue(pickemResearch.actual_hit_rate_pct)}.`,
-    };
-  }
-  return {
-    state: "healthy",
-    summary: "Displayed probabilities are tracking outcomes reasonably well.",
-    helper: `Expected ${formatPercentValue(pickemResearch.expected_hit_rate_pct)} vs actual ${formatPercentValue(pickemResearch.actual_hit_rate_pct)}.`,
-  };
-}
-
-function CalibrationRecentList({
-  rows,
-}: {
-  rows: ModelCalibrationRecentComparisonRow[];
-}) {
-  if (rows.length === 0) return <p className="text-xs text-muted-foreground">No side-by-side comparisons yet.</p>;
-
-  return (
-    <div className="space-y-1.5">
-      {rows.map((row) => (
-        <div key={row.opportunity_key} className="rounded border border-border/70 bg-muted/20 px-2 py-1.5 text-xs">
-          <p className="leading-relaxed">
-            {formatCompactTime(row.first_seen_at)} | {row.sport} | {row.player_name || row.event} | {row.selection_side || "side"}
-            {row.line_value !== null && row.line_value !== undefined ? ` ${row.line_value}` : ""}
-            {" | "}
-            {row.baseline_model_key || "baseline"} {formatPercentValue(row.baseline_ev_percentage)}
-            {" vs "}
-            {row.candidate_model_key || "candidate"} {formatPercentValue(row.candidate_ev_percentage)}
-            {" | Close "}
-            {formatCloseQuality(row.close_quality)}
-            {" | CLV "}
-            {formatPercentValue(row.baseline_clv_ev_percent)}
-            {" / "}
-            {formatPercentValue(row.candidate_clv_ev_percent)}
-          </p>
-          <p className="mt-1 text-[11px] text-muted-foreground">{row.event} @ {row.sportsbook}</p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function PickEmBreakdownChips({
-  title,
-  rows,
-}: {
-  title: string;
-  rows: PickEmResearchBreakdownItem[];
-}) {
-  return (
-    <div className="space-y-1.5">
-      <p className="text-xs text-muted-foreground">{title}</p>
-      {rows.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No data yet.</p>
-      ) : (
-        <div className="flex flex-wrap gap-1.5">
-          {rows.map((row) => (
-            <span key={`${title}-${row.key}`} className="rounded bg-muted px-2 py-1 text-[11px] font-mono">
-              {row.key}: {row.decisive_count} dec | Exp {formatPercentValue(row.expected_hit_rate_pct)} | Act {formatPercentValue(row.actual_hit_rate_pct)} | Drift {formatPercentValue(row.avg_close_drift_pct_points)}
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function PickEmRecentList({
-  rows,
-}: {
-  rows: PickEmResearchRecentRow[];
-}) {
-  if (rows.length === 0) return <p className="text-xs text-muted-foreground">No pick&apos;em observations settled yet.</p>;
-
-  return (
-    <div className="space-y-1.5">
-      {rows.map((row) => (
-        <div key={row.observation_key} className="rounded border border-border/70 bg-muted/20 px-2 py-1.5 text-xs">
-          <p className="leading-relaxed">
-            {formatCompactTime(row.first_seen_at)} | {row.player_name} {row.selection_side} {formatPropLine(row.line_value)} {formatMarketLabel(row.market)}
-            {" | Display "}
-            {formatProbabilityValue(row.displayed_probability)}
-            {" | Close "}
-            {formatProbabilityValue(row.close_true_prob)}
-            {" | Result "}
-            {formatPickEmResult(row.actual_result)}
-          </p>
-          <p className="mt-1 text-[11px] text-muted-foreground">
-            {row.event} | Fair {formatAmericanOdds(row.fair_odds_american)} | Books {scalarOrUnknown(row.books_matched_count)} | EV basis {formatPickEmEvBasis(row.ev_basis)} | Edge {formatPercentValue(row.projected_edge_pct)} | Drift {formatPercentValue(row.close_drift_pct_points)} | Bucket {row.calibration_bucket}
-          </p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function ResearchRecentList({
   title,
   rows,
@@ -909,284 +569,13 @@ function ResearchRecentList({
   );
 }
 
-function ResearchTrackerPanel({
-  research,
-  isError,
-  errorMessage,
-  recentResearch,
-  recentStraightResearch,
-  recentPropResearch,
-}: {
-  research: ResearchOpportunitySummary | undefined;
-  isError: boolean;
-  errorMessage: string | null;
-  recentResearch: ResearchOpportunityRecentRow[];
-  recentStraightResearch: ResearchOpportunityRecentRow[];
-  recentPropResearch: ResearchOpportunityRecentRow[];
-}) {
-  if (isError) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        Close-tracking summary unavailable{errorMessage ? `: ${errorMessage}` : "."}
-      </p>
-    );
-  }
-
-  const action = deriveResearchAction(research);
-  const invalidCloseRate = research?.close_captured_count
-    ? (research.invalid_close_count / research.close_captured_count) * 100
-    : null;
-
-  return (
-    <>
-      <InsightActionCard
-        title="What To Do"
-        summary={action.summary}
-        helper={action.helper}
-        state={action.state}
-      />
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-        <OpsMetricTile label="Valid Closes" value={scalarOrUnknown(research?.valid_close_count)} />
-        <OpsMetricTile label="Beat Close" value={formatPercentValue(research?.beat_close_pct)} />
-        <OpsMetricTile label="Avg CLV" value={formatPercentValue(research?.avg_clv_percent)} />
-        <OpsMetricTile label="Invalid Close Rate" value={formatPercentValue(invalidCloseRate)} />
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-        <OpsMetricTile label="Tracked" value={scalarOrUnknown(research?.captured_count)} />
-        <OpsMetricTile label="Open" value={scalarOrUnknown(research?.open_count)} />
-        <OpsMetricTile label="Close Captured" value={scalarOrUnknown(research?.close_captured_count)} />
-        <OpsMetricTile label="Invalid Close" value={scalarOrUnknown(research?.invalid_close_count)} />
-        <OpsMetricTile
-          label="Tracking State"
-          value={researchAggregateStatusLabel(research?.aggregate_status)}
-          helper={
-            research?.suppressed_by_sample_size
-              ? `Waiting for ${research.min_valid_close_threshold} valid closes before showing beat-close and avg CLV.`
-              : null
-          }
-          className="md:col-span-1"
-        />
-      </div>
-
-      <div className="rounded border border-border/70 bg-muted/10 px-3 py-2">
-        <p className="text-xs text-muted-foreground">
-          Tracker state: {researchAggregateStatusLabel(research?.aggregate_status)}. Pending and invalid counts are shown separately so “not tracked” stays distinct from “sample too small.”
-        </p>
-      </div>
-
-      <BreakdownChips title="By Surface" rows={research?.by_surface ?? []} />
-      <BreakdownChips title="By Source" rows={research?.by_source ?? []} />
-      <BreakdownChips title="By Sportsbook" rows={research?.by_sportsbook ?? []} />
-      <details className="rounded border border-border/70 bg-background/50 px-3 py-2">
-        <summary className="cursor-pointer text-xs text-muted-foreground">Diagnostics</summary>
-        <div className="mt-3 space-y-3">
-          <BreakdownChips title="By Edge Bucket" rows={research?.by_edge_bucket ?? []} />
-          <BreakdownChips title="By Odds Bucket" rows={research?.by_odds_bucket ?? []} />
-        </div>
-      </details>
-
-      <div className="space-y-1.5">
-        <p className="text-xs text-muted-foreground">Recent tracked opportunities</p>
-        <p className="text-[11px] text-muted-foreground">
-          Close pending means the final reference is still waiting for the last 20-minute pregame window.
-        </p>
-        {recentResearch.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No captured opportunities yet.</p>
-        ) : (
-          <div className="space-y-3">
-            <ResearchRecentList title="Straight Bets" rows={recentStraightResearch} />
-            <ResearchRecentList title="Player Props" rows={recentPropResearch} />
-          </div>
-        )}
-      </div>
-    </>
-  );
-}
-
-function ModelCalibrationPanel({
-  calibration,
-  gateState,
-  isError,
-  errorMessage,
-}: {
-  calibration: ModelCalibrationSummary | undefined;
-  gateState: HealthState;
-  isError: boolean;
-  errorMessage: string | null;
-}) {
-  if (isError) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        Model calibration summary unavailable{errorMessage ? `: ${errorMessage}` : "."}
-      </p>
-    );
-  }
-
-  return (
-    <>
-      <InsightActionCard
-        title="What To Do"
-        summary={
-          calibration?.release_gate?.passes
-            ? "Shadow model is within the current promotion gate."
-            : calibration?.release_gate?.eligible
-              ? "Keep shadow running and review the gate reasons before promoting."
-              : "Wait for more valid closes before making model decisions."
-        }
-        helper={
-          calibration?.release_gate?.passes
-            ? `Gate is passing on ${scalarOrUnknown(calibration?.valid_close_count)} valid closes.`
-            : calibration?.release_gate?.eligible
-              ? `${scalarOrUnknown(calibration?.paired_close_count)} paired closes captured so far.`
-              : `Need more valid closes; currently ${scalarOrUnknown(calibration?.valid_close_count)} of ${scalarOrUnknown(calibration?.release_gate?.candidate_valid_close_count)} candidate closes are usable.`
-        }
-        state={gateState}
-      />
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-        <OpsMetricTile label="Valid Closes" value={scalarOrUnknown(calibration?.valid_close_count)} />
-        <OpsMetricTile label="Paired Close %" value={formatPercentValue(calibration?.paired_close_pct)} />
-        <OpsMetricTile label="Captured Evals" value={scalarOrUnknown(calibration?.captured_count)} />
-        <OpsMetricTile
-          label="Promotion Gate"
-          value={calibration?.release_gate?.passes ? "Pass" : calibration?.release_gate?.eligible ? "Hold" : "Not ready"}
-          helper={gateState === "healthy" ? "Shadow is within release thresholds." : "Comparing live and shadow model cohorts."}
-        />
-      </div>
-
-      <div className="rounded border border-border/70 bg-muted/20 p-3 space-y-2">
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-sm font-medium">Shadow Release Gate</p>
-          <div className="flex items-center gap-2">
-            <StatusBadge state={gateState} />
-            <span className="rounded bg-background px-2 py-1 text-[11px] font-mono">
-              {calibration?.release_gate?.baseline_model_key || "baseline"} to {calibration?.release_gate?.candidate_model_key || "candidate"}
-            </span>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          <OpsMetricTile label="Baseline Brier" value={formatDecimalValue(calibration?.release_gate?.baseline_avg_brier_score)} className="bg-background/70" />
-          <OpsMetricTile label="Shadow Brier" value={formatDecimalValue(calibration?.release_gate?.candidate_avg_brier_score)} className="bg-background/70" />
-          <OpsMetricTile label="Baseline Log Loss" value={formatDecimalValue(calibration?.release_gate?.baseline_avg_log_loss)} className="bg-background/70" />
-          <OpsMetricTile label="Shadow Log Loss" value={formatDecimalValue(calibration?.release_gate?.candidate_avg_log_loss)} className="bg-background/70" />
-        </div>
-        <div className="space-y-1">
-          {(calibration?.release_gate?.reasons ?? []).map((reason, index) => (
-            <p key={`${reason}-${index}`} className="text-[11px] text-muted-foreground">
-              {index + 1}. {reason}
-            </p>
-          ))}
-        </div>
-      </div>
-
-      <CalibrationBreakdownChips title="By Model" rows={calibration?.by_model ?? []} />
-      <CalibrationBreakdownChips title="By Interpolation Mode" rows={calibration?.by_interpolation_mode ?? []} />
-
-      <details className="rounded border border-border/70 bg-background/50 px-3 py-2">
-        <summary className="cursor-pointer text-xs text-muted-foreground">Diagnostics</summary>
-        <div className="mt-3 space-y-3">
-          <CalibrationBreakdownChips title="By Market" rows={(calibration?.by_market ?? []).slice(0, 8)} />
-          <CalibrationBreakdownChips title="By Sportsbook" rows={(calibration?.by_sportsbook ?? []).slice(0, 8)} />
-        </div>
-      </details>
-
-      <div className="space-y-1.5">
-        <p className="text-xs text-muted-foreground">Recent live vs shadow comparisons</p>
-        <p className="text-[11px] text-muted-foreground">
-          Paired closes use both sides of the final reference market. Fallback closes use single-side CLV math.
-        </p>
-        <CalibrationRecentList rows={calibration?.recent_comparisons ?? []} />
-      </div>
-    </>
-  );
-}
-
-function PickEmResearchPanel({
-  pickemResearch,
-  isError,
-  errorMessage,
-}: {
-  pickemResearch: PickEmResearchSummary | undefined;
-  isError: boolean;
-  errorMessage: string | null;
-}) {
-  if (isError) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        Pick&apos;em research summary unavailable{errorMessage ? `: ${errorMessage}` : "."}
-      </p>
-    );
-  }
-
-  const action = derivePickEmAction(pickemResearch);
-
-  return (
-    <>
-      <InsightActionCard
-        title="What To Do"
-        summary={action.summary}
-        helper={action.helper}
-        state={action.state}
-      />
-
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-        <OpsMetricTile label="Settled" value={scalarOrUnknown(pickemResearch?.settled_count)} />
-        <OpsMetricTile label="Expected Hit" value={formatPercentValue(pickemResearch?.expected_hit_rate_pct)} />
-        <OpsMetricTile label="Actual Hit" value={formatPercentValue(pickemResearch?.actual_hit_rate_pct)} />
-        <OpsMetricTile label="Delta" value={formatPercentValue(pickemResearch?.hit_rate_delta_pct_points)} />
-        <OpsMetricTile label="Brier" value={formatDecimalValue(pickemResearch?.avg_brier_score)} />
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-        <OpsMetricTile label="Tracked" value={scalarOrUnknown(pickemResearch?.captured_count)} />
-        <OpsMetricTile label="Close Ready" value={scalarOrUnknown(pickemResearch?.close_ready_count)} />
-        <OpsMetricTile label="Avg Close Drift" value={formatPercentValue(pickemResearch?.avg_close_drift_pct_points)} />
-        <OpsMetricTile label="Avg Close Edge" value={formatPercentValue(pickemResearch?.avg_close_edge_pct)} />
-        <OpsMetricTile label="Pending Result" value={scalarOrUnknown(pickemResearch?.pending_result_count)} />
-      </div>
-
-      <div className="rounded border border-border/70 bg-muted/10 px-3 py-2">
-        <p className="text-xs text-muted-foreground">
-          This card answers one question: are displayed probabilities calibrated? The first row is the answer. The second row is supporting market context.
-        </p>
-      </div>
-
-      <PickEmBreakdownChips title="By Probability Bucket" rows={pickemResearch?.by_probability_bucket ?? []} />
-
-      <details className="rounded border border-border/70 bg-background/50 px-3 py-2">
-        <summary className="cursor-pointer text-xs text-muted-foreground">Diagnostics</summary>
-        <div className="mt-3 space-y-3">
-          <PickEmBreakdownChips title="By Market" rows={(pickemResearch?.by_market ?? []).slice(0, 8)} />
-          <PickEmBreakdownChips title="By Books Matched" rows={pickemResearch?.by_books_matched ?? []} />
-          <PickEmBreakdownChips title="By EV Basis" rows={pickemResearch?.by_ev_basis ?? []} />
-        </div>
-      </details>
-
-      <div className="space-y-1.5">
-        <p className="text-xs text-muted-foreground">Recent pick&apos;em observations</p>
-        <p className="text-[11px] text-muted-foreground">
-          Displayed probability comes from the surfaced board card. Actual hit rate only counts settled win/loss outcomes; pushes stay visible but do not enter the calibration denominator.
-        </p>
-        <PickEmRecentList rows={pickemResearch?.recent_observations ?? []} />
-      </div>
-    </>
-  );
-}
-
 export function OpsDashboard() {
   const query = useOperatorStatus();
   const researchQuery = useResearchOpportunitySummary();
-  const calibrationQuery = useModelCalibrationSummary();
-  const pickemResearchQuery = usePickEmResearchSummary();
-  const [activeInsight, setActiveInsight] = useState<InsightView>("research");
   const [showAllOddsScans, setShowAllOddsScans] = useState(false);
   const [showAllOddsCalls, setShowAllOddsCalls] = useState(false);
   const queryErrorMessage = query.error instanceof Error ? query.error.message : null;
   const researchErrorMessage = researchQuery.error instanceof Error ? researchQuery.error.message : null;
-  const calibrationErrorMessage = calibrationQuery.error instanceof Error ? calibrationQuery.error.message : null;
-  const pickemResearchErrorMessage = pickemResearchQuery.error instanceof Error ? pickemResearchQuery.error.message : null;
 
   const automationState = useMemo(() => deriveScannerState(query.data), [query.data]);
   const settlementState = useMemo(() => deriveSettlementState(query.data), [query.data]);
@@ -1194,7 +583,6 @@ export function OpsDashboard() {
   const oddsApiState = useMemo(() => deriveOddsApiState(query.data), [query.data]);
 
   const schedulerScan = query.data?.ops?.last_scheduler_scan;
-  const jitClv = query.data?.ops?.last_jit_clv;
   const cronScan = query.data?.ops?.last_ops_trigger_scan;
   const manualScan = query.data?.ops?.last_manual_scan;
   const autoSettle = query.data?.ops?.last_auto_settle;
@@ -1222,65 +610,13 @@ export function OpsDashboard() {
   const settleSource = normalizeSettleSource(autoSettle?.source);
   const fallbackAvailable = yesNoUnknown(query.data?.runtime?.cron_token_configured);
   const research = researchQuery.data;
-  const calibration = calibrationQuery.data;
-  const pickemResearch = pickemResearchQuery.data;
   const recentResearch = research?.recent_opportunities ?? [];
   const recentStraightResearch = recentResearch.filter((row) => row.surface !== "player_props");
   const recentPropResearch = recentResearch.filter((row) => row.surface === "player_props");
-  const gateState = deriveCalibrationGateState(calibration?.release_gate?.passes, calibration?.release_gate?.eligible);
-  const isRefreshing = query.isFetching || researchQuery.isFetching || calibrationQuery.isFetching || pickemResearchQuery.isFetching;
-  const activeInsightTitle = activeInsight === "research"
-    ? "CLV Close Tracking"
-    : activeInsight === "calibration"
-      ? "Model Calibration"
-      : "Pick'em Validation";
-  const activeInsightDescription = activeInsight === "research"
-    ? "Can we trust CLV yet, and is close capture healthy enough to support it?"
-    : activeInsight === "calibration"
-      ? "Is the shadow props model strong enough to promote over the live baseline?"
-      : "Are surfaced pick'em probabilities lining up with actual settled outcomes?";
-
-  const refreshAll = () => {
-    query.refetch();
-    researchQuery.refetch();
-    calibrationQuery.refetch();
-    pickemResearchQuery.refetch();
-  };
-
-  const manualScanMutation = useMutation({
-    mutationFn: api.adminRefreshMarkets,
-    onSuccess: (result) => {
-      const totalSides = Number(result?.total_sides ?? result?.result?.props_sides ?? 0);
-      toast("Manual board refresh finished", {
-        description: `Run ${result.run_id} completed with ${totalSides} side${totalSides === 1 ? "" : "s"} captured.`,
-      });
-      refreshAll();
-    },
-    onError: (error) => {
-      toast("Manual scan failed", {
-        description: error instanceof Error ? error.message : "Unknown error",
-      });
-    },
-  });
-
-  const autoSettleMutation = useMutation({
-    mutationFn: api.adminTriggerAutoSettle,
-    onSuccess: (result) => {
-      toast("Auto-settle triggered", {
-        description: `Run ${result.run_id} settled ${result.settled} bet${result.settled === 1 ? "" : "s"}.`,
-      });
-      refreshAll();
-    },
-    onError: (error) => {
-      toast("Auto-settle failed", {
-        description: error instanceof Error ? error.message : "Unknown error",
-      });
-    },
-  });
 
   return (
     <main className="min-h-screen bg-background">
-      <div className="container mx-auto max-w-5xl px-4 py-6 space-y-4 pb-20">
+      <div className="container mx-auto max-w-4xl px-4 py-6 space-y-4 pb-20">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-xl font-semibold">Operator Status</h1>
@@ -1291,38 +627,19 @@ export function OpsDashboard() {
               Last snapshot: {formatTime(query.data?.timestamp)}
             </p>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => manualScanMutation.mutate()}
-              disabled={manualScanMutation.isPending || autoSettleMutation.isPending}
-            >
-              <RefreshCcw className={`h-4 w-4 mr-1.5 ${manualScanMutation.isPending ? "animate-spin" : ""}`} />
-              Manual Scan
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => autoSettleMutation.mutate()}
-              disabled={manualScanMutation.isPending || autoSettleMutation.isPending}
-            >
-              <RefreshCcw className={`h-4 w-4 mr-1.5 ${autoSettleMutation.isPending ? "animate-spin" : ""}`} />
-              Auto-Settle
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={refreshAll}
-              disabled={isRefreshing || manualScanMutation.isPending || autoSettleMutation.isPending}
-            >
-              <RefreshCcw className={`h-4 w-4 mr-1.5 ${isRefreshing ? "animate-spin" : ""}`} />
-              Refresh
-            </Button>
-          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              query.refetch();
+              researchQuery.refetch();
+            }}
+            disabled={query.isFetching || researchQuery.isFetching}
+          >
+            <RefreshCcw className={`h-4 w-4 mr-1.5 ${(query.isFetching || researchQuery.isFetching) ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
         </div>
 
         {query.isError && (
@@ -1609,105 +926,11 @@ export function OpsDashboard() {
             <CardContent className="space-y-2">
               <Row label="Last readiness failure" value={formatTime(readinessFailure?.captured_at)} />
               <Row label="Last readiness DB error" value={readinessFailure?.db_error || "None"} />
-              <Row label="Last JIT CLV run" value={formatTimeWithRelative(jitClv?.finished_at || jitClv?.captured_at)} />
-              <Row label="JIT CLV updates" value={scalarOrUnknown(jitClv?.updated)} />
               <Row label="Auto-settle source" value={autoSettle?.source || "Unknown"} />
               <Row label="Auto-settle run id" value={autoSettle?.run_id || "Unknown"} />
             </CardContent>
           </Card>
 
-          <Card className="md:col-span-2">
-            <CardHeader className="pb-4">
-              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                <div>
-                  <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Research & Validation</p>
-                  <h2 className="mt-1 font-semibold">{activeInsightTitle}</h2>
-                  <p className="text-xs text-muted-foreground mt-0.5">{activeInsightDescription}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {activeInsight === "calibration" ? (
-                    <>
-                      <StatusBadge state={gateState} />
-                      {calibration && (
-                        <span className="rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium">
-                          {calibration.valid_close_count} valid / {calibration.captured_count} evals
-                        </span>
-                      )}
-                    </>
-                  ) : activeInsight === "pickem" ? (
-                    pickemResearch && (
-                      <span className="rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium">
-                        {pickemResearch.settled_count} settled / {pickemResearch.captured_count} tracked
-                      </span>
-                    )
-                  ) : (
-                    research && (
-                      <span className="rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium">
-                        {research.clv_ready_count} ready / {research.captured_count} captured
-                      </span>
-                    )
-                  )}
-                </div>
-              </div>
-
-              <div className="grid gap-2 md:grid-cols-3">
-                <InsightSelectorButton
-                  title="CLV Tracking"
-                  description="Can we trust close-based CLV yet?"
-                  metric={`${scalarOrUnknown(research?.clv_ready_count)} / ${scalarOrUnknown(research?.captured_count)}`}
-                  metricLabel="ready / captured"
-                  detail={`${scalarOrUnknown(research?.valid_close_count)} valid closes | ${researchAggregateStatusLabel(research?.aggregate_status)}`}
-                  active={activeInsight === "research"}
-                  onClick={() => setActiveInsight("research")}
-                />
-                <InsightSelectorButton
-                  title="Calibration"
-                  description="Should shadow replace live?"
-                  metric={`${scalarOrUnknown(calibration?.valid_close_count)} / ${scalarOrUnknown(calibration?.captured_count)}`}
-                  metricLabel="valid / evals"
-                  detail={`${scalarOrUnknown(calibration?.paired_close_count)} paired | Gate ${calibration?.release_gate?.passes ? "pass" : calibration?.release_gate?.eligible ? "hold" : "not ready"}`}
-                  active={activeInsight === "calibration"}
-                  onClick={() => setActiveInsight("calibration")}
-                />
-                <InsightSelectorButton
-                  title="Pick'em"
-                  description="Are displayed probabilities calibrated?"
-                  metric={`${scalarOrUnknown(pickemResearch?.settled_count)} / ${scalarOrUnknown(pickemResearch?.captured_count)}`}
-                  metricLabel="settled / tracked"
-                  detail={`${scalarOrUnknown(pickemResearch?.close_ready_count)} close ready | Actual ${formatPercentValue(pickemResearch?.actual_hit_rate_pct)}`}
-                  active={activeInsight === "pickem"}
-                  onClick={() => setActiveInsight("pickem")}
-                />
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {activeInsight === "research" ? (
-                <ResearchTrackerPanel
-                  research={research}
-                  isError={researchQuery.isError}
-                  errorMessage={researchErrorMessage}
-                  recentResearch={recentResearch}
-                  recentStraightResearch={recentStraightResearch}
-                  recentPropResearch={recentPropResearch}
-                />
-              ) : activeInsight === "calibration" ? (
-                <ModelCalibrationPanel
-                  calibration={calibration}
-                  gateState={gateState}
-                  isError={calibrationQuery.isError}
-                  errorMessage={calibrationErrorMessage}
-                />
-              ) : (
-                <PickEmResearchPanel
-                  pickemResearch={pickemResearch}
-                  isError={pickemResearchQuery.isError}
-                  errorMessage={pickemResearchErrorMessage}
-                />
-              )}
-            </CardContent>
-          </Card>
-
-          {/*
           <Card className="md:col-span-2">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between gap-3">
@@ -1719,7 +942,7 @@ export function OpsDashboard() {
                 </div>
                 {research && (
                   <span className="rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium">
-                    {research?.captured_count} captured
+                    {research.captured_count} captured
                   </span>
                 )}
               </div>
@@ -1731,7 +954,7 @@ export function OpsDashboard() {
                 </p>
               ) : (
                 <>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                     <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
                       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Captured</p>
                       <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(research?.captured_count)}</p>
@@ -1749,19 +972,6 @@ export function OpsDashboard() {
                       <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(research?.clv_ready_count)}</p>
                     </div>
                     <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Invalid Close</p>
-                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(research?.invalid_close_count)}</p>
-                    </div>
-                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2 md:col-span-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Aggregate Status</p>
-                      <p className="text-sm font-semibold mt-0.5">{researchAggregateStatusLabel(research?.aggregate_status)}</p>
-                      {research?.suppressed_by_sample_size && (
-                        <p className="text-[11px] text-muted-foreground mt-1">
-                          Waiting for {research?.min_valid_close_threshold} valid closes before showing beat-close and avg CLV.
-                        </p>
-                      )}
-                    </div>
-                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
                       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Beat Close</p>
                       <p className="text-sm font-semibold mt-0.5">{formatPercentValue(research?.beat_close_pct)}</p>
                     </div>
@@ -1769,12 +979,6 @@ export function OpsDashboard() {
                       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Avg CLV</p>
                       <p className="text-sm font-semibold mt-0.5">{formatPercentValue(research?.avg_clv_percent)}</p>
                     </div>
-                  </div>
-
-                  <div className="rounded border border-border/70 bg-muted/10 px-3 py-2">
-                    <p className="text-xs text-muted-foreground">
-                      Tracker state: {researchAggregateStatusLabel(research?.aggregate_status)}. Pending and invalid counts are now surfaced directly so “not tracked” is separate from “sample too small.”
-                    </p>
                   </div>
 
                   <BreakdownChips title="By Surface" rows={research?.by_surface ?? []} />
@@ -1801,194 +1005,6 @@ export function OpsDashboard() {
               )}
             </CardContent>
           </Card>
-
-          <Card className="md:col-span-2">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="font-semibold">Model Calibration</h2>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Live vs shadow props-model tracking, paired-close coverage, and promotion gates.
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <StatusBadge state={gateState} />
-                  {calibration && (
-                    <span className="rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium">
-                      {calibration?.valid_close_count} valid closes
-                    </span>
-                  )}
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {calibrationQuery.isError ? (
-                <p className="text-sm text-muted-foreground">
-                  Model calibration summary unavailable{calibrationErrorMessage ? `: ${calibrationErrorMessage}` : "."}
-                </p>
-              ) : (
-                <>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Captured Evals</p>
-                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(calibration?.captured_count)}</p>
-                    </div>
-                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Valid Closes</p>
-                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(calibration?.valid_close_count)}</p>
-                    </div>
-                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Paired Close %</p>
-                      <p className="text-sm font-semibold mt-0.5">{formatPercentValue(calibration?.paired_close_pct)}</p>
-                    </div>
-                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Promotion Gate</p>
-                      <p className="text-sm font-semibold mt-0.5">
-                        {calibration?.release_gate?.passes ? "Pass" : calibration?.release_gate?.eligible ? "Hold" : "Not ready"}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="rounded border border-border/70 bg-muted/20 p-3 space-y-2">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-medium">Shadow Release Gate</p>
-                      <span className="rounded bg-background px-2 py-1 text-[11px] font-mono">
-                        {calibration?.release_gate?.baseline_model_key || "baseline"} to {calibration?.release_gate?.candidate_model_key || "candidate"}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      <div className="rounded border border-border/60 bg-background/70 px-2 py-2">
-                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Baseline Brier</p>
-                        <p className="text-sm font-semibold mt-0.5">{formatDecimalValue(calibration?.release_gate?.baseline_avg_brier_score)}</p>
-                      </div>
-                      <div className="rounded border border-border/60 bg-background/70 px-2 py-2">
-                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Shadow Brier</p>
-                        <p className="text-sm font-semibold mt-0.5">{formatDecimalValue(calibration?.release_gate?.candidate_avg_brier_score)}</p>
-                      </div>
-                      <div className="rounded border border-border/60 bg-background/70 px-2 py-2">
-                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Baseline Log Loss</p>
-                        <p className="text-sm font-semibold mt-0.5">{formatDecimalValue(calibration?.release_gate?.baseline_avg_log_loss)}</p>
-                      </div>
-                      <div className="rounded border border-border/60 bg-background/70 px-2 py-2">
-                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Shadow Log Loss</p>
-                        <p className="text-sm font-semibold mt-0.5">{formatDecimalValue(calibration?.release_gate?.candidate_avg_log_loss)}</p>
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      {(calibration?.release_gate?.reasons ?? []).map((reason, index) => (
-                        <p key={`${reason}-${index}`} className="text-[11px] text-muted-foreground">
-                          {index + 1}. {reason}
-                        </p>
-                      ))}
-                    </div>
-                  </div>
-
-                  <CalibrationBreakdownChips title="By Model" rows={calibration?.by_model ?? []} />
-                  <CalibrationBreakdownChips title="By Interpolation Mode" rows={calibration?.by_interpolation_mode ?? []} />
-                  <CalibrationBreakdownChips title="By Market" rows={(calibration?.by_market ?? []).slice(0, 8)} />
-                  <CalibrationBreakdownChips title="By Sportsbook" rows={(calibration?.by_sportsbook ?? []).slice(0, 8)} />
-
-                  <div className="space-y-1.5">
-                    <p className="text-xs text-muted-foreground">Recent live vs shadow comparisons</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      Paired closes use both sides of the final reference market. Fallback closes use single-side CLV math.
-                    </p>
-                    <CalibrationRecentList rows={calibration?.recent_comparisons ?? []} />
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className="md:col-span-2">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="font-semibold">Pick'em Research</h2>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Shadow-tracked pick'em board reads, validated against close drift and actual settled results.
-                  </p>
-                </div>
-                {pickemResearch && (
-                  <span className="rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium">
-                    {pickemResearch?.captured_count} tracked
-                  </span>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {pickemResearchQuery.isError ? (
-                <p className="text-sm text-muted-foreground">
-                  Pick'em research summary unavailable{pickemResearchErrorMessage ? `: ${pickemResearchErrorMessage}` : "."}
-                </p>
-              ) : (
-                <>
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Captured</p>
-                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(pickemResearch?.captured_count)}</p>
-                    </div>
-                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Close Ready</p>
-                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(pickemResearch?.close_ready_count)}</p>
-                    </div>
-                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Settled</p>
-                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(pickemResearch?.settled_count)}</p>
-                    </div>
-                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Expected Hit</p>
-                      <p className="text-sm font-semibold mt-0.5">{formatPercentValue(pickemResearch?.expected_hit_rate_pct)}</p>
-                    </div>
-                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Actual Hit</p>
-                      <p className="text-sm font-semibold mt-0.5">{formatPercentValue(pickemResearch?.actual_hit_rate_pct)}</p>
-                    </div>
-                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Delta</p>
-                      <p className="text-sm font-semibold mt-0.5">{formatPercentValue(pickemResearch?.hit_rate_delta_pct_points)}</p>
-                    </div>
-                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Avg Close Drift</p>
-                      <p className="text-sm font-semibold mt-0.5">{formatPercentValue(pickemResearch?.avg_close_drift_pct_points)}</p>
-                    </div>
-                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Avg Close Edge</p>
-                      <p className="text-sm font-semibold mt-0.5">{formatPercentValue(pickemResearch?.avg_close_edge_pct)}</p>
-                    </div>
-                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Brier</p>
-                      <p className="text-sm font-semibold mt-0.5">{formatDecimalValue(pickemResearch?.avg_brier_score)}</p>
-                    </div>
-                    <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Pending Result</p>
-                      <p className="text-sm font-semibold mt-0.5">{scalarOrUnknown(pickemResearch?.pending_result_count)}</p>
-                    </div>
-                  </div>
-
-                  <div className="rounded border border-border/70 bg-muted/10 px-3 py-2">
-                    <p className="text-xs text-muted-foreground">
-                      This card answers whether surfaced pick'em reads are calibrated. Probability buckets compare displayed hit rate to actual settled outcomes, while close drift shows whether the market moved toward or away from the board read.
-                    </p>
-                  </div>
-
-                  <PickEmBreakdownChips title="By Probability Bucket" rows={pickemResearch?.by_probability_bucket ?? []} />
-                  <PickEmBreakdownChips title="By Market" rows={(pickemResearch?.by_market ?? []).slice(0, 8)} />
-                  <PickEmBreakdownChips title="By Books Matched" rows={pickemResearch?.by_books_matched ?? []} />
-                  <PickEmBreakdownChips title="By EV Basis" rows={pickemResearch?.by_ev_basis ?? []} />
-
-                  <div className="space-y-1.5">
-                    <p className="text-xs text-muted-foreground">Recent pick'em observations</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      Displayed probability comes from the surfaced board card. Actual hit rate only counts settled win/loss outcomes; pushes stay visible but do not enter the calibration denominator.
-                    </p>
-                    <PickEmRecentList rows={pickemResearch?.recent_observations ?? []} />
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
-          */}
         </div>
       </div>
     </main>

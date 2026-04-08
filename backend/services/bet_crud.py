@@ -125,7 +125,7 @@ def get_user_settings(db, user_id: str) -> dict:
         "k_factor_clamp_min": 0.50,
         "k_factor_clamp_max": 0.95,
         "onboarding_state": {
-            "version": 1,
+            "version": 2,
             "completed": [],
             "dismissed": [],
             "last_seen_at": None,

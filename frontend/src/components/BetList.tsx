@@ -403,7 +403,11 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
   );
 }
 
-function TutorialPracticeCard({ bet }: { bet: TutorialPracticeBet }) {
+function TutorialPracticeCard({
+  bet,
+}: {
+  bet: TutorialPracticeBet;
+}) {
   return (
     <div className="rounded-xl border border-primary/20 bg-primary/8 p-4 animate-slide-up" style={{ animationFillMode: "both" }}>
       <div className="flex items-start justify-between gap-3">
@@ -444,7 +448,7 @@ function TutorialPracticeCard({ bet }: { bet: TutorialPracticeBet }) {
       </div>
 
       <p className="mt-3 text-xs text-muted-foreground">
-        This practice ticket is part of the tutorial only. It will disappear when you finish the walkthrough and never touches your real bankroll, stats, or history.
+        Tutorial-only ticket. It stays local, does not touch real bankroll/stats/history, and is used for onboarding practice only.
       </p>
     </div>
   );
@@ -1154,7 +1158,7 @@ export function BetList({
                             View Past Bets
                           </Button>
                           <Button asChild variant="outline" className="h-10 sm:flex-1">
-                            <Link href="/scanner/straight_bets">
+                            <Link href="/">
                               Find a Play
                               <ArrowRight className="ml-2 h-4 w-4" />
                             </Link>
@@ -1162,7 +1166,7 @@ export function BetList({
                         </>
                       ) : (
                         <Button asChild className="h-10 sm:w-auto">
-                          <Link href="/scanner/straight_bets">
+                          <Link href="/">
                             Find a Play
                             <ArrowRight className="ml-2 h-4 w-4" />
                           </Link>
@@ -1211,7 +1215,7 @@ export function BetList({
                         </Button>
                       ) : settledBets.length === 0 ? (
                         <Button asChild className="h-10 sm:w-auto">
-                          <Link href="/scanner/straight_bets">
+                          <Link href="/">
                             Find a Play
                             <ArrowRight className="ml-2 h-4 w-4" />
                           </Link>

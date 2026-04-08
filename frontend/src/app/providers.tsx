@@ -5,6 +5,7 @@ import { useState } from "react";
 import { AuthProvider } from "@/lib/auth-context";
 import { KellyProvider } from "@/lib/kelly-context";
 import { BettingPlatformProvider } from "@/lib/betting-platform-store";
+import { OnboardingHighlightProvider } from "@/lib/onboarding-highlight";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -28,7 +29,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <KellyProvider>
-          <BettingPlatformProvider>{children}</BettingPlatformProvider>
+          <OnboardingHighlightProvider>
+            <BettingPlatformProvider>{children}</BettingPlatformProvider>
+          </OnboardingHighlightProvider>
         </KellyProvider>
       </AuthProvider>
     </QueryClientProvider>

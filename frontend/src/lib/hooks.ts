@@ -22,6 +22,8 @@ import type {
   PlayerPropBoardPickEmCard,
   PromoType,
   ScannerSurface,
+  Settings,
+  OnboardingState,
   Summary,
   TransactionCreate,
 } from "@/lib/types";
@@ -38,6 +40,7 @@ export const queryKeys = {
   modelCalibrationSummary: ["model-calibration-summary"] as const,
   pickEmResearchSummary: ["pickem-research-summary"] as const,
   parlaySlips: ["parlay-slips"] as const,
+  onboardingState: ["onboarding-state"] as const,
   settings: ["settings"] as const,
   transactions: ["transactions"] as const,
   balances: ["balances"] as const,
@@ -457,6 +460,33 @@ export function useUpdateSettings() {
   });
 }
 
+export function useOnboardingState(enabled: boolean = true) {
+  const readiness = useBackendReadiness();
+  const backendOk = readiness.data?.status === "ready";
+  return useQuery<OnboardingState>({
+    queryKey: queryKeys.onboardingState,
+    queryFn: api.getOnboardingState,
+    enabled: enabled && backendOk,
+  });
+}
+
+export function useApplyOnboardingEvent() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: api.applyOnboardingEvent,
+    onSuccess: (nextState) => {
+      queryClient.setQueryData(queryKeys.onboardingState, nextState);
+      queryClient.setQueryData(queryKeys.settings, (current: Settings | undefined) => {
+        if (!current) return current;
+        return {
+          ...current,
+          onboarding_state: nextState,
+        };
+      });
+    },
+  });
+}
 // ============ EV Calculator Hook ============
 
 export function useEVCalculation(params: {
@@ -667,9 +697,12 @@ export function useBoardPlayerPropDetail(
   });
 }
 
-/** Scoped manual refresh – does NOT overwrite the canonical board:latest. */
+/** Scoped manual refresh - does NOT overwrite the canonical board:latest. */
 export function useRefreshBoard() {
   return useMutation({
     mutationFn: (scope: ScannerSurface) => api.refreshBoard(scope),
   });
 }
+
+
+

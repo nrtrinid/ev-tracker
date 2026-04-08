@@ -4,7 +4,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { useAuth } from "@/lib/auth-context";
 
 import { isPickEmParlayLeg } from "@/lib/parlay-utils";
+import { sanitizeOnboardingSteps } from "@/lib/onboarding";
 import type {
+  OnboardingStepId,
   ParlayCartLeg,
   ScannedBetData,
   ScannerSurface,
@@ -27,8 +29,8 @@ interface BettingPlatformState {
   surfaceFilters: Partial<Record<ScannerSurface, SurfaceFilters>>;
   scannerReviewCandidate: ScannerReviewCandidate | null;
   tutorialSession: TutorialSession | null;
-  onboardingCompleted: string[];
-  onboardingDismissed: string[];
+  onboardingCompleted: OnboardingStepId[];
+  onboardingDismissed: OnboardingStepId[];
 }
 
 interface BettingPlatformContextValue extends BettingPlatformState {
@@ -46,10 +48,10 @@ interface BettingPlatformContextValue extends BettingPlatformState {
   markTutorialScanSeeded: () => void;
   saveTutorialPracticeBet: (bet: TutorialPracticeBet) => void;
   clearTutorialSession: () => void;
-  markOnboardingCompleted: (step: string) => void;
-  dismissOnboardingStep: (step: string) => void;
+  markOnboardingCompleted: (step: OnboardingStepId) => void;
+  dismissOnboardingStep: (step: OnboardingStepId) => void;
   hydrateOnboarding: (
-    payload: { completed?: string[]; dismissed?: string[] } | null | undefined,
+    payload: { completed?: OnboardingStepId[]; dismissed?: OnboardingStepId[] } | null | undefined,
     source?: "local" | "remote"
   ) => void;
 }
@@ -67,7 +69,7 @@ const defaultState: BettingPlatformState = {
   onboardingDismissed: [],
 };
 
-function arraysEqual(left: string[], right: string[]) {
+function arraysEqual(left: OnboardingStepId[], right: OnboardingStepId[]) {
   if (left.length !== right.length) return false;
   return left.every((value, index) => value === right[index]);
 }
@@ -101,6 +103,10 @@ export function BettingPlatformProvider({ children }: { children: React.ReactNod
     }
     try {
       const parsed = JSON.parse(raw) as BettingPlatformState;
+      const onboardingCompleted = sanitizeOnboardingSteps(parsed.onboardingCompleted);
+      const onboardingDismissed = sanitizeOnboardingSteps(parsed.onboardingDismissed).filter(
+        (step) => !onboardingCompleted.includes(step)
+      );
       setState({
         cart: Array.isArray(parsed.cart) ? parsed.cart : [],
         cartStakeInput: typeof parsed.cartStakeInput === "string" ? parsed.cartStakeInput : "10.00",
@@ -108,8 +114,8 @@ export function BettingPlatformProvider({ children }: { children: React.ReactNod
         surfaceFilters: parsed.surfaceFilters ?? {},
         scannerReviewCandidate: parsed.scannerReviewCandidate ?? null,
         tutorialSession: parsed.tutorialSession ?? null,
-        onboardingCompleted: Array.isArray(parsed.onboardingCompleted) ? parsed.onboardingCompleted : [],
-        onboardingDismissed: Array.isArray(parsed.onboardingDismissed) ? parsed.onboardingDismissed : [],
+        onboardingCompleted,
+        onboardingDismissed,
       });
     } catch {
       window.localStorage.removeItem(storageKey);
@@ -312,7 +318,7 @@ export function BettingPlatformProvider({ children }: { children: React.ReactNod
     });
   }, [persistBettingPlatformState]);
 
-  const markOnboardingCompleted = useCallback((step: string) => {
+  const markOnboardingCompleted = useCallback((step: OnboardingStepId) => {
     setState((current) => {
       if (current.onboardingCompleted.includes(step)) {
         return current;
@@ -320,14 +326,18 @@ export function BettingPlatformProvider({ children }: { children: React.ReactNod
       const nextState = {
         ...current,
         onboardingCompleted: [...current.onboardingCompleted, step],
+        onboardingDismissed: current.onboardingDismissed.filter((value) => value !== step),
       };
       persistBettingPlatformState(nextState);
       return nextState;
     });
   }, [persistBettingPlatformState]);
 
-  const dismissOnboardingStep = useCallback((step: string) => {
+  const dismissOnboardingStep = useCallback((step: OnboardingStepId) => {
     setState((current) => {
+      if (current.onboardingCompleted.includes(step)) {
+        return current;
+      }
       if (current.onboardingDismissed.includes(step)) {
         return current;
       }
@@ -341,20 +351,17 @@ export function BettingPlatformProvider({ children }: { children: React.ReactNod
   }, [persistBettingPlatformState]);
 
   const hydrateOnboarding = useCallback((
-    payload: { completed?: string[]; dismissed?: string[] } | null | undefined,
-    source: "local" | "remote" = "local"
+    payload: { completed?: OnboardingStepId[]; dismissed?: OnboardingStepId[] } | null | undefined,
+    _source: "local" | "remote" = "local"
   ) => {
+    void _source;
     setState((current) => {
-      const payloadCompleted = Array.isArray(payload?.completed) ? payload.completed : current.onboardingCompleted;
-      const payloadDismissed = Array.isArray(payload?.dismissed) ? payload.dismissed : current.onboardingDismissed;
-      const nextCompleted =
-        source === "remote" && current.onboardingCompleted.length > 0 && payloadCompleted.length === 0
-          ? current.onboardingCompleted
-          : payloadCompleted;
-      const nextDismissed =
-        source === "remote" && current.onboardingDismissed.length > 0 && payloadDismissed.length === 0
-          ? current.onboardingDismissed
-          : payloadDismissed;
+      const payloadCompleted = sanitizeOnboardingSteps(payload?.completed ?? current.onboardingCompleted);
+      const payloadDismissed = sanitizeOnboardingSteps(payload?.dismissed ?? current.onboardingDismissed).filter(
+        (step) => !payloadCompleted.includes(step)
+      );
+      const nextCompleted = payloadCompleted;
+      const nextDismissed = payloadDismissed;
 
       if (
         arraysEqual(current.onboardingCompleted, nextCompleted) &&
@@ -426,3 +433,6 @@ export function useBettingPlatformStore() {
   }
   return context;
 }
+
+
+

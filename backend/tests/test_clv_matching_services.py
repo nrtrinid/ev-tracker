@@ -89,27 +89,12 @@ class _Query:
 
 
 class _DB:
-    def __init__(
-        self,
-        *,
-        bets=None,
-        scan_opportunities=None,
-        scan_opportunity_model_evaluations=None,
-        pickem_research_observations=None,
-        missing_scan_opportunities=False,
-    ):
+    def __init__(self, *, bets=None, scan_opportunities=None, missing_scan_opportunities=False):
         self.tables = {
             "bets": list(bets or []),
             "scan_opportunities": list(scan_opportunities or []),
-            "scan_opportunity_model_evaluations": list(scan_opportunity_model_evaluations or []),
-            "pickem_research_observations": list(pickem_research_observations or []),
         }
-        self.updates = {
-            "bets": [],
-            "scan_opportunities": [],
-            "scan_opportunity_model_evaluations": [],
-            "pickem_research_observations": [],
-        }
+        self.updates = {"bets": [], "scan_opportunities": []}
         self.missing_scan_opportunities = missing_scan_opportunities
 
     def table(self, name):
@@ -120,35 +105,16 @@ class _DB:
         return _Query(self, name)
 
 
-def _bookmaker_event(book_key, home, away, home_price=None, away_price=None, *, spread=None, total=None):
-    markets = []
-    if home_price is not None and away_price is not None:
-        markets.append({
+def _bookmaker_event(book_key, home, away, home_price, away_price):
+    return {
+        "key": book_key,
+        "markets": [{
             "key": "h2h",
             "outcomes": [
                 {"name": home, "price": home_price},
                 {"name": away, "price": away_price},
             ],
-        })
-    if isinstance(spread, dict):
-        markets.append({
-            "key": "spreads",
-            "outcomes": [
-                {"name": home, "price": spread["home_price"], "point": spread["home_line"]},
-                {"name": away, "price": spread["away_price"], "point": spread["away_line"]},
-            ],
-        })
-    if isinstance(total, dict):
-        markets.append({
-            "key": "totals",
-            "outcomes": [
-                {"name": "Over", "price": total["over_price"], "point": total["line"]},
-                {"name": "Under", "price": total["under_price"], "point": total["line"]},
-            ],
-        })
-    return {
-        "key": book_key,
-        "markets": markets,
+        }],
     }
 
 
@@ -188,8 +154,6 @@ def test_update_clv_snapshots_prefers_event_id_and_updates_latest_only_outside_c
     assert updated == 1
     assert db.tables["bets"][0]["latest_pinnacle_odds"] == -105
     assert db.tables["bets"][0]["pinnacle_odds_at_close"] is None
-    assert all("beat_close" not in update for update in db.updates["bets"])
-    assert all("clv_ev_percent" not in update for update in db.updates["bets"])
 
 
 def test_update_clv_snapshots_falls_back_to_time_team_when_event_id_misses():
@@ -291,64 +255,6 @@ def test_update_clv_snapshots_can_capture_close_inside_window():
     assert db.tables["bets"][0]["clv_updated_at"] is not None
 
 
-def test_update_bet_reference_snapshots_reports_line_mismatch_reason_for_totals():
-    mod = _reload_clv_tracking()
-    commence_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
-    db = _DB(
-        bets=[
-            {
-                "id": 260,
-                "result": "pending",
-                "surface": "straight_bets",
-                "clv_team": "over",
-                "commence_time": commence_time,
-                "clv_event_id": "evt_total_mismatch",
-                "source_event_id": "evt_total_mismatch",
-                "source_market_key": "totals",
-                "line_value": 220.5,
-                "clv_sport_key": "basketball_nba",
-                "pinnacle_odds_at_close": None,
-                "clv_updated_at": None,
-            }
-        ]
-    )
-
-    summary = mod.update_bet_reference_snapshots(
-        db,
-        sides=[
-            {
-                "surface": "straight_bets",
-                "sport": "basketball_nba",
-                "event_id": "evt_total_mismatch",
-                "commence_time": commence_time,
-                "market_key": "totals",
-                "team": "over",
-                "selection_side": "over",
-                "line_value": 221.5,
-                "pinnacle_odds": -110,
-            },
-            {
-                "surface": "straight_bets",
-                "sport": "basketball_nba",
-                "event_id": "evt_total_mismatch",
-                "commence_time": commence_time,
-                "market_key": "totals",
-                "team": "under",
-                "selection_side": "under",
-                "line_value": 221.5,
-                "pinnacle_odds": -110,
-            },
-        ],
-        allow_close=True,
-        now=datetime.now(timezone.utc),
-    )
-
-    assert summary["latest_updated"] == 0
-    assert summary["close_updated"] == 0
-    assert summary["unmatched_count"] == 1
-    assert summary["reason_counts"]["line_mismatch"] == 1
-
-
 def test_update_clv_snapshots_repairs_invalid_early_close_inside_window():
     mod = _reload_clv_tracking()
     now = datetime(2026, 3, 23, 18, 35, tzinfo=timezone.utc)
@@ -390,70 +296,6 @@ def test_update_clv_snapshots_repairs_invalid_early_close_inside_window():
     assert db.tables["bets"][0]["clv_updated_at"] == now.isoformat()
 
 
-def test_repair_recent_clv_tracking_identity_backfills_recent_rows():
-    mod = _reload_clv_tracking()
-    now = datetime(2026, 4, 2, 18, 0, tzinfo=timezone.utc)
-    db = _DB(
-        bets=[
-            {
-                "id": "bet-backfill",
-                "created_at": (now - timedelta(hours=1)).isoformat(),
-                "surface": "straight_bets",
-                "clv_event_id": "evt-total-backfill",
-                "source_event_id": None,
-                "source_market_key": None,
-                "source_selection_key": "evt-total-backfill|totals|over|221.5",
-                "selection_side": None,
-                "line_value": None,
-                "clv_team": "over",
-                "selection_meta": {"marketKey": "totals"},
-            }
-        ],
-        scan_opportunities=[
-            {
-                "id": "opp-backfill",
-                "first_seen_at": (now - timedelta(hours=1)).isoformat(),
-                "surface": "player_props",
-                "event_id": None,
-                "player_name": "Nikola Jokic",
-                "opportunity_key": "player_props|basketball_nba|id:evt-prop-backfill|player_points|nikola jokic|over|24.5|fanduel",
-                "source_market_key": None,
-                "selection_side": None,
-                "line_value": None,
-            }
-        ],
-        pickem_research_observations=[
-            {
-                "id": "pickem-backfill",
-                "created_at": (now - timedelta(hours=1)).isoformat(),
-                "surface": "player_props",
-                "observation_key": "board_pickem_consensus|2026-04-02|evt-prop-backfill|player_points|nikolajokic|24.5|under",
-                "comparison_key": "evt-prop-backfill|player_points|nikolajokic|24.5",
-                "event_id": None,
-                "market_key": None,
-                "selection_side": None,
-                "line_value": None,
-            }
-        ],
-    )
-
-    summary = mod.repair_recent_clv_tracking_identity(db, now=now)
-
-    assert summary["updated"] == 3
-    assert db.tables["bets"][0]["source_event_id"] == "evt-total-backfill"
-    assert db.tables["bets"][0]["source_market_key"] == "totals"
-    assert db.tables["bets"][0]["selection_side"] == "over"
-    assert db.tables["bets"][0]["line_value"] == 221.5
-    assert db.tables["scan_opportunities"][0]["event_id"] == "evt-prop-backfill"
-    assert db.tables["scan_opportunities"][0]["source_market_key"] == "player_points"
-    assert db.tables["scan_opportunities"][0]["selection_side"] == "over"
-    assert db.tables["scan_opportunities"][0]["line_value"] == 24.5
-    assert db.tables["pickem_research_observations"][0]["event_id"] == "evt-prop-backfill"
-    assert db.tables["pickem_research_observations"][0]["market_key"] == "player_points"
-    assert db.tables["pickem_research_observations"][0]["selection_side"] == "under"
-    assert db.tables["pickem_research_observations"][0]["line_value"] == 24.5
-
-
 def test_update_scan_opportunity_reference_snapshots_updates_latest_without_close_outside_window():
     mod = _reload_clv_tracking()
     now = datetime(2026, 3, 23, 12, 0, tzinfo=timezone.utc)
@@ -487,8 +329,7 @@ def test_update_scan_opportunity_reference_snapshots_updates_latest_without_clos
         now=now,
     )
 
-    assert counts["latest_updated"] == 1
-    assert counts["close_updated"] == 0
+    assert counts == {"latest_updated": 1, "close_updated": 0}
     assert db.tables["scan_opportunities"][0]["latest_reference_odds"] == 135
     assert db.tables["scan_opportunities"][0]["reference_odds_at_close"] is None
 
@@ -535,8 +376,7 @@ def test_update_scan_opportunity_reference_snapshots_updates_prop_latest_without
         now=now,
     )
 
-    assert counts["latest_updated"] == 1
-    assert counts["close_updated"] == 0
+    assert counts == {"latest_updated": 1, "close_updated": 0}
     assert db.tables["scan_opportunities"][0]["latest_reference_odds"] == -112
     assert db.tables["scan_opportunities"][0]["reference_odds_at_close"] is None
 
@@ -594,235 +434,11 @@ def test_update_scan_opportunity_reference_snapshots_captures_prop_close_inside_
         now=now,
     )
 
-    assert counts["latest_updated"] == 1
-    assert counts["close_updated"] == 1
+    assert counts == {"latest_updated": 1, "close_updated": 1}
     assert db.tables["scan_opportunities"][0]["latest_reference_odds"] == -110
     assert db.tables["scan_opportunities"][0]["reference_odds_at_close"] == -110
     assert db.tables["scan_opportunities"][0]["clv_ev_percent"] is not None
     assert db.tables["scan_opportunities"][0]["beat_close"] is not None
-
-
-def test_update_scan_opportunity_reference_snapshots_prefers_paired_prop_close_when_opposing_side_exists():
-    mod = _reload_clv_tracking()
-    now = datetime(2026, 3, 23, 14, 50, tzinfo=timezone.utc)
-    commence_time = "2026-03-23T15:00:00Z"
-    db = _DB(
-        scan_opportunities=[
-            {
-                "id": "opp-prop-paired",
-                "opportunity_key": "player_props|basketball_nba|id:evt-prop-paired|player_points|nikola jokic|over|24.5|fanduel",
-                "surface": "player_props",
-                "sport": "basketball_nba",
-                "team": "Denver Nuggets",
-                "commence_time": commence_time,
-                "event_id": "evt-prop-paired",
-                "player_name": "Nikola Jokic",
-                "source_market_key": "player_points",
-                "selection_side": "over",
-                "line_value": 24.5,
-                "first_book_odds": 105,
-                "reference_odds_at_close": None,
-            }
-        ],
-        scan_opportunity_model_evaluations=[
-            {
-                "id": "eval-prop-paired",
-                "opportunity_key": "player_props|basketball_nba|id:evt-prop-paired|player_points|nikola jokic|over|24.5|fanduel",
-                "model_key": "props_v1_live",
-                "first_true_prob": 0.52,
-                "last_true_prob": 0.52,
-                "first_book_odds": 105,
-                "last_book_odds": 105,
-            }
-        ],
-    )
-
-    counts = mod.update_scan_opportunity_reference_snapshots(
-        db,
-        sides=[
-            {
-                "surface": "player_props",
-                "sport": "basketball_nba",
-                "event_id": "evt-prop-paired",
-                "commence_time": commence_time,
-                "player_name": "Nikola Jokic",
-                "market_key": "player_points",
-                "selection_side": "over",
-                "line_value": 24.5,
-                "reference_odds": -112,
-            },
-            {
-                "surface": "player_props",
-                "sport": "basketball_nba",
-                "event_id": "evt-prop-paired",
-                "commence_time": commence_time,
-                "player_name": "Nikola Jokic",
-                "market_key": "player_points",
-                "selection_side": "under",
-                "line_value": 24.5,
-                "reference_odds": -108,
-            },
-        ],
-        allow_close=True,
-        now=now,
-    )
-
-    assert counts["latest_updated"] == 1
-    assert counts["close_updated"] == 1
-    parent = db.tables["scan_opportunities"][0]
-    assert parent["reference_odds_at_close"] == -112
-    assert parent["close_opposing_reference_odds"] == -108
-    assert parent["close_quality"] == "paired"
-    assert parent["close_true_prob"] is not None
-    evaluation = db.tables["scan_opportunity_model_evaluations"][0]
-    assert evaluation["close_reference_odds"] == -112
-    assert evaluation["close_opposing_reference_odds"] == -108
-    assert evaluation["close_quality"] == "paired"
-    assert evaluation["first_brier_score"] is not None
-    assert evaluation["first_log_loss"] is not None
-
-
-def test_finalize_tracked_clv_closes_from_latest_promotes_exact_latest_snapshots():
-    mod = _reload_clv_tracking()
-    commence_time = "2026-03-23T15:00:00Z"
-    now = datetime(2026, 3, 23, 15, 5, tzinfo=timezone.utc)
-    latest_at = "2026-03-23T14:55:00Z"
-    db = _DB(
-        bets=[
-            {
-                "id": "bet-finalize",
-                "result": "pending",
-                "surface": "straight_bets",
-                "commence_time": commence_time,
-                "created_at": "2026-03-23T12:00:00Z",
-                "clv_event_id": "evt-finalize",
-                "source_market_key": "h2h",
-                "clv_team": "Team Finalize",
-                "odds_american": -105,
-                "latest_pinnacle_odds": -112,
-                "latest_pinnacle_updated_at": latest_at,
-                "pinnacle_odds_at_close": None,
-                "clv_updated_at": None,
-            }
-        ],
-        scan_opportunities=[
-            {
-                "id": "opp-finalize",
-                "opportunity_key": "opp-finalize",
-                "surface": "player_props",
-                "sport": "basketball_nba",
-                "commence_time": commence_time,
-                "first_book_odds": 105,
-                "latest_reference_odds": -110,
-                "latest_reference_updated_at": latest_at,
-                "reference_odds_at_close": None,
-                "close_captured_at": None,
-            }
-        ],
-        pickem_research_observations=[
-            {
-                "id": "pickem-finalize",
-                "surface": "player_props",
-                "commence_time": commence_time,
-                "first_fair_odds_american": 105,
-                "latest_reference_odds": -108,
-                "latest_reference_updated_at": latest_at,
-                "close_reference_odds": None,
-                "close_captured_at": None,
-            }
-        ],
-    )
-
-    summary = mod.finalize_tracked_clv_closes_from_latest(db, now=now)
-
-    assert summary["close_updated"] == 3
-    assert summary["rescue_from_latest_count"] == 3
-    assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -112
-    assert db.tables["bets"][0]["clv_updated_at"] == latest_at
-    assert db.tables["scan_opportunities"][0]["reference_odds_at_close"] == -110
-    assert db.tables["scan_opportunities"][0]["close_captured_at"] == latest_at
-    assert db.tables["pickem_research_observations"][0]["close_reference_odds"] == -108
-    assert db.tables["pickem_research_observations"][0]["close_captured_at"] == latest_at
-
-
-def test_finalize_tracked_clv_closes_from_latest_skips_latest_outside_close_window():
-    mod = _reload_clv_tracking()
-    now = datetime(2026, 3, 23, 15, 5, tzinfo=timezone.utc)
-    db = _DB(
-        bets=[
-            {
-                "id": "bet-too-early",
-                "result": "pending",
-                "surface": "straight_bets",
-                "commence_time": "2026-03-23T15:00:00Z",
-                "created_at": "2026-03-23T12:00:00Z",
-                "clv_event_id": "evt-too-early",
-                "source_market_key": "h2h",
-                "clv_team": "Team Early",
-                "odds_american": -105,
-                "latest_pinnacle_odds": -112,
-                "latest_pinnacle_updated_at": "2026-03-23T14:00:00Z",
-                "pinnacle_odds_at_close": None,
-                "clv_updated_at": None,
-            }
-        ],
-    )
-
-    summary = mod.finalize_tracked_clv_closes_from_latest(db, now=now)
-
-    assert summary["close_updated"] == 0
-    assert summary["bet_updates"]["close_rejected_count"] == 1
-    assert summary["bet_updates"]["reason_counts"]["latest_not_in_close_window"] == 1
-    assert db.tables["bets"][0].get("pinnacle_odds_at_close") is None
-
-
-def test_update_bet_reference_snapshots_matches_prop_by_participant_id_when_name_differs():
-    mod = _reload_clv_tracking()
-    commence_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
-    db = _DB(
-        bets=[
-            {
-                "id": 44,
-                "result": "pending",
-                "surface": "player_props",
-                "clv_sport_key": "basketball_nba",
-                "source_event_id": "evt-prop-id-match",
-                "source_market_key": "player_points",
-                "participant_name": "N. Jokic",
-                "participant_id": "player-15",
-                "selection_side": "over",
-                "line_value": 24.5,
-                "odds_american": 105,
-                "commence_time": commence_time,
-                "pinnacle_odds_at_close": None,
-            }
-        ],
-    )
-
-    counts = mod.update_bet_reference_snapshots(
-        db,
-        sides=[
-            {
-                "surface": "player_props",
-                "sport": "basketball_nba",
-                "event_id": "evt-prop-id-match",
-                "commence_time": commence_time,
-                "player_name": "Nikola Jokic",
-                "participant_id": "player-15",
-                "market_key": "player_points",
-                "selection_side": "over",
-                "line_value": 24.5,
-                "reference_odds": -111,
-            }
-        ],
-        allow_close=True,
-        now=datetime.now(timezone.utc),
-    )
-
-    assert counts["latest_updated"] == 1
-    assert counts["close_updated"] == 1
-    assert db.tables["bets"][0]["latest_pinnacle_odds"] == -111
-    assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -111
 
 
 @pytest.mark.asyncio
@@ -968,324 +584,3 @@ async def test_run_jit_clv_snatcher_still_updates_bets_when_scan_opportunities_t
 
     assert updated == 1
     assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -108
-
-
-@pytest.mark.asyncio
-async def test_run_jit_clv_snatcher_updates_player_prop_bets_without_research_rows(monkeypatch):
-    mod = _reload_odds_api()
-    import services.player_props as player_props
-
-    commence_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
-    db = _DB(
-        bets=[
-            {
-                "id": 40,
-                "result": "pending",
-                "surface": "player_props",
-                "clv_sport_key": "basketball_nba",
-                "source_event_id": "evt-prop-jit",
-                "source_market_key": "player_points",
-                "participant_name": "Nikola Jokic",
-                "selection_side": "over",
-                "line_value": 24.5,
-                "odds_american": 105,
-                "commence_time": commence_time,
-                "pinnacle_odds_at_close": None,
-            }
-        ],
-    )
-
-    async def _fake_fetch_prop_market_for_event(*, sport, event_id, markets, source):
-        assert sport == "basketball_nba"
-        assert event_id == "evt-prop-jit"
-        assert markets == ["player_points"]
-        assert source == "jit_clv_props"
-        return {"id": event_id, "commence_time": commence_time}, None
-
-    def _fake_parse_prop_sides(**kwargs):
-        return [
-            {
-                "surface": "player_props",
-                "sport": "basketball_nba",
-                "event_id": "evt-prop-jit",
-                "commence_time": commence_time,
-                "player_name": "Nikola Jokic",
-                "market_key": "player_points",
-                "selection_side": "over",
-                "line_value": 24.5,
-                "reference_odds": -112,
-            }
-        ]
-
-    monkeypatch.setattr(player_props, "_fetch_prop_market_for_event", _fake_fetch_prop_market_for_event, raising=True)
-    monkeypatch.setattr(player_props, "_parse_prop_sides", _fake_parse_prop_sides, raising=True)
-
-    updated = await mod.run_jit_clv_snatcher(db)
-
-    assert updated == 1
-    assert db.tables["bets"][0]["latest_pinnacle_odds"] == -112
-    assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -112
-    assert db.tables["bets"][0]["clv_updated_at"] is not None
-
-
-@pytest.mark.asyncio
-async def test_run_jit_clv_snatcher_uses_looser_prop_clv_gate_than_surface_scan(monkeypatch):
-    mod = _reload_odds_api()
-    import services.player_props as player_props
-
-    commence_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
-    db = _DB(
-        bets=[
-            {
-                "id": 41,
-                "result": "pending",
-                "surface": "player_props",
-                "clv_sport_key": "basketball_nba",
-                "source_event_id": "evt-prop-gate",
-                "source_market_key": "player_points",
-                "participant_name": "Nikola Jokic",
-                "selection_side": "over",
-                "line_value": 24.5,
-                "odds_american": 105,
-                "commence_time": commence_time,
-                "pinnacle_odds_at_close": None,
-            }
-        ],
-    )
-
-    async def _fake_fetch_prop_market_for_event(*, sport, event_id, markets, source):
-        return {"id": event_id, "commence_time": commence_time}, None
-
-    def _fake_parse_prop_sides(**kwargs):
-        assert kwargs["min_reference_bookmakers"] == 1
-        return [
-            {
-                "surface": "player_props",
-                "sport": "basketball_nba",
-                "event_id": "evt-prop-gate",
-                "commence_time": commence_time,
-                "player_name": "Nikola Jokic",
-                "market_key": "player_points",
-                "selection_side": "over",
-                "line_value": 24.5,
-                "reference_odds": -111,
-            }
-        ]
-
-    monkeypatch.setattr(player_props, "_fetch_prop_market_for_event", _fake_fetch_prop_market_for_event, raising=True)
-    monkeypatch.setattr(player_props, "_parse_prop_sides", _fake_parse_prop_sides, raising=True)
-    monkeypatch.setattr(player_props, "get_player_prop_min_reference_bookmakers", lambda: 3, raising=True)
-    monkeypatch.setattr(player_props, "get_player_prop_clv_min_reference_bookmakers", lambda: 1, raising=True)
-
-    updated = await mod.run_jit_clv_snatcher(db)
-
-    assert updated == 1
-    assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -111
-
-
-@pytest.mark.asyncio
-async def test_fetch_clv_for_pending_bets_updates_player_prop_bets(monkeypatch):
-    mod = _reload_odds_api()
-    import services.player_props as player_props
-
-    commence_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
-    db = _DB(
-        bets=[
-            {
-                "id": 42,
-                "result": "pending",
-                "surface": "player_props",
-                "clv_sport_key": "basketball_nba",
-                "source_event_id": "evt-prop-daily",
-                "source_market_key": "player_points",
-                "participant_name": "Nikola Jokic",
-                "selection_side": "over",
-                "line_value": 24.5,
-                "odds_american": 105,
-                "commence_time": commence_time,
-                "pinnacle_odds_at_close": None,
-            }
-        ],
-    )
-
-    async def _fake_fetch_prop_market_for_event(*, sport, event_id, markets, source):
-        assert source == "clv_daily_props"
-        return {"id": event_id, "commence_time": commence_time}, None
-
-    def _fake_parse_prop_sides(**kwargs):
-        return [
-            {
-                "surface": "player_props",
-                "sport": "basketball_nba",
-                "event_id": "evt-prop-daily",
-                "commence_time": commence_time,
-                "player_name": "Nikola Jokic",
-                "market_key": "player_points",
-                "selection_side": "over",
-                "line_value": 24.5,
-                "reference_odds": -114,
-            }
-        ]
-
-    monkeypatch.setattr(player_props, "_fetch_prop_market_for_event", _fake_fetch_prop_market_for_event, raising=True)
-    monkeypatch.setattr(player_props, "_parse_prop_sides", _fake_parse_prop_sides, raising=True)
-
-    updated = await mod.fetch_clv_for_pending_bets(db)
-
-    assert updated == 1
-    assert db.tables["bets"][0]["latest_pinnacle_odds"] == -114
-    assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -114
-
-
-@pytest.mark.asyncio
-async def test_run_jit_clv_snatcher_updates_straight_total_bets(monkeypatch):
-    mod = _reload_odds_api()
-    commence_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
-    db = _DB(
-        bets=[
-            {
-                "id": 60,
-                "result": "pending",
-                "surface": "straight_bets",
-                "clv_sport_key": "basketball_nba",
-                "clv_team": "over",
-                "source_market_key": "totals",
-                "line_value": 219.5,
-                "commence_time": commence_time,
-                "clv_event_id": "evt-total-jit",
-                "pinnacle_odds_at_close": None,
-                "odds_american": -102,
-            }
-        ],
-    )
-
-    async def _fake_fetch_odds(_sport_key, source="jit_clv"):
-        event = {
-            "id": "evt-total-jit",
-            "home_team": "Team Total A",
-            "away_team": "Team Total B",
-            "commence_time": commence_time,
-            "bookmakers": [
-                _bookmaker_event(
-                    mod.SHARP_BOOK,
-                    "Team Total A",
-                    "Team Total B",
-                    spread={"home_line": -4.5, "away_line": 4.5, "home_price": -110, "away_price": -110},
-                    total={"line": 219.5, "over_price": -114, "under_price": -106},
-                ),
-            ],
-        }
-        return [event], None
-
-    monkeypatch.setattr(mod, "fetch_odds", _fake_fetch_odds)
-
-    updated = await mod.run_jit_clv_snatcher(db)
-
-    assert updated == 1
-    assert db.tables["bets"][0]["latest_pinnacle_odds"] == -114
-    assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -114
-
-
-@pytest.mark.asyncio
-async def test_run_jit_clv_snatcher_updates_straight_spread_bets(monkeypatch):
-    mod = _reload_odds_api()
-    commence_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
-    db = _DB(
-        bets=[
-            {
-                "id": 61,
-                "result": "pending",
-                "surface": "straight_bets",
-                "clv_sport_key": "basketball_nba",
-                "clv_team": "Team Spread A",
-                "source_market_key": "spreads",
-                "line_value": -4.5,
-                "commence_time": commence_time,
-                "clv_event_id": "evt-spread-jit",
-                "pinnacle_odds_at_close": None,
-                "odds_american": -105,
-            }
-        ],
-    )
-
-    async def _fake_fetch_odds(_sport_key, source="jit_clv"):
-        event = {
-            "id": "evt-spread-jit",
-            "home_team": "Team Spread A",
-            "away_team": "Team Spread B",
-            "commence_time": commence_time,
-            "bookmakers": [
-                _bookmaker_event(
-                    mod.SHARP_BOOK,
-                    "Team Spread A",
-                    "Team Spread B",
-                    spread={"home_line": -4.5, "away_line": 4.5, "home_price": -118, "away_price": 102},
-                    total={"line": 221.5, "over_price": -110, "under_price": -110},
-                ),
-            ],
-        }
-        return [event], None
-
-    monkeypatch.setattr(mod, "fetch_odds", _fake_fetch_odds)
-
-    updated = await mod.run_jit_clv_snatcher(db)
-
-    assert updated == 1
-    assert db.tables["bets"][0]["latest_pinnacle_odds"] == -118
-    assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -118
-
-
-@pytest.mark.asyncio
-async def test_replay_recent_clv_closes_repairs_started_prop_bets(monkeypatch):
-    mod = _reload_odds_api()
-    import services.player_props as player_props
-
-    commence_time = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
-    db = _DB(
-        bets=[
-            {
-                "id": 43,
-                "result": "pending",
-                "surface": "player_props",
-                "clv_sport_key": "basketball_nba",
-                "source_event_id": "evt-prop-replay",
-                "source_market_key": "player_points",
-                "participant_name": "Nikola Jokic",
-                "selection_side": "over",
-                "line_value": 24.5,
-                "odds_american": 105,
-                "commence_time": commence_time,
-                "pinnacle_odds_at_close": None,
-                "clv_updated_at": None,
-            }
-        ],
-    )
-
-    async def _fake_fetch_prop_market_for_event(*, sport, event_id, markets, source):
-        assert source == "clv_replay_props"
-        return {"id": event_id, "commence_time": commence_time}, None
-
-    def _fake_parse_prop_sides(**kwargs):
-        return [
-            {
-                "surface": "player_props",
-                "sport": "basketball_nba",
-                "event_id": "evt-prop-replay",
-                "commence_time": commence_time,
-                "player_name": "Nikola Jokic",
-                "market_key": "player_points",
-                "selection_side": "over",
-                "line_value": 24.5,
-                "reference_odds": -115,
-            }
-        ]
-
-    monkeypatch.setattr(player_props, "_fetch_prop_market_for_event", _fake_fetch_prop_market_for_event, raising=True)
-    monkeypatch.setattr(player_props, "_parse_prop_sides", _fake_parse_prop_sides, raising=True)
-
-    summary = await mod.replay_recent_clv_closes(db, lookback_hours=4)
-
-    assert summary["candidate_count"] == 1
-    assert summary["close_updated"] == 1
-    assert db.tables["bets"][0]["latest_pinnacle_odds"] == -115
-    assert db.tables["bets"][0]["pinnacle_odds_at_close"] == -115

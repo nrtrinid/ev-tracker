@@ -2,7 +2,6 @@ import { expect, test } from "@playwright/test";
 
 import {
   buildParlayCartLeg,
-  buildParlayCartLegFromPickEmCard,
   buildScannerLogBetInitialValues,
   parseScannerCustomBoostInput,
   toggleScannerBookSelection,
@@ -60,24 +59,6 @@ const BASE_PROP_SIDE: MarketSide = {
   best_logged_odds_american: null,
   current_odds_american: 105,
   matched_pending_bet_id: null,
-};
-
-const BASE_SPREAD_SIDE: MarketSide = {
-  ...BASE_SIDE,
-  market_key: "spreads",
-  selection_key: "evt-1|spreads|lakers|+4.5",
-  team: "Lakers",
-  selection_side: "home",
-  line_value: 4.5,
-};
-
-const BASE_TOTAL_SIDE: MarketSide = {
-  ...BASE_SIDE,
-  market_key: "totals",
-  selection_key: "evt-1|totals|over|221.5",
-  team: "Over",
-  selection_side: "over",
-  line_value: 221.5,
 };
 
 test.describe("scanner state utils", () => {
@@ -146,80 +127,6 @@ test.describe("scanner state utils", () => {
     expect(out.source_selection_key).toBe("evt-2|player_points|jokic|over|24.5");
   });
 
-  test("buildScannerLogBetInitialValues preserves spread line metadata", async () => {
-    const out = buildScannerLogBetInitialValues({
-      side: BASE_SPREAD_SIDE,
-      activeLens: "standard",
-      boostPercent: 30,
-      sportDisplayMap: { basketball_nba: "NBA" },
-      kellyMultiplier: 1,
-      bankroll: 1000,
-    });
-
-    expect(out.event).toBe("Lakers +4.5");
-    expect(out.market).toBe("Spread");
-    expect(out.selection_side).toBe("Lakers");
-    expect(out.line_value).toBe(4.5);
-    expect(out.source_market_key).toBe("spreads");
-  });
-
-  test("buildScannerLogBetInitialValues preserves totals metadata", async () => {
-    const out = buildScannerLogBetInitialValues({
-      side: BASE_TOTAL_SIDE,
-      activeLens: "standard",
-      boostPercent: 30,
-      sportDisplayMap: { basketball_nba: "NBA" },
-      kellyMultiplier: 1,
-      bankroll: 1000,
-    });
-
-    expect(out.event).toBe("Over 221.5");
-    expect(out.market).toBe("Total");
-    expect(out.selection_side).toBe("over");
-    expect(out.line_value).toBe(221.5);
-  });
-
-  test("buildScannerLogBetInitialValues recovers spread line metadata from selection key", async () => {
-    const out = buildScannerLogBetInitialValues({
-      side: {
-        ...BASE_SPREAD_SIDE,
-        line_value: null,
-      },
-      activeLens: "standard",
-      boostPercent: 30,
-      sportDisplayMap: { basketball_nba: "NBA" },
-      kellyMultiplier: 1,
-      bankroll: 1000,
-    });
-
-    expect(out.event).toBe("Lakers +4.5");
-    expect(out.market).toBe("Spread");
-    expect(out.selection_side).toBe("Lakers");
-    expect(out.line_value).toBe(4.5);
-    expect(out.source_market_key).toBe("spreads");
-  });
-
-  test("buildScannerLogBetInitialValues recovers total line metadata from selection key", async () => {
-    const out = buildScannerLogBetInitialValues({
-      side: {
-        ...BASE_TOTAL_SIDE,
-        line_value: null,
-        selection_side: null,
-      },
-      activeLens: "standard",
-      boostPercent: 30,
-      sportDisplayMap: { basketball_nba: "NBA" },
-      kellyMultiplier: 1,
-      bankroll: 1000,
-    });
-
-    expect(out.event).toBe("Over 221.5");
-    expect(out.market).toBe("Total");
-    expect(out.selection_side).toBe("over");
-    expect(out.line_value).toBe(221.5);
-    expect(out.source_market_key).toBe("totals");
-  });
-
   test("buildParlayCartLeg builds stable ids for props", async () => {
     const out = buildParlayCartLeg(BASE_PROP_SIDE);
 
@@ -256,72 +163,5 @@ test.describe("scanner state utils", () => {
     expect(out.referenceOddsAmerican).toBe(240);
     expect(out.referenceTrueProbability).toBeCloseTo(100 / 340, 8);
     expect(out.selectionMeta).toMatchObject({ rawPinnacleOdds: 227 });
-  });
-
-  test("buildParlayCartLeg formats spread and total legs distinctly", async () => {
-    const spreadLeg = buildParlayCartLeg(BASE_SPREAD_SIDE);
-    const totalLeg = buildParlayCartLeg(BASE_TOTAL_SIDE);
-
-    expect(spreadLeg.display).toBe("Lakers +4.5");
-    expect(spreadLeg.marketDisplay).toBe("Spread");
-    expect(spreadLeg.selectionSide).toBe("Lakers");
-
-    expect(totalLeg.display).toBe("Over 221.5");
-    expect(totalLeg.marketDisplay).toBe("Total");
-    expect(totalLeg.selectionSide).toBe("over");
-    expect(totalLeg.lineValue).toBe(221.5);
-  });
-
-  test("buildParlayCartLeg formats spread and total legs distinctly even without explicit line values", async () => {
-    const spreadLeg = buildParlayCartLeg({
-      ...BASE_SPREAD_SIDE,
-      line_value: null,
-    });
-    const totalLeg = buildParlayCartLeg({
-      ...BASE_TOTAL_SIDE,
-      line_value: null,
-      selection_side: null,
-    });
-
-    expect(spreadLeg.display).toBe("Lakers +4.5");
-    expect(totalLeg.display).toBe("Over 221.5");
-  });
-
-  test("buildParlayCartLegFromPickEmCard maps consensus winner into a pick'em slip leg", async () => {
-    const out = buildParlayCartLegFromPickEmCard({
-      comparison_key: "evt-2|player_points|jokic|24.5",
-      event_id: "evt-2",
-      sport: "basketball_nba",
-      event: "Nuggets @ Suns",
-      commence_time: "2026-03-21T03:00:00Z",
-      player_name: "Nikola Jokic",
-      participant_id: "pp-123",
-      team: "Nuggets",
-      opponent: "Suns",
-      market_key: "player_points",
-      market: "player_points",
-      line_value: 24.5,
-      exact_line_bookmakers: ["FanDuel", "BetMGM"],
-      exact_line_bookmaker_count: 2,
-      consensus_over_prob: 0.57,
-      consensus_under_prob: 0.43,
-      consensus_side: "over",
-      confidence_label: "solid",
-      best_over_sportsbook: "FanDuel",
-      best_over_odds: 105,
-      best_over_deeplink_url: "https://example.com/over",
-      best_under_sportsbook: "BetMGM",
-      best_under_odds: -120,
-      best_under_deeplink_url: "https://example.com/under",
-    });
-
-    expect(out).not.toBeNull();
-    expect(out?.sportsbook).toBe("FanDuel");
-    expect(out?.selectionSide).toBe("over");
-    expect(out?.referenceSource).toBe("pickem_consensus");
-    expect(out?.selectionMeta).toMatchObject({
-      pickEmComparisonKey: "evt-2|player_points|jokic|24.5",
-      sportsbookDeeplinkUrl: "https://example.com/over",
-    });
   });
 });

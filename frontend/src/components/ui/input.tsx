@@ -14,7 +14,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
           "flex h-10 w-full bg-transparent px-1 py-2 text-sm",
           "border-0 border-b-2 border-[#DDD5C7] rounded-none",
           "placeholder:text-muted-foreground/60",
-          "focus:outline-none focus:border-[#C4A35A] focus:bg-background",
+          "focus:outline-none focus:border-[#C4A35A] focus:bg-[#FAF8F5]",
           "transition-colors duration-150",
           "disabled:cursor-not-allowed disabled:opacity-50",
           // Larger touch target on mobile

@@ -6,52 +6,31 @@ FastAPI backend for sports betting EV tracking.
 import asyncio
 import json
 import logging
-import signal
-from fastapi import FastAPI, HTTPException, Depends, Header, Request, Response, status
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, UTC, timedelta
 from contextlib import asynccontextmanager
 import os
 import time
-from typing import Any
 from uuid import uuid4
 from dotenv import load_dotenv
 import httpx
 from zoneinfo import ZoneInfo
 
 from models import (
-    BetResult, PromoType,
+    BetCreate, BetUpdate, BetResponse, BetResult, PromoType,
     SettingsUpdate, SettingsResponse, SummaryResponse,
     TransactionCreate, TransactionResponse, BalanceResponse,
     ScanResponse, FullScanResponse,
 )
 from calculations import (
-    american_to_decimal, calculate_ev,
-    estimate_bonus_retention,
+    american_to_decimal, calculate_ev, calculate_real_profit, calculate_clv,
+    compute_blend_weight, estimate_bonus_retention,
 )
 from auth import get_current_user
 from services.shared_state import allow_fixed_window_rate_limit, is_redis_enabled
 from services.scan_cache import persist_latest_full_scan as persist_latest_full_scan_service
 from services.settings_response import build_settings_response as build_settings_response_service
-from services.bet_crud import (
-    DEFAULT_SPORTSBOOKS,
-    EV_LOCK_PROMO_TYPES,
-    _lock_ev_for_row,
-    _retry_supabase,
-    build_bet_response,
-    build_effective_k,
-    compute_k_user,
-    get_user_settings,
-)
-from utils.request_context import (
-    get_correlation_id,
-    get_db_metrics,
-    get_request_id,
-    reset_db_metrics,
-    reset_request_context,
-    restore_db_metrics,
-    set_request_context,
-)
 
 load_dotenv()
 
@@ -60,40 +39,6 @@ app: FastAPI
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO), format="%(message)s")
 logger = logging.getLogger("ev_tracker")
-
-# Stable per-process identifier for correlating restarts in logs.
-_BOOT_ID = f"boot_{uuid4().hex[:12]}"
-
-
-def _app_role() -> str:
-    raw_role = os.getenv("APP_ROLE")
-    if raw_role is None or not raw_role.strip():
-        return "all" if os.getenv("ENABLE_SCHEDULER") == "1" else "api"
-    role = raw_role.strip().lower()
-    if role in {"web", "backend"}:
-        return "api"
-    if role in {"scheduler", "all", "api"}:
-        return role
-    return "api"
-
-
-def _scheduler_runs_in_process() -> bool:
-    if os.getenv("TESTING") == "1":
-        return False
-    if os.getenv("ENABLE_SCHEDULER") != "1":
-        return False
-    return _app_role() in {"scheduler", "all"}
-
-
-def _boot_fields() -> dict:
-    from utils.telemetry import rss_mb as _rss_mb
-
-    return {
-        "boot_id": _BOOT_ID,
-        "pid": os.getpid(),
-        "app_role": _app_role(),
-        "rss_mb": _rss_mb(),
-    }
 
 SCHEDULER_STALE_WINDOWS = {
     "jit_clv": timedelta(minutes=45),
@@ -116,6 +61,11 @@ AUTOLOG_MAX_TOTAL = 5
 AUTOLOG_MAX_LOW = 2
 AUTOLOG_MAX_HIGH = 3
 AUTOLOG_PAPER_STAKE = 10.0
+
+# Optional one-off scan schedule in Phoenix local time, format HH:MM (24h).
+# Example: SCHEDULED_SCAN_TEMP_TIME_PHOENIX=14:45
+SCHEDULED_SCAN_TEMP_TIME_ENV = "SCHEDULED_SCAN_TEMP_TIME_PHOENIX"
+
 
 def _is_paper_experiment_autolog_enabled() -> bool:
     return (os.getenv("ENABLE_PAPER_EXPERIMENT_AUTOLOG") or "0") == "1"
@@ -147,14 +97,9 @@ def _new_run_id(prefix: str) -> str:
 
 
 def _log_event(event: str, level: str = "info", **fields):
-    from utils.time_utils import utc_now_iso_z
-
     payload = {
         "event": event,
-        "timestamp": utc_now_iso_z(),
-        "app_role": _app_role(),
-        "request_id": get_request_id(),
-        "correlation_id": get_correlation_id(),
+        "timestamp": datetime.now(UTC).isoformat() + "Z",
         **fields,
     }
     message = json.dumps(payload, default=str)
@@ -566,23 +511,13 @@ def _validate_environment() -> None:
     cron_token_configured = bool(os.getenv("CRON_TOKEN"))
     paper_autolog_enabled = _is_paper_experiment_autolog_enabled()
     paper_autolog_user_id = _paper_experiment_account_user_id()
+    temp_scan_time_raw = os.getenv(SCHEDULED_SCAN_TEMP_TIME_ENV)
+
     if scheduler_enabled and not odds_api_configured:
         _log_event(
             "startup.env_scheduler_without_odds_key",
             level="warning",
             message="ENABLE_SCHEDULER=1 but ODDS_API_KEY is missing; scan jobs will fail.",
-        )
-    if scheduler_enabled and _app_role() == "api":
-        _log_event(
-            "startup.scheduler_externalized",
-            message="API process expects scheduler work to run in a separate process.",
-            redis_configured=is_redis_enabled(),
-        )
-    if scheduler_enabled and _app_role() in {"api", "scheduler"} and not is_redis_enabled():
-        _log_event(
-            "startup.redis_recommended_for_multi_process",
-            level="warning",
-            message="Scheduler/web split is safer with REDIS_URL configured for shared state and rate limiting.",
         )
 
     if not cron_token_configured:
@@ -597,6 +532,15 @@ def _validate_environment() -> None:
             "startup.env_paper_autolog_without_user_id",
             level="warning",
             message="Paper autolog is enabled but no account user id is configured; autolog inserts will be skipped.",
+        )
+
+    if temp_scan_time_raw and _parse_hhmm(temp_scan_time_raw) is None:
+        _log_event(
+            "startup.env_temp_scan_time_invalid",
+            level="warning",
+            env_var=SCHEDULED_SCAN_TEMP_TIME_ENV,
+            provided_value=temp_scan_time_raw,
+            message="Invalid temp scan time format; expected HH:MM in 24h format.",
         )
 
     _log_event(
@@ -621,87 +565,16 @@ def _capture_research_opportunities(sides: list[dict], *, source: str) -> None:
 
     from services.research_opportunities import capture_scan_opportunities
 
-    started_at = time.monotonic()
     try:
-        result = capture_scan_opportunities(
+        capture_scan_opportunities(
             get_db(),
             sides=sides,
             source=source,
             captured_at=_utc_now_iso(),
         )
-        _log_event(
-            "research.capture.completed",
-            source=source,
-            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
-            eligible_seen=result.get("eligible_seen") if isinstance(result, dict) else None,
-            inserted=result.get("inserted") if isinstance(result, dict) else None,
-            updated=result.get("updated") if isinstance(result, dict) else None,
-        )
     except Exception as e:
         _log_event(
             "research.capture.failed",
-            level="warning",
-            source=source,
-            error_class=type(e).__name__,
-            error=str(e),
-        )
-
-
-def _sync_pickem_research_from_props_payload(payload: dict[str, Any] | None, *, source: str) -> None:
-    """Persist player-props board artifacts + pick'em research rows from a fresh props payload."""
-    if not isinstance(payload, dict):
-        return
-    if str(payload.get("surface") or "").strip() != "player_props":
-        return
-    sides = payload.get("sides")
-    if not isinstance(sides, list) or not sides:
-        return
-
-    try:
-        from services.pickem_research import capture_pickem_research_observations
-        from services.player_prop_board import (
-            build_player_prop_board_item,
-            build_player_prop_board_pickem_cards,
-            persist_player_prop_board_artifacts,
-        )
-
-        db = get_db()
-        board_chunk_size = int(os.getenv("PLAYER_PROPS_BOARD_CHUNK_SIZE") or "250") or 250
-        board_legacy_max = int(os.getenv("PLAYER_PROPS_BOARD_LEGACY_MAX_ITEMS") or "150") or 150
-        artifacts_summary = persist_player_prop_board_artifacts(
-            db=db,
-            payload=payload,
-            retry_supabase=_retry_supabase,
-            log_event=_log_event,
-            chunk_size=board_chunk_size,
-            legacy_max_items=board_legacy_max,
-        )
-        raw_pickem_cards = payload.get("pickem_cards")
-        if isinstance(raw_pickem_cards, list):
-            pickem_cards = [card for card in raw_pickem_cards if isinstance(card, dict)]
-        else:
-            pickem_cards = build_player_prop_board_pickem_cards(
-                [build_player_prop_board_item(side) for side in sides if isinstance(side, dict)]
-            )
-        capture_summary = capture_pickem_research_observations(
-            db,
-            cards=pickem_cards,
-            source=source,
-            captured_at=str(payload.get("scanned_at") or _utc_now_iso()),
-        )
-        _log_event(
-            "pickem.sync.completed",
-            source=source,
-            lean_total=artifacts_summary.get("lean_total") if isinstance(artifacts_summary, dict) else None,
-            opportunities_total=artifacts_summary.get("opportunities_total") if isinstance(artifacts_summary, dict) else None,
-            pickem_total=artifacts_summary.get("pickem_total") if isinstance(artifacts_summary, dict) else None,
-            eligible_seen=capture_summary.get("eligible_seen") if isinstance(capture_summary, dict) else None,
-            inserted=capture_summary.get("inserted") if isinstance(capture_summary, dict) else None,
-            updated=capture_summary.get("updated") if isinstance(capture_summary, dict) else None,
-        )
-    except Exception as e:
-        _log_event(
-            "pickem.sync.failed",
             level="warning",
             source=source,
             error_class=type(e).__name__,
@@ -715,173 +588,7 @@ async def _apply_fresh_straight_scan_followups(result: dict, *, source: str) -> 
     if not sides or result.get("cache_hit"):
         return
     _capture_research_opportunities(sides, source=source)
-    await _piggyback_clv(sides, source=source)
-
-
-async def _apply_fresh_board_drop_followups(result: dict, *, source: str) -> None:
-    """Piggyback CLV on the fresh sides returned by a daily-board refresh."""
-    if not isinstance(result, dict):
-        return
-    fresh_sides = [
-        *(result.pop("fresh_straight_sides", []) or []),
-        *(result.pop("fresh_prop_sides", []) or []),
-    ]
-    if not fresh_sides:
-        return
-    await _piggyback_clv(fresh_sides, source=source)
-
-
-def _initial_board_alert_status(*, run_id: str, window_label: str, anchor_time_mst: str | None) -> dict[str, Any]:
-    return {
-        "run_id": run_id,
-        "message_type": "alert",
-        "window_label": window_label,
-        "anchor_time_mst": anchor_time_mst,
-        "attempted": False,
-        "delivery_status": "not_attempted",
-        "status_code": None,
-        "response_text": None,
-        "error": None,
-        "route_kind": None,
-        "webhook_source": None,
-    }
-
-
-def _board_alert_status_fields(board_alert: dict[str, Any] | None) -> dict[str, Any]:
-    status = board_alert if isinstance(board_alert, dict) else {}
-    return {
-        "board_alert": status or None,
-        "board_alert_attempted": status.get("attempted"),
-        "board_alert_delivery_status": status.get("delivery_status"),
-        "board_alert_http_status": status.get("status_code"),
-        "board_alert_error": status.get("error"),
-    }
-
-
-async def _schedule_board_drop_alert(
-    *,
-    run_id: str,
-    result: dict | None,
-    window_label: str,
-    anchor_time_mst: str | None,
-) -> dict[str, Any]:
-    board_alert = _initial_board_alert_status(
-        run_id=run_id,
-        window_label=window_label,
-        anchor_time_mst=anchor_time_mst,
-    )
-    if not isinstance(result, dict) or not result.get("ok"):
-        board_alert["delivery_status"] = "skipped_result_not_ok"
-        return board_alert
-
-    from services.discord_alerts import (
-        DiscordDeliveryError,
-        build_board_drop_alert_payload,
-        describe_discord_delivery_target,
-        send_discord_webhook,
-    )
-
-    payload = build_board_drop_alert_payload(
-        window_label=window_label,
-        anchor_time_mst=anchor_time_mst,
-        result=result,
-    )
-    delivery_target = describe_discord_delivery_target("alert")
-    board_alert.update(
-        {
-            "route_kind": delivery_target.get("route_kind"),
-            "webhook_source": delivery_target.get("webhook_source"),
-        }
-    )
-    _log_event(
-        "scheduler.board_alert.dispatch.started",
-        run_id=run_id,
-        window_label=window_label,
-        anchor_time_mst=anchor_time_mst,
-        route_kind=board_alert.get("route_kind"),
-        webhook_source=board_alert.get("webhook_source"),
-        webhook_configured=delivery_target.get("webhook_configured"),
-    )
-    try:
-        delivery = await send_discord_webhook(payload, message_type="alert")
-        if isinstance(delivery, dict):
-            board_alert.update(
-                {
-                    "attempted": delivery.get("delivery_status") != "disabled_no_webhook",
-                    "delivery_status": delivery.get("delivery_status"),
-                    "status_code": delivery.get("status_code"),
-                    "response_text": delivery.get("response_text"),
-                    "route_kind": delivery.get("route_kind"),
-                    "webhook_source": delivery.get("webhook_source"),
-                }
-            )
-        if board_alert.get("delivery_status") == "disabled_no_webhook":
-            board_alert["error"] = "Discord alert webhook not configured"
-            _log_event(
-                "scheduler.board_alert.dispatch.skipped",
-                level="warning",
-                run_id=run_id,
-                window_label=window_label,
-                anchor_time_mst=anchor_time_mst,
-                route_kind=board_alert.get("route_kind"),
-                webhook_source=board_alert.get("webhook_source"),
-                delivery_status=board_alert.get("delivery_status"),
-            )
-        else:
-            _log_event(
-                "scheduler.board_alert.dispatch.completed",
-                run_id=run_id,
-                window_label=window_label,
-                anchor_time_mst=anchor_time_mst,
-                route_kind=board_alert.get("route_kind"),
-                webhook_source=board_alert.get("webhook_source"),
-                delivery_status=board_alert.get("delivery_status"),
-                status_code=board_alert.get("status_code"),
-                response_text=board_alert.get("response_text"),
-            )
-    except DiscordDeliveryError as exc:
-        board_alert.update(
-            {
-                "attempted": True,
-                "delivery_status": "failed",
-                "status_code": exc.status_code,
-                "response_text": exc.response_text,
-                "error": str(exc),
-                "route_kind": exc.route_kind or board_alert.get("route_kind"),
-                "webhook_source": exc.webhook_source or board_alert.get("webhook_source"),
-            }
-        )
-        _log_event(
-            "scheduler.board_alert.dispatch.failed",
-            level="error",
-            run_id=run_id,
-            window_label=window_label,
-            anchor_time_mst=anchor_time_mst,
-            route_kind=board_alert.get("route_kind"),
-            webhook_source=board_alert.get("webhook_source"),
-            status_code=board_alert.get("status_code"),
-            response_text=board_alert.get("response_text"),
-            error=str(exc),
-        )
-    except Exception as exc:
-        board_alert.update(
-            {
-                "attempted": bool(delivery_target.get("webhook_configured")),
-                "delivery_status": "failed_unexpected",
-                "error": f"{type(exc).__name__}: {exc}",
-            }
-        )
-        _log_event(
-            "scheduler.board_alert.dispatch.failed",
-            level="error",
-            run_id=run_id,
-            window_label=window_label,
-            anchor_time_mst=anchor_time_mst,
-            route_kind=board_alert.get("route_kind"),
-            webhook_source=board_alert.get("webhook_source"),
-            error=board_alert.get("error"),
-        )
-    return board_alert
+    await _piggyback_clv(sides)
 
 
 def _get_environment() -> str:
@@ -1033,82 +740,12 @@ def _parse_utc_iso(timestamp: str | None) -> datetime | None:
             return None
 
 
-def _check_durable_scheduler_freshness() -> tuple[bool, dict] | None:
-    from services.ops_history import load_scheduler_job_snapshot
-
-    try:
-        snapshot = load_scheduler_job_snapshot(db=get_db(), retry_supabase=_retry_supabase)
-    except Exception as exc:
-        return False, {
-            "enabled": True,
-            "fresh": False,
-            "source": "durable_ops_history",
-            "reason": f"ops_history_unavailable:{type(exc).__name__}",
-            "jobs": {},
-        }
-
-    boot_row = snapshot.get("scheduler_boot")
-    scheduler_started_at = None
-    if isinstance(boot_row, dict):
-        scheduler_started_at = _parse_utc_iso(
-            boot_row.get("captured_at") or boot_row.get("finished_at") or boot_row.get("started_at")
-        )
-
-    now = datetime.now(UTC)
-    all_fresh = True
-    jobs: dict[str, dict] = {}
-    job_kind_map = {
-        "jit_clv": "jit_clv",
-        "auto_settler": "auto_settle",
-        "scheduled_scan": "scheduled_scan",
-    }
-    for job_name, stale_window in SCHEDULER_STALE_WINDOWS.items():
-        row = snapshot.get(job_kind_map[job_name]) or {}
-        last_success = _parse_utc_iso(
-            row.get("captured_at") or row.get("finished_at") or row.get("started_at")
-        ) if isinstance(row, dict) else None
-        freshness_reason = "fresh_success"
-
-        if last_success is not None:
-            age_seconds = (now - last_success).total_seconds()
-            is_fresh = age_seconds <= stale_window.total_seconds()
-            if not is_fresh:
-                freshness_reason = "stale_success"
-        else:
-            age_seconds = None
-            if scheduler_started_at is not None:
-                startup_age = (now - scheduler_started_at).total_seconds()
-                is_fresh = startup_age <= stale_window.total_seconds()
-                freshness_reason = "waiting_first_run" if is_fresh else "stale_no_success"
-            else:
-                is_fresh = False
-                freshness_reason = "missing_durable_boot"
-
-        if not is_fresh:
-            all_fresh = False
-        jobs[job_name] = {
-            "fresh": is_fresh,
-            "freshness_reason": freshness_reason,
-            "last_success_at": row.get("captured_at") if isinstance(row, dict) else None,
-            "last_failure_at": row.get("captured_at") if isinstance(row, dict) and row.get("status") == "failed" else None,
-            "last_run_id": row.get("run_id") if isinstance(row, dict) else None,
-            "last_error": None,
-            "stale_after_seconds": int(stale_window.total_seconds()),
-            "age_seconds": round(age_seconds, 2) if age_seconds is not None else None,
-        }
-
-    return all_fresh, {"enabled": True, "fresh": all_fresh, "source": "durable_ops_history", "jobs": jobs}
-
-
 def _check_scheduler_freshness(scheduler_expected: bool) -> tuple[bool, dict]:
     if not scheduler_expected:
         return True, {"enabled": False, "fresh": True, "jobs": {}}
 
     heartbeats = getattr(app.state, "scheduler_heartbeats", None)
     if not isinstance(heartbeats, dict):
-        durable = _check_durable_scheduler_freshness()
-        if durable is not None:
-            return durable
         return False, {
             "enabled": True,
             "fresh": False,
@@ -1153,25 +790,18 @@ def _check_scheduler_freshness(scheduler_expected: bool) -> tuple[bool, dict]:
             "age_seconds": round(age_seconds, 2) if age_seconds is not None else None,
         }
 
-    return all_fresh, {"enabled": True, "fresh": all_fresh, "source": "in_process", "jobs": jobs}
+    return all_fresh, {"enabled": True, "fresh": all_fresh, "jobs": jobs}
 
 
 def _runtime_state() -> dict:
     environment = os.getenv("ENVIRONMENT", "production").lower()
-    app_role = _app_role()
     scheduler_expected = os.getenv("ENABLE_SCHEDULER") == "1" and os.getenv("TESTING") != "1"
     scheduler_running = bool(getattr(app.state, "scheduler", None))
     return {
         "environment": environment,
-        "app_role": app_role,
         "scheduler_expected": scheduler_expected,
         "scheduler_running": scheduler_running,
-        "scheduler_runs_in_process": _scheduler_runs_in_process(),
-        "scheduler_responsibility": "in_process" if _scheduler_runs_in_process() else (
-            "external" if scheduler_expected and app_role == "api" else "disabled"
-        ),
         "redis_configured": is_redis_enabled(),
-        "redis_recommended_for_coordination": bool(scheduler_expected and app_role in {"api", "scheduler"}),
         "cron_token_configured": bool(os.getenv("CRON_TOKEN")),
         "odds_api_key_configured": bool(os.getenv("ODDS_API_KEY")),
         "supabase_url_configured": bool(os.getenv("SUPABASE_URL")),
@@ -1183,10 +813,7 @@ def _check_db_ready() -> tuple[bool, str | None]:
     try:
         db = get_db()
         # Cheap DB probe through PostgREST with minimal payload.
-        _retry_supabase(
-            lambda: db.table("settings").select("user_id").limit(1).execute(),
-            label="health.settings_probe",
-        )
+        db.table("settings").select("user_id").limit(1).execute()
         return True, None
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"
@@ -1249,64 +876,28 @@ except Exception as e:
     print(f"[Scheduler] Failed to load America/Phoenix timezone: {e}")
 
 
-# In-process lock to prevent overlapping daily-board runs (scheduler + cron/ops triggers).
-_DAILY_BOARD_RUN_LOCK = asyncio.Lock()
-_CLV_SCHEDULER_INTERVAL_MINUTES = 5
-_CLV_FINALIZE_STAGGER_MINUTES = 1
-
-
 async def _run_jit_clv_snatcher_job():
     """JIT CLV Snatcher: capture closing Pinnacle lines for games starting in the next 20 min."""
     from services.odds_api import run_jit_clv_snatcher
 
     run_id = _new_run_id("jit_clv")
-    started = _utc_now_iso()
     started_at = time.monotonic()
     _record_scheduler_heartbeat("jit_clv", run_id, "started")
     _log_event("scheduler.jit_clv.started", run_id=run_id)
     db = get_db()
     try:
-        summary = await run_jit_clv_snatcher(db, include_summary=True)
-        updated = int((summary or {}).get("close_updated", 0))
-        finished = _utc_now_iso()
-        duration_ms = round((time.monotonic() - started_at) * 1000, 2)
+        updated = await run_jit_clv_snatcher(db)
         _log_event(
             "scheduler.jit_clv.completed",
             run_id=run_id,
             updated=updated,
-            duration_ms=duration_ms,
-            summary=summary,
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
         )
         _record_scheduler_heartbeat(
             "jit_clv",
             run_id,
             "success",
-            duration_ms=duration_ms,
-        )
-        _set_ops_status(
-            "last_jit_clv",
-            {
-                "source": "scheduler",
-                "run_id": run_id,
-                "started_at": started,
-                "finished_at": finished,
-                "duration_ms": duration_ms,
-                "updated": updated,
-                "captured_at": finished,
-                "status": "completed",
-                "summary": summary,
-            },
-        )
-        _persist_ops_job_run(
-            job_kind="jit_clv",
-            source="scheduler",
-            status="completed",
-            run_id=run_id,
-            captured_at=finished,
-            started_at=started,
-            finished_at=finished,
-            duration_ms=duration_ms,
-            meta=summary or {"updated": updated},
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
         )
         if updated:
             print(f"[JIT CLV] Captured closing lines for {updated} bet(s).")
@@ -1320,33 +911,18 @@ async def _run_jit_clv_snatcher_job():
                             "title": "JIT CLV update",
                             "description": f"Captured closing lines for **{updated}** bet(s).",
                             "fields": [
-                                {"name": "Time (UTC)", "value": _utc_now_iso(), "inline": True},
+                                {"name": "Time (UTC)", "value": datetime.now(UTC).isoformat() + "Z", "inline": True},
                             ],
                         }
                     ]
                 }
                 asyncio.create_task(send_discord_webhook(payload, message_type="heartbeat"))
     except Exception as e:
-        finished = _utc_now_iso()
-        duration_ms = round((time.monotonic() - started_at) * 1000, 2)
-        _set_ops_status(
-            "last_jit_clv",
-            {
-                "source": "scheduler",
-                "run_id": run_id,
-                "started_at": started,
-                "finished_at": finished,
-                "duration_ms": duration_ms,
-                "updated": 0,
-                "captured_at": finished,
-                "status": "failed",
-            },
-        )
         _record_scheduler_heartbeat(
             "jit_clv",
             run_id,
             "failure",
-            duration_ms=duration_ms,
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
             error=str(e),
         )
         _log_event(
@@ -1355,157 +931,23 @@ async def _run_jit_clv_snatcher_job():
             run_id=run_id,
             error_class=type(e).__name__,
             error=str(e),
-            duration_ms=duration_ms,
-        )
-        _persist_ops_job_run(
-            job_kind="jit_clv",
-            source="scheduler",
-            status="failed",
-            run_id=run_id,
-            captured_at=finished,
-            started_at=started,
-            finished_at=finished,
-            duration_ms=duration_ms,
-            error_count=1,
-            errors=[{"error_class": type(e).__name__, "error": str(e)}],
-            meta={"updated": 0},
-        )
-
-
-async def _run_clv_finalize_job():
-    """Exact-only close finalizer: promote already-captured latest snapshots into close fields."""
-    from services.odds_api import finalize_recent_clv_closes
-
-    run_id = _new_run_id("clv_finalize")
-    started = _utc_now_iso()
-    started_at = time.monotonic()
-    _record_scheduler_heartbeat("clv_finalize", run_id, "started")
-    _log_event("scheduler.clv_finalize.started", run_id=run_id)
-    db = get_db()
-    try:
-        summary = await finalize_recent_clv_closes(db, include_summary=True)
-        updated = int((summary or {}).get("close_updated", 0))
-        finished = _utc_now_iso()
-        duration_ms = round((time.monotonic() - started_at) * 1000, 2)
-        _log_event(
-            "scheduler.clv_finalize.completed",
-            run_id=run_id,
-            updated=updated,
-            duration_ms=duration_ms,
-            summary=summary,
-        )
-        _record_scheduler_heartbeat(
-            "clv_finalize",
-            run_id,
-            "success",
-            duration_ms=duration_ms,
-        )
-        _set_ops_status(
-            "last_clv_finalize",
-            {
-                "source": "scheduler",
-                "run_id": run_id,
-                "started_at": started,
-                "finished_at": finished,
-                "duration_ms": duration_ms,
-                "updated": updated,
-                "captured_at": finished,
-                "status": "completed",
-                "summary": summary,
-            },
-        )
-        _persist_ops_job_run(
-            job_kind="clv_finalize",
-            source="scheduler",
-            status="completed",
-            run_id=run_id,
-            captured_at=finished,
-            started_at=started,
-            finished_at=finished,
-            duration_ms=duration_ms,
-            meta=summary or {"updated": updated},
-        )
-    except Exception as e:
-        finished = _utc_now_iso()
-        duration_ms = round((time.monotonic() - started_at) * 1000, 2)
-        _set_ops_status(
-            "last_clv_finalize",
-            {
-                "source": "scheduler",
-                "run_id": run_id,
-                "started_at": started,
-                "finished_at": finished,
-                "duration_ms": duration_ms,
-                "updated": 0,
-                "captured_at": finished,
-                "status": "failed",
-            },
-        )
-        _record_scheduler_heartbeat(
-            "clv_finalize",
-            run_id,
-            "failure",
-            duration_ms=duration_ms,
-            error=str(e),
-        )
-        _log_event(
-            "scheduler.clv_finalize.failed",
-            level="error",
-            run_id=run_id,
-            error_class=type(e).__name__,
-            error=str(e),
-            duration_ms=duration_ms,
-        )
-        _persist_ops_job_run(
-            job_kind="clv_finalize",
-            source="scheduler",
-            status="failed",
-            run_id=run_id,
-            captured_at=finished,
-            started_at=started,
-            finished_at=finished,
-            duration_ms=duration_ms,
-            error_count=1,
-            errors=[{"error_class": type(e).__name__, "error": str(e)}],
-            meta={"updated": 0},
+            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
         )
 
 
 async def _run_auto_settler_job():
     """Auto-Settler: grade completed ML bets using The Odds API /scores endpoint."""
     from services.odds_api import run_auto_settler, get_last_auto_settler_summary
-    from services.player_prop_weights import train_player_prop_model_weights
 
     run_id = _new_run_id("auto_settler")
-    started = _utc_now_iso()
+    started = datetime.now(UTC).isoformat() + "Z"
     started_at = time.monotonic()
     _record_scheduler_heartbeat("auto_settler", run_id, "started")
     _log_event("scheduler.auto_settler.started", run_id=run_id)
     db = get_db()
-    weight_training_summary = None
     try:
         settled = await run_auto_settler(db, source="auto_settle_scheduler")
-        try:
-            weight_training_summary = train_player_prop_model_weights(db)
-            _log_event(
-                "scheduler.auto_settler.weight_training.completed",
-                run_id=run_id,
-                **(weight_training_summary or {}),
-            )
-        except Exception as weight_exc:
-            weight_training_summary = {
-                "ok": False,
-                "error_class": type(weight_exc).__name__,
-                "error": str(weight_exc),
-            }
-            _log_event(
-                "scheduler.auto_settler.weight_training.failed",
-                level="warning",
-                run_id=run_id,
-                error_class=type(weight_exc).__name__,
-                error=str(weight_exc),
-            )
-        finished = _utc_now_iso()
+        finished = datetime.now(UTC).isoformat() + "Z"
         _log_event(
             "scheduler.auto_settler.completed",
             run_id=run_id,
@@ -1533,17 +975,6 @@ async def _run_auto_settler_job():
         summary = get_last_auto_settler_summary()
         if summary:
             _set_ops_status("last_auto_settle_summary", summary)
-        _auto_meta = None
-        if isinstance(summary, dict):
-            _auto_meta = {}
-            if isinstance(summary.get("sports"), list):
-                _auto_meta["sports"] = summary["sports"]
-            if isinstance(summary.get("prop_settle_telemetry"), dict):
-                _auto_meta["prop_settle_telemetry"] = summary["prop_settle_telemetry"]
-            if isinstance(weight_training_summary, dict):
-                _auto_meta["player_prop_weight_training"] = weight_training_summary
-            if not _auto_meta:
-                _auto_meta = None
         _persist_ops_job_run(
             job_kind="auto_settle",
             source="scheduler",
@@ -1555,7 +986,7 @@ async def _run_auto_settler_job():
             duration_ms=round((time.monotonic() - started_at) * 1000, 2),
             settled=settled,
             skipped_totals=summary.get("skipped_totals") if isinstance(summary, dict) else None,
-            meta=_auto_meta,
+            meta={"sports": summary.get("sports")} if isinstance(summary, dict) and isinstance(summary.get("sports"), list) else None,
         )
         if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1":
             from services.discord_alerts import send_discord_webhook
@@ -1598,86 +1029,215 @@ async def _run_auto_settler_job():
 
 async def _run_scheduled_scan_job():
     """
-    Daily board drop job (mobile-first board):
-    - Broad NBA totals fetch for selection + context
-    - Full-slate NBA props scan across 5 flagship markets
-    - Persist board:latest snapshot with game_context
+    Scheduled scan job: warms the same cache used by GET /api/scan-markets by
+    calling services.odds_api.get_cached_or_scan across SUPPORTED_SPORTS.
+
+    Player props are intentionally excluded here and remain manual-only.
     """
-    from services.daily_board import run_daily_board_drop
+    from services.odds_api import append_scan_activity, get_cached_or_scan, SUPPORTED_SPORTS
 
     run_id = _new_run_id("scheduled_scan")
-    started = _utc_now_iso()
+    started = datetime.now(UTC).isoformat()
     started_at = time.monotonic()
     _record_scheduler_heartbeat("scheduled_scan", run_id, "started")
-    _log_event("scheduler.daily_board.started", run_id=run_id, started_at=started)
+    _log_event("scheduler.scan.started", run_id=run_id, started_at=started + "Z")
 
+    total_sides = 0
+    alerts_scheduled = 0
     hard_errors = 0
-    result: dict | None = None
-    scan_window = {
-        "label": "Late-Afternoon / Final-Context Scan",
-        "anchor_timezone": "America/Phoenix",
-        "anchor_time_mst": "15:30",
-    }
-    board_alert = _initial_board_alert_status(
-        run_id=run_id,
-        window_label=scan_window["label"],
-        anchor_time_mst=scan_window["anchor_time_mst"],
-    )
-    try:
-        _log_event(
-            "board.drop.started_from_scheduler",
-            run_id=run_id,
-            locked=_DAILY_BOARD_RUN_LOCK.locked(),
-            scheduler_mode="main_drop",
-            **_boot_fields(),
-        )
-        if _DAILY_BOARD_RUN_LOCK.locked() and (os.getenv("BOARD_DROP_SKIP_IF_LOCKED") or "0") == "1":
-            _log_event(
-                "board.drop.skipped_lock",
-                level="warning",
+    all_sides: list[dict] = []
+    total_events = 0
+    total_with_both = 0
+    min_remaining: str | None = None
+    oldest_fetched: float | None = None
+    from services.discord_alerts import schedule_alerts
+
+    for sport_key in SUPPORTED_SPORTS:
+        sport_started_at = time.monotonic()
+        try:
+            result = await get_cached_or_scan(sport_key, source="scheduled_scan")
+            scan_duration_ms = round((time.monotonic() - sport_started_at) * 1000, 2)
+            sides_count = len(result.get("sides") or [])
+            fetched = result.get("events_fetched")
+            with_both = result.get("events_with_both_books")
+            sides = result.get("sides") or []
+            append_scan_activity(
+                scan_session_id=run_id,
+                source="scheduled_scan",
+                surface="straight_bets",
+                scan_scope="all",
+                requested_sport=None,
+                sport=sport_key,
+                actor_label=None,
                 run_id=run_id,
-                source="scheduled_board_drop",
+                cache_hit=bool(result.get("cache_hit")),
+                outbound_call_made=not bool(result.get("cache_hit")),
+                duration_ms=scan_duration_ms,
+                events_fetched=int(fetched or 0),
+                events_with_both_books=int(with_both or 0),
+                sides_count=sides_count,
+                api_requests_remaining=result.get("api_requests_remaining"),
+                status_code=200,
+                error_type=None,
+                error_message=None,
             )
-            result = {"ok": False, "skipped": True, "reason": "lock_held"}
-        else:
-            async with _DAILY_BOARD_RUN_LOCK:
-                result = await run_daily_board_drop(
-                    db=get_db(),
-                    source="scheduled_board_drop",
-                    scan_label="Late-Afternoon / Final-Context Scan",
-                    mst_anchor_time="15:30",
-                    retry_supabase=_retry_supabase,
-                    log_event=_log_event,
-                )
-                await _apply_fresh_board_drop_followups(result, source="scheduled_board_drop")
-                board_alert = await _schedule_board_drop_alert(
+            all_sides.extend(sides)
+            await _apply_fresh_straight_scan_followups(result, source="scheduled_scan")
+            total_sides += len(sides)
+            total_events += int(fetched or 0)
+            total_with_both += int(with_both or 0)
+
+            rem = result.get("api_requests_remaining")
+            if rem is not None:
+                try:
+                    r = int(rem)
+                    min_remaining = str(r) if min_remaining is None else str(min(r, int(min_remaining)))
+                except ValueError:
+                    min_remaining = str(rem)
+
+            ft = result.get("fetched_at")
+            if ft is not None:
+                oldest_fetched = ft if oldest_fetched is None else min(oldest_fetched, ft)
+
+            alerts_scheduled += schedule_alerts(sides)
+            _log_event(
+                "scheduler.scan.sport_completed",
+                run_id=run_id,
+                sport=sport_key,
+                sides=sides_count,
+                events_fetched=fetched,
+                events_with_both_books=with_both,
+            )
+        except httpx.HTTPStatusError as e:
+            scan_duration_ms = round((time.monotonic() - sport_started_at) * 1000, 2)
+            remaining = None
+            status_code = e.response.status_code if e.response is not None else None
+            if e.response is not None:
+                remaining = e.response.headers.get("x-requests-remaining") or e.response.headers.get("x-request-remaining")
+            append_scan_activity(
+                scan_session_id=run_id,
+                source="scheduled_scan",
+                surface="straight_bets",
+                scan_scope="all",
+                requested_sport=None,
+                sport=sport_key,
+                actor_label=None,
+                run_id=run_id,
+                cache_hit=False,
+                outbound_call_made=True,
+                duration_ms=scan_duration_ms,
+                events_fetched=0,
+                events_with_both_books=0,
+                sides_count=0,
+                api_requests_remaining=remaining,
+                status_code=status_code,
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
+            if e.response is not None and e.response.status_code == 404:
+                _log_event(
+                    "scheduler.scan.sport_skipped",
                     run_id=run_id,
-                    result=result,
-                    window_label=scan_window["label"],
-                    anchor_time_mst="15:30",
+                    sport=sport_key,
+                    status=404,
+                    reason="no odds",
                 )
+                continue
+            _log_event(
+                "scheduler.scan.sport_failed",
+                level="error",
+                run_id=run_id,
+                sport=sport_key,
+                error_class=type(e).__name__,
+                error=str(e),
+            )
+            hard_errors += 1
+        except Exception as e:
+            scan_duration_ms = round((time.monotonic() - sport_started_at) * 1000, 2)
+            append_scan_activity(
+                scan_session_id=run_id,
+                source="scheduled_scan",
+                surface="straight_bets",
+                scan_scope="all",
+                requested_sport=None,
+                sport=sport_key,
+                actor_label=None,
+                run_id=run_id,
+                cache_hit=False,
+                outbound_call_made=False,
+                duration_ms=scan_duration_ms,
+                events_fetched=0,
+                events_with_both_books=0,
+                sides_count=0,
+                api_requests_remaining=None,
+                status_code=None,
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
+            # Never crash the server/scheduler; log and continue.
+            _log_event(
+                "scheduler.scan.sport_failed",
+                level="error",
+                run_id=run_id,
+                sport=sport_key,
+                error_class=type(e).__name__,
+                error=str(e),
+            )
+            hard_errors += 1
+
+    scanned_at = (
+        datetime.fromtimestamp(oldest_fetched, tz=UTC).isoformat().replace("+00:00", "Z")
+        if oldest_fetched
+        else _utc_now_iso()
+    )
+
+    # Keep Scanner's "latest scan" payload in sync for scheduled runs, not only manual scans.
+    try:
+        _persist_latest_full_scan(
+            db=get_db(),
+            surface="straight_bets",
+            sport="all",
+            sides=all_sides,
+            events_fetched=total_events,
+            events_with_both_books=total_with_both,
+            api_requests_remaining=min_remaining,
+            scanned_at=scanned_at,
+            retry_supabase=_retry_supabase,
+            log_event=_log_event,
+        )
     except Exception as e:
         _log_event(
-            "scheduler.daily_board.failed",
+            "scheduler.scan.latest_cache_persist_failed",
+            level="warning",
+            run_id=run_id,
+            error_class=type(e).__name__,
+            error=str(e),
+        )
+
+    finished = datetime.now(UTC).isoformat()
+    autolog_summary = None
+    try:
+        autolog_summary = await _run_longshot_autolog_for_sides(db=get_db(), run_id=run_id, sides=all_sides)
+    except Exception as e:
+        autolog_summary = {
+            "enabled": _is_paper_experiment_autolog_enabled(),
+            "error": f"{type(e).__name__}: {e}",
+        }
+        _log_event(
+            "scheduler.scan.autolog.failed",
             level="error",
             run_id=run_id,
             error_class=type(e).__name__,
             error=str(e),
         )
-        hard_errors = 1
 
-    finished = _utc_now_iso()
-    alerts_scheduled = 1 if board_alert.get("attempted") else 0
-    board_alert_fields = _board_alert_status_fields(board_alert)
     _log_event(
-        "scheduler.daily_board.completed",
+        "scheduler.scan.completed",
         run_id=run_id,
-        finished_at=finished,
-        result=result,
+        finished_at=finished + "Z",
+        total_sides=total_sides,
         alerts_scheduled=alerts_scheduled,
-        board_alert_delivery_status=board_alert.get("delivery_status"),
-        board_alert_http_status=board_alert.get("status_code"),
-        board_alert_error=board_alert.get("error"),
+        autolog_summary=autolog_summary,
         duration_ms=round((time.monotonic() - started_at) * 1000, 2),
     )
     duration_ms = round((time.monotonic() - started_at) * 1000, 2)
@@ -1701,19 +1261,14 @@ async def _run_scheduled_scan_job():
         "last_scheduler_scan",
         {
             "run_id": run_id,
-            "scan_window": scan_window,
-            "started_at": started,
-            "finished_at": finished,
+            "started_at": started + "Z",
+            "finished_at": finished + "Z",
             "duration_ms": duration_ms,
-            "total_sides": (result or {}).get("props_sides") if isinstance(result, dict) else None,
-            "props_events_scanned": (result or {}).get("props_events_scanned") if isinstance(result, dict) else None,
-            "featured_games_count": (result or {}).get("featured_games_count") if isinstance(result, dict) else None,
+            "total_sides": total_sides,
             "alerts_scheduled": alerts_scheduled,
             "hard_errors": hard_errors,
-            "captured_at": finished,
-            "board_drop": True,
-            "result": result,
-            **board_alert_fields,
+            "captured_at": finished + "Z",
+            "autolog_summary": autolog_summary,
         },
     )
     _persist_ops_job_run(
@@ -1722,173 +1277,45 @@ async def _run_scheduled_scan_job():
         status="completed" if hard_errors == 0 else "completed_with_errors",
         run_id=run_id,
         scan_session_id=run_id,
-        surface="board",
-        scan_scope="daily_board",
-        requested_sport="basketball_nba",
-        captured_at=finished,
-        started_at=started,
-        finished_at=finished,
+        surface="straight_bets",
+        scan_scope="all",
+        requested_sport="all",
+        captured_at=finished + "Z",
+        started_at=started + "Z",
+        finished_at=finished + "Z",
         duration_ms=duration_ms,
-        events_fetched=None,
-        events_with_both_books=None,
-        total_sides=(result or {}).get("props_sides") if isinstance(result, dict) else None,
+        events_fetched=total_events,
+        events_with_both_books=total_with_both,
+        total_sides=total_sides,
         alerts_scheduled=alerts_scheduled,
         hard_errors=hard_errors,
-        api_requests_remaining=None,
-        meta={
-            "board_drop": True,
-            "scan_window": scan_window,
-            "props_events_scanned": (result or {}).get("props_events_scanned") if isinstance(result, dict) else None,
-            "featured_games_count": (result or {}).get("featured_games_count") if isinstance(result, dict) else None,
-            **board_alert_fields,
-            "result": result,
-        },
+        api_requests_remaining=min_remaining,
+        meta={"autolog_summary": autolog_summary},
     )
 
-async def _run_early_look_scan_job():
-    """Early-Look board scan: pre-main-drop injury/context pulse."""
-    from services.daily_board import run_daily_board_drop
+    # Optional heartbeat so we can confirm the scheduled scan ran even when it finds no lines.
+    # Send only when enabled and when no alerts were scheduled.
+    if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1" and alerts_scheduled == 0:
+        from services.discord_alerts import send_discord_webhook
 
-    run_id = _new_run_id("scheduled_scan_early")
-    started = _utc_now_iso()
-    started_at = time.monotonic()
-    _record_scheduler_heartbeat("scheduled_scan", run_id, "started")
-    _log_event("scheduler.daily_board.early_look.started", run_id=run_id, started_at=started)
-
-    hard_errors = 0
-    result: dict | None = None
-    scan_window = {
-        "label": "Early-Look / Injury-Watch Scan",
-        "anchor_timezone": "America/Phoenix",
-        "anchor_time_mst": "10:30",
-    }
-    board_alert = _initial_board_alert_status(
-        run_id=run_id,
-        window_label=scan_window["label"],
-        anchor_time_mst=scan_window["anchor_time_mst"],
-    )
-    try:
-        _log_event(
-            "board.drop.started_from_scheduler",
-            run_id=run_id,
-            locked=_DAILY_BOARD_RUN_LOCK.locked(),
-            scheduler_mode="early_look",
-            **_boot_fields(),
-        )
-        if _DAILY_BOARD_RUN_LOCK.locked() and (os.getenv("BOARD_DROP_SKIP_IF_LOCKED") or "0") == "1":
-            _log_event(
-                "board.drop.skipped_lock",
-                level="warning",
-                run_id=run_id,
-                source="scheduled_board_drop_early_look",
-            )
-            result = {"ok": False, "skipped": True, "reason": "lock_held"}
-        else:
-            async with _DAILY_BOARD_RUN_LOCK:
-                result = await run_daily_board_drop(
-                    db=get_db(),
-                    source="scheduled_board_drop_early_look",
-                    scan_label="Early-Look / Injury-Watch Scan",
-                    mst_anchor_time="10:30",
-                    retry_supabase=_retry_supabase,
-                    log_event=_log_event,
-                )
-                await _apply_fresh_board_drop_followups(result, source="scheduled_board_drop_early_look")
-                board_alert = await _schedule_board_drop_alert(
-                    run_id=run_id,
-                    result=result,
-                    window_label=scan_window["label"],
-                    anchor_time_mst="10:30",
-                )
-    except Exception as e:
-        _log_event(
-            "scheduler.daily_board.early_look.failed",
-            level="error",
-            run_id=run_id,
-            error_class=type(e).__name__,
-            error=str(e),
-        )
-        hard_errors = 1
-
-    finished = _utc_now_iso()
-    duration_ms = round((time.monotonic() - started_at) * 1000, 2)
-    alerts_scheduled = 1 if board_alert.get("attempted") else 0
-    board_alert_fields = _board_alert_status_fields(board_alert)
-    _log_event(
-        "scheduler.daily_board.early_look.completed",
-        run_id=run_id,
-        finished_at=finished,
-        result=result,
-        alerts_scheduled=alerts_scheduled,
-        board_alert_delivery_status=board_alert.get("delivery_status"),
-        board_alert_http_status=board_alert.get("status_code"),
-        board_alert_error=board_alert.get("error"),
-        duration_ms=duration_ms,
-    )
-    if hard_errors:
-        _record_scheduler_heartbeat(
-            "scheduled_scan",
-            run_id,
-            "failure",
-            duration_ms=duration_ms,
-            error=f"{hard_errors} run failed",
-        )
-    else:
-        _record_scheduler_heartbeat(
-            "scheduled_scan",
-            run_id,
-            "success",
-            duration_ms=duration_ms,
-        )
-
-    _set_ops_status(
-        "last_scheduler_scan",
-        {
-            "run_id": run_id,
-            "scan_window": scan_window,
-            "started_at": started,
-            "finished_at": finished,
-            "duration_ms": duration_ms,
-            "total_sides": (result or {}).get("props_sides") if isinstance(result, dict) else None,
-            "props_events_scanned": (result or {}).get("props_events_scanned") if isinstance(result, dict) else None,
-            "featured_games_count": (result or {}).get("featured_games_count") if isinstance(result, dict) else None,
-            "alerts_scheduled": alerts_scheduled,
-            "hard_errors": hard_errors,
-            "captured_at": finished,
-            "board_drop": True,
-            "result": result,
-            **board_alert_fields,
-        },
-    )
-    _persist_ops_job_run(
-        job_kind="scheduled_scan",
-        source="scheduler",
-        status="completed" if hard_errors == 0 else "completed_with_errors",
-        run_id=run_id,
-        scan_session_id=run_id,
-        surface="board",
-        scan_scope="daily_board",
-        requested_sport="basketball_nba",
-        captured_at=finished,
-        started_at=started,
-        finished_at=finished,
-        duration_ms=duration_ms,
-        events_fetched=None,
-        events_with_both_books=None,
-        total_sides=(result or {}).get("props_sides") if isinstance(result, dict) else None,
-        alerts_scheduled=alerts_scheduled,
-        hard_errors=hard_errors,
-        api_requests_remaining=None,
-        meta={
-            "board_drop": True,
-            "scan_window": scan_window,
-            **board_alert_fields,
-            "result": result,
-        },
-    )
+        payload = {
+            "embeds": [
+                {
+                    "title": "Scheduled scan complete (no alerts)",
+                    "description": "The scheduled scan ran successfully but found no qualifying lines to alert on.",
+                    "fields": [
+                        {"name": "Started (UTC)", "value": started + "Z", "inline": True},
+                        {"name": "Finished (UTC)", "value": finished + "Z", "inline": True},
+                        {"name": "Total sides", "value": str(total_sides), "inline": True},
+                        {"name": "Alerts scheduled", "value": str(alerts_scheduled), "inline": True},
+                    ],
+                }
+            ]
+        }
+        asyncio.create_task(send_discord_webhook(payload, message_type="heartbeat"))
 
 
-async def _piggyback_clv(sides: list[dict], *, source: str = "unknown"):
+async def _piggyback_clv(sides: list[dict]):
     """
     Fire-and-forget task: update CLV reference snapshots for pending bets and
     open research opportunities from the just-completed fresh scan. Errors are
@@ -1898,148 +1325,50 @@ async def _piggyback_clv(sides: list[dict], *, source: str = "unknown"):
         update_bet_reference_snapshots,
         update_scan_opportunity_reference_snapshots,
     )
-    from services.pickem_research import update_pickem_research_close_snapshots
-    started_at = time.monotonic()
-    run_id = _new_run_id("clv_piggyback")
-    started = _utc_now_iso()
     try:
         db = get_db()
-        bet_updates = update_bet_reference_snapshots(db, sides=sides, allow_close=True)
-        opportunity_updates = update_scan_opportunity_reference_snapshots(db, sides=sides, allow_close=True)
-        pickem_updates = update_pickem_research_close_snapshots(db, sides=sides, allow_close=True)
-        finished = _utc_now_iso()
-        duration_ms = round((time.monotonic() - started_at) * 1000, 2)
-        summary = {
-            "source": source,
-            "fetched_side_count": len(sides),
-            "bet_updates": bet_updates,
-            "research_updates": opportunity_updates,
-            "pickem_updates": pickem_updates,
-            "updated": int(bet_updates.get("latest_updated", 0))
-            + int(opportunity_updates.get("latest_updated", 0))
-            + int(pickem_updates.get("latest_updated", 0)),
-            "close_updated": int(bet_updates.get("close_updated", 0))
-            + int(opportunity_updates.get("close_updated", 0))
-            + int(pickem_updates.get("close_updated", 0)),
-        }
-        _log_event(
-            "clv.piggyback.completed",
-            run_id=run_id,
-            source=source,
-            duration_ms=duration_ms,
-            bet_latest_updated=bet_updates.get("latest_updated") if isinstance(bet_updates, dict) else None,
-            bet_close_updated=bet_updates.get("close_updated") if isinstance(bet_updates, dict) else None,
-            bet_close_rejected=bet_updates.get("close_rejected_count") if isinstance(bet_updates, dict) else None,
-            bet_reason_counts=bet_updates.get("reason_counts") if isinstance(bet_updates, dict) else None,
-            research_latest_updated=opportunity_updates.get("latest_updated") if isinstance(opportunity_updates, dict) else None,
-            research_close_updated=opportunity_updates.get("close_updated") if isinstance(opportunity_updates, dict) else None,
-            research_close_rejected=opportunity_updates.get("close_rejected_count") if isinstance(opportunity_updates, dict) else None,
-            research_reason_counts=opportunity_updates.get("reason_counts") if isinstance(opportunity_updates, dict) else None,
-            pickem_latest_updated=pickem_updates.get("latest_updated") if isinstance(pickem_updates, dict) else None,
-            pickem_close_updated=pickem_updates.get("close_updated") if isinstance(pickem_updates, dict) else None,
-            pickem_close_rejected=pickem_updates.get("close_rejected_count") if isinstance(pickem_updates, dict) else None,
-            pickem_reason_counts=pickem_updates.get("reason_counts") if isinstance(pickem_updates, dict) else None,
-        )
-        _persist_ops_job_run(
-            job_kind="clv_piggyback",
-            source=source,
-            status="completed",
-            run_id=run_id,
-            captured_at=finished,
-            started_at=started,
-            finished_at=finished,
-            duration_ms=duration_ms,
-            meta=summary,
-        )
+        update_bet_reference_snapshots(db, sides=sides, allow_close=True)
+        update_scan_opportunity_reference_snapshots(db, sides=sides, allow_close=True)
     except Exception as e:
-        _log_event(
-            "clv.piggyback.failed",
-            level="warning",
-            run_id=run_id,
-            source=source,
-            duration_ms=round((time.monotonic() - started_at) * 1000, 2),
-            error_class=type(e).__name__,
-            error=str(e),
-        )
+        print(f"[CLV piggyback] Error: {e}")
 
 
 async def start_scheduler():
     if os.getenv("TESTING") == "1":
         return  # Skip scheduler in integration tests so we don't hit Odds API or cron
     if os.getenv("ENABLE_SCHEDULER") != "1":
-        _log_event("scheduler.disabled", **_boot_fields())
         return  # Only one instance should run background jobs (Render scaling/workers)
-    if not _scheduler_runs_in_process():
-        _log_event("scheduler.externalized", **_boot_fields())
-        return
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
     from apscheduler.triggers.interval import IntervalTrigger
     _init_scheduler_heartbeats()
     scheduler = AsyncIOScheduler()
-    clv_job_anchor = datetime.now(UTC) + timedelta(minutes=_CLV_SCHEDULER_INTERVAL_MINUTES)
-    # Every 5 min: capture closing reference lines for games approaching lock.
-    scheduler.add_job(
-        _run_jit_clv_snatcher_job,
-        IntervalTrigger(minutes=_CLV_SCHEDULER_INTERVAL_MINUTES, start_date=clv_job_anchor),
-    )
-    _log_event(
-        "scheduler.job_registered",
-        job="jit_clv_snatcher",
-        trigger=f"interval:{_CLV_SCHEDULER_INTERVAL_MINUTES}m",
-        **_boot_fields(),
-    )
-    # Keep finalize on the same cadence, but offset it so it doesn't contend with JIT snapshot work.
-    scheduler.add_job(
-        _run_clv_finalize_job,
-        IntervalTrigger(
-            minutes=_CLV_SCHEDULER_INTERVAL_MINUTES,
-            start_date=clv_job_anchor + timedelta(minutes=_CLV_FINALIZE_STAGGER_MINUTES),
-        ),
-    )
-    _log_event(
-        "scheduler.job_registered",
-        job="clv_finalize",
-        trigger=f"interval:{_CLV_SCHEDULER_INTERVAL_MINUTES}m+{_CLV_FINALIZE_STAGGER_MINUTES}m",
-        **_boot_fields(),
-    )
-    # 11:00 PM Phoenix catches most same-night finals; 4:00 AM cleans up stragglers.
+    # Every 15 min: capture closing Pinnacle lines for games starting within 20 min
+    scheduler.add_job(_run_jit_clv_snatcher_job, IntervalTrigger(minutes=15))
+    # 4:00 AM Phoenix daily: auto-grade completed ML bets via /scores.
     # Explicit timezone keeps scheduler behavior consistent across hosts.
-    auto_settle_schedules = (
-        [
-            (23, 0, CronTrigger(hour=23, minute=0, timezone=PHOENIX_TZ)),
-            (4, 0, CronTrigger(hour=4, minute=0, timezone=PHOENIX_TZ)),
-        ]
+    auto_settle_trigger = (
+        CronTrigger(hour=4, minute=0, timezone=PHOENIX_TZ)
         if PHOENIX_TZ is not None
-        else [
-            (23, 0, CronTrigger(hour=23, minute=0)),
-            (4, 0, CronTrigger(hour=4, minute=0)),
-        ]
+        else CronTrigger(hour=4, minute=0)
     )
-    for hour, minute, trigger in auto_settle_schedules:
-        scheduler.add_job(
-            _run_auto_settler_job,
-            trigger,
-            misfire_grace_time=60 * 60,
-            coalesce=True,
-        )
-        _log_event(
-            "scheduler.job_registered",
-            job="auto_settler",
-            trigger=f"cron:{hour:02d}:{minute:02d}",
-            **_boot_fields(),
-        )
+    scheduler.add_job(
+        _run_auto_settler_job,
+        auto_settle_trigger,
+        misfire_grace_time=60 * 60,
+        coalesce=True,
+    )
     if PHOENIX_TZ is not None:
-        scheduler.add_job(
-            _run_early_look_scan_job,
-            CronTrigger(hour=10, minute=30, timezone=PHOENIX_TZ),
-        )
-        _log_event("scheduler.job_registered", job="daily_board_early_look", trigger="cron:10:30", **_boot_fields())
-        scheduler.add_job(
-            _run_scheduled_scan_job,
-            CronTrigger(hour=15, minute=30, timezone=PHOENIX_TZ),
-        )
-        _log_event("scheduler.job_registered", job="daily_board_main_drop", trigger="cron:15:30", **_boot_fields())
+        scheduled_scan_times: list[tuple[int, int]] = [(5, 30), (14, 30)]
+        temp_scan_time = _parse_hhmm(os.getenv(SCHEDULED_SCAN_TEMP_TIME_ENV))
+        if temp_scan_time is not None and temp_scan_time not in scheduled_scan_times:
+            scheduled_scan_times.append(temp_scan_time)
+
+        for hour, minute in scheduled_scan_times:
+            scheduler.add_job(
+                _run_scheduled_scan_job,
+                CronTrigger(hour=hour, minute=minute, timezone=PHOENIX_TZ),
+            )
     else:
         print("[Scheduler] Phoenix timezone unavailable; skipping scheduled scan jobs.")
     scheduler.start()
@@ -2050,15 +1379,6 @@ async def start_scheduler():
         jobs_count = len(getattr(scheduler, "jobs", []))
     _log_event("scheduler.started", jobs=jobs_count)
     app.state.scheduler = scheduler
-    _persist_ops_job_run(
-        job_kind="scheduler_boot",
-        source=_app_role(),
-        status="completed",
-        captured_at=app.state.scheduler_started_at,
-        started_at=app.state.scheduler_started_at,
-        finished_at=app.state.scheduler_started_at,
-        meta={"boot_id": _BOOT_ID, "jobs": jobs_count},
-    )
 
 
 async def stop_scheduler():
@@ -2076,50 +1396,14 @@ async def stop_scheduler():
             )
 
 
-async def run_scheduler_worker() -> None:
-    """Run scheduler jobs without serving HTTP traffic."""
-    if not _scheduler_runs_in_process():
-        raise RuntimeError("Scheduler worker requires ENABLE_SCHEDULER=1 with APP_ROLE=scheduler or APP_ROLE=all.")
-    _log_event("scheduler_worker.boot", **_boot_fields())
-    _validate_environment()
-    _init_ops_status()
-    await start_scheduler()
-
-    stop_event = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, stop_event.set)
-        except NotImplementedError:
-            pass
-
-    try:
-        await stop_event.wait()
-    finally:
-        try:
-            from services.http_client import close_async_client
-
-            await close_async_client()
-        except Exception:
-            pass
-        await stop_scheduler()
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _log_event("app.boot", **_boot_fields())
     _validate_environment()
     _init_ops_status()
     await start_scheduler()
     try:
         yield
     finally:
-        try:
-            from services.http_client import close_async_client
-
-            await close_async_client()
-        except Exception:
-            pass
         await stop_scheduler()
 
 
@@ -2139,83 +1423,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# Lightweight request timing + memory watermark logs for high-risk endpoints.
-_TELEMETRY_PATHS = {
-    "/bets",
-    "/balances",
-    "/summary",
-    "/api/board/latest",
-    "/api/ops/status",
-    "/api/ops/research-opportunities/summary",
-    "/api/ops/clv-debug",
-    "/ready",
-}
-
-
-@app.middleware("http")
-async def _timing_middleware(request: Request, call_next):
-    import time as _time
-
-    from utils.telemetry import rss_mb as _rss_mb
-
-    path = request.url.path
-    should_log = path in _TELEMETRY_PATHS or request.method in {"POST", "PATCH", "DELETE"}
-    request_id = request.headers.get("X-Request-ID") or f"req_{uuid4().hex[:12]}"
-    correlation_id = request.headers.get("X-Correlation-ID") or request_id
-    request_token, correlation_token = set_request_context(
-        request_id=request_id,
-        correlation_id=correlation_id,
-    )
-    db_count_token, db_duration_token = reset_db_metrics()
-    started = _time.monotonic()
-    rss_before = _rss_mb() if should_log else None
-    try:
-        response = await call_next(request)
-    except Exception as exc:
-        duration_ms = round((_time.monotonic() - started) * 1000, 2)
-        db_metrics = get_db_metrics()
-        if should_log:
-            _log_event(
-                "http.request.failed",
-                level="warning",
-                method=request.method,
-                path=path,
-                duration_ms=duration_ms,
-                rss_mb_before=rss_before,
-                rss_mb_after=_rss_mb(),
-                db_roundtrip_count=db_metrics["roundtrip_count"],
-                db_roundtrip_duration_ms=db_metrics["roundtrip_duration_ms"],
-                error_class=type(exc).__name__,
-                error=str(exc),
-            )
-        restore_db_metrics(count_token=db_count_token, duration_token=db_duration_token)
-        reset_request_context(request_token=request_token, correlation_token=correlation_token)
-        raise
-
-    duration_ms = round((_time.monotonic() - started) * 1000, 2)
-    db_metrics = get_db_metrics()
-    response.headers["X-Request-ID"] = request_id
-    response.headers["X-Correlation-ID"] = correlation_id
-    response.headers["X-DB-Roundtrips"] = str(db_metrics["roundtrip_count"])
-    response.headers["X-Request-Duration-MS"] = str(duration_ms)
-
-    if should_log:
-        _log_event(
-            "http.request.completed",
-            method=request.method,
-            path=path,
-            status_code=getattr(response, "status_code", None),
-            duration_ms=duration_ms,
-            rss_mb_before=rss_before,
-            rss_mb_after=_rss_mb(),
-            db_roundtrip_count=db_metrics["roundtrip_count"],
-            db_roundtrip_duration_ms=db_metrics["roundtrip_duration_ms"],
-        )
-    restore_db_metrics(count_token=db_count_token, duration_token=db_duration_token)
-    reset_request_context(request_token=request_token, correlation_token=correlation_token)
-    return response
-
 # Import database after app setup to avoid circular imports
 from database import get_db
 
@@ -2227,8 +1434,6 @@ from routes.transactions_routes import router as transactions_router
 from routes.parlay_routes import router as parlay_router
 from routes.utility_routes import router as utility_router
 from routes.admin_routes import router as admin_router
-from routes.bet_routes import router as bet_router
-from routes.board_routes import router as board_router
 
 app.include_router(scan_router)
 app.include_router(ops_router)
@@ -2237,31 +1442,6 @@ app.include_router(transactions_router)
 app.include_router(parlay_router)
 app.include_router(utility_router)
 app.include_router(admin_router)
-app.include_router(bet_router)
-app.include_router(board_router, prefix="/api")
-
-# ---- Re-export selected route handlers for tests ----
-# Some unit/integration tests import these callables from the main module.
-from routes.scan_routes import scan_markets, scan_latest  # noqa: E402
-from routes.ops_cron import ops_status_impl as _ops_status_impl  # noqa: E402
-
-
-def ops_status(x_cron_token: str | None = None):
-    """Test-friendly wrapper around the ops status implementation."""
-    from services.research_opportunities import get_research_opportunities_summary  # noqa: F401
-
-    return _ops_status_impl(
-        x_cron_token=x_cron_token,
-        require_valid_cron_token=lambda token: _require_ops_token(token, None),
-        runtime_state=_runtime_state,
-        check_db_ready=_check_db_ready,
-        check_scheduler_freshness=_check_scheduler_freshness,
-        utc_now_iso=_utc_now_iso,
-        get_db=get_db,
-        retry_supabase=_retry_supabase,
-        log_event=_log_event,
-        get_ops_status=lambda: getattr(app.state, "ops_status", {}),
-    )
 
 # ---------- Scan rate limit ----------
 # 12 full scans per 15 minutes per user; uses shared state when REDIS_URL is configured.
@@ -2285,18 +1465,261 @@ async def require_scan_rate_limit(user: dict = Depends(get_current_user)) -> dic
     return user
 
 
+def _retry_supabase(f, retries=2):
+    """Retry a Supabase/PostgREST request on transient 'Server disconnected' errors."""
+    last_err = None
+    for attempt in range(retries):
+        try:
+            return f()
+        except httpx.RemoteProtocolError as e:
+            last_err = e
+            if attempt == retries - 1:
+                raise
+            time.sleep(0.4)
+    if last_err:
+        raise last_err
+
+
+DEFAULT_SPORTSBOOKS = [
+    "DraftKings", "FanDuel", "BetMGM", "Caesars",
+    "ESPN Bet", "Fanatics", "Hard Rock", "bet365"
+]
+
+
+def get_user_settings(db, user_id: str) -> dict:
+    """Get settings from DB, creating defaults for new users."""
+    result = _retry_supabase(lambda: db.table("settings").select("*").eq("user_id", user_id).execute())
+    if result.data:
+        return result.data[0]
+
+    defaults = {
+        "user_id": user_id,
+        "k_factor": 0.78,
+        "default_stake": None,
+        "preferred_sportsbooks": DEFAULT_SPORTSBOOKS,
+        "kelly_multiplier": 0.25,
+        "bankroll_override": 1000.0,
+        "use_computed_bankroll": True,
+        "k_factor_mode": "baseline",
+        "k_factor_min_stake": 300.0,
+        "k_factor_smoothing": 700.0,
+        "k_factor_clamp_min": 0.50,
+        "k_factor_clamp_max": 0.95,
+        "onboarding_state": {
+            "version": 2,
+            "completed": [],
+            "dismissed": [],
+            "last_seen_at": None,
+        },
+    }
+    _retry_supabase(lambda: db.table("settings").upsert(defaults).execute())
+    result = _retry_supabase(lambda: db.table("settings").select("*").eq("user_id", user_id).execute())
+    return result.data[0]
+
+
+def compute_k_user(db, user_id: str) -> dict:
+    """
+    Compute observed bonus retention from settled bonus bets.
+    Returns k_obs (None if no data), bonus_stake_settled.
+    """
+    created_after = datetime.now(UTC) - timedelta(days=999)
+    try:
+        res = _retry_supabase(lambda: (
+            db.table("bets")
+            # Keep this query simple and filter in Python. The narrower PostgREST
+            # filter shape here has produced noisy 400s in local auth contexts.
+            .select("*")
+            .eq("user_id", user_id)
+            .execute()
+        ))
+        rows = res.data or []
+    except Exception:
+        return {"k_obs": None, "bonus_stake_settled": 0.0}
+
+    total_stake = 0.0
+    total_profit = 0.0
+    for row in rows:
+        if row.get("promo_type") != "bonus_bet":
+            continue
+        stake = float(row.get("stake") or 0)
+        result = row.get("result")
+        if result == "pending":
+            continue
+        created_at = row.get("created_at")
+        if created_at:
+            try:
+                created_dt = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+                if created_dt < created_after:
+                    continue
+            except Exception:
+                pass
+        win_payout = float(row.get("payout_override") or row.get("win_payout") or 0)
+        total_stake += stake
+        if result == "win":
+            # bonus_bet profit = win_payout (stake not returned)
+            total_profit += win_payout
+        # loss / push / void → 0 profit
+
+    k_obs = (total_profit / total_stake) if total_stake > 0 else None
+    return {"k_obs": k_obs, "bonus_stake_settled": total_stake}
+
+
+def build_effective_k(settings: dict, k_obs: float | None, bonus_stake_settled: float) -> dict:
+    """
+    Compute all derived k fields returned to the frontend.
+    Returns a dict with k_factor_observed, k_factor_weight, k_factor_effective.
+    """
+    k0 = float(settings.get("k_factor") or 0.78)
+    mode = settings.get("k_factor_mode") or "baseline"
+    min_stake = float(settings.get("k_factor_min_stake") or 300.0)
+    smoothing = float(settings.get("k_factor_smoothing") or 700.0)
+    clamp_min = float(settings.get("k_factor_clamp_min") or 0.50)
+    clamp_max = float(settings.get("k_factor_clamp_max") or 0.95)
+
+    w = 0.0
+    k_effective = k0
+
+    if mode == "auto" and k_obs is not None:
+        k_clamped = max(clamp_min, min(clamp_max, k_obs))
+        w = compute_blend_weight(bonus_stake_settled, min_stake, smoothing)
+        k_effective = (1.0 - w) * k0 + w * k_clamped
+
+    return {
+        "k_factor_observed": k_obs,
+        "k_factor_weight": round(w, 4),
+        "k_factor_effective": round(k_effective, 4),
+        "k_factor_bonus_stake_settled": round(bonus_stake_settled, 2),
+    }
+
+
+def build_bet_response(row: dict, k_factor: float) -> BetResponse:
+    """Convert database row to BetResponse with calculated fields."""
+    from calculations import calculate_hold_from_odds
+
+    decimal_odds = american_to_decimal(row["odds_american"])
+    decimal_odds_for_ev = decimal_odds
+
+    # If payout_override is provided, keep EV math consistent with the displayed payout.
+    # This is only unambiguous for markets where win_payout is stake * decimal_odds
+    # (standard/no_sweat/promo_qualifier). For bonus bets and profit boosts, payout
+    # semantics differ, so we do not try to back-solve odds automatically.
+    payout_override = row.get("payout_override")
+    promo_type = row.get("promo_type")
+    stake = row.get("stake") or 0
+    if (
+        payout_override is not None
+        and stake
+        and promo_type in ("standard", "no_sweat", "promo_qualifier")
+    ):
+        try:
+            implied_decimal = float(payout_override) / float(stake)
+            if implied_decimal > 1:
+                decimal_odds_for_ev = implied_decimal
+        except Exception:
+            pass
+
+    vig = None
+    if row.get("opposing_odds"):
+        vig = calculate_hold_from_odds(row["odds_american"], row["opposing_odds"])
+
+    ev_result = calculate_ev(
+        stake=row["stake"],
+        decimal_odds=decimal_odds_for_ev,
+        promo_type=row["promo_type"],
+        k_factor=k_factor,
+        boost_percent=row.get("boost_percent"),
+        winnings_cap=row.get("winnings_cap"),
+        vig=vig,
+        true_prob=row.get("true_prob_at_entry"),
+    )
+
+    # Use payout override if present
+    win_payout = payout_override or ev_result["win_payout"]
+
+    real_profit = calculate_real_profit(
+        stake=row["stake"],
+        win_payout=win_payout,
+        result=row["result"],
+        promo_type=row["promo_type"],
+    )
+
+    # CLV — compute only when we have both entry and close Pinnacle lines
+    clv_ev_percent = None
+    beat_close = None
+    if row.get("pinnacle_odds_at_entry") and row.get("pinnacle_odds_at_close"):
+        clv_result = calculate_clv(row["odds_american"], row["pinnacle_odds_at_close"])
+        clv_ev_percent = clv_result["clv_ev_percent"]
+        beat_close = clv_result["beat_close"]
+
+    # Use locked EV when present (frozen at bet-creation time)
+    ev_per_dollar_out = row.get("ev_per_dollar_locked") if row.get("ev_per_dollar_locked") is not None else ev_result["ev_per_dollar"]
+    ev_total_out = row.get("ev_total_locked") if row.get("ev_total_locked") is not None else ev_result["ev_total"]
+    win_payout_out = row.get("win_payout_locked") if row.get("win_payout_locked") is not None else win_payout
+
+    return BetResponse(
+        id=row["id"],
+        created_at=row["created_at"],
+        event_date=row["event_date"],
+        settled_at=row.get("settled_at"),
+        sport=row["sport"],
+        event=row["event"],
+        market=row["market"],
+        surface=row.get("surface") or "straight_bets",
+        sportsbook=row["sportsbook"],
+        promo_type=row["promo_type"],
+        odds_american=row["odds_american"],
+        odds_decimal=decimal_odds,
+        stake=row["stake"],
+        boost_percent=row.get("boost_percent"),
+        winnings_cap=row.get("winnings_cap"),
+        notes=row.get("notes"),
+        opposing_odds=row.get("opposing_odds"),
+        result=row["result"],
+        win_payout=win_payout_out,
+        ev_per_dollar=ev_per_dollar_out,
+        ev_total=ev_total_out,
+        real_profit=real_profit,
+        pinnacle_odds_at_entry=row.get("pinnacle_odds_at_entry"),
+        latest_pinnacle_odds=row.get("latest_pinnacle_odds"),
+        latest_pinnacle_updated_at=row.get("latest_pinnacle_updated_at"),
+        pinnacle_odds_at_close=row.get("pinnacle_odds_at_close"),
+        clv_updated_at=row.get("clv_updated_at"),
+        commence_time=row.get("commence_time"),
+        clv_team=row.get("clv_team"),
+        clv_sport_key=row.get("clv_sport_key"),
+        clv_event_id=row.get("clv_event_id"),
+        true_prob_at_entry=row.get("true_prob_at_entry"),
+        clv_ev_percent=clv_ev_percent,
+        beat_close=beat_close,
+        ev_per_dollar_locked=row.get("ev_per_dollar_locked"),
+        ev_total_locked=row.get("ev_total_locked"),
+        win_payout_locked=row.get("win_payout_locked"),
+        ev_lock_version=row.get("ev_lock_version") or 1,
+        is_paper=bool(row.get("is_paper") or False),
+        strategy_cohort=row.get("strategy_cohort"),
+        auto_logged=bool(row.get("auto_logged") or False),
+        auto_log_run_at=row.get("auto_log_run_at"),
+        auto_log_run_key=row.get("auto_log_run_key"),
+        scan_ev_percent_at_log=row.get("scan_ev_percent_at_log"),
+        book_odds_at_log=row.get("book_odds_at_log"),
+        reference_odds_at_log=row.get("reference_odds_at_log"),
+        source_event_id=row.get("source_event_id"),
+        source_market_key=row.get("source_market_key"),
+        source_selection_key=row.get("source_selection_key"),
+        participant_name=row.get("participant_name"),
+        participant_id=row.get("participant_id"),
+        selection_side=row.get("selection_side"),
+        line_value=row.get("line_value"),
+        selection_meta=row.get("selection_meta"),
+    )
+
 
 # ============ Health Check ============
 
 @app.get("/health")
 def health_check():
     """Health check endpoint."""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now(UTC).isoformat(),
-        "app_role": _app_role(),
-        "boot_id": _BOOT_ID,
-    }
+    return {"status": "healthy", "timestamp": datetime.now(UTC).isoformat()}
 
 
 @app.get("/ready")
@@ -2314,11 +1737,7 @@ def readiness_check():
     checks = {
         "supabase_env": runtime["supabase_url_configured"] and runtime["supabase_service_role_configured"],
         "db_connectivity": db_ok,
-        "scheduler_state": (
-            (not runtime["scheduler_expected"])
-            or runtime["scheduler_running"]
-            or runtime.get("scheduler_responsibility") == "external"
-        ),
+        "scheduler_state": (not runtime["scheduler_expected"]) or runtime["scheduler_running"],
         "scheduler_freshness": scheduler_fresh_ok,
     }
     ready = all(checks.values())
@@ -2350,7 +1769,7 @@ def readiness_check():
 
     response = {
         "status": "ready" if ready else "not_ready",
-        "timestamp": _utc_now_iso(),
+        "timestamp": datetime.now(UTC).isoformat() + "Z",
         "checks": checks,
         "runtime": runtime,
         "scheduler_freshness": scheduler_freshness,
@@ -2364,6 +1783,344 @@ def readiness_check():
     raise HTTPException(status_code=503, detail=response)
 
 
+# ── EV freeze helper ─────────────────────────────────────────────────────────
+
+EV_LOCK_PROMO_TYPES = {"bonus_bet", "no_sweat", "promo_qualifier",
+                       "boost_30", "boost_50", "boost_100", "boost_custom"}
+
+
+def _lock_ev_for_row(db, bet_id: str, user_id: str, row: dict, settings: dict) -> None:
+    """
+    Compute EV once using the current effective k and write locked fields to DB.
+    Only runs for promo types where k has a meaningful effect.
+    Does NOT update bets that already have a valid lock (ev_locked_at is set).
+    """
+    if row.get("ev_locked_at") is not None:
+        return
+    if row.get("promo_type") not in EV_LOCK_PROMO_TYPES:
+        return
+
+    k_data = compute_k_user(db, user_id)
+    k_derived = build_effective_k(settings, k_data["k_obs"], k_data["bonus_stake_settled"])
+    k_eff = k_derived["k_factor_effective"]
+
+    from calculations import calculate_hold_from_odds
+    decimal_odds = american_to_decimal(row["odds_american"])
+    payout_override = row.get("payout_override")
+    stake = float(row.get("stake") or 0)
+    promo_type = row.get("promo_type")
+
+    decimal_odds_for_ev = decimal_odds
+    if (payout_override is not None and stake
+            and promo_type in ("standard", "no_sweat", "promo_qualifier")):
+        try:
+            implied = float(payout_override) / float(stake)
+            if implied > 1:
+                decimal_odds_for_ev = implied
+        except Exception:
+            pass
+
+    vig = None
+    if row.get("opposing_odds"):
+        vig = calculate_hold_from_odds(row["odds_american"], row["opposing_odds"])
+
+    ev_result = calculate_ev(
+        stake=stake,
+        decimal_odds=decimal_odds_for_ev,
+        promo_type=promo_type,
+        k_factor=k_eff,
+        boost_percent=row.get("boost_percent"),
+        winnings_cap=row.get("winnings_cap"),
+        vig=vig,
+        true_prob=row.get("true_prob_at_entry"),
+    )
+    win_payout = payout_override or ev_result["win_payout"]
+
+    try:
+        db.table("bets").update({
+            "ev_per_dollar_locked": ev_result["ev_per_dollar"],
+            "ev_total_locked": ev_result["ev_total"],
+            "win_payout_locked": win_payout,
+            "ev_locked_at": datetime.now(UTC).isoformat(),
+        }).eq("id", bet_id).eq("user_id", user_id).execute()
+    except Exception as e:
+        logger.warning("ev_lock.write_failed bet_id=%s err=%s", bet_id, e)
+
+
+# ============ Bets CRUD ============
+
+@app.post("/bets", response_model=BetResponse, status_code=201)
+def create_bet(bet: BetCreate, user: dict = Depends(get_current_user)):
+    """Create a new bet."""
+    db = get_db()
+    settings = get_user_settings(db, user["id"])
+
+    data = {
+        "user_id": user["id"],
+        "sport": bet.sport,
+        "event": bet.event,
+        "market": bet.market,
+        "surface": bet.surface,
+        "sportsbook": bet.sportsbook,
+        "promo_type": bet.promo_type.value,
+        "odds_american": bet.odds_american,
+        "stake": bet.stake,
+        "boost_percent": bet.boost_percent,
+        "winnings_cap": bet.winnings_cap,
+        "notes": bet.notes,
+        "payout_override": bet.payout_override,
+        "opposing_odds": bet.opposing_odds,
+        "result": BetResult.PENDING.value,
+        # CLV tracking fields (None when betting manually, set when logging from scanner)
+        "pinnacle_odds_at_entry": bet.pinnacle_odds_at_entry,
+        "commence_time": bet.commence_time,
+        "clv_team": bet.clv_team,
+        "clv_sport_key": bet.clv_sport_key,
+        "clv_event_id": bet.clv_event_id,
+        "true_prob_at_entry": bet.true_prob_at_entry,
+        "source_event_id": bet.source_event_id,
+        "source_market_key": bet.source_market_key,
+        "source_selection_key": bet.source_selection_key,
+        "participant_name": bet.participant_name,
+        "participant_id": bet.participant_id,
+        "selection_side": bet.selection_side,
+        "line_value": bet.line_value,
+        "selection_meta": bet.selection_meta,
+    }
+
+    # Only include event_date if provided, otherwise let DB default to today
+    if bet.event_date:
+        data["event_date"] = bet.event_date.isoformat()
+
+    result = db.table("bets").insert(data).execute()
+
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to create bet")
+
+    row = result.data[0]
+    _lock_ev_for_row(db, row["id"], user["id"], row, settings)
+    # Re-fetch so locked fields are included in the response
+    fresh = db.table("bets").select("*").eq("id", row["id"]).execute()
+    return build_bet_response(fresh.data[0] if fresh.data else row, settings["k_factor"])
+
+
+@app.get("/bets", response_model=list[BetResponse])
+def get_bets(
+    sport: str | None = None,
+    sportsbook: str | None = None,
+    result: BetResult | None = None,
+    limit: int = 1000,
+    offset: int = 0,
+    user: dict = Depends(get_current_user),
+):
+    """Get all bets with optional filters."""
+    db = get_db()
+    settings = get_user_settings(db, user["id"])
+
+    query = (
+        db.table("bets")
+        .select("*")
+        .eq("user_id", user["id"])
+        .order("created_at", desc=True)
+    )
+
+    if sport:
+        query = query.eq("sport", sport)
+    if sportsbook:
+        query = query.eq("sportsbook", sportsbook)
+    if result:
+        query = query.eq("result", result.value)
+
+    query = query.range(offset, offset + limit - 1)
+
+    response = _retry_supabase(lambda: query.execute())
+
+    return [build_bet_response(row, settings["k_factor"]) for row in response.data]
+
+
+@app.get("/bets/{bet_id}", response_model=BetResponse)
+def get_bet(bet_id: str, user: dict = Depends(get_current_user)):
+    """Get a single bet by ID."""
+    db = get_db()
+    settings = get_user_settings(db, user["id"])
+
+    result = (
+        db.table("bets")
+        .select("*")
+        .eq("id", bet_id)
+        .eq("user_id", user["id"])
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Bet not found")
+
+    return build_bet_response(result.data[0], settings["k_factor"])
+
+
+@app.patch("/bets/{bet_id}", response_model=BetResponse)
+def update_bet(bet_id: str, bet: BetUpdate, user: dict = Depends(get_current_user)):
+    """Update an existing bet."""
+    db = get_db()
+    settings = get_user_settings(db, user["id"])
+
+    # Build update data, excluding None values
+    data = {}
+    if bet.sport is not None:
+        data["sport"] = bet.sport
+    if bet.event is not None:
+        data["event"] = bet.event
+    if bet.market is not None:
+        data["market"] = bet.market
+    if bet.surface is not None:
+        data["surface"] = bet.surface
+    if bet.sportsbook is not None:
+        data["sportsbook"] = bet.sportsbook
+    if bet.promo_type is not None:
+        data["promo_type"] = bet.promo_type.value
+    if bet.odds_american is not None:
+        data["odds_american"] = bet.odds_american
+    if bet.stake is not None:
+        data["stake"] = bet.stake
+    if bet.boost_percent is not None:
+        data["boost_percent"] = bet.boost_percent
+    if bet.winnings_cap is not None:
+        data["winnings_cap"] = bet.winnings_cap
+    if bet.notes is not None:
+        data["notes"] = bet.notes
+    if bet.result is not None:
+        data["result"] = bet.result.value
+        # Auto-set settled_at when result changes from pending
+        current = (
+            db.table("bets")
+            .select("result")
+            .eq("id", bet_id)
+            .eq("user_id", user["id"])
+            .execute()
+        )
+        if current.data and current.data[0]["result"] == "pending" and bet.result.value != "pending":
+            data["settled_at"] = datetime.now(UTC).isoformat()
+    if bet.payout_override is not None:
+        data["payout_override"] = bet.payout_override
+    if bet.opposing_odds is not None:
+        data["opposing_odds"] = bet.opposing_odds
+    if bet.event_date is not None:
+        data["event_date"] = bet.event_date.isoformat()
+
+    # If any EV-relevant field changed, clear the lock so it gets recomputed
+    EV_RELEVANT = {"odds_american", "stake", "promo_type", "boost_percent",
+                   "winnings_cap", "payout_override", "opposing_odds"}
+    if data.keys() & EV_RELEVANT:
+        data["ev_per_dollar_locked"] = None
+        data["ev_total_locked"] = None
+        data["win_payout_locked"] = None
+        data["ev_locked_at"] = None
+
+    if not data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    result = (
+        db.table("bets")
+        .update(data)
+        .eq("id", bet_id)
+        .eq("user_id", user["id"])
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Bet not found")
+
+    row = result.data[0]
+    _lock_ev_for_row(db, bet_id, user["id"], row, settings)
+    fresh = db.table("bets").select("*").eq("id", bet_id).execute()
+    return build_bet_response(fresh.data[0] if fresh.data else row, settings["k_factor"])
+
+
+@app.patch("/bets/{bet_id}/result")
+def update_bet_result(
+    bet_id: str,
+    result: BetResult,
+    user: dict = Depends(get_current_user),
+):
+    """Quick endpoint to just update bet result (win/loss)."""
+    db = get_db()
+    settings = get_user_settings(db, user["id"])
+
+    # Build update data
+    update_data = {"result": result.value}
+
+    # Auto-set settled_at when changing from pending to settled
+    current = (
+        db.table("bets")
+        .select("result")
+        .eq("id", bet_id)
+        .eq("user_id", user["id"])
+        .execute()
+    )
+    if not current.data:
+        raise HTTPException(status_code=404, detail="Bet not found")
+    if current.data[0]["result"] == "pending" and result.value != "pending":
+        update_data["settled_at"] = datetime.now(UTC).isoformat()
+
+    response = (
+        db.table("bets")
+        .update(update_data)
+        .eq("id", bet_id)
+        .eq("user_id", user["id"])
+        .execute()
+    )
+
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Bet not found")
+
+    return build_bet_response(response.data[0], settings["k_factor"])
+
+
+@app.delete("/bets/{bet_id}")
+def delete_bet(bet_id: str, user: dict = Depends(get_current_user)):
+    """Delete a bet."""
+    db = get_db()
+
+    result = (
+        db.table("bets")
+        .delete()
+        .eq("id", bet_id)
+        .eq("user_id", user["id"])
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Bet not found")
+
+    return {"deleted": True, "id": bet_id}
+
+
+def backfill_ev_locks(user: dict = Depends(get_current_user)):
+    """
+    One-off endpoint: freeze EV on all existing promo bets that don't yet have
+    locked EV fields. Safe to call multiple times (idempotent: skips rows that
+    already have ev_locked_at set).
+    """
+    db = get_db()
+    settings = get_user_settings(db, user["id"])
+
+    res = _retry_supabase(lambda: (
+        db.table("bets")
+        .select("*")
+        .eq("user_id", user["id"])
+        .is_("ev_locked_at", "null")
+        .in_("promo_type", list(EV_LOCK_PROMO_TYPES))
+        .execute()
+    ))
+    rows = res.data or []
+    locked = 0
+    for row in rows:
+        try:
+            _lock_ev_for_row(db, row["id"], user["id"], row, settings)
+            locked += 1
+        except Exception as e:
+            logger.warning("backfill_ev_lock.failed bet_id=%s err=%s", row["id"], e)
+    return {"backfilled": locked, "total_eligible": len(rows)}
 
 
 # ============ Summary / Dashboard ============
@@ -2542,46 +2299,69 @@ def delete_transaction(
 @app.get("/balances", response_model=list[BalanceResponse])
 def get_balances(user: dict = Depends(get_current_user)):
     """Get computed balance for each sportsbook."""
-    request_id = f"balances_{uuid4().hex[:10]}"
-    _log_event(
-        "balances.entered",
-        request_id=request_id,
-        **_boot_fields(),
-        user_id=str(user.get("id") or ""),
-    )
     db = get_db()
     settings = get_user_settings(db, user["id"])
-    # k_factor no longer needed for balances (profit uses stored bet fields)
-    _k_factor = settings["k_factor"]
+    k_factor = settings["k_factor"]
 
     # Get all transactions for this user
     tx_result = _retry_supabase(lambda: (
         db.table("transactions")
-        .select("sportsbook,type,amount")
+        .select("*")
         .eq("user_id", user["id"])
         .execute()
     ))
     transactions = tx_result.data or []
 
     # Get all bets for profit calculation
-    bets_result = _retry_supabase(lambda: (
-        db.table("bets")
-        .select("sportsbook,result,promo_type,stake,odds_american,boost_percent,winnings_cap,payout_override,win_payout_locked,true_prob_at_entry")
-        .eq("user_id", user["id"])
-        .execute()
-    ))
+    bets_result = _retry_supabase(lambda: db.table("bets").select("*").eq("user_id", user["id"]).execute())
     bets = bets_result.data or []
 
-    from services.balance_stats import compute_balances_by_sportsbook_fast
+    # Aggregate by sportsbook
+    sportsbook_data = {}
 
-    out = compute_balances_by_sportsbook_fast(transactions=transactions, bets=bets)
-    resp = [BalanceResponse(**row) for row in out]
-    _log_event(
-        "balances.completed",
-        request_id=request_id,
-        **_boot_fields(),
-    )
-    return resp
+    # Process transactions
+    for tx in transactions:
+        book = tx["sportsbook"]
+        if book not in sportsbook_data:
+            sportsbook_data[book] = {"deposits": 0, "withdrawals": 0, "profit": 0, "pending": 0}
+
+        if tx["type"] == "deposit":
+            sportsbook_data[book]["deposits"] += float(tx["amount"])
+        else:
+            sportsbook_data[book]["withdrawals"] += float(tx["amount"])
+
+    # Process bets for profit and pending
+    for row in bets:
+        book = row["sportsbook"]
+        if book not in sportsbook_data:
+            sportsbook_data[book] = {"deposits": 0, "withdrawals": 0, "profit": 0, "pending": 0}
+
+        bet = build_bet_response(row, k_factor)
+
+        if bet.result == BetResult.PENDING:
+            # Pending cash exposure: bonus bet stake is not real cash.
+            if bet.promo_type != "bonus_bet":
+                sportsbook_data[book]["pending"] += bet.stake
+        elif bet.real_profit is not None:
+            sportsbook_data[book]["profit"] += bet.real_profit
+
+    # Build response
+    balances = []
+    for book, data in sorted(sportsbook_data.items()):
+        net_deposits = data["deposits"] - data["withdrawals"]
+        balance = net_deposits + data["profit"] - data["pending"]
+
+        balances.append(BalanceResponse(
+            sportsbook=book,
+            deposits=round(data["deposits"], 2),
+            withdrawals=round(data["withdrawals"], 2),
+            net_deposits=round(net_deposits, 2),
+            profit=round(data["profit"], 2),
+            pending=round(data["pending"], 2),
+            balance=round(balance, 2),
+        ))
+
+    return balances
 
 
 # ============ Settings ============
@@ -2685,6 +2465,505 @@ def calculate_ev_preview(
         "promo_type": promo_type.value,
         **result,
     }
+
+
+# ============ Odds Scanner ============
+
+async def scan_bets(
+    sport: str = "basketball_nba",
+    user: dict = Depends(require_scan_rate_limit),
+):
+    """
+    Scan live odds: de-vig Pinnacle, compare to DraftKings,
+    return any +EV moneyline opportunities.
+    """
+    from services.odds_api import scan_for_ev, fetch_odds, SUPPORTED_SPORTS
+
+    if sport not in SUPPORTED_SPORTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported sport. Choose from: {', '.join(SUPPORTED_SPORTS)}",
+        )
+
+    try:
+        result = await scan_for_ev(sport)
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Odds API error: {e}")
+
+    return _build_scan_response(sport=sport, result=result)
+
+
+async def scan_markets(
+    surface: str = "straight_bets",
+    sport: str | None = None,
+    user: dict = Depends(require_scan_rate_limit),
+):
+    from routes.scan_routes import scan_markets_impl
+    from services.scan_markets import apply_manual_scan_bundle, scan_exception_to_http_exception
+
+    return await scan_markets_impl(
+        surface=surface,
+        sport=sport,
+        user=user,
+        get_db=get_db,
+        supported_sports=_scanner_supported_sports(surface),
+        get_cached_or_scan=lambda sport_key, source="manual_scan": _get_cached_or_scan_for_surface(surface, sport_key, source=source),
+        apply_manual_scan_bundle_fn=apply_manual_scan_bundle,
+        set_ops_status=_set_ops_status,
+        utc_now_iso=_utc_now_iso,
+        piggyback_clv=_piggyback_clv,
+        capture_research_opportunities=_capture_research_opportunities,
+        persist_latest_full_scan=_persist_latest_full_scan,
+        retry_supabase=_retry_supabase,
+        log_event=_log_event,
+        annotate_sides=_annotate_sides_with_duplicate_state,
+        append_scan_activity=_append_scan_activity,
+        persist_ops_job_run=_persist_ops_job_run,
+        new_run_id=_new_run_id,
+        map_error=scan_exception_to_http_exception,
+        build_full_scan_response=_build_full_scan_response,
+        get_environment=_get_environment,
+    )
+
+
+async def scan_latest(
+    surface: str = "straight_bets",
+    user: dict = Depends(require_scan_rate_limit),
+):
+    """
+    Return the most recent *global* scan payload, even if stale.
+
+    This is a UX convenience so the Scanner can show something on first load
+    (across devices/accounts) without requiring an immediate rescan.
+    """
+    db = get_db()
+    try:
+        try:
+            cache_key = f"{surface}:latest"
+            res = _retry_supabase(lambda: (
+                db.table("global_scan_cache")
+                .select("payload")
+                .eq("key", cache_key)
+                .limit(1)
+                .execute()
+            ))
+        except Exception as e:
+            # Supabase PostgREST returns PGRST205 when the table doesn't exist / schema cache is stale.
+            # Treat as "no scans yet" so the UI doesn't show scary errors.
+            msg = str(e)
+            if "PGRST205" in msg or ("global_scan_cache" in msg and "schema cache" in msg):
+                return FullScanResponse(
+                    surface=surface,
+                    sport="all",
+                    sides=[],
+                    events_fetched=0,
+                    events_with_both_books=0,
+                    api_requests_remaining=None,
+                    scanned_at=None,
+                )
+            raise
+        if not res.data and surface == "straight_bets":
+            res = _retry_supabase(lambda: (
+                db.table("global_scan_cache")
+                .select("payload")
+                .eq("key", "latest")
+                .limit(1)
+                .execute()
+            ))
+        if not res.data:
+            # Return an empty payload (200) so the UI doesn't treat this as an error.
+            return FullScanResponse(
+                surface=surface,
+                sport="all",
+                sides=[],
+                events_fetched=0,
+                events_with_both_books=0,
+                api_requests_remaining=None,
+                scanned_at=None,
+            )
+        payload = res.data[0].get("payload")
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=500, detail="Invalid scan cache payload")
+        sides = payload.get("sides") if isinstance(payload.get("sides"), list) else []
+        payload["surface"] = payload.get("surface") or surface
+        payload["sides"] = [
+            side if isinstance(side, dict) and side.get("surface") else {"surface": surface, **side}
+            for side in _annotate_sides_with_duplicate_state(db, user["id"], sides)
+        ]
+        return payload
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to load scan cache: {e}")
+
+
+async def ops_trigger_scan(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+):
+    """
+    Manual operator scan trigger.
+
+    Security: requires X-Ops-Token header matching CRON_TOKEN.
+    """
+    _require_ops_token(x_ops_token, x_cron_token)
+
+    run_id = _new_run_id("ops_scan")
+    started_clock = time.monotonic()
+    _log_event("ops.trigger.scan.started", run_id=run_id)
+
+    from services.odds_api import get_cached_or_scan, SUPPORTED_SPORTS
+
+    started = datetime.now(UTC).isoformat() + "Z"
+    scanned = []
+    errors: list[dict] = []
+    total_sides = 0
+    alerts_scheduled = 0
+    from services.discord_alerts import schedule_alerts
+
+    for sport_key in SUPPORTED_SPORTS:
+        try:
+            result = await get_cached_or_scan(sport_key, source="ops_trigger_scan")
+            sides = result.get("sides") or []
+            scanned.append(
+                {
+                    "sport": sport_key,
+                    "sides": len(sides),
+                    "events_fetched": result.get("events_fetched"),
+                    "events_with_both_books": result.get("events_with_both_books"),
+                    "api_requests_remaining": result.get("api_requests_remaining"),
+                }
+            )
+            total_sides += len(sides)
+            alerts_scheduled += schedule_alerts(sides)
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code if e.response is not None else None
+            # 404 just means out of season / no odds; treat as non-fatal.
+            if status == 404:
+                errors.append({"sport": sport_key, "status": 404, "error": "no odds"})
+                _log_event("ops.trigger.scan.sport_skipped", run_id=run_id, sport=sport_key, status=404, reason="no odds")
+                continue
+            errors.append({"sport": sport_key, "status": status, "error": str(e)})
+            _log_event(
+                "ops.trigger.scan.sport_failed",
+                level="error",
+                run_id=run_id,
+                sport=sport_key,
+                status=status,
+                error_class=type(e).__name__,
+                error=str(e),
+            )
+        except Exception as e:
+            errors.append({"sport": sport_key, "error": str(e)})
+            _log_event(
+                "ops.trigger.scan.sport_failed",
+                level="error",
+                run_id=run_id,
+                sport=sport_key,
+                error_class=type(e).__name__,
+                error=str(e),
+            )
+
+    finished = datetime.now(UTC).isoformat() + "Z"
+    duration_ms = round((time.monotonic() - started_clock) * 1000, 2)
+    _log_event(
+        "ops.trigger.scan.completed",
+        run_id=run_id,
+        total_sides=total_sides,
+        alerts_scheduled=alerts_scheduled,
+        error_count=len(errors),
+        duration_ms=duration_ms,
+    )
+
+    _set_ops_status(
+        "last_ops_trigger_scan",
+        {
+            "run_id": run_id,
+            "started_at": started,
+            "finished_at": finished,
+            "duration_ms": duration_ms,
+            "total_sides": total_sides,
+            "alerts_scheduled": alerts_scheduled,
+            "error_count": len(errors),
+            "errors": errors,
+            "captured_at": finished,
+        },
+    )
+    _persist_ops_job_run(
+        job_kind="ops_trigger_scan",
+        source="ops_trigger",
+        status="completed" if not errors else "completed_with_errors",
+        run_id=run_id,
+        scan_session_id=run_id,
+        surface="straight_bets",
+        scan_scope="all",
+        requested_sport="all",
+        captured_at=finished,
+        started_at=started,
+        finished_at=finished,
+        duration_ms=duration_ms,
+        total_sides=total_sides,
+        alerts_scheduled=alerts_scheduled,
+        error_count=len(errors),
+        errors=errors,
+    )
+
+    # Optional heartbeat so we can confirm the scheduled scan ran even when it finds no lines.
+    # Reuse the existing heartbeat flag to avoid adding another env var.
+    # Sends only when enabled and when no alerts were scheduled.
+    if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1" and alerts_scheduled == 0:
+        from services.discord_alerts import send_discord_webhook
+
+        payload = {
+            "embeds": [
+                {
+                    "title": "Scan run complete (no alerts)",
+                    "description": "The scheduled scan ran successfully but found no qualifying lines to alert on.",
+                    "fields": [
+                        {"name": "Started (UTC)", "value": started, "inline": True},
+                        {"name": "Finished (UTC)", "value": finished, "inline": True},
+                        {"name": "Total sides", "value": str(total_sides), "inline": True},
+                        {"name": "Alerts scheduled", "value": str(alerts_scheduled), "inline": True},
+                    ],
+                }
+            ]
+        }
+        asyncio.create_task(send_discord_webhook(payload, message_type="heartbeat"))
+
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "started_at": started,
+        "finished_at": finished,
+        "duration_ms": duration_ms,
+        "sports_scanned": scanned,
+        "errors": errors,
+        "total_sides": total_sides,
+        "alerts_scheduled": alerts_scheduled,
+    }
+
+
+async def ops_trigger_auto_settle(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+):
+    """
+    Manual operator auto-settler trigger.
+
+    Security: requires X-Ops-Token header matching CRON_TOKEN.
+    """
+    _require_ops_token(x_ops_token, x_cron_token)
+
+    run_id = _new_run_id("ops_auto_settle")
+    started_clock = time.monotonic()
+    _log_event("ops.trigger.auto_settle.started", run_id=run_id)
+
+    from services.odds_api import get_last_auto_settler_summary
+
+    db = get_db()
+    started = datetime.now(UTC).isoformat() + "Z"
+    try:
+        from services.odds_api import run_auto_settler
+
+        settled = await run_auto_settler(db, source="auto_settle_ops_trigger")
+        _log_event("ops.trigger.auto_settle.completed", run_id=run_id, settled=settled)
+    except Exception as e:
+        # Never crash the server; return error for cron logs.
+        _log_event(
+            "ops.trigger.auto_settle.failed",
+            level="error",
+            run_id=run_id,
+            error_class=type(e).__name__,
+            error=str(e),
+            duration_ms=round((time.monotonic() - started_clock) * 1000, 2),
+        )
+        raise HTTPException(status_code=502, detail=f"Auto-settler error: {e}")
+    finally:
+        finished = datetime.now(UTC).isoformat() + "Z"
+
+    duration_ms = round((time.monotonic() - started_clock) * 1000, 2)
+
+    _set_ops_status(
+        "last_auto_settle",
+        {
+            "source": "ops_trigger",
+            "run_id": run_id,
+            "started_at": started,
+            "finished_at": finished,
+            "duration_ms": duration_ms,
+            "settled": settled,
+            "captured_at": finished,
+        },
+    )
+    summary = get_last_auto_settler_summary()
+    if summary:
+        _set_ops_status("last_auto_settle_summary", summary)
+    _persist_ops_job_run(
+        job_kind="auto_settle",
+        source="ops_trigger",
+        status="completed",
+        run_id=run_id,
+        captured_at=finished,
+        started_at=started,
+        finished_at=finished,
+        duration_ms=duration_ms,
+        settled=settled,
+        skipped_totals=summary.get("skipped_totals") if isinstance(summary, dict) else None,
+        meta={"sports": summary.get("sports")} if isinstance(summary, dict) and isinstance(summary.get("sports"), list) else None,
+    )
+
+    if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1":
+        from services.discord_alerts import send_discord_webhook
+
+        payload = {
+            "embeds": [
+                {
+                    "title": "Auto-settle run complete",
+                    "description": f"Graded **{settled}** bet(s).",
+                    "fields": [
+                        {"name": "Started (UTC)", "value": started, "inline": True},
+                        {"name": "Finished (UTC)", "value": finished, "inline": True},
+                    ],
+                }
+            ]
+        }
+        asyncio.create_task(send_discord_webhook(payload, message_type="heartbeat"))
+
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "started_at": started,
+        "finished_at": finished,
+        "duration_ms": duration_ms,
+        "settled": settled,
+    }
+
+
+def ops_status(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+):
+    """
+    Protected operator status endpoint.
+
+    Uses CRON_TOKEN auth (via X-Ops-Token) to avoid exposing internals publicly.
+    """
+    _require_ops_token(x_ops_token, x_cron_token)
+
+    runtime = _runtime_state()
+    db_ok, db_error = _check_db_ready()
+    scheduler_fresh_ok, scheduler_freshness = _check_scheduler_freshness(runtime["scheduler_expected"])
+    from services.odds_api import get_odds_api_activity_snapshot
+    from services.ops_history import load_ops_status_snapshot
+
+    try:
+        db = get_db()
+    except Exception:
+        db = None
+    ops = load_ops_status_snapshot(
+        db=db,
+        retry_supabase=_retry_supabase,
+        log_event=_log_event,
+        fallback_ops_status=getattr(app.state, "ops_status", {}),
+        fallback_odds_api_activity=get_odds_api_activity_snapshot(),
+    )
+
+    return {
+        "timestamp": _utc_now_iso(),
+        "runtime": runtime,
+        "checks": {
+            "db_connectivity": db_ok,
+            "scheduler_freshness": scheduler_fresh_ok,
+        },
+        "db_error": db_error,
+        "scheduler_freshness": scheduler_freshness,
+        "ops": ops,
+    }
+
+
+async def ops_trigger_test_discord(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+):
+    """
+    Send a test Discord message (no EV/odds filtering).
+
+    Security: requires X-Ops-Token header matching CRON_TOKEN.
+    """
+    _require_ops_token(x_ops_token, x_cron_token)
+
+    run_id = _new_run_id("ops_discord_test")
+    started_at = time.monotonic()
+    _log_event("ops.trigger.discord_test.started", run_id=run_id)
+
+    from services.discord_alerts import send_discord_webhook
+
+    payload = {
+        "embeds": [
+            {
+                "title": "Webhook test",
+                "description": "If you can read this, DISCORD_WEBHOOK_URL is working.",
+                "fields": [
+                    {"name": "Server time (UTC)", "value": datetime.now(UTC).isoformat() + "Z", "inline": False},
+                ],
+            }
+        ]
+    }
+
+    # Keep the explicit test routing in production, but fall back for simple
+    # monkeypatched stubs that only accept the payload argument in contract tests.
+    try:
+        await send_discord_webhook(payload, message_type="test")
+    except TypeError as exc:
+        if "message_type" not in str(exc):
+            raise
+        await send_discord_webhook(payload)
+    _log_event(
+        "ops.trigger.discord_test.completed",
+        run_id=run_id,
+        duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+    )
+    return {"ok": True, "scheduled": True, "run_id": run_id}
+
+
+async def ops_trigger_test_discord_alert(
+    x_ops_token: str | None = None, x_cron_token: str | None = None
+) -> dict[str, bool | str]:
+    """
+    Trigger a test message to the alert webhook (DISCORD_ALERT_WEBHOOK_URL).
+    Useful for verifying the dedicated alert webhook is configured and working.
+    Security: requires X-Ops-Token header matching CRON_TOKEN.
+    """
+    _require_ops_token(x_ops_token, x_cron_token)
+
+    run_id = _new_run_id("ops_discord_alert_test")
+    started_at = time.monotonic()
+    _log_event("ops.trigger.discord_alert_test.started", run_id=run_id)
+
+    from services.discord_alerts import send_discord_webhook
+
+    payload = {
+        "embeds": [
+            {
+                "title": "Alert Webhook Test",
+                "description": "If you can read this, DISCORD_ALERT_WEBHOOK_URL is working.",
+                "fields": [
+                    {"name": "Server time (UTC)", "value": datetime.now(UTC).isoformat() + "Z", "inline": False},
+                ],
+            }
+        ]
+    }
+
+    # Awaited directly so any Discord error surfaces in logs/response.
+    await send_discord_webhook(payload, message_type="alert")
+    _log_event(
+        "ops.trigger.discord_alert_test.completed",
+        run_id=run_id,
+        duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+    )
+    return {"ok": True, "scheduled": True, "run_id": run_id}
 
 
 if __name__ == "__main__":

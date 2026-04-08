@@ -1,31 +1,7 @@
 import type { MarketSide, ParlayCartLeg, PromoType, ScannedBetData } from "@/lib/types";
 import { calculateStealthStake, decimalToAmerican } from "@/lib/utils";
 
-import type { PickEmBoardCard } from "./pickem-board";
 import type { ScannerLens } from "./scanner-ui-model";
-
-function formatPickEmLineValue(value: number): string {
-  if (Number.isInteger(value)) {
-    return `${value}`;
-  }
-  return `${Number.parseFloat(value.toFixed(2))}`;
-}
-
-function buildPlayerPropSelectionKeyParts(
-  eventId: string | null | undefined,
-  marketKey: string,
-  playerName: string,
-  side: string,
-  lineValue: number | null | undefined,
-): string {
-  const lineToken = lineValue == null ? "" : `:${lineValue}`;
-  return [
-    String(eventId ?? "").trim().toLowerCase(),
-    marketKey.trim().toLowerCase(),
-    playerName.trim().toLowerCase(),
-    side.trim().toLowerCase(),
-  ].join("|") + lineToken;
-}
 
 export function toggleScannerBookSelection(current: string[], book: string): string[] {
   if (current.includes(book)) {
@@ -50,70 +26,6 @@ function fairAmericanFromTrueProbability(trueProb: number | null | undefined): n
     return null;
   }
   return decimalToAmerican(1 / trueProb);
-}
-
-function formatScannerLineValue(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return "";
-  if (Number.isInteger(value)) return `${value}`;
-  return `${Number.parseFloat(value.toFixed(2))}`;
-}
-
-function parseStraightSelectionKeyParts(selectionKey: string | null | undefined): string[] {
-  return String(selectionKey ?? "")
-    .split("|")
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
-function parseStraightBetFallbackLineValue(side: Extract<MarketSide, { surface: "straight_bets" }>): number | null {
-  if (side.line_value != null && Number.isFinite(side.line_value)) {
-    return side.line_value;
-  }
-  const parts = parseStraightSelectionKeyParts(side.selection_key);
-  const candidate = parts.at(-1);
-  if (!candidate) return null;
-  const parsed = Number.parseFloat(candidate);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function parseStraightBetFallbackSelectionSide(side: Extract<MarketSide, { surface: "straight_bets" }>): string {
-  if (side.selection_side) return String(side.selection_side).trim();
-  const parts = parseStraightSelectionKeyParts(side.selection_key);
-  return parts[2] ?? String(side.team ?? "").trim();
-}
-
-function parseStraightBetFallbackMarketKey(side: Extract<MarketSide, { surface: "straight_bets" }>): string {
-  if (side.market_key) return String(side.market_key).trim().toLowerCase();
-  const parts = parseStraightSelectionKeyParts(side.selection_key);
-  return parts[1] ?? "h2h";
-}
-
-export function formatStraightBetDisplay(side: Extract<MarketSide, { surface: "straight_bets" }>): string {
-  const marketKey = String(side.market_key ?? "h2h").toLowerCase();
-  if (marketKey === "spreads") {
-    const line = parseStraightBetFallbackLineValue(side);
-    const lineLabel =
-      line == null || !Number.isFinite(line)
-        ? ""
-        : line > 0
-          ? ` +${formatScannerLineValue(line)}`
-          : ` ${formatScannerLineValue(line)}`;
-    return `${side.team}${lineLabel}`.trim();
-  }
-  if (marketKey === "totals") {
-    const sideLabel = parseStraightBetFallbackSelectionSide(side);
-    const lineLabel = formatScannerLineValue(parseStraightBetFallbackLineValue(side));
-    const normalizedSideLabel = `${sideLabel.charAt(0).toUpperCase()}${sideLabel.slice(1)}`.trim();
-    return `${normalizedSideLabel}${lineLabel ? ` ${lineLabel}` : ""}`.trim();
-  }
-  return `${side.team} ML`;
-}
-
-function formatStraightBetMarketDisplay(side: Extract<MarketSide, { surface: "straight_bets" }>): string {
-  const marketKey = String(side.market_key ?? "h2h").toLowerCase();
-  if (marketKey === "spreads") return "Spread";
-  if (marketKey === "totals") return "Total";
-  return "Moneyline";
 }
 
 export function buildScannerLogBetInitialValues(params: {
@@ -169,7 +81,7 @@ export function buildScannerLogBetInitialValues(params: {
         opponent: side.opponent,
         display_name: side.display_name,
         reference_source: side.reference_source,
-        reference_bookmakers: side.reference_bookmakers ?? [],
+        reference_bookmakers: side.reference_bookmakers,
       },
       raw_kelly_stake: rawKellyStake,
       stealth_kelly_stake: stealthKellyStake,
@@ -180,38 +92,24 @@ export function buildScannerLogBetInitialValues(params: {
     };
   }
 
-  const straightDisplay = formatStraightBetDisplay(side);
-  const straightMarket = formatStraightBetMarketDisplay(side);
-  const straightMarketKey = parseStraightBetFallbackMarketKey(side);
-  const straightSelectionSide =
-    straightMarketKey === "totals" ? parseStraightBetFallbackSelectionSide(side) : side.team;
-  const straightLineValue = side.line_value ?? parseStraightBetFallbackLineValue(side) ?? undefined;
-
   return {
     surface: side.surface,
     sportsbook: side.sportsbook,
     sport: sportDisplay,
-    event: straightDisplay,
-    market: straightMarket,
+    event: `${side.team} ML`,
+    market: "ML",
     odds_american: side.book_odds,
     promo_type: promoType,
     boost_percent: boostPct,
     pinnacle_odds_at_entry: side.pinnacle_odds,
     commence_time: side.commence_time,
-    clv_team: straightMarketKey === "totals" ? straightSelectionSide : side.team,
+    clv_team: side.team,
     clv_sport_key: side.sport,
     clv_event_id: side.event_id ?? undefined,
     source_event_id: side.event_id ?? undefined,
-    source_market_key: straightMarketKey,
+    source_market_key: side.market_key ?? "h2h",
     source_selection_key: side.selection_key ?? undefined,
-    selection_side: straightSelectionSide,
-    line_value: straightLineValue,
-    selection_meta: {
-      marketKey: straightMarketKey,
-      display: straightDisplay,
-      sportsbookDeeplinkUrl: side.sportsbook_deeplink_url,
-      sportsbookDeeplinkLevel: side.sportsbook_deeplink_level,
-    },
+    selection_side: side.team,
     true_prob_at_entry: side.true_prob,
     raw_kelly_stake: rawKellyStake,
     stealth_kelly_stake: stealthKellyStake,
@@ -251,7 +149,7 @@ export function buildParlayCartLeg(side: MarketSide): ParlayCartLeg {
       sourceSelectionKey: side.selection_key,
       selectionMeta: {
         opponent: side.opponent,
-        referenceBookmakers: side.reference_bookmakers ?? [],
+        referenceBookmakers: side.reference_bookmakers,
         referenceBookmakerCount: side.reference_bookmaker_count,
         confidenceLabel: side.confidence_label,
         sportsbookDeeplinkUrl: side.sportsbook_deeplink_url,
@@ -262,9 +160,6 @@ export function buildParlayCartLeg(side: MarketSide): ParlayCartLeg {
 
   const selectionKey = side.selection_key ?? `${side.event_id ?? side.commence_time}:${side.team}`;
   const deviggedFairOdds = fairAmericanFromTrueProbability(side.true_prob);
-  const straightDisplay = formatStraightBetDisplay(side);
-  const straightMarketDisplay = formatStraightBetMarketDisplay(side);
-  const straightSelectionSide = side.market_key === "totals" ? (side.selection_side ?? side.team) : side.team;
   return {
     id: `${side.surface}:${selectionKey}:${side.sportsbook}`,
     surface: side.surface,
@@ -276,15 +171,14 @@ export function buildParlayCartLeg(side: MarketSide): ParlayCartLeg {
     referenceOddsAmerican: deviggedFairOdds ?? side.pinnacle_odds,
     referenceTrueProbability: side.true_prob,
     referenceSource: "pinnacle",
-    display: straightDisplay,
+    display: `${side.team} ML`,
     event: side.event,
     sport: side.sport,
     commenceTime: side.commence_time,
-    correlationTags: [side.event_id ?? side.event, side.selection_key ?? `${side.market_key ?? "h2h"}:${straightDisplay}`],
+    correlationTags: [side.event_id ?? side.event, side.team],
     team: side.team,
-    selectionSide: straightSelectionSide,
-    lineValue: side.line_value ?? undefined,
-    marketDisplay: straightMarketDisplay,
+    selectionSide: side.team,
+    marketDisplay: "Moneyline",
     sourceEventId: side.event_id ?? undefined,
     sourceMarketKey: side.market_key ?? "h2h",
     sourceSelectionKey: selectionKey,
@@ -292,66 +186,6 @@ export function buildParlayCartLeg(side: MarketSide): ParlayCartLeg {
       rawPinnacleOdds: side.pinnacle_odds,
       sportsbookDeeplinkUrl: side.sportsbook_deeplink_url,
       sportsbookDeeplinkLevel: side.sportsbook_deeplink_level,
-    },
-  };
-}
-
-/** Builds a parlay cart leg from a Pick'em consensus card (best book for the consensus side). */
-export function buildParlayCartLegFromPickEmCard(card: PickEmBoardCard): ParlayCartLeg | null {
-  const side = card.consensus_side;
-  const sportsbook = side === "over" ? card.best_over_sportsbook : card.best_under_sportsbook;
-  const bookOdds = side === "over" ? card.best_over_odds : card.best_under_odds;
-  const deeplink = side === "over" ? card.best_over_deeplink_url : card.best_under_deeplink_url;
-  const trueProb = side === "over" ? card.consensus_over_prob : card.consensus_under_prob;
-
-  if (!sportsbook?.trim() || bookOdds == null || !Number.isFinite(bookOdds)) {
-    return null;
-  }
-
-  const selectionKey = buildPlayerPropSelectionKeyParts(
-    card.event_id,
-    card.market_key,
-    card.player_name,
-    side,
-    card.line_value,
-  );
-
-  const sideLabel = side === "over" ? "Over" : "Under";
-  const display = `${card.player_name} ${sideLabel} ${formatPickEmLineValue(card.line_value)}`;
-  const referenceOddsAmerican = fairAmericanFromTrueProbability(trueProb);
-
-  return {
-    id: `player_props:${selectionKey}:${sportsbook}`,
-    surface: "player_props",
-    eventId: card.event_id ?? undefined,
-    marketKey: card.market_key,
-    selectionKey,
-    sportsbook,
-    oddsAmerican: bookOdds,
-    referenceOddsAmerican,
-    referenceTrueProbability: trueProb,
-    referenceSource: "pickem_consensus",
-    display,
-    event: card.event,
-    sport: card.sport,
-    commenceTime: card.commence_time,
-    correlationTags: [card.event_id ?? card.event, card.player_name, card.market_key],
-    team: card.team ?? undefined,
-    participantName: card.player_name,
-    participantId: card.participant_id ?? undefined,
-    selectionSide: side,
-    lineValue: card.line_value,
-    marketDisplay: card.market,
-    sourceEventId: card.event_id ?? undefined,
-    sourceMarketKey: card.market_key,
-    sourceSelectionKey: selectionKey,
-    selectionMeta: {
-      opponent: card.opponent,
-      referenceBookmakers: card.exact_line_bookmakers,
-      referenceBookmakerCount: card.exact_line_bookmaker_count,
-      confidenceLabel: card.confidence_label,
-      sportsbookDeeplinkUrl: deeplink,
-      pickEmComparisonKey: card.comparison_key,
     },
   };
 }

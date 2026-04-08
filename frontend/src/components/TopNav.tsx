@@ -8,6 +8,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useBackendReadiness } from "@/lib/hooks";
 import { hasUserFacingSyncIssue } from "@/lib/readiness-ui";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
+import { ONBOARDING_STEPS } from "@/lib/onboarding";
 
 const navItems = [
   { href: "/", label: "Home", icon: Home },
@@ -30,7 +31,7 @@ export function TopNav() {
   const showStatus = hasUserFacingSyncIssue(readiness);
   const statusLabel = "Sync issue";
   const showHomeReviewBadge =
-    Boolean(scannerReviewCandidate) && !onboardingDismissed.includes("home_scanner_review");
+    Boolean(scannerReviewCandidate) && !onboardingDismissed.includes(ONBOARDING_STEPS.HOME_SCANNER_REVIEW);
 
   const handleSignOut = async () => {
     await signOut();
