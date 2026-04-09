@@ -512,6 +512,23 @@ def _validate_environment() -> None:
     paper_autolog_enabled = _is_paper_experiment_autolog_enabled()
     paper_autolog_user_id = _paper_experiment_account_user_id()
     temp_scan_time_raw = os.getenv(SCHEDULED_SCAN_TEMP_TIME_ENV)
+    heartbeat_enabled = os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1"
+    discord_alert_target = {
+        "webhook_configured": False,
+        "route_kind": "alert_unconfigured",
+    }
+    discord_test_target = {
+        "webhook_configured": False,
+        "route_kind": "test_unconfigured",
+    }
+
+    try:
+        from services.discord_alerts import describe_discord_delivery_target
+
+        discord_alert_target = describe_discord_delivery_target("alert")
+        discord_test_target = describe_discord_delivery_target("test")
+    except Exception:
+        pass
 
     if scheduler_enabled and not odds_api_configured:
         _log_event(
@@ -525,6 +542,34 @@ def _validate_environment() -> None:
             "startup.env_cron_token_missing",
             level="warning",
             message="CRON_TOKEN is missing; cron endpoints will reject requests.",
+        )
+
+    if scheduler_enabled and not bool(discord_alert_target.get("webhook_configured")):
+        _log_event(
+            "startup.env_discord_alert_webhook_missing",
+            level="warning",
+            route_kind=discord_alert_target.get("route_kind"),
+            message="ENABLE_SCHEDULER=1 but no alert Discord webhook is configured; alert delivery is disabled.",
+        )
+
+    if (
+        scheduler_enabled
+        and bool(discord_alert_target.get("webhook_configured"))
+        and discord_alert_target.get("route_kind") == "alert_primary_fallback"
+    ):
+        _log_event(
+            "startup.env_discord_alert_webhook_fallback",
+            level="warning",
+            route_kind=discord_alert_target.get("route_kind"),
+            message="DISCORD_ALERT_WEBHOOK_URL not set; alerts will use DISCORD_WEBHOOK_URL fallback.",
+        )
+
+    if heartbeat_enabled and not bool(discord_test_target.get("webhook_configured")):
+        _log_event(
+            "startup.env_discord_debug_webhook_missing",
+            level="warning",
+            route_kind=discord_test_target.get("route_kind"),
+            message="DISCORD_AUTO_SETTLE_HEARTBEAT=1 but no debug/test Discord webhook is configured.",
         )
 
     if paper_autolog_enabled and not paper_autolog_user_id:
@@ -549,6 +594,11 @@ def _validate_environment() -> None:
         scheduler_enabled=scheduler_enabled,
         cron_token_configured=cron_token_configured,
         odds_api_key_configured=odds_api_configured,
+        discord_alert_webhook_configured=bool(discord_alert_target.get("webhook_configured")),
+        discord_alert_route_kind=discord_alert_target.get("route_kind"),
+        discord_test_webhook_configured=bool(discord_test_target.get("webhook_configured")),
+        discord_test_route_kind=discord_test_target.get("route_kind"),
+        discord_heartbeat_enabled=heartbeat_enabled,
         paper_autolog_enabled=paper_autolog_enabled,
         paper_autolog_user_id_configured=bool(paper_autolog_user_id),
     )
@@ -580,6 +630,24 @@ def _capture_research_opportunities(sides: list[dict], *, source: str) -> None:
             error_class=type(e).__name__,
             error=str(e),
         )
+
+
+def _sync_pickem_research_from_props_payload(payload: dict | None, *, source: str = "unknown") -> None:
+    """Best-effort sync of pick'em research observations from player-prop payloads."""
+    if not isinstance(payload, dict):
+        return
+    try:
+        from services.pickem_research import capture_pickem_research_observations
+
+        capture_pickem_research_observations(
+            get_db(),
+            payload,
+            source=source,
+            captured_at=_utc_now_iso(),
+        )
+    except Exception:
+        # Pick'em sync should never block scan responses.
+        return
 
 
 async def _apply_fresh_straight_scan_followups(result: dict, *, source: str) -> None:
@@ -744,6 +812,56 @@ def _check_scheduler_freshness(scheduler_expected: bool) -> tuple[bool, dict]:
     if not scheduler_expected:
         return True, {"enabled": False, "fresh": True, "jobs": {}}
 
+    app_role = (os.getenv("APP_ROLE") or "").strip().lower()
+    if app_role == "api":
+        try:
+            from services.ops_history import load_scheduler_job_snapshot
+
+            db = get_db()
+            snapshot = load_scheduler_job_snapshot(
+                db=db,
+                retry_supabase=_retry_supabase,
+                log_event=_log_event,
+            )
+            now = datetime.now(UTC)
+
+            def _fresh_from(snapshot_key: str, stale_window: timedelta) -> tuple[bool, str | None, str]:
+                entry = snapshot.get(snapshot_key) if isinstance(snapshot, dict) else None
+                captured_at = _parse_utc_iso(entry.get("captured_at") if isinstance(entry, dict) else None)
+                if captured_at is None:
+                    return False, None, "missing_snapshot"
+                age_seconds = (now - captured_at).total_seconds()
+                is_fresh = age_seconds <= stale_window.total_seconds()
+                return is_fresh, (entry.get("captured_at") if isinstance(entry, dict) else None), (
+                    "fresh_snapshot" if is_fresh else "stale_snapshot"
+                )
+
+            job_map = {
+                "jit_clv": "jit_clv",
+                "auto_settler": "auto_settle",
+                "scheduled_scan": "scheduled_scan",
+            }
+            jobs: dict[str, dict] = {}
+            all_fresh = True
+            for job_name, stale_window in SCHEDULER_STALE_WINDOWS.items():
+                snapshot_key = job_map.get(job_name, job_name)
+                fresh, last_success_at, reason = _fresh_from(snapshot_key, stale_window)
+                if not fresh:
+                    all_fresh = False
+                jobs[job_name] = {
+                    "fresh": fresh,
+                    "freshness_reason": reason,
+                    "last_success_at": last_success_at,
+                    "last_failure_at": None,
+                    "last_run_id": None,
+                    "last_error": None,
+                    "stale_after_seconds": int(stale_window.total_seconds()),
+                    "age_seconds": None,
+                }
+            return all_fresh, {"enabled": True, "fresh": all_fresh, "jobs": jobs}
+        except Exception:
+            pass
+
     heartbeats = getattr(app.state, "scheduler_heartbeats", None)
     if not isinstance(heartbeats, dict):
         return False, {
@@ -797,6 +915,42 @@ def _runtime_state() -> dict:
     environment = os.getenv("ENVIRONMENT", "production").lower()
     scheduler_expected = os.getenv("ENABLE_SCHEDULER") == "1" and os.getenv("TESTING") != "1"
     scheduler_running = bool(getattr(app.state, "scheduler", None))
+    heartbeat_enabled = os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1"
+
+    discord_runtime: dict[str, Any] = {
+        "heartbeat_enabled": heartbeat_enabled,
+        "alert_delivery": {
+            "message_type": "alert",
+            "route_kind": "alert_unconfigured",
+            "webhook_configured": False,
+            "webhook_source": None,
+            "role_configured": False,
+            "role_source": None,
+            "dedupe_ttl_seconds": None,
+            "redis_enabled": is_redis_enabled(),
+        },
+        "test_delivery": {
+            "message_type": "test",
+            "route_kind": "test_unconfigured",
+            "webhook_configured": False,
+            "webhook_source": None,
+            "role_configured": False,
+            "role_source": None,
+            "dedupe_ttl_seconds": None,
+            "redis_enabled": is_redis_enabled(),
+        },
+        "last_schedule_stats": {},
+    }
+
+    try:
+        from services.discord_alerts import describe_discord_delivery_target, get_last_schedule_stats
+
+        discord_runtime["alert_delivery"] = describe_discord_delivery_target("alert")
+        discord_runtime["test_delivery"] = describe_discord_delivery_target("test")
+        discord_runtime["last_schedule_stats"] = get_last_schedule_stats()
+    except Exception:
+        pass
+
     return {
         "environment": environment,
         "scheduler_expected": scheduler_expected,
@@ -806,6 +960,7 @@ def _runtime_state() -> dict:
         "odds_api_key_configured": bool(os.getenv("ODDS_API_KEY")),
         "supabase_url_configured": bool(os.getenv("SUPABASE_URL")),
         "supabase_service_role_configured": bool(os.getenv("SUPABASE_SERVICE_ROLE_KEY")),
+        "discord": discord_runtime,
     }
 
 
@@ -1050,7 +1205,12 @@ async def _run_scheduled_scan_job():
     total_with_both = 0
     min_remaining: str | None = None
     oldest_fetched: float | None = None
-    from services.discord_alerts import schedule_alerts
+    alert_skip_totals = {
+        "skipped_memory_dedupe": 0,
+        "skipped_shared_dedupe": 0,
+        "skipped_threshold": 0,
+    }
+    from services.discord_alerts import get_last_schedule_stats, schedule_alerts
 
     for sport_key in SUPPORTED_SPORTS:
         sport_started_at = time.monotonic()
@@ -1100,6 +1260,10 @@ async def _run_scheduled_scan_job():
                 oldest_fetched = ft if oldest_fetched is None else min(oldest_fetched, ft)
 
             alerts_scheduled += schedule_alerts(sides)
+            schedule_stats = get_last_schedule_stats()
+            alert_skip_totals["skipped_memory_dedupe"] += int(schedule_stats.get("skipped_memory_dedupe") or 0)
+            alert_skip_totals["skipped_shared_dedupe"] += int(schedule_stats.get("skipped_shared_dedupe") or 0)
+            alert_skip_totals["skipped_threshold"] += int(schedule_stats.get("skipped_threshold") or 0)
             _log_event(
                 "scheduler.scan.sport_completed",
                 run_id=run_id,
@@ -1107,6 +1271,7 @@ async def _run_scheduled_scan_job():
                 sides=sides_count,
                 events_fetched=fetched,
                 events_with_both_books=with_both,
+                discord_alert_schedule=schedule_stats,
             )
         except httpx.HTTPStatusError as e:
             scan_duration_ms = round((time.monotonic() - sport_started_at) * 1000, 2)
@@ -1237,6 +1402,7 @@ async def _run_scheduled_scan_job():
         finished_at=finished + "Z",
         total_sides=total_sides,
         alerts_scheduled=alerts_scheduled,
+        alert_skip_totals=alert_skip_totals,
         autolog_summary=autolog_summary,
         duration_ms=round((time.monotonic() - started_at) * 1000, 2),
     )
@@ -1264,8 +1430,10 @@ async def _run_scheduled_scan_job():
             "started_at": started + "Z",
             "finished_at": finished + "Z",
             "duration_ms": duration_ms,
+            "board_drop": True,
             "total_sides": total_sides,
             "alerts_scheduled": alerts_scheduled,
+            "alert_skip_totals": alert_skip_totals,
             "hard_errors": hard_errors,
             "captured_at": finished + "Z",
             "autolog_summary": autolog_summary,
@@ -1290,7 +1458,10 @@ async def _run_scheduled_scan_job():
         alerts_scheduled=alerts_scheduled,
         hard_errors=hard_errors,
         api_requests_remaining=min_remaining,
-        meta={"autolog_summary": autolog_summary},
+        meta={
+            "autolog_summary": autolog_summary,
+            "alert_skip_totals": alert_skip_totals,
+        },
     )
 
     # Optional heartbeat so we can confirm the scheduled scan ran even when it finds no lines.
@@ -1313,6 +1484,11 @@ async def _run_scheduled_scan_job():
             ]
         }
         asyncio.create_task(send_discord_webhook(payload, message_type="heartbeat"))
+
+
+async def _run_early_look_scan_job():
+    """Legacy compatibility alias for early-look scan invocations."""
+    await _run_scheduled_scan_job()
 
 
 async def _piggyback_clv(sides: list[dict]):
@@ -1338,13 +1514,15 @@ async def start_scheduler():
         return  # Skip scheduler in integration tests so we don't hit Odds API or cron
     if os.getenv("ENABLE_SCHEDULER") != "1":
         return  # Only one instance should run background jobs (Render scaling/workers)
+    if (os.getenv("APP_ROLE") or "").strip().lower() == "api":
+        return  # External scheduler topology: API role should not run in-process jobs.
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
     from apscheduler.triggers.interval import IntervalTrigger
     _init_scheduler_heartbeats()
     scheduler = AsyncIOScheduler()
-    # Every 15 min: capture closing Pinnacle lines for games starting within 20 min
-    scheduler.add_job(_run_jit_clv_snatcher_job, IntervalTrigger(minutes=15))
+    # Every 5 min: capture closing Pinnacle lines for games starting within 20 min
+    scheduler.add_job(_run_jit_clv_snatcher_job, IntervalTrigger(minutes=5))
     # 4:00 AM Phoenix daily: auto-grade completed ML bets via /scores.
     # Explicit timezone keeps scheduler behavior consistent across hosts.
     auto_settle_trigger = (
@@ -1530,9 +1708,7 @@ def compute_k_user(db, user_id: str) -> dict:
     try:
         res = _retry_supabase(lambda: (
             db.table("bets")
-            # Keep this query simple and filter in Python. The narrower PostgREST
-            # filter shape here has produced noisy 400s in local auth contexts.
-            .select("*")
+            .select("promo_type,result,created_at,stake,payout_override,win_payout")
             .eq("user_id", user_id)
             .execute()
         ))
@@ -2460,6 +2636,7 @@ async def scan_markets(
     surface: str = "straight_bets",
     sport: str | None = None,
     user: dict = Depends(require_scan_rate_limit),
+    session_id: str | None = None,
 ):
     from routes.scan_routes import scan_markets_impl
     from services.scan_markets import apply_manual_scan_bundle, scan_exception_to_http_exception
@@ -2468,6 +2645,7 @@ async def scan_markets(
         surface=surface,
         sport=sport,
         user=user,
+        session_id=session_id,
         get_db=get_db,
         supported_sports=_scanner_supported_sports(surface),
         get_cached_or_scan=lambda sport_key, source="manual_scan": _get_cached_or_scan_for_surface(surface, sport_key, source=source),
@@ -2483,6 +2661,7 @@ async def scan_markets(
         append_scan_activity=_append_scan_activity,
         persist_ops_job_run=_persist_ops_job_run,
         new_run_id=_new_run_id,
+        sync_pickem_research_from_props_payload=_sync_pickem_research_from_props_payload,
         map_error=scan_exception_to_http_exception,
         build_full_scan_response=_build_full_scan_response,
         get_environment=_get_environment,
@@ -2582,7 +2761,12 @@ async def ops_trigger_scan(
     errors: list[dict] = []
     total_sides = 0
     alerts_scheduled = 0
-    from services.discord_alerts import schedule_alerts
+    alert_skip_totals = {
+        "skipped_memory_dedupe": 0,
+        "skipped_shared_dedupe": 0,
+        "skipped_threshold": 0,
+    }
+    from services.discord_alerts import get_last_schedule_stats, schedule_alerts
 
     for sport_key in SUPPORTED_SPORTS:
         try:
@@ -2599,6 +2783,16 @@ async def ops_trigger_scan(
             )
             total_sides += len(sides)
             alerts_scheduled += schedule_alerts(sides)
+            schedule_stats = get_last_schedule_stats()
+            alert_skip_totals["skipped_memory_dedupe"] += int(schedule_stats.get("skipped_memory_dedupe") or 0)
+            alert_skip_totals["skipped_shared_dedupe"] += int(schedule_stats.get("skipped_shared_dedupe") or 0)
+            alert_skip_totals["skipped_threshold"] += int(schedule_stats.get("skipped_threshold") or 0)
+            _log_event(
+                "ops.trigger.scan.alert_schedule",
+                run_id=run_id,
+                sport=sport_key,
+                discord_alert_schedule=schedule_stats,
+            )
         except httpx.HTTPStatusError as e:
             status = e.response.status_code if e.response is not None else None
             # 404 just means out of season / no odds; treat as non-fatal.
@@ -2634,6 +2828,7 @@ async def ops_trigger_scan(
         run_id=run_id,
         total_sides=total_sides,
         alerts_scheduled=alerts_scheduled,
+        alert_skip_totals=alert_skip_totals,
         error_count=len(errors),
         duration_ms=duration_ms,
     )
@@ -2647,6 +2842,7 @@ async def ops_trigger_scan(
             "duration_ms": duration_ms,
             "total_sides": total_sides,
             "alerts_scheduled": alerts_scheduled,
+            "alert_skip_totals": alert_skip_totals,
             "error_count": len(errors),
             "errors": errors,
             "captured_at": finished,
@@ -2669,6 +2865,7 @@ async def ops_trigger_scan(
         alerts_scheduled=alerts_scheduled,
         error_count=len(errors),
         errors=errors,
+        meta={"alert_skip_totals": alert_skip_totals},
     )
 
     # Optional heartbeat so we can confirm the scheduled scan ran even when it finds no lines.
@@ -2703,6 +2900,7 @@ async def ops_trigger_scan(
         "errors": errors,
         "total_sides": total_sides,
         "alerts_scheduled": alerts_scheduled,
+        "alert_skip_totals": alert_skip_totals,
     }
 
 

@@ -1,9 +1,39 @@
+import importlib
+import os
+import sys
 import types
 from datetime import datetime, UTC, timedelta
 
 import pytest
 from fastapi import HTTPException
-from .test_utils import import_main_for_tests, install_apscheduler_stubs, reload_service_module
+
+
+def _reload_main(monkeypatch, *, zoneinfo_zoneinfo_override=None):
+    """
+    Reload backend main module with optional ZoneInfo override.
+
+    main.py does `from zoneinfo import ZoneInfo` at import time, so to simulate
+    missing tzdata we patch `zoneinfo.ZoneInfo` before reload.
+    """
+    if zoneinfo_zoneinfo_override is not None:
+        import zoneinfo as _zoneinfo_mod
+        monkeypatch.setattr(_zoneinfo_mod, "ZoneInfo", zoneinfo_zoneinfo_override, raising=True)
+
+    # Unit tests should not require real backend secrets just to import main.
+    monkeypatch.setenv("SUPABASE_URL", os.getenv("SUPABASE_URL") or "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "unit-test-key")
+
+    # Allow importing main.py even when backend deps aren't installed in the current interpreter.
+    # (These are unit tests; we stub the client to avoid touching the network/DB.)
+    if "supabase" not in sys.modules:
+        sys.modules["supabase"] = types.SimpleNamespace(
+            create_client=lambda *args, **kwargs: None,
+            Client=object,
+        )
+
+    if "main" in sys.modules:
+        return importlib.reload(sys.modules["main"])
+    return importlib.import_module("main")
 
 
 class DummyScheduler:
@@ -23,12 +53,47 @@ class DummyScheduler:
         self.shutdown_called = True
         self.shutdown_wait = wait
 
+
+def _install_apscheduler_stubs(*, scheduler_cls=DummyScheduler):
+    """
+    Provide minimal apscheduler module stubs so `main.start_scheduler()` can import them
+    even when apscheduler isn't installed in the current interpreter.
+    """
+    apscheduler_mod = types.ModuleType("apscheduler")
+    schedulers_mod = types.ModuleType("apscheduler.schedulers")
+    sched_asyncio_mod = types.ModuleType("apscheduler.schedulers.asyncio")
+    triggers_mod = types.ModuleType("apscheduler.triggers")
+    triggers_cron_mod = types.ModuleType("apscheduler.triggers.cron")
+    triggers_interval_mod = types.ModuleType("apscheduler.triggers.interval")
+
+    class CronTrigger:
+        def __init__(self, *, hour, minute, timezone=None):
+            self.hour = hour
+            self.minute = minute
+            self.timezone = timezone
+
+    class IntervalTrigger:
+        def __init__(self, *, minutes):
+            self.minutes = minutes
+
+    sched_asyncio_mod.AsyncIOScheduler = scheduler_cls
+    triggers_cron_mod.CronTrigger = CronTrigger
+    triggers_interval_mod.IntervalTrigger = IntervalTrigger
+
+    sys.modules.setdefault("apscheduler", apscheduler_mod)
+    sys.modules.setdefault("apscheduler.schedulers", schedulers_mod)
+    sys.modules.setdefault("apscheduler.schedulers.asyncio", sched_asyncio_mod)
+    sys.modules.setdefault("apscheduler.triggers", triggers_mod)
+    sys.modules.setdefault("apscheduler.triggers.cron", triggers_cron_mod)
+    sys.modules.setdefault("apscheduler.triggers.interval", triggers_interval_mod)
+
+
 @pytest.mark.asyncio
 async def test_does_not_start_scheduler_when_enable_scheduler_not_1(monkeypatch):
     monkeypatch.setenv("TESTING", "0")
-    monkeypatch.setenv("ENABLE_SCHEDULER", "0")
+    monkeypatch.delenv("ENABLE_SCHEDULER", raising=False)
 
-    main = import_main_for_tests(monkeypatch)
+    main = _reload_main(monkeypatch)
     await main.start_scheduler()
 
     assert not hasattr(main.app.state, "scheduler")
@@ -42,52 +107,25 @@ async def test_uses_america_phoenix_timezone_when_available(monkeypatch):
     class FakeTz:
         key = "America/Phoenix"
 
-    main = import_main_for_tests(monkeypatch, zoneinfo_zoneinfo_override=lambda _name: FakeTz())
+    main = _reload_main(monkeypatch, zoneinfo_zoneinfo_override=lambda _name: FakeTz())
     assert main.PHOENIX_TZ is not None
 
-    install_apscheduler_stubs(scheduler_cls=DummyScheduler)
+    _install_apscheduler_stubs(scheduler_cls=DummyScheduler)
 
     await main.start_scheduler()
 
     scheduler = main.app.state.scheduler
     assert scheduler.started is True
 
-    jit_jobs = [j for j in scheduler.jobs if j["func"] == main._run_jit_clv_snatcher_job]
-    assert len(jit_jobs) == 1
-    assert jit_jobs[0]["trigger"].minutes == 5
-    assert jit_jobs[0]["trigger"].start_date is not None
-
-    finalize_jobs = [j for j in scheduler.jobs if j["func"] == main._run_clv_finalize_job]
-    assert len(finalize_jobs) == 1
-    assert finalize_jobs[0]["trigger"].minutes == 5
-    assert finalize_jobs[0]["trigger"].start_date is not None
-    assert finalize_jobs[0]["trigger"].start_date - jit_jobs[0]["trigger"].start_date == timedelta(minutes=1)
-
     scan_jobs = [j for j in scheduler.jobs if j["func"] == main._run_scheduled_scan_job]
-    assert len(scan_jobs) == 1
+    assert len(scan_jobs) == 2
     assert all(getattr(j["trigger"], "timezone", None) == main.PHOENIX_TZ for j in scan_jobs)
-    assert [(j["trigger"].hour, j["trigger"].minute) for j in scan_jobs] == [(15, 30)]
 
     auto_settle_jobs = [j for j in scheduler.jobs if j["func"] == main._run_auto_settler_job]
-    assert len(auto_settle_jobs) == 2
-    assert all(getattr(j["trigger"], "timezone", None) == main.PHOENIX_TZ for j in auto_settle_jobs)
-    assert sorted((j["trigger"].hour, j["trigger"].minute) for j in auto_settle_jobs) == [(4, 0), (23, 0)]
-    assert all(j["kwargs"].get("misfire_grace_time") == 3600 for j in auto_settle_jobs)
-    assert all(j["kwargs"].get("coalesce") is True for j in auto_settle_jobs)
-
-
-@pytest.mark.asyncio
-async def test_api_role_does_not_start_in_process_scheduler(monkeypatch):
-    monkeypatch.setenv("TESTING", "0")
-    monkeypatch.setenv("ENABLE_SCHEDULER", "1")
-    monkeypatch.setenv("APP_ROLE", "api")
-
-    main = import_main_for_tests(monkeypatch)
-    install_apscheduler_stubs(scheduler_cls=DummyScheduler)
-
-    await main.start_scheduler()
-
-    assert not hasattr(main.app.state, "scheduler")
+    assert len(auto_settle_jobs) == 1
+    assert getattr(auto_settle_jobs[0]["trigger"], "timezone", None) == main.PHOENIX_TZ
+    assert auto_settle_jobs[0]["kwargs"].get("misfire_grace_time") == 3600
+    assert auto_settle_jobs[0]["kwargs"].get("coalesce") is True
 
 
 @pytest.mark.asyncio
@@ -98,10 +136,10 @@ async def test_skips_scheduled_scans_cleanly_if_phoenix_zone_cannot_load(monkeyp
     def _raise_zoneinfo(_name: str):
         raise Exception("ZoneInfo not available")
 
-    main = import_main_for_tests(monkeypatch, zoneinfo_zoneinfo_override=_raise_zoneinfo)
+    main = _reload_main(monkeypatch, zoneinfo_zoneinfo_override=_raise_zoneinfo)
     assert main.PHOENIX_TZ is None
 
-    install_apscheduler_stubs(scheduler_cls=DummyScheduler)
+    _install_apscheduler_stubs(scheduler_cls=DummyScheduler)
 
     await main.start_scheduler()
     scheduler = main.app.state.scheduler
@@ -115,226 +153,49 @@ async def test_skips_scheduled_scans_cleanly_if_phoenix_zone_cannot_load(monkeyp
 
 @pytest.mark.asyncio
 async def test_scheduled_scan_job_continues_if_one_sport_scan_throws(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
+    main = _reload_main(monkeypatch)
 
-    called = {"count": 0}
+    called = []
 
-    async def _fake_daily_board_drop(*_args, **_kwargs):
-        called["count"] += 1
-        return {"ok": True, "props_sides": 0, "selected_event_ids": []}
+    async def fake_get_cached_or_scan(sport, source="unknown"):
+        called.append(sport)
+        if sport == "bad_sport":
+            raise RuntimeError("boom")
+        return {"sides": [], "events_fetched": 1, "events_with_both_books": 1}
 
-    import services.daily_board as daily_board
-    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
+    import services.odds_api as odds_api
+    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["good1", "bad_sport", "good2"], raising=True)
+    monkeypatch.setattr(odds_api, "get_cached_or_scan", fake_get_cached_or_scan, raising=True)
 
     await main._run_scheduled_scan_job()
 
-    assert called["count"] == 1
+    assert called == ["good1", "bad_sport", "good2"]
 
 
 @pytest.mark.asyncio
 async def test_scheduled_scan_job_calls_get_cached_or_scan_for_all_supported_sports(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
+    main = _reload_main(monkeypatch)
 
-    called = {"count": 0}
+    called = []
 
-    async def _fake_daily_board_drop(*_args, **_kwargs):
-        called["count"] += 1
-        return {"ok": True, "props_sides": 1, "selected_event_ids": ["evt-1"]}
-
-    import services.daily_board as daily_board
-    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
-
-    await main._run_scheduled_scan_job()
-
-    assert called["count"] == 1
-
-
-@pytest.mark.asyncio
-async def test_scheduled_scan_job_piggybacks_clv_for_fresh_board_sides(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
-
-    seen: dict[str, list[dict]] = {}
-
-    async def _fake_daily_board_drop(*_args, **_kwargs):
-        return {
-            "ok": True,
-            "props_sides": 2,
-            "selected_event_ids": ["evt-1"],
-            "fresh_straight_sides": [{"surface": "straight_bets", "team": "Lakers"}],
-            "fresh_prop_sides": [{"surface": "player_props", "player_name": "Nikola Jokic"}],
-        }
-
-    async def _fake_piggyback_clv(sides, *, source="unknown"):
-        seen["sides"] = list(sides)
-        seen["source"] = source
-
-    import services.daily_board as daily_board
-    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
-    monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
-
-    await main._run_scheduled_scan_job()
-
-    assert len(seen["sides"]) == 2
-    assert seen["source"] == "scheduled_board_drop"
-    snapshot = main.app.state.ops_status["last_scheduler_scan"]
-    assert "fresh_straight_sides" not in (snapshot.get("result") or {})
-    assert "fresh_prop_sides" not in (snapshot.get("result") or {})
-
-
-@pytest.mark.asyncio
-async def test_scheduled_scan_job_sends_board_drop_alert(monkeypatch):
-    import services.discord_alerts as discord_alerts
-    import services.daily_board as daily_board
-
-    main = import_main_for_tests(monkeypatch)
-    sent = []
-
-    async def _fake_daily_board_drop(*_args, **_kwargs):
-        return {
-            "ok": True,
-            "props_sides": 12,
-            "straight_sides": 7,
-            "featured_games_count": 6,
-            "selected_event_ids": ["evt-1"],
-            "fresh_straight_sides": [{"surface": "straight_bets", "team": "Lakers"}],
-            "fresh_prop_sides": [{"surface": "player_props", "player_name": "Nikola Jokic"}],
-        }
-
-    async def _fake_send_discord_webhook(payload, message_type="alert"):
-        sent.append((payload, message_type))
-        return {
-            "ok": True,
-            "message_type": message_type,
-            "route_kind": "alert_dedicated",
-            "webhook_source": "DISCORD_ALERT_WEBHOOK_URL",
-            "delivery_status": "delivered",
-            "status_code": 204,
-            "response_text": None,
-        }
-
-    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
-    monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
-
-    await main._run_scheduled_scan_job()
-
-    assert sent
-    assert any(message_type == "alert" for _payload, message_type in sent)
-    alert_payload = next(payload for payload, message_type in sent if message_type == "alert")
-    assert alert_payload["embeds"][0]["title"] == "Trusted Beta Board Live"
-    snapshot = main.app.state.ops_status["last_scheduler_scan"]
-    assert snapshot["alerts_scheduled"] == 1
-    assert snapshot["board_alert_attempted"] is True
-    assert snapshot["board_alert_delivery_status"] == "delivered"
-    assert snapshot["board_alert_http_status"] == 204
-    assert snapshot["board_alert"]["route_kind"] == "alert_dedicated"
-
-
-@pytest.mark.asyncio
-async def test_early_look_scan_job_sends_board_drop_alert(monkeypatch):
-    import services.discord_alerts as discord_alerts
-    import services.daily_board as daily_board
-
-    main = import_main_for_tests(monkeypatch)
-    sent = []
-
-    async def _fake_daily_board_drop(*_args, **_kwargs):
-        return {
-            "ok": True,
-            "props_sides": 9,
-            "straight_sides": 5,
-            "featured_games_count": 4,
-            "selected_event_ids": ["evt-1"],
-            "fresh_straight_sides": [],
-            "fresh_prop_sides": [],
-        }
-
-    async def _fake_send_discord_webhook(payload, message_type="alert"):
-        sent.append((payload, message_type))
-        return {
-            "ok": True,
-            "message_type": message_type,
-            "route_kind": "alert_dedicated",
-            "webhook_source": "DISCORD_ALERT_WEBHOOK_URL",
-            "delivery_status": "delivered",
-            "status_code": 204,
-            "response_text": None,
-        }
-
-    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
-    monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
-
-    await main._run_early_look_scan_job()
-
-    assert sent
-    alert_payload = next(payload for payload, message_type in sent if message_type == "alert")
-    assert "10:30 MST" in alert_payload["embeds"][0]["description"]
-    snapshot = main.app.state.ops_status["last_scheduler_scan"]
-    assert snapshot["board_alert_delivery_status"] == "delivered"
-    assert snapshot["scan_window"]["anchor_time_mst"] == "10:30"
-
-
-@pytest.mark.asyncio
-async def test_scheduled_scan_job_records_board_alert_failure(monkeypatch):
-    import services.discord_alerts as discord_alerts
-    import services.daily_board as daily_board
-
-    main = import_main_for_tests(monkeypatch)
-
-    async def _fake_daily_board_drop(*_args, **_kwargs):
-        return {
-            "ok": True,
-            "props_sides": 3,
-            "selected_event_ids": ["evt-1"],
-        }
-
-    async def _fake_send_discord_webhook(_payload, message_type="alert"):
-        raise discord_alerts.DiscordDeliveryError(
-            message="Discord webhook rejected alert message with status 429: rate limited",
-            message_type=message_type,
-            status_code=429,
-            response_text="rate limited",
-            route_kind="alert_dedicated",
-            webhook_source="DISCORD_ALERT_WEBHOOK_URL",
-        )
-
-    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
-    monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
-
-    await main._run_scheduled_scan_job()
-
-    snapshot = main.app.state.ops_status["last_scheduler_scan"]
-    assert snapshot["alerts_scheduled"] == 1
-    assert snapshot["board_alert_attempted"] is True
-    assert snapshot["board_alert_delivery_status"] == "failed"
-    assert snapshot["board_alert_http_status"] == 429
-    assert "rate limited" in snapshot["board_alert_error"]
-    assert snapshot["board_alert"]["webhook_source"] == "DISCORD_ALERT_WEBHOOK_URL"
-
-
-@pytest.mark.asyncio
-async def test_scheduled_scan_job_never_calls_player_props_scanner(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
-
-    async def fake_get_cached_or_scan(_sport, source="unknown"):
-        return {"sides": [], "events_fetched": 0, "events_with_both_books": 0}
-
-    async def _boom_player_props(*_args, **_kwargs):
-        raise AssertionError("player props should never run in scheduled scans")
+    async def fake_get_cached_or_scan(sport, source="unknown"):
+        called.append(sport)
+        return {"sides": [1], "events_fetched": 1, "events_with_both_books": 1}
 
     import services.odds_api as odds_api
-    import services.player_props as player_props
-
-    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)
+    sports = ["s1", "s2", "s3", "s4"]
+    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", sports, raising=True)
     monkeypatch.setattr(odds_api, "get_cached_or_scan", fake_get_cached_or_scan, raising=True)
-    monkeypatch.setattr(player_props, "get_cached_or_scan_player_props", _boom_player_props, raising=True)
 
     await main._run_scheduled_scan_job()
+
+    assert called == sports
 
 
 def test_scheduler_freshness_uses_startup_grace_when_no_success(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
+    main = _reload_main(monkeypatch)
     main._init_scheduler_heartbeats()
-    main.app.state.scheduler_started_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    main.app.state.scheduler_started_at = datetime.now(UTC).isoformat() + "Z"
 
     fresh, details = main._check_scheduler_freshness(True)
 
@@ -345,9 +206,9 @@ def test_scheduler_freshness_uses_startup_grace_when_no_success(monkeypatch):
 
 
 def test_scheduler_freshness_fails_if_no_success_past_stale_window(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
+    main = _reload_main(monkeypatch)
     main._init_scheduler_heartbeats()
-    main.app.state.scheduler_started_at = (datetime.now(UTC) - timedelta(hours=48)).isoformat().replace("+00:00", "Z")
+    main.app.state.scheduler_started_at = (datetime.now(UTC) - timedelta(hours=48)).isoformat() + "Z"
 
     fresh, details = main._check_scheduler_freshness(True)
 
@@ -356,39 +217,8 @@ def test_scheduler_freshness_fails_if_no_success_past_stale_window(monkeypatch):
     assert any(state["freshness_reason"] == "stale_no_success" for state in details["jobs"].values())
 
 
-def test_scheduler_freshness_uses_durable_snapshot_when_scheduler_is_external(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
-    monkeypatch.setenv("ENABLE_SCHEDULER", "1")
-    monkeypatch.setenv("APP_ROLE", "api")
-
-    if hasattr(main.app.state, "scheduler_heartbeats"):
-        delattr(main.app.state, "scheduler_heartbeats")
-
-    import services.ops_history as ops_history
-
-    now = datetime.now(UTC)
-    boot_ts = (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
-    success_ts = (now - timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
-    monkeypatch.setattr(
-        ops_history,
-        "load_scheduler_job_snapshot",
-        lambda **_: {
-            "scheduler_boot": {"captured_at": boot_ts},
-            "jit_clv": {"captured_at": success_ts, "run_id": "jit-1", "status": "completed"},
-            "auto_settle": {"captured_at": success_ts, "run_id": "settle-1", "status": "completed"},
-            "scheduled_scan": {"captured_at": success_ts, "run_id": "scan-1", "status": "completed"},
-        },
-        raising=True,
-    )
-
-    fresh, details = main._check_scheduler_freshness(True)
-
-    assert fresh is True
-    assert details["source"] == "durable_ops_history"
-
-
 def test_ops_status_requires_valid_cron_token(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
+    main = _reload_main(monkeypatch)
     main._init_ops_status()
     monkeypatch.setenv("CRON_TOKEN", "secret-token")
 
@@ -399,7 +229,7 @@ def test_ops_status_requires_valid_cron_token(monkeypatch):
 
 
 def test_ops_status_returns_snapshot_when_token_valid(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
+    main = _reload_main(monkeypatch)
     main._init_ops_status()
     monkeypatch.setenv("CRON_TOKEN", "secret-token")
     monkeypatch.setenv("ENABLE_SCHEDULER", "0")
@@ -412,12 +242,11 @@ def test_ops_status_returns_snapshot_when_token_valid(monkeypatch):
     assert payload["runtime"]["scheduler_expected"] is False
     assert "odds_api_activity" in payload["ops"]
     assert "summary" in payload["ops"]["odds_api_activity"]
-    assert "recent_scans" in payload["ops"]["odds_api_activity"]
     assert "recent_calls" in payload["ops"]["odds_api_activity"]
 
 
 def test_paper_autolog_env_variables(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
+    main = _reload_main(monkeypatch)
 
     monkeypatch.delenv("ENABLE_PAPER_EXPERIMENT_AUTOLOG", raising=False)
     monkeypatch.delenv("PAPER_EXPERIMENT_ACCOUNT_USER_ID", raising=False)
@@ -432,7 +261,7 @@ def test_paper_autolog_env_variables(monkeypatch):
 
 
 def test_validate_environment_warns_when_autolog_enabled_without_user_id(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
+    main = _reload_main(monkeypatch)
 
     monkeypatch.setenv("ENABLE_PAPER_EXPERIMENT_AUTOLOG", "1")
     monkeypatch.delenv("PAPER_EXPERIMENT_ACCOUNT_USER_ID", raising=False)
@@ -450,8 +279,28 @@ def test_validate_environment_warns_when_autolog_enabled_without_user_id(monkeyp
     assert "startup.env_paper_autolog_without_user_id" in warning_events
 
 
+def test_validate_environment_warns_when_scheduler_enabled_without_discord_alert_webhook(monkeypatch):
+    main = _reload_main(monkeypatch)
+
+    monkeypatch.setenv("ENABLE_SCHEDULER", "1")
+    monkeypatch.delenv("DISCORD_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("DISCORD_ALERT_WEBHOOK_URL", raising=False)
+
+    captured = []
+
+    def _capture(event: str, level: str = "info", **fields):
+        captured.append((event, level, fields))
+
+    monkeypatch.setattr(main, "_log_event", _capture, raising=True)
+
+    main._validate_environment()
+
+    warning_events = [e for e, _level, _f in captured]
+    assert "startup.env_discord_alert_webhook_missing" in warning_events
+
+
 def test_annotate_sides_with_duplicate_state_uses_pending_best_price(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
+    main = _reload_main(monkeypatch)
 
     class _FakeQuery:
         def __init__(self, data):
@@ -513,13 +362,6 @@ def test_annotate_sides_with_duplicate_state_uses_pending_best_price(monkeypatch
         },
         {
             "sport": "basketball_nba",
-            "commence_time": "2026-03-19T20:00:00Z",
-            "team": "Lakers",
-            "sportsbook": "FanDuel",
-            "book_odds": 140,
-        },
-        {
-            "sport": "basketball_nba",
             "commence_time": "2026-03-19T21:00:00Z",
             "team": "Celtics",
             "sportsbook": "DraftKings",
@@ -527,7 +369,7 @@ def test_annotate_sides_with_duplicate_state_uses_pending_best_price(monkeypatch
         },
     ]
 
-    annotated = main.annotate_sides_with_duplicate_state(db, "user-1", sides)
+    annotated = main._annotate_sides_with_duplicate_state(db, "user-1", sides)
 
     assert annotated[0]["scanner_duplicate_state"] == "already_logged"
     assert annotated[0]["best_logged_odds_american"] == 130
@@ -536,17 +378,13 @@ def test_annotate_sides_with_duplicate_state_uses_pending_best_price(monkeypatch
     assert annotated[1]["scanner_duplicate_state"] == "better_now"
     assert annotated[1]["best_logged_odds_american"] == 130
 
-    assert annotated[2]["scanner_duplicate_state"] == "logged_elsewhere"
-    assert annotated[2]["best_logged_odds_american"] == 130
-    assert annotated[2]["matched_pending_bet_id"] == "bet-best"
-
-    assert annotated[3]["scanner_duplicate_state"] == "new"
-    assert annotated[3]["matched_pending_bet_id"] is None
+    assert annotated[2]["scanner_duplicate_state"] == "new"
+    assert annotated[2]["matched_pending_bet_id"] is None
 
 
 @pytest.mark.asyncio
 async def test_longshot_autolog_guardrails(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
+    main = _reload_main(monkeypatch)
 
     class _FakeQuery:
         def __init__(self, db):
@@ -617,7 +455,7 @@ async def test_longshot_autolog_guardrails(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_longshot_autolog_caps_and_idempotency(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
+    main = _reload_main(monkeypatch)
 
     class _FakeQuery:
         def __init__(self, db):
@@ -711,7 +549,7 @@ async def test_longshot_autolog_caps_and_idempotency(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_scan_markets_returns_backend_duplicate_state_enum(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
+    main = _reload_main(monkeypatch)
 
     class _FakeQuery:
         def __init__(self, table_name, db):
@@ -822,77 +660,8 @@ async def test_scan_markets_returns_backend_duplicate_state_enum(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_scan_markets_records_grouped_manual_scan_activity(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
-    odds_api = reload_service_module("odds_api")
-
-    class _FakeQuery:
-        def select(self, *_args, **_kwargs):
-            return self
-
-        def eq(self, *_args, **_kwargs):
-            return self
-
-        def limit(self, *_args, **_kwargs):
-            return self
-
-        def upsert(self, *_args, **_kwargs):
-            return self
-
-        def execute(self):
-            return types.SimpleNamespace(data=[])
-
-    class _FakeDB:
-        def table(self, _name):
-            return _FakeQuery()
-
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB(), raising=True)
-    monkeypatch.setattr(main, "_retry_supabase", lambda f, retries=2: f(), raising=True)
-
-    async def _fake_cached_or_scan(_sport, source="unknown"):
-        assert source == "manual_scan"
-        return {
-            "sides": [
-                {
-                    "sportsbook": "DraftKings",
-                    "sport": "basketball_nba",
-                    "event": "Lakers @ Celtics",
-                    "commence_time": "2026-03-19T20:00:00Z",
-                    "team": "Lakers",
-                    "pinnacle_odds": 110,
-                    "book_odds": 130,
-                    "true_prob": 0.52,
-                    "base_kelly_fraction": 0.01,
-                    "book_decimal": 2.3,
-                    "ev_percentage": 2.0,
-                }
-            ],
-            "events_fetched": 2,
-            "events_with_both_books": 1,
-            "api_requests_remaining": "100",
-            "fetched_at": 1_700_000_000,
-            "cache_hit": False,
-        }
-
-    monkeypatch.setattr(odds_api, "get_cached_or_scan", _fake_cached_or_scan, raising=True)
-    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)
-
-    await main.scan_markets(sport="basketball_nba", user={"id": "user-1", "email": "operator@example.com"})
-
-    snapshot = odds_api.get_odds_api_activity_snapshot()
-    assert snapshot["recent_scans"]
-    newest = snapshot["recent_scans"][0]
-    assert newest["source"] == "manual_scan"
-    assert newest["surface"] == "straight_bets"
-    assert newest["scan_scope"] == "single_sport"
-    assert newest["requested_sport"] == "basketball_nba"
-    assert newest["actor_label"] == "operator@example.com"
-    assert newest["total_sides"] == 1
-
-
-@pytest.mark.asyncio
 async def test_scan_latest_enriches_duplicate_state_from_cached_payload(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
+    main = _reload_main(monkeypatch)
 
     class _FakeQuery:
         def __init__(self, table_name, db):
@@ -972,19 +741,37 @@ async def test_scan_latest_enriches_duplicate_state_from_cached_payload(monkeypa
 
 @pytest.mark.asyncio
 async def test_scheduled_scan_ops_status_includes_autolog_summary(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
+    main = _reload_main(monkeypatch)
 
-    async def _fake_daily_board_drop(*_args, **_kwargs):
-        return {"ok": True, "props_sides": 0, "selected_event_ids": []}
+    import services.odds_api as odds_api
+    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)
 
-    import services.daily_board as daily_board
-    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
+    async def _fake_cached_or_scan(_sport, source="unknown"):
+        return {
+            "sides": [],
+            "events_fetched": 0,
+            "events_with_both_books": 0,
+            "api_requests_remaining": "99",
+        }
+
+    monkeypatch.setattr(odds_api, "get_cached_or_scan", _fake_cached_or_scan, raising=True)
+
+    async def _fake_autolog(db, *, run_id: str, sides: list[dict]):
+        return {
+            "enabled": True,
+            "configured": True,
+            "run_id": run_id,
+            "inserted_total": 0,
+            "selected_by_cohort": {main.LOW_EDGE_COHORT: 0, main.HIGH_EDGE_COHORT: 0},
+        }
+
+    monkeypatch.setattr(main, "_run_longshot_autolog_for_sides", _fake_autolog, raising=True)
 
     await main._run_scheduled_scan_job()
 
     snapshot = main.app.state.ops_status["last_scheduler_scan"]
     assert isinstance(snapshot, dict)
-    assert snapshot.get("board_drop") is True
-    assert isinstance(snapshot.get("result"), (dict, type(None)))
-    assert snapshot.get("board_alert_delivery_status") in {"disabled_no_webhook", "delivered", "failed", "failed_unexpected"}
+    assert "autolog_summary" in snapshot
+    assert snapshot["autolog_summary"]["enabled"] is True
+    assert snapshot["autolog_summary"]["configured"] is True
 

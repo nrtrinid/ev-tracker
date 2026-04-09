@@ -18,6 +18,24 @@ from models import (
 router = APIRouter()
 
 
+def _raise_if_delivery_disabled(delivery: Any, *, run_id: str, fallback_message_type: str) -> None:
+    if not isinstance(delivery, dict):
+        return
+    if delivery.get("delivery_status") != "disabled_no_webhook":
+        return
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "ok": False,
+            "error": "discord_webhook_not_configured",
+            "message_type": delivery.get("message_type") or fallback_message_type,
+            "route_kind": delivery.get("route_kind"),
+            "webhook_source": delivery.get("webhook_source"),
+            "run_id": run_id,
+        },
+    )
+
+
 async def cron_run_scan_impl(
     x_cron_token: str | None,
     *,
@@ -40,7 +58,7 @@ async def cron_run_scan_impl(
     log_event(f"{log_prefix}.started", run_id=run_id)
 
     from services.odds_api import append_scan_activity, get_cached_or_scan, SUPPORTED_SPORTS
-    from services.discord_alerts import schedule_alerts
+    from services.discord_alerts import get_last_schedule_stats, schedule_alerts
 
     started = datetime.now(UTC).isoformat() + "Z"
     scanned = []
@@ -50,6 +68,11 @@ async def cron_run_scan_impl(
     total_events = 0
     total_with_both = 0
     min_remaining: str | None = None
+    alert_skip_totals = {
+        "skipped_memory_dedupe": 0,
+        "skipped_shared_dedupe": 0,
+        "skipped_threshold": 0,
+    }
 
     for sport_key in SUPPORTED_SPORTS:
         sport_started_at = time.monotonic()
@@ -105,6 +128,16 @@ async def cron_run_scan_impl(
                 except (TypeError, ValueError):
                     min_remaining = str(remaining)
             alerts_scheduled += schedule_alerts(sides)
+            schedule_stats = get_last_schedule_stats()
+            alert_skip_totals["skipped_memory_dedupe"] += int(schedule_stats.get("skipped_memory_dedupe") or 0)
+            alert_skip_totals["skipped_shared_dedupe"] += int(schedule_stats.get("skipped_shared_dedupe") or 0)
+            alert_skip_totals["skipped_threshold"] += int(schedule_stats.get("skipped_threshold") or 0)
+            log_event(
+                f"{log_prefix}.alert_schedule",
+                run_id=run_id,
+                sport=sport_key,
+                discord_alert_schedule=schedule_stats,
+            )
         except httpx.HTTPStatusError as e:
             scan_duration_ms = round((time.monotonic() - sport_started_at) * 1000, 2)
             status = e.response.status_code if e.response is not None else None
@@ -184,6 +217,7 @@ async def cron_run_scan_impl(
         run_id=run_id,
         total_sides=total_sides,
         alerts_scheduled=alerts_scheduled,
+        alert_skip_totals=alert_skip_totals,
         error_count=len(errors),
         duration_ms=duration_ms,
     )
@@ -197,6 +231,7 @@ async def cron_run_scan_impl(
             "duration_ms": duration_ms,
             "total_sides": total_sides,
             "alerts_scheduled": alerts_scheduled,
+            "alert_skip_totals": alert_skip_totals,
             "error_count": len(errors),
             "errors": errors,
             "captured_at": finished,
@@ -223,6 +258,7 @@ async def cron_run_scan_impl(
         hard_errors=len(errors) if ops_status_key != "last_ops_trigger_scan" else None,
         error_count=len(errors),
         errors=errors,
+        meta={"alert_skip_totals": alert_skip_totals},
     )
 
     if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1" and alerts_scheduled == 0:
@@ -250,10 +286,17 @@ async def cron_run_scan_impl(
         "started_at": started,
         "finished_at": finished,
         "duration_ms": duration_ms,
+        "board_drop": True,
+        "result": {
+            "props_sides": total_sides,
+            "events_fetched": total_events,
+            "events_with_both_books": total_with_both,
+        },
         "sports_scanned": scanned,
         "errors": errors,
         "total_sides": total_sides,
         "alerts_scheduled": alerts_scheduled,
+        "alert_skip_totals": alert_skip_totals,
     }
 
 
@@ -487,6 +530,158 @@ def ops_analytics_users_impl(
     )
 
 
+def ops_clv_debug_impl(
+    x_cron_token: str | None,
+    *,
+    require_valid_cron_token: Callable[[str | None], None],
+    get_db: Callable[[], Any],
+    retry_supabase: Callable[[Callable[[], Any]], Any],
+    load_snapshot: Callable[..., dict[str, Any]],
+    load_scheduler_job_snapshot: Callable[..., dict[str, Any]],
+    load_recent_clv_job_runs: Callable[..., list[dict[str, Any]]],
+    utc_now_iso: Callable[[], str],
+) -> dict[str, Any]:
+    require_valid_cron_token(x_cron_token)
+    return load_snapshot(
+        get_db(),
+        retry_supabase=retry_supabase,
+        load_scheduler_job_snapshot=load_scheduler_job_snapshot,
+        load_recent_clv_job_runs=load_recent_clv_job_runs,
+        utc_now_iso=utc_now_iso,
+    )
+
+
+async def cron_run_clv_daily_impl(
+    x_cron_token: str | None,
+    *,
+    require_valid_cron_token: Callable[[str | None], None],
+    new_run_id: Callable[[str], str],
+    log_event: Callable[..., None],
+    set_ops_status: Callable[[str, dict], None],
+    persist_ops_job_run: Callable[..., None],
+    get_db: Callable[[], Any],
+    run_id_prefix: str = "cron_clv_daily",
+    log_prefix: str = "cron.clv_daily",
+    ops_status_source: str = "cron",
+) -> dict[str, Any]:
+    require_valid_cron_token(x_cron_token)
+
+    run_id = new_run_id(run_id_prefix)
+    started_clock = time.monotonic()
+    log_event(f"{log_prefix}.started", run_id=run_id)
+
+    from services.odds_api import fetch_clv_for_pending_bets
+
+    db = get_db()
+    started = datetime.now(UTC).isoformat() + "Z"
+    summary: dict[str, Any] | None = None
+    try:
+        summary = await fetch_clv_for_pending_bets(db, include_summary=True)
+        log_event(
+            f"{log_prefix}.completed",
+            run_id=run_id,
+            updated=int((summary or {}).get("close_updated", 0)),
+            summary=summary,
+        )
+    except Exception as e:
+        log_event(
+            f"{log_prefix}.failed",
+            level="error",
+            run_id=run_id,
+            error_class=type(e).__name__,
+            error=str(e),
+            duration_ms=round((time.monotonic() - started_clock) * 1000, 2),
+        )
+        raise HTTPException(status_code=502, detail=f"Daily CLV safety-net error: {e}")
+    finally:
+        finished = datetime.now(UTC).isoformat() + "Z"
+
+    duration_ms = round((time.monotonic() - started_clock) * 1000, 2)
+    updated = int((summary or {}).get("close_updated", 0))
+    set_ops_status(
+        "last_clv_daily",
+        {
+            "source": ops_status_source,
+            "run_id": run_id,
+            "started_at": started,
+            "finished_at": finished,
+            "duration_ms": duration_ms,
+            "updated": updated,
+            "captured_at": finished,
+            "summary": summary,
+        },
+    )
+    persist_ops_job_run(
+        job_kind="clv_daily",
+        source=ops_status_source,
+        status="completed",
+        run_id=run_id,
+        captured_at=finished,
+        started_at=started,
+        finished_at=finished,
+        duration_ms=duration_ms,
+        meta=summary or {"updated": updated},
+    )
+
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "started_at": started,
+        "finished_at": finished,
+        "duration_ms": duration_ms,
+        "updated": updated,
+        "summary": summary,
+    }
+
+
+async def ops_replay_recent_clv_impl(
+    x_cron_token: str | None,
+    *,
+    require_valid_cron_token: Callable[[str | None], None],
+    new_run_id: Callable[[str], str],
+    log_event: Callable[..., None],
+    set_ops_status: Callable[[str, dict], None],
+    persist_ops_job_run: Callable[..., None],
+    get_db: Callable[[], Any],
+    replay_recent_closes: Callable[..., Any],
+    lookback_hours: int,
+) -> dict[str, Any]:
+    require_valid_cron_token(x_cron_token)
+    run_id = new_run_id("ops_clv_replay")
+    started = datetime.now(UTC).isoformat() + "Z"
+    started_clock = time.monotonic()
+    log_event("ops.trigger.clv_replay.started", run_id=run_id, lookback_hours=lookback_hours)
+    summary = await replay_recent_closes(get_db(), lookback_hours=lookback_hours)
+    finished = datetime.now(UTC).isoformat() + "Z"
+    duration_ms = round((time.monotonic() - started_clock) * 1000, 2)
+    set_ops_status(
+        "last_clv_replay",
+        {
+            "source": "ops",
+            "run_id": run_id,
+            "started_at": started,
+            "finished_at": finished,
+            "duration_ms": duration_ms,
+            "updated": int((summary or {}).get("close_updated", 0)),
+            "captured_at": finished,
+            "summary": summary,
+        },
+    )
+    persist_ops_job_run(
+        job_kind="clv_replay",
+        source="ops",
+        status="completed",
+        run_id=run_id,
+        captured_at=finished,
+        started_at=started,
+        finished_at=finished,
+        duration_ms=duration_ms,
+        meta=summary,
+    )
+    log_event("ops.trigger.clv_replay.completed", run_id=run_id, duration_ms=duration_ms, summary=summary)
+    return summary
+
+
 async def cron_test_discord_impl(
     x_cron_token: str | None,
     *,
@@ -518,11 +713,13 @@ async def cron_test_discord_impl(
     }
 
     try:
-        await send_discord_webhook(payload, message_type="test")
+        delivery = await send_discord_webhook(payload, message_type="test")
+        _raise_if_delivery_disabled(delivery, run_id=run_id, fallback_message_type="test")
     except TypeError as exc:
         if "message_type" not in str(exc):
             raise
-        await send_discord_webhook(payload)
+        delivery = await send_discord_webhook(payload)
+        _raise_if_delivery_disabled(delivery, run_id=run_id, fallback_message_type="test")
     except Exception as exc:
         from services.discord_alerts import DiscordDeliveryError
 
@@ -554,7 +751,12 @@ async def cron_test_discord_impl(
         run_id=run_id,
         duration_ms=round((time.monotonic() - started_at) * 1000, 2),
     )
-    return {"ok": True, "scheduled": True, "run_id": run_id}
+    return {
+        "ok": True,
+        "scheduled": True,
+        "run_id": run_id,
+        "delivery_status": delivery.get("delivery_status") if isinstance(delivery, dict) else None,
+    }
 
 
 async def cron_test_discord_alert_impl(
@@ -588,7 +790,8 @@ async def cron_test_discord_alert_impl(
     }
 
     try:
-        await send_discord_webhook(payload, message_type="alert")
+        delivery = await send_discord_webhook(payload, message_type="alert")
+        _raise_if_delivery_disabled(delivery, run_id=run_id, fallback_message_type="alert")
     except Exception as exc:
         from services.discord_alerts import DiscordDeliveryError
 
@@ -620,7 +823,12 @@ async def cron_test_discord_alert_impl(
         run_id=run_id,
         duration_ms=round((time.monotonic() - started_at) * 1000, 2),
     )
-    return {"ok": True, "scheduled": True, "run_id": run_id}
+    return {
+        "ok": True,
+        "scheduled": True,
+        "run_id": run_id,
+        "delivery_status": delivery.get("delivery_status") if isinstance(delivery, dict) else None,
+    }
 
 
 @router.post("/api/ops/trigger/scan")
@@ -744,6 +952,73 @@ def ops_pickem_research_summary(
         require_valid_cron_token=lambda token: main._require_ops_token(token, None),
         get_db=main.get_db,
         get_summary=get_pickem_research_summary,
+    )
+
+
+@router.get("/api/ops/clv-debug")
+def ops_clv_debug(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    import main
+    from services.clv_audit import build_clv_audit_snapshot
+    from services.ops_history import load_recent_clv_job_runs, load_scheduler_job_snapshot
+
+    return ops_clv_debug_impl(
+        x_cron_token=x_ops_token or x_cron_token,
+        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        get_db=main.get_db,
+        retry_supabase=main._retry_supabase,
+        load_snapshot=build_clv_audit_snapshot,
+        load_scheduler_job_snapshot=load_scheduler_job_snapshot,
+        load_recent_clv_job_runs=load_recent_clv_job_runs,
+        utc_now_iso=main._utc_now_iso,
+    )
+
+
+@router.post("/api/ops/trigger/clv-daily")
+async def ops_trigger_clv_daily(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    import main
+
+    return await cron_run_clv_daily_impl(
+        x_cron_token=x_ops_token or x_cron_token,
+        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        new_run_id=main._new_run_id,
+        log_event=main._log_event,
+        set_ops_status=main._set_ops_status,
+        persist_ops_job_run=main._persist_ops_job_run,
+        get_db=main.get_db,
+        run_id_prefix="ops_clv_daily",
+        log_prefix="ops.trigger.clv_daily",
+        ops_status_source="ops",
+    )
+
+
+@router.post("/api/ops/trigger/clv-replay")
+async def ops_trigger_clv_replay(
+    lookback_hours: int = Query(default=8, ge=1, le=24),
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    import main
+    from services.odds_api import replay_recent_clv_closes
+
+    return await ops_replay_recent_clv_impl(
+        x_cron_token=x_ops_token or x_cron_token,
+        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        new_run_id=main._new_run_id,
+        log_event=main._log_event,
+        set_ops_status=main._set_ops_status,
+        persist_ops_job_run=main._persist_ops_job_run,
+        get_db=main.get_db,
+        replay_recent_closes=replay_recent_clv_closes,
+        lookback_hours=lookback_hours,
     )
 
 

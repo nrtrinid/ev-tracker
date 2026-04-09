@@ -161,6 +161,50 @@ def test_schedule_alerts_dedupes(monkeypatch):
     assert len(created) == 1
 
 
+def test_schedule_alerts_records_skip_telemetry(monkeypatch):
+    mod = _reload_discord_alerts()
+    mod.ALERTED_KEYS.clear()
+
+    def fake_create_task(_coro):
+        try:
+            _coro.close()
+        except Exception:
+            pass
+
+        class DummyTask:
+            pass
+
+        return DummyTask()
+
+    monkeypatch.setattr(mod.asyncio, "create_task", fake_create_task, raising=True)
+    monkeypatch.setattr(mod, "make_alert_key", lambda side: side["key"], raising=True)
+    monkeypatch.setattr(mod, "should_alert", lambda side: bool(side.get("eligible")), raising=True)
+    monkeypatch.setattr(
+        mod,
+        "mark_alert_if_new",
+        lambda key, _ttl: key != "shared-dedupe",
+        raising=True,
+    )
+
+    sides = [
+        {"key": "good", "eligible": True},
+        {"key": "shared-dedupe", "eligible": True},
+        {"key": "threshold", "eligible": False},
+        {"key": "good", "eligible": True},
+    ]
+
+    scheduled = mod.schedule_alerts(sides)
+    stats = mod.get_last_schedule_stats()
+
+    assert scheduled == 1
+    assert stats["candidates_seen"] == 4
+    assert stats["scheduled"] == 1
+    assert stats["skipped_shared_dedupe"] == 1
+    assert stats["skipped_threshold"] == 1
+    assert stats["skipped_memory_dedupe"] == 1
+    assert stats["skipped_total"] == 3
+
+
 @pytest.mark.asyncio
 async def test_send_discord_webhook_noop_without_env(monkeypatch, capsys):
     mod = _reload_discord_alerts()

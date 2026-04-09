@@ -64,6 +64,8 @@ cd ~/ev-tracker
 docker compose up -d --force-recreate backend_api backend_scheduler caddy
 ```
 
+When Discord webhook values change, always run the force-recreate command above and then re-run the Discord verification checks below.
+
 ## Health Checks
 
 ```bash
@@ -79,6 +81,24 @@ curl -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/clv-debug
 curl -X POST -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/trigger/test-discord
 curl -X POST -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/trigger/test-discord-alert
 ```
+
+## Discord Verification (Required)
+
+Run this sequence after every deploy and every Discord secret rotation:
+
+```bash
+curl -X POST -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/trigger/test-discord
+curl -X POST -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/trigger/test-discord-alert
+curl -X POST -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/trigger/scan
+curl -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/status
+```
+
+Expected results:
+
+- both test endpoints return `ok: true` with a `run_id`
+- ops scan response includes `alerts_scheduled` and `alert_skip_totals`
+- ops status runtime includes `discord.alert_delivery`, `discord.test_delivery`, and `discord.last_schedule_stats`
+- backend logs include `[Discord] Webhook response: 2xx` and no repeated `DISCORD_WEBHOOK_URL not set` warning
 
 ## Beta Env Checklist
 

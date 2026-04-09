@@ -71,6 +71,8 @@ Before release, confirm:
 4. Trigger:
    - `POST /api/ops/trigger/test-discord`
    - `POST /api/ops/trigger/test-discord-alert`
+  - Confirm both return `ok: true` and include a `run_id`
+  - Confirm backend logs show `[Discord] Webhook response: 2xx`
 5. Use a fresh beta account and verify:
    - sign up / sign in
    - home board loads

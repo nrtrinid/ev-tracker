@@ -99,6 +99,8 @@ Before sharing `main` with testers:
 - trigger:
   - `POST /api/ops/trigger/test-discord`
   - `POST /api/ops/trigger/test-discord-alert`
+  - confirm both return `ok: true` (not `503`)
+  - confirm logs show `[Discord] Webhook response: 2xx`
 - manually verify:
   - sign up / sign in
   - home board loads
