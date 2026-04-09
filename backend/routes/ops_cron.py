@@ -720,6 +720,8 @@ async def cron_test_discord_impl(
             raise
         delivery = await send_discord_webhook(payload)
         _raise_if_delivery_disabled(delivery, run_id=run_id, fallback_message_type="test")
+    except HTTPException:
+        raise
     except Exception as exc:
         from services.discord_alerts import DiscordDeliveryError
 
@@ -792,6 +794,13 @@ async def cron_test_discord_alert_impl(
     try:
         delivery = await send_discord_webhook(payload, message_type="alert")
         _raise_if_delivery_disabled(delivery, run_id=run_id, fallback_message_type="alert")
+    except TypeError as exc:
+        if "message_type" not in str(exc):
+            raise
+        delivery = await send_discord_webhook(payload)
+        _raise_if_delivery_disabled(delivery, run_id=run_id, fallback_message_type="alert")
+    except HTTPException:
+        raise
     except Exception as exc:
         from services.discord_alerts import DiscordDeliveryError
 

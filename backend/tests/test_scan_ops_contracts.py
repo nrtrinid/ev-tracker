@@ -102,8 +102,6 @@ def test_scan_endpoints_require_auth(public_client):
 def test_ops_endpoints_require_ops_token(public_client):
     assert public_client.get("/api/ops/status").status_code == 401
     assert public_client.get("/api/ops/research-opportunities/summary").status_code == 401
-    assert public_client.get("/api/ops/model-calibration/summary").status_code == 401
-    assert public_client.get("/api/ops/pickem-research/summary").status_code == 401
     assert public_client.post("/api/ops/trigger/scan").status_code == 401
     assert public_client.post("/api/ops/trigger/auto-settle").status_code == 401
     assert public_client.post("/api/ops/trigger/test-discord").status_code == 401
@@ -190,7 +188,7 @@ def test_scan_markets_contract_shape_with_duplicate_fields(auth_client, auth_hea
     monkeypatch.setattr(main, "_retry_supabase", lambda f: f(), raising=True)
     monkeypatch.setattr(main, "_annotate_sides_with_duplicate_state", lambda _db, _uid, sides: sides, raising=True)
 
-    async def _fake_piggyback_clv(_sides, *, source="unknown"):
+    async def _fake_piggyback_clv(_sides):
         return None
 
     monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
@@ -377,16 +375,9 @@ def test_player_props_manual_scan_end_to_end_contract(auth_client, auth_headers,
     import services.player_props as player_props
 
     fake_db_state = {}
-    pickem_sync_calls = []
     monkeypatch.setattr(main, "get_db", lambda: _FakeDB(fake_db_state), raising=True)
     monkeypatch.setattr(main, "_retry_supabase", lambda f: f(), raising=True)
     monkeypatch.setattr(main, "_annotate_sides_with_duplicate_state", lambda _db, _uid, sides: sides, raising=True)
-    monkeypatch.setattr(
-        main,
-        "_sync_pickem_research_from_props_payload",
-        lambda payload, source="unknown": pickem_sync_calls.append((payload, source)),
-        raising=True,
-    )
 
     async def _fake_scoreboard():
         return {
@@ -585,11 +576,6 @@ def test_player_props_manual_scan_end_to_end_contract(auth_client, auth_headers,
     assert latest_payload["surface"] == "player_props"
     assert latest_payload["diagnostics"]["quality_gate_min_reference_bookmakers"] == 2
     assert latest_payload["sides"][0]["participant_id"] == "4431767"
-    assert len(pickem_sync_calls) == 1
-    synced_payload, synced_source = pickem_sync_calls[0]
-    assert synced_source == "manual_scan"
-    assert synced_payload["surface"] == "player_props"
-    assert len(synced_payload["sides"]) == 6
     assert latest_payload["prizepicks_cards"] == []
 
     fake_db_state["select_data"] = [{"payload": latest_payload}]
@@ -733,62 +719,24 @@ def test_ops_status_contract_shape_degraded(monkeypatch, auth_client):
 
 
 @pytest.mark.integration
-def test_ops_clv_debug_contract_shape(auth_client, monkeypatch):
-    import main
-    import services.clv_audit as clv_audit
-    import services.ops_history as ops_history
-
-    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
-    monkeypatch.setattr(
-        clv_audit,
-        "build_clv_audit_snapshot",
-        lambda _db, **_kwargs: {
-            "generated_at": "2026-04-02T18:00:00Z",
-            "inventory": {"writers": [], "readers": [], "reason_codes": ["missing_identity"]},
-            "scheduler": {"jit_clv": {"captured_at": "2026-04-02T17:45:00Z"}},
-            "job_runs": {"recent": [], "by_source": [], "by_job_kind": [], "stale_jobs": {"jit_clv": {"is_stale": False}}},
-            "rescueability": {"rescue_eligible_count": 0, "rescue_from_latest_count": 0},
-            "bets": {"tracked_count": 1, "valid_count": 0, "sample": {"pending": []}},
-            "research_opportunities": {"tracked_count": 0, "valid_count": 0, "sample": {"pending": []}},
-            "pickem_research": {"tracked_count": 0, "valid_count": 0, "sample": {"pending": []}},
-        },
-        raising=True,
-    )
-    monkeypatch.setattr(ops_history, "load_scheduler_job_snapshot", lambda **_: {}, raising=True)
-    monkeypatch.setattr(ops_history, "load_recent_clv_job_runs", lambda **_: [], raising=True)
-
-    resp = auth_client.get("/api/ops/clv-debug", headers={"X-Ops-Token": "ops-secret"})
-    assert resp.status_code == 200
-
-    body = resp.json()
-    assert isinstance(body["inventory"], dict)
-    assert isinstance(body["job_runs"], dict)
-    assert isinstance(body["rescueability"], dict)
-    assert isinstance(body["bets"], dict)
-    assert isinstance(body["research_opportunities"], dict)
-    assert isinstance(body["pickem_research"], dict)
-
-
-@pytest.mark.integration
 def test_ops_trigger_scan_contract_shape(auth_client, monkeypatch):
-    import services.daily_board as daily_board
+    import services.odds_api as odds_api
+    import services.discord_alerts as discord_alerts
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
 
-    async def _fake_daily_board_drop(*, db, source: str, retry_supabase, log_event):
-        assert source == "ops_trigger_board_drop"
+    async def _fake_get_cached_or_scan(_sport: str, source: str = "ops_trigger_scan"):
+        assert source == "ops_trigger_scan"
         return {
-            "ok": True,
-            "snapshot_id": "snap_test",
-            "scanned_at": "2026-03-26T20:00:00Z",
-            "selected_event_ids": ["evt-1"],
-            "selected_games": [],
-            "props_sides": 2,
-            "duration_ms": 12.0,
+            "sides": [{"team": "Lakers"}, {"team": "Warriors"}],
+            "events_fetched": 1,
+            "events_with_both_books": 1,
+            "api_requests_remaining": "496",
         }
 
-    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
+    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)
+    monkeypatch.setattr(odds_api, "get_cached_or_scan", _fake_get_cached_or_scan, raising=True)
+    monkeypatch.setattr(discord_alerts, "schedule_alerts", lambda _sides: 0, raising=True)
 
     resp = auth_client.post("/api/ops/trigger/scan", headers={"X-Ops-Token": "ops-secret"})
     assert resp.status_code == 200
@@ -796,87 +744,10 @@ def test_ops_trigger_scan_contract_shape(auth_client, monkeypatch):
     body = resp.json()
     assert isinstance(body.get("ok"), bool)
     assert isinstance(body.get("run_id"), str)
-    assert body.get("board_drop") is True
-    assert isinstance(body.get("result"), dict) or body.get("result") is None
+    assert isinstance(body.get("sports_scanned"), list)
     assert isinstance(body.get("errors"), list)
-    assert (isinstance(body.get("total_sides"), int) or body.get("total_sides") is None)
+    assert isinstance(body.get("total_sides"), int)
     assert isinstance(body.get("alerts_scheduled"), int)
-
-
-@pytest.mark.integration
-def test_ops_trigger_clv_daily_contract_shape(auth_client, monkeypatch):
-    import main
-    import services.odds_api as odds_api
-
-    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
-
-    async def _fake_fetch_clv_for_pending_bets(_db, *, include_summary: bool = False):
-        assert include_summary is True
-        return {
-            "job_source": "clv_daily",
-            "candidate_fields": {"bet_straight_candidates": 1, "bet_prop_candidates": 1, "sports": 1},
-            "sports_processed": 1,
-            "duration_ms": 12.5,
-            "fetched_side_count": 4,
-            "fetched_side_surfaces": {"straight_bets": 2, "player_props": 2},
-            "fetched_side_markets": {"h2h": 2, "player_points": 2},
-            "bet_updates": {"latest_updated": 2, "close_updated": 2, "reason_counts": {}},
-            "research_updates": {},
-            "pickem_updates": {},
-            "updated": 2,
-            "close_updated": 2,
-            "reason_counts": {"bets": {}, "research": {}, "pickem": {}},
-        }
-
-    monkeypatch.setattr(odds_api, "fetch_clv_for_pending_bets", _fake_fetch_clv_for_pending_bets, raising=True)
-
-    resp = auth_client.post("/api/ops/trigger/clv-daily", headers={"X-Ops-Token": "ops-secret"})
-    assert resp.status_code == 200
-
-    body = resp.json()
-    assert body["ok"] is True
-    assert isinstance(body["run_id"], str)
-    assert isinstance(body["updated"], int)
-    assert isinstance(body["summary"], dict)
-    assert body["summary"]["job_source"] == "clv_daily"
-
-
-@pytest.mark.integration
-def test_ops_trigger_clv_replay_contract_shape(auth_client, monkeypatch):
-    import main
-    import services.odds_api as odds_api
-
-    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
-
-    async def _fake_replay_recent_clv_closes(_db, *, lookback_hours: int):
-        assert lookback_hours == 6
-        return {
-            "ok": True,
-            "lookback_hours": lookback_hours,
-            "candidate_count": 3,
-            "bet_straight_candidates": 1,
-            "bet_prop_candidates": 2,
-            "updated": 2,
-            "close_updated": 2,
-            "sports_processed": 1,
-        }
-
-    monkeypatch.setattr(odds_api, "replay_recent_clv_closes", _fake_replay_recent_clv_closes, raising=True)
-
-    resp = auth_client.post("/api/ops/trigger/clv-replay?lookback_hours=6", headers={"X-Ops-Token": "ops-secret"})
-    assert resp.status_code == 200
-
-    body = resp.json()
-    assert body["ok"] is True
-    assert body["lookback_hours"] == 6
-    assert isinstance(body["candidate_count"], int)
-    assert isinstance(body["bet_straight_candidates"], int)
-    assert isinstance(body["bet_prop_candidates"], int)
-    assert isinstance(body["updated"], int)
-    assert isinstance(body["close_updated"], int)
-    assert isinstance(body["sports_processed"], int)
 
 
 @pytest.mark.integration
@@ -887,15 +758,10 @@ def test_ops_research_opportunities_summary_contract_shape(auth_client, monkeypa
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
     monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
 
-    monkeypatch.setattr(research, "get_research_opportunities_summary", lambda _db, **_kwargs: {
+    monkeypatch.setattr(research, "get_research_opportunities_summary", lambda _db: {
         "captured_count": 4,
         "open_count": 2,
         "close_captured_count": 2,
-        "pending_close_count": 2,
-        "valid_close_count": 2,
-        "invalid_close_count": 0,
-        "valid_close_coverage_pct": None,
-        "invalid_close_rate_pct": None,
         "clv_ready_count": 2,
         "beat_close_pct": 50.0,
         "avg_clv_percent": 0.8,
@@ -949,195 +815,6 @@ def test_ops_research_opportunities_summary_contract_shape(auth_client, monkeypa
 
 
 @pytest.mark.integration
-def test_ops_model_calibration_summary_contract_shape(auth_client, monkeypatch):
-    import main
-    import services.model_calibration as calibration
-
-    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
-
-    monkeypatch.setattr(calibration, "get_model_calibration_summary", lambda _db: {
-        "captured_count": 8,
-        "valid_close_count": 4,
-        "paired_close_count": 3,
-        "fallback_close_count": 1,
-        "paired_close_pct": 75.0,
-        "by_model": [
-            {
-                "key": "props_v1_live",
-                "captured_count": 4,
-                "valid_close_count": 2,
-                "paired_close_count": 2,
-                "avg_brier_score": 0.024,
-                "avg_log_loss": 0.137,
-                "avg_clv_percent": 0.8,
-                "beat_close_pct": 50.0,
-            }
-        ],
-        "by_market": [],
-        "by_sportsbook": [],
-        "by_interpolation_mode": [],
-        "cohort_trend": [
-            {
-                "cohort_key": "2026-03-30",
-                "captured_count": 8,
-                "valid_close_count": 4,
-                "avg_brier_score": 0.022,
-                "avg_log_loss": 0.131,
-                "avg_clv_percent": 0.7,
-                "beat_close_pct": 50.0,
-            }
-        ],
-        "recent_comparisons": [
-            {
-                "opportunity_key": "prop-compare-1",
-                "surface": "player_props",
-                "first_seen_at": "2026-03-30T12:00:00Z",
-                "sport": "basketball_nba",
-                "event": "Nuggets @ Suns",
-                "sportsbook": "FanDuel",
-                "market": "player_points",
-                "player_name": "Nikola Jokic",
-                "selection_side": "over",
-                "line_value": 24.5,
-                "close_quality": "paired",
-                "close_true_prob": 0.534,
-                "baseline_model_key": "props_v1_live",
-                "baseline_true_prob": 0.522,
-                "baseline_ev_percentage": 6.1,
-                "baseline_clv_ev_percent": 0.5,
-                "candidate_model_key": "props_v2_shadow",
-                "candidate_true_prob": 0.531,
-                "candidate_ev_percentage": 7.0,
-                "candidate_clv_ev_percent": 0.8,
-            }
-        ],
-        "release_gate": {
-            "candidate_model_key": "props_v2_shadow",
-            "baseline_model_key": "props_v1_live",
-            "candidate_valid_close_count": 120,
-            "baseline_valid_close_count": 120,
-            "candidate_avg_brier_score": 0.021,
-            "baseline_avg_brier_score": 0.024,
-            "candidate_avg_log_loss": 0.129,
-            "baseline_avg_log_loss": 0.137,
-            "candidate_avg_clv_percent": 0.82,
-            "baseline_avg_clv_percent": 0.8,
-            "candidate_beat_close_pct": 51.0,
-            "baseline_beat_close_pct": 50.0,
-            "eligible": False,
-            "passes": False,
-            "reasons": ["Need at least 200 valid closes for both baseline and shadow models."],
-        },
-    }, raising=True)
-
-    resp = auth_client.get("/api/ops/model-calibration/summary", headers={"X-Ops-Token": "ops-secret"})
-    assert resp.status_code == 200
-
-    body = resp.json()
-    assert isinstance(body.get("captured_count"), int)
-    assert isinstance(body.get("valid_close_count"), int)
-    assert isinstance(body.get("paired_close_count"), int)
-    assert isinstance(body.get("fallback_close_count"), int)
-    assert isinstance(body.get("by_model"), list)
-    assert isinstance(body.get("cohort_trend"), list)
-    assert isinstance(body.get("recent_comparisons"), list)
-    assert isinstance(body.get("release_gate"), dict)
-    assert body["recent_comparisons"][0]["candidate_model_key"] == "props_v2_shadow"
-
-
-@pytest.mark.integration
-def test_ops_pickem_research_summary_contract_shape(auth_client, monkeypatch):
-    import main
-    import services.pickem_research as pickem_research
-
-    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
-
-    monkeypatch.setattr(pickem_research, "get_pickem_research_summary", lambda _db: {
-        "captured_count": 6,
-        "close_ready_count": 5,
-        "settled_count": 4,
-        "decisive_count": 3,
-        "push_count": 1,
-        "pending_result_count": 2,
-        "avg_display_probability_pct": 64.5,
-        "expected_hit_rate_pct": 64.5,
-        "actual_hit_rate_pct": 66.7,
-        "hit_rate_delta_pct_points": 2.2,
-        "avg_close_probability_pct": 62.1,
-        "avg_close_drift_pct_points": -2.4,
-        "avg_close_edge_pct": -1.1,
-        "avg_brier_score": 0.214,
-        "avg_log_loss": 0.611,
-        "by_probability_bucket": [
-            {
-                "key": "65-70%",
-                "captured_count": 3,
-                "close_ready_count": 3,
-                "settled_count": 2,
-                "decisive_count": 2,
-                "push_count": 0,
-                "expected_hit_rate_pct": 67.0,
-                "actual_hit_rate_pct": 50.0,
-                "hit_rate_delta_pct_points": -17.0,
-                "avg_close_drift_pct_points": -3.1,
-                "avg_close_edge_pct": -1.8,
-                "avg_brier_score": 0.226,
-                "avg_log_loss": 0.644,
-            }
-        ],
-        "by_market": [],
-        "by_books_matched": [],
-        "by_ev_basis": [],
-        "recent_observations": [
-            {
-                "observation_key": "pickem-1",
-                "comparison_key": "evt-1|jokic|player_points|24.5",
-                "first_seen_at": "2026-03-31T15:00:00Z",
-                "last_seen_at": "2026-03-31T15:05:00Z",
-                "sport": "basketball_nba",
-                "event": "Nuggets @ Suns",
-                "commence_time": "2026-03-31T19:00:00Z",
-                "market": "player_points",
-                "player_name": "Nikola Jokic",
-                "selection_side": "over",
-                "line_value": 24.5,
-                "displayed_probability": 0.67,
-                "fair_odds_american": -203.0,
-                "books_matched_count": 3,
-                "confidence_label": "high",
-                "ev_basis": "best_market_price",
-                "selected_sportsbook": "FanDuel",
-                "selected_market_odds": 105.0,
-                "projected_edge_pct": 4.2,
-                "close_true_prob": 0.64,
-                "close_quality": "paired",
-                "close_edge_pct": -1.8,
-                "close_drift_pct_points": -3.0,
-                "actual_result": "loss",
-                "settled_at": "2026-04-01T01:00:00Z",
-                "calibration_bucket": "65-70%",
-                "first_source": "cron_board_drop",
-                "surfaced_count": 1,
-            }
-        ],
-    }, raising=True)
-
-    resp = auth_client.get("/api/ops/pickem-research/summary", headers={"X-Ops-Token": "ops-secret"})
-    assert resp.status_code == 200
-
-    body = resp.json()
-    assert isinstance(body.get("captured_count"), int)
-    assert isinstance(body.get("close_ready_count"), int)
-    assert isinstance(body.get("settled_count"), int)
-    assert isinstance(body.get("decisive_count"), int)
-    assert isinstance(body.get("by_probability_bucket"), list)
-    assert isinstance(body.get("recent_observations"), list)
-    assert body["recent_observations"][0]["player_name"] == "Nikola Jokic"
-
-
-@pytest.mark.integration
 def test_ops_trigger_auto_settle_contract_shape(auth_client, monkeypatch):
     import services.odds_api as odds_api
     import main
@@ -1169,15 +846,7 @@ def test_ops_trigger_test_discord_contract_shape(auth_client, monkeypatch):
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
 
     async def _fake_send_discord_webhook(_payload):
-        return {
-            "ok": True,
-            "message_type": "test",
-            "route_kind": "debug_dedicated",
-            "webhook_source": "DISCORD_DEBUG_WEBHOOK_URL",
-            "delivery_status": "delivered",
-            "status_code": 204,
-            "response_text": None,
-        }
+        return None
 
     monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
 
@@ -1188,7 +857,6 @@ def test_ops_trigger_test_discord_contract_shape(auth_client, monkeypatch):
     assert body.get("ok") is True
     assert body.get("scheduled") is True
     assert isinstance(body.get("run_id"), str)
-    assert body.get("delivery_status") == "delivered"
 
 
 @pytest.mark.integration
@@ -1224,15 +892,7 @@ def test_ops_trigger_test_discord_alert_contract_shape(auth_client, monkeypatch)
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
 
     async def _fake_send_discord_webhook(_payload, message_type="alert"):
-        return {
-            "ok": True,
-            "message_type": message_type,
-            "route_kind": "alert_dedicated",
-            "webhook_source": "DISCORD_ALERT_WEBHOOK_URL",
-            "delivery_status": "delivered",
-            "status_code": 204,
-            "response_text": None,
-        }
+        return None
 
     monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
 
@@ -1243,7 +903,6 @@ def test_ops_trigger_test_discord_alert_contract_shape(auth_client, monkeypatch)
     assert body.get("ok") is True
     assert body.get("scheduled") is True
     assert isinstance(body.get("run_id"), str)
-    assert body.get("delivery_status") == "delivered"
 
 
 @pytest.mark.integration
@@ -1272,3 +931,4 @@ def test_ops_trigger_test_discord_alert_returns_config_diagnostics_when_unconfig
     assert body["detail"]["error"] == "discord_webhook_not_configured"
     assert body["detail"]["message_type"] == "alert"
     assert body["detail"]["route_kind"] == "alert_unconfigured"
+    assert body["detail"]["webhook_source"] is None

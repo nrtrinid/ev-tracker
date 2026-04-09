@@ -91,7 +91,7 @@ def _install_apscheduler_stubs(*, scheduler_cls=DummyScheduler):
 @pytest.mark.asyncio
 async def test_does_not_start_scheduler_when_enable_scheduler_not_1(monkeypatch):
     monkeypatch.setenv("TESTING", "0")
-    monkeypatch.delenv("ENABLE_SCHEDULER", raising=False)
+    monkeypatch.setenv("ENABLE_SCHEDULER", "0")
 
     main = _reload_main(monkeypatch)
     await main.start_scheduler()

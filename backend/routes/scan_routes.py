@@ -26,6 +26,16 @@ router = APIRouter()
 SUPPORTED_SURFACES = {"straight_bets", "player_props"}
 
 
+def _invoke_scan_followup(fn, sides: list[dict[str, object]]) -> object:
+    """Call follow-up hooks with optional source kwarg for backward compatibility."""
+    try:
+        return fn(sides, source="manual_scan")
+    except TypeError as exc:
+        if "source" not in str(exc):
+            raise
+        return fn(sides)
+
+
 async def scan_impl(
     *,
     sport: str,
@@ -170,8 +180,8 @@ async def scan_markets_impl(
                 "last_manual_scan",
                 {**status, "scan_session_id": scan_session_id},
             ),
-            schedule_piggyback=lambda sides: piggyback_clv(sides, source="manual_scan"),
-            schedule_research_capture=lambda sides: capture_research_opportunities(sides, source="manual_scan"),
+            schedule_piggyback=lambda sides: _invoke_scan_followup(piggyback_clv, sides),
+            schedule_research_capture=lambda sides: _invoke_scan_followup(capture_research_opportunities, sides),
             persist_latest_scan=lambda payload: persist_latest_full_scan(
                 db=db,
                 retry_supabase=retry_supabase,

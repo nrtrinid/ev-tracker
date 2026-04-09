@@ -329,7 +329,8 @@ def test_update_scan_opportunity_reference_snapshots_updates_latest_without_clos
         now=now,
     )
 
-    assert counts == {"latest_updated": 1, "close_updated": 0}
+    assert counts["latest_updated"] == 1
+    assert counts["close_updated"] == 0
     assert db.tables["scan_opportunities"][0]["latest_reference_odds"] == 135
     assert db.tables["scan_opportunities"][0]["reference_odds_at_close"] is None
 
@@ -376,7 +377,8 @@ def test_update_scan_opportunity_reference_snapshots_updates_prop_latest_without
         now=now,
     )
 
-    assert counts == {"latest_updated": 1, "close_updated": 0}
+    assert counts["latest_updated"] == 1
+    assert counts["close_updated"] == 0
     assert db.tables["scan_opportunities"][0]["latest_reference_odds"] == -112
     assert db.tables["scan_opportunities"][0]["reference_odds_at_close"] is None
 
@@ -434,7 +436,8 @@ def test_update_scan_opportunity_reference_snapshots_captures_prop_close_inside_
         now=now,
     )
 
-    assert counts == {"latest_updated": 1, "close_updated": 1}
+    assert counts["latest_updated"] == 1
+    assert counts["close_updated"] == 1
     assert db.tables["scan_opportunities"][0]["latest_reference_odds"] == -110
     assert db.tables["scan_opportunities"][0]["reference_odds_at_close"] == -110
     assert db.tables["scan_opportunities"][0]["clv_ev_percent"] is not None
