@@ -25,7 +25,7 @@ def register_scheduled_scan_jobs(
         return
 
     temp_scan_time = parse_hhmm(temp_scan_time_raw)
-    scan_times = merge_scan_times([(16, 30), (18, 30)], temp_scan_time)
+    scan_times = merge_scan_times([(10, 30), (15, 30)], temp_scan_time)
     for hour, minute in scan_times:
         scheduler.add_job(
             run_scheduled_scan_job,

@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 import os
 import time
 from uuid import uuid4
+from typing import Any
 from dotenv import load_dotenv
 import httpx
 from zoneinfo import ZoneInfo
@@ -65,6 +66,13 @@ AUTOLOG_PAPER_STAKE = 10.0
 # Optional one-off scan schedule in Phoenix local time, format HH:MM (24h).
 # Example: SCHEDULED_SCAN_TEMP_TIME_PHOENIX=14:45
 SCHEDULED_SCAN_TEMP_TIME_ENV = "SCHEDULED_SCAN_TEMP_TIME_PHOENIX"
+DISCORD_SCAN_ALERT_MODE_ENV = "DISCORD_SCAN_ALERT_MODE"
+DISCORD_SCAN_ALERT_MODE_TIMED_PING = "timed_ping"
+DISCORD_SCAN_ALERT_MODE_EDGE_LIVE = "edge_live"
+SCHEDULED_SCAN_WINDOWS_MST: list[tuple[int, int, str]] = [
+    (10, 30, "Early-Look / Injury-Watch Scan"),
+    (15, 30, "Final Board / Bet Placement Scan"),
+]
 
 
 def _is_paper_experiment_autolog_enabled() -> bool:
@@ -90,6 +98,33 @@ def _parse_hhmm(value: str | None) -> tuple[int, int] | None:
     if hour < 0 or hour > 23 or minute < 0 or minute > 59:
         return None
     return (hour, minute)
+
+
+def _scan_alert_mode_raw() -> str:
+    return (os.getenv(DISCORD_SCAN_ALERT_MODE_ENV) or DISCORD_SCAN_ALERT_MODE_TIMED_PING).strip().lower()
+
+
+def _scan_alert_mode() -> str:
+    raw = _scan_alert_mode_raw()
+    if raw in {DISCORD_SCAN_ALERT_MODE_TIMED_PING, DISCORD_SCAN_ALERT_MODE_EDGE_LIVE}:
+        return raw
+    return DISCORD_SCAN_ALERT_MODE_TIMED_PING
+
+
+def _scheduled_scan_window(now: datetime | None = None) -> dict[str, str]:
+    current = now or datetime.now(UTC)
+    local_now = current.astimezone(PHOENIX_TZ) if PHOENIX_TZ is not None else current
+    minute_of_day = (local_now.hour * 60) + local_now.minute
+
+    hour, minute, label = min(
+        SCHEDULED_SCAN_WINDOWS_MST,
+        key=lambda window: abs(minute_of_day - ((window[0] * 60) + window[1])),
+    )
+    return {
+        "label": label,
+        "anchor_timezone": "America/Phoenix",
+        "anchor_time_mst": f"{hour:02d}:{minute:02d}",
+    }
 
 
 def _new_run_id(prefix: str) -> str:
@@ -513,6 +548,8 @@ def _validate_environment() -> None:
     paper_autolog_user_id = _paper_experiment_account_user_id()
     temp_scan_time_raw = os.getenv(SCHEDULED_SCAN_TEMP_TIME_ENV)
     heartbeat_enabled = os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1"
+    scan_alert_mode_raw = _scan_alert_mode_raw()
+    scan_alert_mode = _scan_alert_mode()
     discord_alert_target = {
         "webhook_configured": False,
         "route_kind": "alert_unconfigured",
@@ -588,6 +625,16 @@ def _validate_environment() -> None:
             message="Invalid temp scan time format; expected HH:MM in 24h format.",
         )
 
+    if scan_alert_mode_raw != scan_alert_mode:
+        _log_event(
+            "startup.env_scan_alert_mode_invalid",
+            level="warning",
+            env_var=DISCORD_SCAN_ALERT_MODE_ENV,
+            provided_value=scan_alert_mode_raw,
+            defaulted_to=scan_alert_mode,
+            message="Unsupported scan alert mode; defaulting to timed_ping.",
+        )
+
     _log_event(
         "startup.env_validated",
         environment=environment,
@@ -599,6 +646,7 @@ def _validate_environment() -> None:
         discord_test_webhook_configured=bool(discord_test_target.get("webhook_configured")),
         discord_test_route_kind=discord_test_target.get("route_kind"),
         discord_heartbeat_enabled=heartbeat_enabled,
+        discord_scan_alert_mode=scan_alert_mode,
         paper_autolog_enabled=paper_autolog_enabled,
         paper_autolog_user_id_configured=bool(paper_autolog_user_id),
     )
@@ -919,6 +967,7 @@ def _runtime_state() -> dict:
 
     discord_runtime: dict[str, Any] = {
         "heartbeat_enabled": heartbeat_enabled,
+        "scan_alert_mode": _scan_alert_mode(),
         "alert_delivery": {
             "message_type": "alert",
             "route_kind": "alert_unconfigured",
@@ -1194,8 +1243,16 @@ async def _run_scheduled_scan_job():
     run_id = _new_run_id("scheduled_scan")
     started = datetime.now(UTC).isoformat()
     started_at = time.monotonic()
+    scan_window = _scheduled_scan_window()
+    scan_alert_mode = _scan_alert_mode()
     _record_scheduler_heartbeat("scheduled_scan", run_id, "started")
-    _log_event("scheduler.scan.started", run_id=run_id, started_at=started + "Z")
+    _log_event(
+        "scheduler.scan.started",
+        run_id=run_id,
+        started_at=started + "Z",
+        scan_window=scan_window,
+        scan_alert_mode=scan_alert_mode,
+    )
 
     total_sides = 0
     alerts_scheduled = 0
@@ -1210,7 +1267,21 @@ async def _run_scheduled_scan_job():
         "skipped_shared_dedupe": 0,
         "skipped_threshold": 0,
     }
-    from services.discord_alerts import get_last_schedule_stats, schedule_alerts
+    board_alert = {
+        "attempted": False,
+        "delivery_status": "not_attempted",
+        "status_code": None,
+        "route_kind": None,
+        "webhook_source": None,
+        "error": None,
+    }
+    from services.discord_alerts import (
+        DiscordDeliveryError,
+        build_board_drop_alert_payload,
+        get_last_schedule_stats,
+        schedule_alerts,
+        send_discord_webhook,
+    )
 
     for sport_key in SUPPORTED_SPORTS:
         sport_started_at = time.monotonic()
@@ -1259,11 +1330,22 @@ async def _run_scheduled_scan_job():
             if ft is not None:
                 oldest_fetched = ft if oldest_fetched is None else min(oldest_fetched, ft)
 
-            alerts_scheduled += schedule_alerts(sides)
-            schedule_stats = get_last_schedule_stats()
-            alert_skip_totals["skipped_memory_dedupe"] += int(schedule_stats.get("skipped_memory_dedupe") or 0)
-            alert_skip_totals["skipped_shared_dedupe"] += int(schedule_stats.get("skipped_shared_dedupe") or 0)
-            alert_skip_totals["skipped_threshold"] += int(schedule_stats.get("skipped_threshold") or 0)
+            if scan_alert_mode == DISCORD_SCAN_ALERT_MODE_EDGE_LIVE:
+                alerts_scheduled += schedule_alerts(sides)
+                schedule_stats = get_last_schedule_stats()
+                alert_skip_totals["skipped_memory_dedupe"] += int(schedule_stats.get("skipped_memory_dedupe") or 0)
+                alert_skip_totals["skipped_shared_dedupe"] += int(schedule_stats.get("skipped_shared_dedupe") or 0)
+                alert_skip_totals["skipped_threshold"] += int(schedule_stats.get("skipped_threshold") or 0)
+            else:
+                schedule_stats = {
+                    "mode": scan_alert_mode,
+                    "candidates_seen": len(sides),
+                    "scheduled": 0,
+                    "skipped_memory_dedupe": 0,
+                    "skipped_shared_dedupe": 0,
+                    "skipped_threshold": len(sides),
+                    "skipped_total": len(sides),
+                }
             _log_event(
                 "scheduler.scan.sport_completed",
                 run_id=run_id,
@@ -1272,6 +1354,7 @@ async def _run_scheduled_scan_job():
                 events_fetched=fetched,
                 events_with_both_books=with_both,
                 discord_alert_schedule=schedule_stats,
+                scan_alert_mode=scan_alert_mode,
             )
         except httpx.HTTPStatusError as e:
             scan_duration_ms = round((time.monotonic() - sport_started_at) * 1000, 2)
@@ -1396,6 +1479,55 @@ async def _run_scheduled_scan_job():
             error=str(e),
         )
 
+    if scan_alert_mode == DISCORD_SCAN_ALERT_MODE_TIMED_PING:
+        board_alert_payload = build_board_drop_alert_payload(
+            window_label=scan_window["label"],
+            anchor_time_mst=scan_window["anchor_time_mst"],
+            result={
+                "props_sides": 0,
+                "straight_sides": total_sides,
+                "featured_games_count": total_events,
+            },
+        )
+        try:
+            delivery = await send_discord_webhook(board_alert_payload, message_type="alert")
+            board_alert = {
+                "attempted": True,
+                "delivery_status": delivery.get("delivery_status") if isinstance(delivery, dict) else "delivered",
+                "status_code": delivery.get("status_code") if isinstance(delivery, dict) else None,
+                "route_kind": delivery.get("route_kind") if isinstance(delivery, dict) else None,
+                "webhook_source": delivery.get("webhook_source") if isinstance(delivery, dict) else None,
+                "error": None,
+            }
+        except DiscordDeliveryError as exc:
+            board_alert = {
+                "attempted": True,
+                "delivery_status": "failed",
+                "status_code": exc.status_code,
+                "route_kind": exc.route_kind,
+                "webhook_source": exc.webhook_source,
+                "error": str(exc),
+            }
+        except Exception as exc:
+            board_alert = {
+                "attempted": True,
+                "delivery_status": "failed_unexpected",
+                "status_code": None,
+                "route_kind": None,
+                "webhook_source": None,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        _log_event(
+            "scheduler.scan.board_alert",
+            run_id=run_id,
+            scan_window=scan_window,
+            delivery_status=board_alert.get("delivery_status"),
+            status_code=board_alert.get("status_code"),
+            route_kind=board_alert.get("route_kind"),
+            webhook_source=board_alert.get("webhook_source"),
+            error=board_alert.get("error"),
+        )
+
     _log_event(
         "scheduler.scan.completed",
         run_id=run_id,
@@ -1404,6 +1536,9 @@ async def _run_scheduled_scan_job():
         alerts_scheduled=alerts_scheduled,
         alert_skip_totals=alert_skip_totals,
         autolog_summary=autolog_summary,
+        scan_window=scan_window,
+        scan_alert_mode=scan_alert_mode,
+        board_alert=board_alert,
         duration_ms=round((time.monotonic() - started_at) * 1000, 2),
     )
     duration_ms = round((time.monotonic() - started_at) * 1000, 2)
@@ -1434,6 +1569,13 @@ async def _run_scheduled_scan_job():
             "total_sides": total_sides,
             "alerts_scheduled": alerts_scheduled,
             "alert_skip_totals": alert_skip_totals,
+            "scan_window": scan_window,
+            "scan_alert_mode": scan_alert_mode,
+            "board_alert": board_alert,
+            "board_alert_attempted": bool(board_alert.get("attempted")),
+            "board_alert_delivery_status": board_alert.get("delivery_status"),
+            "board_alert_http_status": board_alert.get("status_code"),
+            "board_alert_error": board_alert.get("error"),
             "hard_errors": hard_errors,
             "captured_at": finished + "Z",
             "autolog_summary": autolog_summary,
@@ -1461,14 +1603,23 @@ async def _run_scheduled_scan_job():
         meta={
             "autolog_summary": autolog_summary,
             "alert_skip_totals": alert_skip_totals,
+            "scan_window": scan_window,
+            "scan_alert_mode": scan_alert_mode,
+            "board_alert": board_alert,
+            "board_alert_attempted": bool(board_alert.get("attempted")),
+            "board_alert_delivery_status": board_alert.get("delivery_status"),
+            "board_alert_http_status": board_alert.get("status_code"),
+            "board_alert_error": board_alert.get("error"),
         },
     )
 
     # Optional heartbeat so we can confirm the scheduled scan ran even when it finds no lines.
     # Send only when enabled and when no alerts were scheduled.
-    if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1" and alerts_scheduled == 0:
-        from services.discord_alerts import send_discord_webhook
-
+    if (
+        scan_alert_mode == DISCORD_SCAN_ALERT_MODE_EDGE_LIVE
+        and os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1"
+        and alerts_scheduled == 0
+    ):
         payload = {
             "embeds": [
                 {
@@ -1537,7 +1688,9 @@ async def start_scheduler():
         coalesce=True,
     )
     if PHOENIX_TZ is not None:
-        scheduled_scan_times: list[tuple[int, int]] = [(5, 30), (14, 30)]
+        scheduled_scan_times: list[tuple[int, int]] = [
+            (hour, minute) for hour, minute, _label in SCHEDULED_SCAN_WINDOWS_MST
+        ]
         temp_scan_time = _parse_hhmm(os.getenv(SCHEDULED_SCAN_TEMP_TIME_ENV))
         if temp_scan_time is not None and temp_scan_time not in scheduled_scan_times:
             scheduled_scan_times.append(temp_scan_time)

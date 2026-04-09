@@ -119,6 +119,7 @@ async def test_uses_america_phoenix_timezone_when_available(monkeypatch):
 
     scan_jobs = [j for j in scheduler.jobs if j["func"] == main._run_scheduled_scan_job]
     assert len(scan_jobs) == 2
+    assert {(j["trigger"].hour, j["trigger"].minute) for j in scan_jobs} == {(10, 30), (15, 30)}
     assert all(getattr(j["trigger"], "timezone", None) == main.PHOENIX_TZ for j in scan_jobs)
 
     auto_settle_jobs = [j for j in scheduler.jobs if j["func"] == main._run_auto_settler_job]
@@ -190,6 +191,69 @@ async def test_scheduled_scan_job_calls_get_cached_or_scan_for_all_supported_spo
     await main._run_scheduled_scan_job()
 
     assert called == sports
+
+
+@pytest.mark.asyncio
+async def test_scheduled_scan_job_timed_ping_mode_sends_single_board_alert(monkeypatch):
+    main = _reload_main(monkeypatch)
+    monkeypatch.setenv("DISCORD_SCAN_ALERT_MODE", "timed_ping")
+
+    async def fake_get_cached_or_scan(_sport, source="unknown"):
+        return {
+            "sides": [
+                {
+                    "sport": "basketball_nba",
+                    "event": "Lakers @ Celtics",
+                    "commence_time": "2026-03-19T20:00:00Z",
+                    "team": "Lakers",
+                    "sportsbook": "DraftKings",
+                    "book_odds": 120,
+                    "ev_percentage": 2.1,
+                }
+            ],
+            "events_fetched": 1,
+            "events_with_both_books": 1,
+            "api_requests_remaining": "99",
+            "cache_hit": True,
+        }
+
+    import services.odds_api as odds_api
+    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)
+    monkeypatch.setattr(odds_api, "get_cached_or_scan", fake_get_cached_or_scan, raising=True)
+
+    import services.discord_alerts as discord_alerts
+
+    def _fail_if_edge_alerts_called(_sides):
+        raise AssertionError("schedule_alerts should not run in timed_ping mode")
+
+    sent: list[tuple[dict, str]] = []
+
+    async def _fake_send_discord_webhook(payload, message_type="alert"):
+        sent.append((payload, message_type))
+        return {
+            "delivery_status": "delivered",
+            "status_code": 204,
+            "route_kind": "alert_dedicated",
+            "webhook_source": "DISCORD_ALERT_WEBHOOK_URL",
+        }
+
+    monkeypatch.setattr(discord_alerts, "schedule_alerts", _fail_if_edge_alerts_called, raising=True)
+    monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
+
+    await main._run_scheduled_scan_job()
+
+    assert len(sent) == 1
+    payload, message_type = sent[0]
+    assert message_type == "alert"
+    assert payload["embeds"][0]["title"] == "Trusted Beta Board Live"
+
+    snapshot = main.app.state.ops_status["last_scheduler_scan"]
+    assert snapshot["scan_alert_mode"] == "timed_ping"
+    assert snapshot["alerts_scheduled"] == 0
+    assert snapshot["board_alert_attempted"] is True
+    assert snapshot["board_alert_delivery_status"] == "delivered"
+    assert snapshot["board_alert_http_status"] == 204
+    assert snapshot["scan_window"]["anchor_time_mst"] in {"10:30", "15:30"}
 
 
 def test_scheduler_freshness_uses_startup_grace_when_no_success(monkeypatch):

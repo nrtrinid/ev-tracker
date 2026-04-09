@@ -64,7 +64,7 @@ def test_register_scheduled_scan_jobs_registers_default_and_temp_times():
 
     assert len(scheduler.jobs) == 3
     times = {(j["trigger"].hour, j["trigger"].minute) for j in scheduler.jobs}
-    assert times == {(16, 30), (18, 30), (14, 45)}
+    assert times == {(10, 30), (15, 30), (14, 45)}
 
 
 def test_mark_and_shutdown_scheduler_lifecycle():
