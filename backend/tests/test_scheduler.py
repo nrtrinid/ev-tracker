@@ -245,6 +245,22 @@ def test_ops_status_returns_snapshot_when_token_valid(monkeypatch):
     assert "recent_calls" in payload["ops"]["odds_api_activity"]
 
 
+def test_app_role_normalization(monkeypatch):
+    main = _reload_main(monkeypatch)
+
+    monkeypatch.delenv("APP_ROLE", raising=False)
+    assert main._app_role() == "api"
+
+    monkeypatch.setenv("APP_ROLE", "scheduler")
+    assert main._app_role() == "scheduler"
+
+    monkeypatch.setenv("APP_ROLE", "api")
+    assert main._app_role() == "api"
+
+    monkeypatch.setenv("APP_ROLE", "unexpected")
+    assert main._app_role() == "api"
+
+
 def test_paper_autolog_env_variables(monkeypatch):
     main = _reload_main(monkeypatch)
 

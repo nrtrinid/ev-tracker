@@ -1574,6 +1574,32 @@ async def stop_scheduler():
             )
 
 
+def _app_role() -> str:
+    """Return normalized runtime role used by entrypoint orchestration."""
+    role = (os.getenv("APP_ROLE") or "api").strip().lower()
+    return "scheduler" if role == "scheduler" else "api"
+
+
+async def run_scheduler_worker() -> None:
+    """
+    Standalone scheduler worker entrypoint.
+
+    This path is used by backend/entrypoint.py when APP_ROLE=scheduler, so we
+    bootstrap environment validation + scheduler jobs without starting uvicorn.
+    """
+    _validate_environment()
+    _init_ops_status()
+    await start_scheduler()
+
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        pass
+    finally:
+        await stop_scheduler()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _validate_environment()
