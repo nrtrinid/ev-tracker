@@ -2,7 +2,7 @@ from .test_utils import ensure_supabase_stub
 
 ensure_supabase_stub()
 
-from models import BetCreate, BetUpdate, PromoType
+from models import BetCreate, BetResponse, BetUpdate, PromoType
 from services import bet_crud
 
 
@@ -151,3 +151,8 @@ def test_update_bet_impl_allows_explicit_null_for_clearable_fields(monkeypatch):
     assert db.bets.last_payload["notes"] is None
     assert db.bets.last_payload["boost_percent"] is None
     assert db.bets.last_payload["winnings_cap"] is None
+
+
+def test_bet_response_schema_includes_payout_override():
+    schema = BetResponse.model_json_schema()
+    assert "payout_override" in schema.get("properties", {})

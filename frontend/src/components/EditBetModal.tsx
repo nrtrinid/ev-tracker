@@ -38,6 +38,12 @@ interface EditBetModalProps {
   onOpenChange: (open: boolean) => void;
 }
 
+function formatOddsForInput(odds: number | null | undefined): string {
+  if (odds == null) return "";
+  if (odds > 0) return `+${odds}`;
+  return String(odds);
+}
+
 export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
   const updateBet = useUpdateBet();
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -53,7 +59,7 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
     odds: "",
     stake: "",
     boost_percent: "",
-    winnings_cap: "",
+    payout_override: "",
     opposing_odds: "",
     notes: "",
     event_date: "",
@@ -68,11 +74,11 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
         event: bet.event,
         market: bet.market,
         promo_type: bet.promo_type,
-        odds: String(Math.abs(bet.odds_american)),
+        odds: formatOddsForInput(bet.odds_american),
         stake: String(bet.stake),
-        boost_percent: bet.boost_percent ? String(bet.boost_percent) : "",
-        winnings_cap: bet.winnings_cap ? String(bet.winnings_cap) : "",
-        opposing_odds: bet.opposing_odds ? String(Math.abs(bet.opposing_odds)) : "",
+        boost_percent: bet.boost_percent != null ? String(bet.boost_percent) : "",
+        payout_override: bet.payout_override != null ? String(bet.payout_override) : "",
+        opposing_odds: formatOddsForInput(bet.opposing_odds),
         notes: bet.notes || "",
         event_date: bet.event_date || "",
       });
@@ -85,13 +91,14 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
-  const oddsNum = oddsInputRef.current?.getSignedValue() || 0;
-  const stakeNum = parseFloat(formData.stake) || 0;
-
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!bet) return;
+
+    const oddsNum = oddsInputRef.current?.getSignedValue() || 0;
+    const stakeNum = parseFloat(formData.stake) || 0;
+    const opposingOddsNum = opposingOddsInputRef.current?.getSignedValue() || 0;
 
     if (!formData.sportsbook || !formData.sport || !oddsNum || !stakeNum) {
       toast.error("Missing required fields");
@@ -104,7 +111,23 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
       toast.error("Boost percent must be between 0 and 300");
       return;
     }
-    const winningsCapNum = parseFloat(formData.winnings_cap) || 0;
+
+    const payoutOverrideRaw = formData.payout_override.trim();
+    let payoutOverrideNum: number | null = null;
+    if (payoutOverrideRaw !== "") {
+      const parsed = parseFloat(payoutOverrideRaw);
+      if (isNaN(parsed) || parsed <= 0) {
+        toast.error("Payout override must be greater than 0");
+        return;
+      }
+      payoutOverrideNum = parsed;
+    }
+
+    const hasOpposingOdds = formData.opposing_odds.trim() !== "";
+    if (hasOpposingOdds && opposingOddsNum === 0) {
+      toast.error("Opposing line must be a non-zero American odds value");
+      return;
+    }
 
     try {
       await updateBet.mutateAsync({
@@ -121,7 +144,8 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
             formData.promo_type === "boost_custom"
               ? Math.max(0, Math.min(300, boostPercentNum)) || undefined
               : undefined,
-          winnings_cap: winningsCapNum || undefined,
+          payout_override: payoutOverrideNum,
+          opposing_odds: hasOpposingOdds ? opposingOddsNum : null,
           notes: formData.notes || undefined,
           event_date: formData.event_date || undefined,
         },
@@ -331,16 +355,16 @@ export function EditBetModal({ bet, open, onOpenChange }: EditBetModalProps) {
                 />
               </div>
 
-              {/* Winnings Cap */}
+              {/* Payout Override */}
               <div>
                 <label className="text-sm font-medium mb-2 block">
-                  Winnings Cap ($) <span className="text-muted-foreground font-normal">(optional)</span>
+                  Payout Override ($) <span className="text-muted-foreground font-normal">(optional)</span>
                 </label>
                 <Input
                   type="number"
-                  placeholder="Optional max bonus winnings"
-                  value={formData.winnings_cap}
-                  onChange={(e) => updateField("winnings_cap", e.target.value)}
+                  placeholder="Optional total return override"
+                  value={formData.payout_override}
+                  onChange={(e) => updateField("payout_override", e.target.value)}
                 />
               </div>
 

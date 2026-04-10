@@ -1,0 +1,1281 @@
+﻿.F..FFFFFF...F.......FF.F                                                [100%]
+================================== FAILURES ===================================
+______________ test_uses_america_phoenix_timezone_when_available ______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002BB72753770>
+
+    @pytest.mark.asyncio
+    async def test_uses_america_phoenix_timezone_when_available(monkeypatch):
+        monkeypatch.setenv("TESTING", "0")
+        monkeypatch.setenv("ENABLE_SCHEDULER", "1")
+    
+        class FakeTz:
+            key = "America/Phoenix"
+    
+        main = import_main_for_tests(monkeypatch, zoneinfo_zoneinfo_override=lambda _name: FakeTz())
+        assert main.PHOENIX_TZ is not None
+    
+        install_apscheduler_stubs(scheduler_cls=DummyScheduler)
+    
+        await main.start_scheduler()
+    
+        scheduler = main.app.state.scheduler
+        assert scheduler.started is True
+    
+        jit_jobs = [j for j in scheduler.jobs if j["func"] == main._run_jit_clv_snatcher_job]
+        assert len(jit_jobs) == 1
+        assert jit_jobs[0]["trigger"].minutes == 5
+>       assert jit_jobs[0]["trigger"].start_date is not None
+E       assert None is not None
+E        +  where None = <tests.test_utils.install_apscheduler_stubs.<locals>.IntervalTrigger object at 0x000002BB727CA9C0>.start_date
+
+tests\test_scheduler.py:58: AssertionError
+_________ test_scheduled_scan_job_continues_if_one_sport_scan_throws __________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002BB7202BAA0>
+
+    @pytest.mark.asyncio
+    async def test_scheduled_scan_job_continues_if_one_sport_scan_throws(monkeypatch):
+        main = import_main_for_tests(monkeypatch)
+    
+        called = {"count": 0}
+    
+        async def _fake_daily_board_drop(*_args, **_kwargs):
+            called["count"] += 1
+            return {"ok": True, "props_sides": 0, "selected_event_ids": []}
+    
+        import services.daily_board as daily_board
+        monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
+    
+        await main._run_scheduled_scan_job()
+    
+>       assert called["count"] == 1
+E       assert 0 == 1
+
+tests\test_scheduler.py:131: AssertionError
+---------------------------- Captured stdout call -----------------------------
+[CLV piggyback] Error: 'NoneType' object has no attribute 'table'
+[CLV piggyback] Error: 'NoneType' object has no attribute 'table'
+------------------------------ Captured log call ------------------------------
+WARNING  ev_tracker:main.py:106 {"event": "research.capture.failed", "timestamp": "2026-04-08T13:05:04.686193+00:00Z", "source": "scheduled_scan", "error_class": "AttributeError", "error": "'NoneType' object has no attribute 'table'"}
+WARNING  ev_tracker:main.py:106 {"event": "research.capture.failed", "timestamp": "2026-04-08T13:05:05.414662+00:00Z", "source": "scheduled_scan", "error_class": "AttributeError", "error": "'NoneType' object has no attribute 'table'"}
+WARNING  ev_tracker:main.py:106 {"event": "scan_latest_cache.persist_failed", "timestamp": "2026-04-08T13:05:05.419671+00:00Z", "surface": "straight_bets", "cache_key": "straight_bets:latest", "error_class": "AttributeError", "error": "'NoneType' object has no attribute 'table'"}
+__ test_scheduled_scan_job_calls_get_cached_or_scan_for_all_supported_sports __
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002BB727E2870>
+
+    @pytest.mark.asyncio
+    async def test_scheduled_scan_job_calls_get_cached_or_scan_for_all_supported_sports(monkeypatch):
+        main = import_main_for_tests(monkeypatch)
+    
+        called = {"count": 0}
+    
+        async def _fake_daily_board_drop(*_args, **_kwargs):
+            called["count"] += 1
+            return {"ok": True, "props_sides": 1, "selected_event_ids": ["evt-1"]}
+    
+        import services.daily_board as daily_board
+        monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
+    
+        await main._run_scheduled_scan_job()
+    
+>       assert called["count"] == 1
+E       assert 0 == 1
+
+tests\test_scheduler.py:149: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  ev_tracker:main.py:106 {"event": "scan_latest_cache.persist_failed", "timestamp": "2026-04-08T13:05:05.489125+00:00Z", "surface": "straight_bets", "cache_key": "straight_bets:latest", "error_class": "AttributeError", "error": "'NoneType' object has no attribute 'table'"}
+________ test_scheduled_scan_job_piggybacks_clv_for_fresh_board_sides _________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002BB72752210>
+
+    @pytest.mark.asyncio
+    async def test_scheduled_scan_job_piggybacks_clv_for_fresh_board_sides(monkeypatch):
+        main = import_main_for_tests(monkeypatch)
+    
+        seen: dict[str, list[dict]] = {}
+    
+        async def _fake_daily_board_drop(*_args, **_kwargs):
+            return {
+                "ok": True,
+                "props_sides": 2,
+                "selected_event_ids": ["evt-1"],
+                "fresh_straight_sides": [{"surface": "straight_bets", "team": "Lakers"}],
+                "fresh_prop_sides": [{"surface": "player_props", "player_name": "Nikola Jokic"}],
+            }
+    
+        async def _fake_piggyback_clv(sides, *, source="unknown"):
+            seen["sides"] = list(sides)
+            seen["source"] = source
+    
+        import services.daily_board as daily_board
+        monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
+        monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
+    
+        await main._run_scheduled_scan_job()
+    
+>       assert len(seen["sides"]) == 2
+                   ^^^^^^^^^^^^^
+E       KeyError: 'sides'
+
+tests\test_scheduler.py:177: KeyError
+------------------------------ Captured log call ------------------------------
+WARNING  ev_tracker:main.py:106 {"event": "scan_latest_cache.persist_failed", "timestamp": "2026-04-08T13:05:05.567701+00:00Z", "surface": "straight_bets", "cache_key": "straight_bets:latest", "error_class": "AttributeError", "error": "'NoneType' object has no attribute 'table'"}
+_______________ test_scheduled_scan_job_sends_board_drop_alert ________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002BB7272AC00>
+
+    @pytest.mark.asyncio
+    async def test_scheduled_scan_job_sends_board_drop_alert(monkeypatch):
+        import services.discord_alerts as discord_alerts
+        import services.daily_board as daily_board
+    
+        main = import_main_for_tests(monkeypatch)
+        sent = []
+    
+        async def _fake_daily_board_drop(*_args, **_kwargs):
+            return {
+                "ok": True,
+                "props_sides": 12,
+                "straight_sides": 7,
+                "featured_games_count": 6,
+                "selected_event_ids": ["evt-1"],
+                "fresh_straight_sides": [{"surface": "straight_bets", "team": "Lakers"}],
+                "fresh_prop_sides": [{"surface": "player_props", "player_name": "Nikola Jokic"}],
+            }
+    
+        async def _fake_send_discord_webhook(payload, message_type="alert"):
+            sent.append((payload, message_type))
+            return {
+                "ok": True,
+                "message_type": message_type,
+                "route_kind": "alert_dedicated",
+                "webhook_source": "DISCORD_ALERT_WEBHOOK_URL",
+                "delivery_status": "delivered",
+                "status_code": 204,
+                "response_text": None,
+            }
+    
+        monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
+        monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
+    
+        await main._run_scheduled_scan_job()
+    
+>       assert sent
+E       assert []
+
+tests\test_scheduler.py:220: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  ev_tracker:main.py:106 {"event": "scan_latest_cache.persist_failed", "timestamp": "2026-04-08T13:05:05.635943+00:00Z", "surface": "straight_bets", "cache_key": "straight_bets:latest", "error_class": "AttributeError", "error": "'NoneType' object has no attribute 'table'"}
+_______________ test_early_look_scan_job_sends_board_drop_alert _______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002BB72AB39E0>
+
+    @pytest.mark.asyncio
+    async def test_early_look_scan_job_sends_board_drop_alert(monkeypatch):
+        import services.discord_alerts as discord_alerts
+        import services.daily_board as daily_board
+    
+        main = import_main_for_tests(monkeypatch)
+        sent = []
+    
+        async def _fake_daily_board_drop(*_args, **_kwargs):
+            return {
+                "ok": True,
+                "props_sides": 9,
+                "straight_sides": 5,
+                "featured_games_count": 4,
+                "selected_event_ids": ["evt-1"],
+                "fresh_straight_sides": [],
+                "fresh_prop_sides": [],
+            }
+    
+        async def _fake_send_discord_webhook(payload, message_type="alert"):
+            sent.append((payload, message_type))
+            return {
+                "ok": True,
+                "message_type": message_type,
+                "route_kind": "alert_dedicated",
+                "webhook_source": "DISCORD_ALERT_WEBHOOK_URL",
+                "delivery_status": "delivered",
+                "status_code": 204,
+                "response_text": None,
+            }
+    
+        monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
+        monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
+    
+        await main._run_early_look_scan_job()
+    
+>       assert sent
+E       assert []
+
+tests\test_scheduler.py:268: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  ev_tracker:main.py:106 {"event": "scan_latest_cache.persist_failed", "timestamp": "2026-04-08T13:05:05.748471+00:00Z", "surface": "straight_bets", "cache_key": "straight_bets:latest", "error_class": "AttributeError", "error": "'NoneType' object has no attribute 'table'"}
+_____________ test_scheduled_scan_job_records_board_alert_failure _____________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002BB728121E0>
+
+    @pytest.mark.asyncio
+    async def test_scheduled_scan_job_records_board_alert_failure(monkeypatch):
+        import services.discord_alerts as discord_alerts
+        import services.daily_board as daily_board
+    
+        main = import_main_for_tests(monkeypatch)
+    
+        async def _fake_daily_board_drop(*_args, **_kwargs):
+            return {
+                "ok": True,
+                "props_sides": 3,
+                "selected_event_ids": ["evt-1"],
+            }
+    
+        async def _fake_send_discord_webhook(_payload, message_type="alert"):
+            raise discord_alerts.DiscordDeliveryError(
+                message="Discord webhook rejected alert message with status 429: rate limited",
+                message_type=message_type,
+                status_code=429,
+                response_text="rate limited",
+                route_kind="alert_dedicated",
+                webhook_source="DISCORD_ALERT_WEBHOOK_URL",
+            )
+    
+        monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
+        monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
+    
+        await main._run_scheduled_scan_job()
+    
+        snapshot = main.app.state.ops_status["last_scheduler_scan"]
+>       assert snapshot["alerts_scheduled"] == 1
+E       assert 0 == 1
+
+tests\test_scheduler.py:306: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  ev_tracker:main.py:106 {"event": "scan_latest_cache.persist_failed", "timestamp": "2026-04-08T13:05:05.829506+00:00Z", "surface": "straight_bets", "cache_key": "straight_bets:latest", "error_class": "AttributeError", "error": "'NoneType' object has no attribute 'table'"}
+__ test_scheduler_freshness_uses_durable_snapshot_when_scheduler_is_external __
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002BB72858710>
+
+    def test_scheduler_freshness_uses_durable_snapshot_when_scheduler_is_external(monkeypatch):
+        main = import_main_for_tests(monkeypatch)
+        monkeypatch.setenv("ENABLE_SCHEDULER", "1")
+        monkeypatch.setenv("APP_ROLE", "api")
+    
+        if hasattr(main.app.state, "scheduler_heartbeats"):
+            delattr(main.app.state, "scheduler_heartbeats")
+    
+        import services.ops_history as ops_history
+    
+        now = datetime.now(UTC)
+        boot_ts = (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+        success_ts = (now - timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+        monkeypatch.setattr(
+            ops_history,
+            "load_scheduler_job_snapshot",
+            lambda **_: {
+                "scheduler_boot": {"captured_at": boot_ts},
+                "jit_clv": {"captured_at": success_ts, "run_id": "jit-1", "status": "completed"},
+                "auto_settle": {"captured_at": success_ts, "run_id": "settle-1", "status": "completed"},
+                "scheduled_scan": {"captured_at": success_ts, "run_id": "scan-1", "status": "completed"},
+            },
+            raising=True,
+        )
+    
+        fresh, details = main._check_scheduler_freshness(True)
+    
+        assert fresh is True
+>       assert details["source"] == "durable_ops_history"
+               ^^^^^^^^^^^^^^^^^
+E       KeyError: 'source'
+
+tests\test_scheduler.py:387: KeyError
+___________ test_scan_markets_returns_backend_duplicate_state_enum ____________
+
+    async def scan_markets_impl(
+        *,
+        surface: str,
+        sport: str | None,
+        user: dict,
+        session_id: str | None = None,
+        get_db,
+        supported_sports: list[str],
+        get_cached_or_scan,
+        apply_manual_scan_bundle_fn,
+        set_ops_status,
+        utc_now_iso,
+        piggyback_clv,
+        capture_research_opportunities,
+        persist_latest_full_scan,
+        retry_supabase,
+        log_event,
+        annotate_sides,
+        append_scan_activity,
+        persist_ops_job_run,
+        new_run_id,
+        sync_pickem_research_from_props_payload,
+        map_error,
+        build_full_scan_response,
+        get_environment,
+    ):
+        if surface not in SUPPORTED_SURFACES:
+            raise HTTPException(status_code=400, detail=f"Unsupported surface '{surface}'")
+    
+        db = get_db()
+        scan_session_id = new_run_id("manual_scan")
+        actor_label = str(user.get("email") or user.get("id") or "").strip() or None
+        scan_scope = "all" if sport is None else "single_sport"
+    
+        async def _get_cached_or_scan_with_activity(sport_key: str) -> dict:
+            started_at = time.monotonic()
+            try:
+                result = await get_cached_or_scan(sport_key, source="manual_scan")
+                append_scan_activity(
+                    scan_session_id=scan_session_id,
+                    source="manual_scan",
+                    surface=surface,
+                    scan_scope=scan_scope,
+                    requested_sport=sport,
+                    sport=sport_key,
+                    actor_label=actor_label,
+                    run_id=None,
+                    cache_hit=bool(result.get("cache_hit")),
+                    outbound_call_made=not bool(result.get("cache_hit")),
+                    duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+                    events_fetched=int(result.get("events_fetched") or 0),
+                    events_with_both_books=int(result.get("events_with_both_books") or 0),
+                    sides_count=len(result.get("sides") or []),
+                    api_requests_remaining=result.get("api_requests_remaining"),
+                    status_code=200,
+                    error_type=None,
+                    error_message=None,
+                )
+                return result
+            except httpx.HTTPStatusError as e:
+                remaining = None
+                status_code = e.response.status_code if e.response is not None else None
+                if e.response is not None:
+                    remaining = e.response.headers.get("x-requests-remaining") or e.response.headers.get("x-request-remaining")
+                append_scan_activity(
+                    scan_session_id=scan_session_id,
+                    source="manual_scan",
+                    surface=surface,
+                    scan_scope=scan_scope,
+                    requested_sport=sport,
+                    sport=sport_key,
+                    actor_label=actor_label,
+                    run_id=None,
+                    cache_hit=False,
+                    outbound_call_made=True,
+                    duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+                    events_fetched=0,
+                    events_with_both_books=0,
+                    sides_count=0,
+                    api_requests_remaining=remaining,
+                    status_code=status_code,
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                )
+                raise
+            except Exception as e:
+                append_scan_activity(
+                    scan_session_id=scan_session_id,
+                    source="manual_scan",
+                    surface=surface,
+                    scan_scope=scan_scope,
+                    requested_sport=sport,
+                    sport=sport_key,
+                    actor_label=actor_label,
+                    run_id=None,
+                    cache_hit=False,
+                    outbound_call_made=False,
+                    duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+                    events_fetched=0,
+                    events_with_both_books=0,
+                    sides_count=0,
+                    api_requests_remaining=None,
+                    status_code=None,
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                )
+                raise
+    
+        if sport is not None and sport not in supported_sports:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported sport. Choose from: {', '.join(supported_sports)}",
+            )
+    
+        def _finalize_manual_scan_bundle(bundle: dict):
+            response_payload = apply_manual_scan_bundle_fn(
+                bundle=bundle,
+                captured_at=utc_now_iso(),
+                set_last_manual_scan_status=lambda status: set_ops_status(
+                    "last_manual_scan",
+                    {**status, "scan_session_id": scan_session_id},
+                ),
+                schedule_piggyback=lambda sides: piggyback_clv(sides, source="manual_scan"),
+                schedule_research_capture=lambda sides: capture_research_opportunities(sides, source="manual_scan"),
+                persist_latest_scan=lambda payload: persist_latest_full_scan(
+                    db=db,
+                    retry_supabase=retry_supabase,
+                    log_event=log_event,
+                    **payload,
+                ),
+            )
+            persist_ops_job_run(
+                job_kind="manual_scan",
+                source="manual_scan",
+                status="completed",
+                scan_session_id=scan_session_id,
+                surface=bundle["ops_status_payload"].get("surface"),
+                scan_scope=scan_scope,
+                requested_sport=bundle["ops_status_payload"].get("sport"),
+                captured_at=utc_now_iso(),
+                events_fetched=bundle["ops_status_payload"].get("events_fetched"),
+                events_with_both_books=bundle["ops_status_payload"].get("events_with_both_books"),
+                total_sides=bundle["ops_status_payload"].get("total_sides"),
+                api_requests_remaining=bundle["ops_status_payload"].get("api_requests_remaining"),
+            )
+            if surface == "player_props" and bundle.get("fresh_sides"):
+                sync_pickem_research_from_props_payload(
+                    bundle.get("persist_payload"),
+                    source="manual_scan",
+                )
+            return build_full_scan_response(response_payload)
+    
+        try:
+            if sport is not None:
+                single_sport = await run_single_sport_manual_scan(
+                    surface=surface,
+                    sport=sport,
+                    get_cached_or_scan=_get_cached_or_scan_with_activity,
+                    annotate_sides=lambda sides: annotate_sides(db, user["id"], sides),
+                )
+>               return _finalize_manual_scan_bundle(single_sport)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+routes\scan_routes.py:211: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+routes\scan_routes.py:166: in _finalize_manual_scan_bundle
+    response_payload = apply_manual_scan_bundle_fn(
+services\scan_markets.py:150: in apply_manual_scan_bundle
+    piggyback_result = schedule_piggyback(fresh_sides)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+sides = [{'base_kelly_fraction': 0.01, 'book_decimal': 2.3, 'book_odds': 130, 'commence_time': '2026-03-19T20:00:00Z', ...}, {'base_kelly_fraction': 0.01, 'book_decimal': 2.2, 'book_odds': 120, 'commence_time': '2026-03-19T21:00:00Z', ...}]
+
+>       schedule_piggyback=lambda sides: piggyback_clv(sides, source="manual_scan"),
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        schedule_research_capture=lambda sides: capture_research_opportunities(sides, source="manual_scan"),
+        persist_latest_scan=lambda payload: persist_latest_full_scan(
+            db=db,
+            retry_supabase=retry_supabase,
+            log_event=log_event,
+            **payload,
+        ),
+    )
+E   TypeError: _piggyback_clv() got an unexpected keyword argument 'source'
+
+routes\scan_routes.py:173: TypeError
+
+During handling of the above exception, another exception occurred:
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002BB74249F10>
+
+    @pytest.mark.asyncio
+    async def test_scan_markets_returns_backend_duplicate_state_enum(monkeypatch):
+        main = import_main_for_tests(monkeypatch)
+    
+        class _FakeQuery:
+            def __init__(self, table_name, db):
+                self._table = table_name
+                self._db = db
+                self._eq_filters = []
+    
+            def select(self, *_args, **_kwargs):
+                return self
+    
+            def eq(self, field, value):
+                self._eq_filters.append((field, value))
+                return self
+    
+            def limit(self, _n):
+                return self
+    
+            def upsert(self, payload, **_kwargs):
+                if self._table == "global_scan_cache":
+                    self._db.cache_payload = payload.get("payload")
+                return self
+    
+            def execute(self):
+                if self._table == "bets":
+                    rows = list(self._db.pending_rows)
+                    for field, value in self._eq_filters:
+                        rows = [r for r in rows if r.get(field) == value]
+                    return types.SimpleNamespace(data=rows)
+                if self._table == "global_scan_cache":
+                    return types.SimpleNamespace(data=[{"payload": self._db.cache_payload}] if self._db.cache_payload else [])
+                return types.SimpleNamespace(data=[])
+    
+        class _FakeDB:
+            def __init__(self, pending_rows):
+                self.pending_rows = pending_rows
+                self.cache_payload = None
+    
+            def table(self, name):
+                return _FakeQuery(name, self)
+    
+        db = _FakeDB(
+            pending_rows=[
+                {
+                    "id": "pending-1",
+                    "user_id": "user-1",
+                    "result": "pending",
+                    "market": "ML",
+                    "odds_american": 120,
+                    "sportsbook": "DraftKings",
+                    "commence_time": "2026-03-19T20:00:00Z",
+                    "clv_team": "Lakers",
+                    "clv_sport_key": "basketball_nba",
+                }
+            ]
+        )
+    
+        monkeypatch.setattr(main, "get_db", lambda: db, raising=True)
+        monkeypatch.setattr(main, "_retry_supabase", lambda f, retries=2: f(), raising=True)
+    
+        import services.odds_api as odds_api
+    
+        async def _fake_cached_or_scan(_sport, source="unknown"):
+            return {
+                "sides": [
+                    {
+                        "sportsbook": "DraftKings",
+                        "sport": "basketball_nba",
+                        "event": "Lakers @ Celtics",
+                        "commence_time": "2026-03-19T20:00:00Z",
+                        "team": "Lakers",
+                        "pinnacle_odds": 110,
+                        "book_odds": 130,
+                        "true_prob": 0.52,
+                        "base_kelly_fraction": 0.01,
+                        "book_decimal": 2.3,
+                        "ev_percentage": 2.0,
+                    },
+                    {
+                        "sportsbook": "DraftKings",
+                        "sport": "basketball_nba",
+                        "event": "Knicks @ Bulls",
+                        "commence_time": "2026-03-19T21:00:00Z",
+                        "team": "Knicks",
+                        "pinnacle_odds": 105,
+                        "book_odds": 120,
+                        "true_prob": 0.5,
+                        "base_kelly_fraction": 0.01,
+                        "book_decimal": 2.2,
+                        "ev_percentage": 1.0,
+                    },
+                ],
+                "events_fetched": 2,
+                "events_with_both_books": 2,
+                "api_requests_remaining": "100",
+                "fetched_at": 1_700_000_000,
+            }
+    
+        monkeypatch.setattr(odds_api, "get_cached_or_scan", _fake_cached_or_scan, raising=True)
+        monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)
+    
+>       response = await main.scan_markets(sport="basketball_nba", user={"id": "user-1"})
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_scheduler.py:815: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+main.py:2542: in scan_markets
+    return await scan_markets_impl(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    async def scan_markets_impl(
+        *,
+        surface: str,
+        sport: str | None,
+        user: dict,
+        session_id: str | None = None,
+        get_db,
+        supported_sports: list[str],
+        get_cached_or_scan,
+        apply_manual_scan_bundle_fn,
+        set_ops_status,
+        utc_now_iso,
+        piggyback_clv,
+        capture_research_opportunities,
+        persist_latest_full_scan,
+        retry_supabase,
+        log_event,
+        annotate_sides,
+        append_scan_activity,
+        persist_ops_job_run,
+        new_run_id,
+        sync_pickem_research_from_props_payload,
+        map_error,
+        build_full_scan_response,
+        get_environment,
+    ):
+        if surface not in SUPPORTED_SURFACES:
+            raise HTTPException(status_code=400, detail=f"Unsupported surface '{surface}'")
+    
+        db = get_db()
+        scan_session_id = new_run_id("manual_scan")
+        actor_label = str(user.get("email") or user.get("id") or "").strip() or None
+        scan_scope = "all" if sport is None else "single_sport"
+    
+        async def _get_cached_or_scan_with_activity(sport_key: str) -> dict:
+            started_at = time.monotonic()
+            try:
+                result = await get_cached_or_scan(sport_key, source="manual_scan")
+                append_scan_activity(
+                    scan_session_id=scan_session_id,
+                    source="manual_scan",
+                    surface=surface,
+                    scan_scope=scan_scope,
+                    requested_sport=sport,
+                    sport=sport_key,
+                    actor_label=actor_label,
+                    run_id=None,
+                    cache_hit=bool(result.get("cache_hit")),
+                    outbound_call_made=not bool(result.get("cache_hit")),
+                    duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+                    events_fetched=int(result.get("events_fetched") or 0),
+                    events_with_both_books=int(result.get("events_with_both_books") or 0),
+                    sides_count=len(result.get("sides") or []),
+                    api_requests_remaining=result.get("api_requests_remaining"),
+                    status_code=200,
+                    error_type=None,
+                    error_message=None,
+                )
+                return result
+            except httpx.HTTPStatusError as e:
+                remaining = None
+                status_code = e.response.status_code if e.response is not None else None
+                if e.response is not None:
+                    remaining = e.response.headers.get("x-requests-remaining") or e.response.headers.get("x-request-remaining")
+                append_scan_activity(
+                    scan_session_id=scan_session_id,
+                    source="manual_scan",
+                    surface=surface,
+                    scan_scope=scan_scope,
+                    requested_sport=sport,
+                    sport=sport_key,
+                    actor_label=actor_label,
+                    run_id=None,
+                    cache_hit=False,
+                    outbound_call_made=True,
+                    duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+                    events_fetched=0,
+                    events_with_both_books=0,
+                    sides_count=0,
+                    api_requests_remaining=remaining,
+                    status_code=status_code,
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                )
+                raise
+            except Exception as e:
+                append_scan_activity(
+                    scan_session_id=scan_session_id,
+                    source="manual_scan",
+                    surface=surface,
+                    scan_scope=scan_scope,
+                    requested_sport=sport,
+                    sport=sport_key,
+                    actor_label=actor_label,
+                    run_id=None,
+                    cache_hit=False,
+                    outbound_call_made=False,
+                    duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+                    events_fetched=0,
+                    events_with_both_books=0,
+                    sides_count=0,
+                    api_requests_remaining=None,
+                    status_code=None,
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                )
+                raise
+    
+        if sport is not None and sport not in supported_sports:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported sport. Choose from: {', '.join(supported_sports)}",
+            )
+    
+        def _finalize_manual_scan_bundle(bundle: dict):
+            response_payload = apply_manual_scan_bundle_fn(
+                bundle=bundle,
+                captured_at=utc_now_iso(),
+                set_last_manual_scan_status=lambda status: set_ops_status(
+                    "last_manual_scan",
+                    {**status, "scan_session_id": scan_session_id},
+                ),
+                schedule_piggyback=lambda sides: piggyback_clv(sides, source="manual_scan"),
+                schedule_research_capture=lambda sides: capture_research_opportunities(sides, source="manual_scan"),
+                persist_latest_scan=lambda payload: persist_latest_full_scan(
+                    db=db,
+                    retry_supabase=retry_supabase,
+                    log_event=log_event,
+                    **payload,
+                ),
+            )
+            persist_ops_job_run(
+                job_kind="manual_scan",
+                source="manual_scan",
+                status="completed",
+                scan_session_id=scan_session_id,
+                surface=bundle["ops_status_payload"].get("surface"),
+                scan_scope=scan_scope,
+                requested_sport=bundle["ops_status_payload"].get("sport"),
+                captured_at=utc_now_iso(),
+                events_fetched=bundle["ops_status_payload"].get("events_fetched"),
+                events_with_both_books=bundle["ops_status_payload"].get("events_with_both_books"),
+                total_sides=bundle["ops_status_payload"].get("total_sides"),
+                api_requests_remaining=bundle["ops_status_payload"].get("api_requests_remaining"),
+            )
+            if surface == "player_props" and bundle.get("fresh_sides"):
+                sync_pickem_research_from_props_payload(
+                    bundle.get("persist_payload"),
+                    source="manual_scan",
+                )
+            return build_full_scan_response(response_payload)
+    
+        try:
+            if sport is not None:
+                single_sport = await run_single_sport_manual_scan(
+                    surface=surface,
+                    sport=sport,
+                    get_cached_or_scan=_get_cached_or_scan_with_activity,
+                    annotate_sides=lambda sides: annotate_sides(db, user["id"], sides),
+                )
+                return _finalize_manual_scan_bundle(single_sport)
+    
+            all_sports = await run_all_sports_manual_scan(
+                surface=surface,
+                environment=get_environment(),
+                supported_sports=supported_sports,
+                get_cached_or_scan=_get_cached_or_scan_with_activity,
+                annotate_sides=lambda sides: annotate_sides(db, user["id"], sides),
+            )
+            return _finalize_manual_scan_bundle(all_sports)
+        except Exception as e:
+            capture_backend_event(
+                db,
+                event_name="scanner_failed",
+                user_id=str(user.get("id") or ""),
+                session_id=session_id,
+                properties={
+                    "route": "/api/scan-markets",
+                    "app_area": "scanner",
+                    "surface": surface,
+                    "requested_sport": sport,
+                    "error_type": type(e).__name__,
+                },
+                dedupe_key=f"scanner-failed:{scan_session_id}:{get_request_id()}",
+            )
+>           raise map_error(e)
+E           fastapi.exceptions.HTTPException: 502: Odds API error: _piggyback_clv() got an unexpected keyword argument 'source'
+
+routes\scan_routes.py:236: HTTPException
+------------------------------ Captured log call ------------------------------
+WARNING  ev_tracker:main.py:106 {"event": "research.capture.failed", "timestamp": "2026-04-08T13:05:06.489477+00:00Z", "source": "manual_scan", "error_class": "AttributeError", "error": "'_FakeQuery' object has no attribute 'in_'"}
+WARNING  ev_tracker:main.py:106 {"event": "analytics.capture_failed", "timestamp": "2026-04-08T13:05:06.490477+00:00Z", "event_name": "scanner_failed", "error_class": "AttributeError", "error": "'_FakeQuery' object has no attribute 'insert'"}
+___________ test_scan_markets_records_grouped_manual_scan_activity ____________
+
+    async def scan_markets_impl(
+        *,
+        surface: str,
+        sport: str | None,
+        user: dict,
+        session_id: str | None = None,
+        get_db,
+        supported_sports: list[str],
+        get_cached_or_scan,
+        apply_manual_scan_bundle_fn,
+        set_ops_status,
+        utc_now_iso,
+        piggyback_clv,
+        capture_research_opportunities,
+        persist_latest_full_scan,
+        retry_supabase,
+        log_event,
+        annotate_sides,
+        append_scan_activity,
+        persist_ops_job_run,
+        new_run_id,
+        sync_pickem_research_from_props_payload,
+        map_error,
+        build_full_scan_response,
+        get_environment,
+    ):
+        if surface not in SUPPORTED_SURFACES:
+            raise HTTPException(status_code=400, detail=f"Unsupported surface '{surface}'")
+    
+        db = get_db()
+        scan_session_id = new_run_id("manual_scan")
+        actor_label = str(user.get("email") or user.get("id") or "").strip() or None
+        scan_scope = "all" if sport is None else "single_sport"
+    
+        async def _get_cached_or_scan_with_activity(sport_key: str) -> dict:
+            started_at = time.monotonic()
+            try:
+                result = await get_cached_or_scan(sport_key, source="manual_scan")
+                append_scan_activity(
+                    scan_session_id=scan_session_id,
+                    source="manual_scan",
+                    surface=surface,
+                    scan_scope=scan_scope,
+                    requested_sport=sport,
+                    sport=sport_key,
+                    actor_label=actor_label,
+                    run_id=None,
+                    cache_hit=bool(result.get("cache_hit")),
+                    outbound_call_made=not bool(result.get("cache_hit")),
+                    duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+                    events_fetched=int(result.get("events_fetched") or 0),
+                    events_with_both_books=int(result.get("events_with_both_books") or 0),
+                    sides_count=len(result.get("sides") or []),
+                    api_requests_remaining=result.get("api_requests_remaining"),
+                    status_code=200,
+                    error_type=None,
+                    error_message=None,
+                )
+                return result
+            except httpx.HTTPStatusError as e:
+                remaining = None
+                status_code = e.response.status_code if e.response is not None else None
+                if e.response is not None:
+                    remaining = e.response.headers.get("x-requests-remaining") or e.response.headers.get("x-request-remaining")
+                append_scan_activity(
+                    scan_session_id=scan_session_id,
+                    source="manual_scan",
+                    surface=surface,
+                    scan_scope=scan_scope,
+                    requested_sport=sport,
+                    sport=sport_key,
+                    actor_label=actor_label,
+                    run_id=None,
+                    cache_hit=False,
+                    outbound_call_made=True,
+                    duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+                    events_fetched=0,
+                    events_with_both_books=0,
+                    sides_count=0,
+                    api_requests_remaining=remaining,
+                    status_code=status_code,
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                )
+                raise
+            except Exception as e:
+                append_scan_activity(
+                    scan_session_id=scan_session_id,
+                    source="manual_scan",
+                    surface=surface,
+                    scan_scope=scan_scope,
+                    requested_sport=sport,
+                    sport=sport_key,
+                    actor_label=actor_label,
+                    run_id=None,
+                    cache_hit=False,
+                    outbound_call_made=False,
+                    duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+                    events_fetched=0,
+                    events_with_both_books=0,
+                    sides_count=0,
+                    api_requests_remaining=None,
+                    status_code=None,
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                )
+                raise
+    
+        if sport is not None and sport not in supported_sports:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported sport. Choose from: {', '.join(supported_sports)}",
+            )
+    
+        def _finalize_manual_scan_bundle(bundle: dict):
+            response_payload = apply_manual_scan_bundle_fn(
+                bundle=bundle,
+                captured_at=utc_now_iso(),
+                set_last_manual_scan_status=lambda status: set_ops_status(
+                    "last_manual_scan",
+                    {**status, "scan_session_id": scan_session_id},
+                ),
+                schedule_piggyback=lambda sides: piggyback_clv(sides, source="manual_scan"),
+                schedule_research_capture=lambda sides: capture_research_opportunities(sides, source="manual_scan"),
+                persist_latest_scan=lambda payload: persist_latest_full_scan(
+                    db=db,
+                    retry_supabase=retry_supabase,
+                    log_event=log_event,
+                    **payload,
+                ),
+            )
+            persist_ops_job_run(
+                job_kind="manual_scan",
+                source="manual_scan",
+                status="completed",
+                scan_session_id=scan_session_id,
+                surface=bundle["ops_status_payload"].get("surface"),
+                scan_scope=scan_scope,
+                requested_sport=bundle["ops_status_payload"].get("sport"),
+                captured_at=utc_now_iso(),
+                events_fetched=bundle["ops_status_payload"].get("events_fetched"),
+                events_with_both_books=bundle["ops_status_payload"].get("events_with_both_books"),
+                total_sides=bundle["ops_status_payload"].get("total_sides"),
+                api_requests_remaining=bundle["ops_status_payload"].get("api_requests_remaining"),
+            )
+            if surface == "player_props" and bundle.get("fresh_sides"):
+                sync_pickem_research_from_props_payload(
+                    bundle.get("persist_payload"),
+                    source="manual_scan",
+                )
+            return build_full_scan_response(response_payload)
+    
+        try:
+            if sport is not None:
+                single_sport = await run_single_sport_manual_scan(
+                    surface=surface,
+                    sport=sport,
+                    get_cached_or_scan=_get_cached_or_scan_with_activity,
+                    annotate_sides=lambda sides: annotate_sides(db, user["id"], sides),
+                )
+>               return _finalize_manual_scan_bundle(single_sport)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+routes\scan_routes.py:211: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+routes\scan_routes.py:166: in _finalize_manual_scan_bundle
+    response_payload = apply_manual_scan_bundle_fn(
+services\scan_markets.py:150: in apply_manual_scan_bundle
+    piggyback_result = schedule_piggyback(fresh_sides)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+sides = [{'base_kelly_fraction': 0.01, 'book_decimal': 2.3, 'book_odds': 130, 'commence_time': '2026-03-19T20:00:00Z', ...}]
+
+>       schedule_piggyback=lambda sides: piggyback_clv(sides, source="manual_scan"),
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        schedule_research_capture=lambda sides: capture_research_opportunities(sides, source="manual_scan"),
+        persist_latest_scan=lambda payload: persist_latest_full_scan(
+            db=db,
+            retry_supabase=retry_supabase,
+            log_event=log_event,
+            **payload,
+        ),
+    )
+E   TypeError: _piggyback_clv() got an unexpected keyword argument 'source'
+
+routes\scan_routes.py:173: TypeError
+
+During handling of the above exception, another exception occurred:
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002BB73183080>
+
+    @pytest.mark.asyncio
+    async def test_scan_markets_records_grouped_manual_scan_activity(monkeypatch):
+        main = import_main_for_tests(monkeypatch)
+        odds_api = reload_service_module("odds_api")
+    
+        class _FakeQuery:
+            def select(self, *_args, **_kwargs):
+                return self
+    
+            def eq(self, *_args, **_kwargs):
+                return self
+    
+            def limit(self, *_args, **_kwargs):
+                return self
+    
+            def upsert(self, *_args, **_kwargs):
+                return self
+    
+            def execute(self):
+                return types.SimpleNamespace(data=[])
+    
+        class _FakeDB:
+            def table(self, _name):
+                return _FakeQuery()
+    
+        monkeypatch.setattr(main, "get_db", lambda: _FakeDB(), raising=True)
+        monkeypatch.setattr(main, "_retry_supabase", lambda f, retries=2: f(), raising=True)
+    
+        async def _fake_cached_or_scan(_sport, source="unknown"):
+            assert source == "manual_scan"
+            return {
+                "sides": [
+                    {
+                        "sportsbook": "DraftKings",
+                        "sport": "basketball_nba",
+                        "event": "Lakers @ Celtics",
+                        "commence_time": "2026-03-19T20:00:00Z",
+                        "team": "Lakers",
+                        "pinnacle_odds": 110,
+                        "book_odds": 130,
+                        "true_prob": 0.52,
+                        "base_kelly_fraction": 0.01,
+                        "book_decimal": 2.3,
+                        "ev_percentage": 2.0,
+                    }
+                ],
+                "events_fetched": 2,
+                "events_with_both_books": 1,
+                "api_requests_remaining": "100",
+                "fetched_at": 1_700_000_000,
+                "cache_hit": False,
+            }
+    
+        monkeypatch.setattr(odds_api, "get_cached_or_scan", _fake_cached_or_scan, raising=True)
+        monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)
+    
+>       await main.scan_markets(sport="basketball_nba", user={"id": "user-1", "email": "operator@example.com"})
+
+tests\test_scheduler.py:880: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+main.py:2542: in scan_markets
+    return await scan_markets_impl(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    async def scan_markets_impl(
+        *,
+        surface: str,
+        sport: str | None,
+        user: dict,
+        session_id: str | None = None,
+        get_db,
+        supported_sports: list[str],
+        get_cached_or_scan,
+        apply_manual_scan_bundle_fn,
+        set_ops_status,
+        utc_now_iso,
+        piggyback_clv,
+        capture_research_opportunities,
+        persist_latest_full_scan,
+        retry_supabase,
+        log_event,
+        annotate_sides,
+        append_scan_activity,
+        persist_ops_job_run,
+        new_run_id,
+        sync_pickem_research_from_props_payload,
+        map_error,
+        build_full_scan_response,
+        get_environment,
+    ):
+        if surface not in SUPPORTED_SURFACES:
+            raise HTTPException(status_code=400, detail=f"Unsupported surface '{surface}'")
+    
+        db = get_db()
+        scan_session_id = new_run_id("manual_scan")
+        actor_label = str(user.get("email") or user.get("id") or "").strip() or None
+        scan_scope = "all" if sport is None else "single_sport"
+    
+        async def _get_cached_or_scan_with_activity(sport_key: str) -> dict:
+            started_at = time.monotonic()
+            try:
+                result = await get_cached_or_scan(sport_key, source="manual_scan")
+                append_scan_activity(
+                    scan_session_id=scan_session_id,
+                    source="manual_scan",
+                    surface=surface,
+                    scan_scope=scan_scope,
+                    requested_sport=sport,
+                    sport=sport_key,
+                    actor_label=actor_label,
+                    run_id=None,
+                    cache_hit=bool(result.get("cache_hit")),
+                    outbound_call_made=not bool(result.get("cache_hit")),
+                    duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+                    events_fetched=int(result.get("events_fetched") or 0),
+                    events_with_both_books=int(result.get("events_with_both_books") or 0),
+                    sides_count=len(result.get("sides") or []),
+                    api_requests_remaining=result.get("api_requests_remaining"),
+                    status_code=200,
+                    error_type=None,
+                    error_message=None,
+                )
+                return result
+            except httpx.HTTPStatusError as e:
+                remaining = None
+                status_code = e.response.status_code if e.response is not None else None
+                if e.response is not None:
+                    remaining = e.response.headers.get("x-requests-remaining") or e.response.headers.get("x-request-remaining")
+                append_scan_activity(
+                    scan_session_id=scan_session_id,
+                    source="manual_scan",
+                    surface=surface,
+                    scan_scope=scan_scope,
+                    requested_sport=sport,
+                    sport=sport_key,
+                    actor_label=actor_label,
+                    run_id=None,
+                    cache_hit=False,
+                    outbound_call_made=True,
+                    duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+                    events_fetched=0,
+                    events_with_both_books=0,
+                    sides_count=0,
+                    api_requests_remaining=remaining,
+                    status_code=status_code,
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                )
+                raise
+            except Exception as e:
+                append_scan_activity(
+                    scan_session_id=scan_session_id,
+                    source="manual_scan",
+                    surface=surface,
+                    scan_scope=scan_scope,
+                    requested_sport=sport,
+                    sport=sport_key,
+                    actor_label=actor_label,
+                    run_id=None,
+                    cache_hit=False,
+                    outbound_call_made=False,
+                    duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+                    events_fetched=0,
+                    events_with_both_books=0,
+                    sides_count=0,
+                    api_requests_remaining=None,
+                    status_code=None,
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                )
+                raise
+    
+        if sport is not None and sport not in supported_sports:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported sport. Choose from: {', '.join(supported_sports)}",
+            )
+    
+        def _finalize_manual_scan_bundle(bundle: dict):
+            response_payload = apply_manual_scan_bundle_fn(
+                bundle=bundle,
+                captured_at=utc_now_iso(),
+                set_last_manual_scan_status=lambda status: set_ops_status(
+                    "last_manual_scan",
+                    {**status, "scan_session_id": scan_session_id},
+                ),
+                schedule_piggyback=lambda sides: piggyback_clv(sides, source="manual_scan"),
+                schedule_research_capture=lambda sides: capture_research_opportunities(sides, source="manual_scan"),
+                persist_latest_scan=lambda payload: persist_latest_full_scan(
+                    db=db,
+                    retry_supabase=retry_supabase,
+                    log_event=log_event,
+                    **payload,
+                ),
+            )
+            persist_ops_job_run(
+                job_kind="manual_scan",
+                source="manual_scan",
+                status="completed",
+                scan_session_id=scan_session_id,
+                surface=bundle["ops_status_payload"].get("surface"),
+                scan_scope=scan_scope,
+                requested_sport=bundle["ops_status_payload"].get("sport"),
+                captured_at=utc_now_iso(),
+                events_fetched=bundle["ops_status_payload"].get("events_fetched"),
+                events_with_both_books=bundle["ops_status_payload"].get("events_with_both_books"),
+                total_sides=bundle["ops_status_payload"].get("total_sides"),
+                api_requests_remaining=bundle["ops_status_payload"].get("api_requests_remaining"),
+            )
+            if surface == "player_props" and bundle.get("fresh_sides"):
+                sync_pickem_research_from_props_payload(
+                    bundle.get("persist_payload"),
+                    source="manual_scan",
+                )
+            return build_full_scan_response(response_payload)
+    
+        try:
+            if sport is not None:
+                single_sport = await run_single_sport_manual_scan(
+                    surface=surface,
+                    sport=sport,
+                    get_cached_or_scan=_get_cached_or_scan_with_activity,
+                    annotate_sides=lambda sides: annotate_sides(db, user["id"], sides),
+                )
+                return _finalize_manual_scan_bundle(single_sport)
+    
+            all_sports = await run_all_sports_manual_scan(
+                surface=surface,
+                environment=get_environment(),
+                supported_sports=supported_sports,
+                get_cached_or_scan=_get_cached_or_scan_with_activity,
+                annotate_sides=lambda sides: annotate_sides(db, user["id"], sides),
+            )
+            return _finalize_manual_scan_bundle(all_sports)
+        except Exception as e:
+            capture_backend_event(
+                db,
+                event_name="scanner_failed",
+                user_id=str(user.get("id") or ""),
+                session_id=session_id,
+                properties={
+                    "route": "/api/scan-markets",
+                    "app_area": "scanner",
+                    "surface": surface,
+                    "requested_sport": sport,
+                    "error_type": type(e).__name__,
+                },
+                dedupe_key=f"scanner-failed:{scan_session_id}:{get_request_id()}",
+            )
+>           raise map_error(e)
+E           fastapi.exceptions.HTTPException: 502: Odds API error: _piggyback_clv() got an unexpected keyword argument 'source'
+
+routes\scan_routes.py:236: HTTPException
+------------------------------ Captured log call ------------------------------
+WARNING  ev_tracker:main.py:106 {"event": "research.capture.failed", "timestamp": "2026-04-08T13:05:06.597474+00:00Z", "source": "manual_scan", "error_class": "AttributeError", "error": "'_FakeQuery' object has no attribute 'in_'"}
+WARNING  ev_tracker:main.py:106 {"event": "analytics.capture_failed", "timestamp": "2026-04-08T13:05:06.597474+00:00Z", "event_name": "scanner_failed", "error_class": "AttributeError", "error": "'_FakeQuery' object has no attribute 'insert'"}
+___________ test_scheduled_scan_ops_status_includes_autolog_summary ___________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002BB72EE4620>
+
+    @pytest.mark.asyncio
+    async def test_scheduled_scan_ops_status_includes_autolog_summary(monkeypatch):
+        main = import_main_for_tests(monkeypatch)
+    
+        async def _fake_daily_board_drop(*_args, **_kwargs):
+            return {"ok": True, "props_sides": 0, "selected_event_ids": []}
+    
+        import services.daily_board as daily_board
+        monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_daily_board_drop, raising=True)
+    
+        await main._run_scheduled_scan_job()
+    
+        snapshot = main.app.state.ops_status["last_scheduler_scan"]
+        assert isinstance(snapshot, dict)
+        assert snapshot.get("board_drop") is True
+        assert isinstance(snapshot.get("result"), (dict, type(None)))
+>       assert snapshot.get("board_alert_delivery_status") in {"disabled_no_webhook", "delivered", "failed", "failed_unexpected"}
+E       AssertionError: assert None in {'delivered', 'disabled_no_webhook', 'failed', 'failed_unexpected'}
+E        +  where None = <built-in method get of dict object at 0x000002BB74743BC0>('board_alert_delivery_status')
+E        +    where <built-in method get of dict object at 0x000002BB74743BC0> = {'alerts_scheduled': 0, 'autolog_summary': {'enabled': False, 'inserted_total': 0}, 'board_drop': True, 'captured_at': '2026-04-08T13:05:06.756473+00:00Z', ...}.get
+
+tests\test_scheduler.py:989: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  ev_tracker:main.py:106 {"event": "scan_latest_cache.persist_failed", "timestamp": "2026-04-08T13:05:06.756473+00:00Z", "surface": "straight_bets", "cache_key": "straight_bets:latest", "error_class": "AttributeError", "error": "'NoneType' object has no attribute 'table'"}
+=========================== short test summary info ===========================
+FAILED tests/test_scheduler.py::test_uses_america_phoenix_timezone_when_available
+FAILED tests/test_scheduler.py::test_scheduled_scan_job_continues_if_one_sport_scan_throws
+FAILED tests/test_scheduler.py::test_scheduled_scan_job_calls_get_cached_or_scan_for_all_supported_sports
+FAILED tests/test_scheduler.py::test_scheduled_scan_job_piggybacks_clv_for_fresh_board_sides
+FAILED tests/test_scheduler.py::test_scheduled_scan_job_sends_board_drop_alert
+FAILED tests/test_scheduler.py::test_early_look_scan_job_sends_board_drop_alert
+FAILED tests/test_scheduler.py::test_scheduled_scan_job_records_board_alert_failure
+FAILED tests/test_scheduler.py::test_scheduler_freshness_uses_durable_snapshot_when_scheduler_is_external
+FAILED tests/test_scheduler.py::test_scan_markets_returns_backend_duplicate_state_enum
+FAILED tests/test_scheduler.py::test_scan_markets_records_grouped_manual_scan_activity
+FAILED tests/test_scheduler.py::test_scheduled_scan_ops_status_includes_autolog_summary
+11 failed, 14 passed in 3.33s

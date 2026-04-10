@@ -87,8 +87,6 @@ async def ingest_analytics_event(
     x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
     authorization: str | None = Header(default=None, alias="Authorization"),
 ):
-    import main
-
     event_name = payload.event_name.strip()
     if not is_supported_analytics_event(event_name):
         raise HTTPException(status_code=422, detail="Unsupported analytics event")
@@ -104,10 +102,24 @@ async def ingest_analytics_event(
         # Always set from authenticated identity so clients cannot spoof this field.
         properties["user_email"] = user_email
 
+    db = None
+    retry_supabase = None
+    log_event = None
+    try:
+        import main
+
+        db = main.get_db()
+        retry_supabase = main._retry_supabase
+        log_event = main._log_event
+    except Exception:
+        # Analytics ingestion is best-effort; route should still return ok=False-style status
+        # via inserted flag rather than raising hard infra errors.
+        pass
+
     inserted = capture_analytics_event(
-        db=main.get_db(),
-        retry_supabase=main._retry_supabase,
-        log_event=main._log_event,
+        db=db,
+        retry_supabase=retry_supabase,
+        log_event=log_event,
         event_name=event_name,
         source="frontend",
         user_id=user_id,

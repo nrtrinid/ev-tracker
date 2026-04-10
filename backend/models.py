@@ -117,6 +117,7 @@ class BetResponse(BaseModel):
     stake: float
     boost_percent: float | None
     winnings_cap: float | None
+    payout_override: float | None = None
     notes: str | None
     opposing_odds: float | None
     result: BetResult

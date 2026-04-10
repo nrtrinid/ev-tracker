@@ -45,25 +45,31 @@ export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>
       isPositive,
     }));
 
-    // Parse current value to extract sign and number on mount or when value changes from outside
+    // Only sync sign from explicit +/- prefixes in externally-provided values.
+    // Do not infer sign from plain digits, which would override user toggles.
     useEffect(() => {
-      if (value) {
-        // If value already has sign, parse it
-        const num = parseFloat(value);
-        if (!isNaN(num) && num !== 0) {
-          setIsPositive(num >= 0);
-          // Store absolute value
-          if (num < 0) {
-            onChange(Math.abs(num).toString());
-          }
-        }
-      } else {
+      const trimmed = value.trim();
+      if (!trimmed) {
         setIsPositive(defaultSign === "+");
+        return;
       }
-    }, [defaultSign, onChange, value]); // Add missing dependencies
+
+      const hasExplicitSign = trimmed.startsWith("+") || trimmed.startsWith("-");
+      if (!hasExplicitSign) {
+        return;
+      }
+
+      const nextIsPositive = !trimmed.startsWith("-");
+      setIsPositive(nextIsPositive);
+
+      const unsigned = trimmed.replace(/[+-]/g, "");
+      if (unsigned !== value) {
+        onChange(unsigned);
+      }
+    }, [defaultSign, onChange, value]);
 
     const handleToggleSign = () => {
-      setIsPositive(!isPositive);
+      setIsPositive((prev) => !prev);
     };
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
