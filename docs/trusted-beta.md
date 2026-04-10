@@ -5,7 +5,8 @@ This document is the short runbook for the friends-only trusted beta.
 ## What Testers Should Expect
 
 - `main` is the beta branch and should feel stable enough to share.
-- Signup is open, but distribution is invite-only.
+- Signup should require the shared beta invite code once per account via `BETA_INVITE_CODE`.
+- Use an easy spoken phrase for the invite code. The app ignores case, spaces, and punctuation, so `Daily Drop`, `daily-drop`, and `dailydrop` all work.
 - The home page is driven by the daily board:
   - `Promos` mixes promo-ranked game lines and player props
   - `Game Lines` can include moneylines, spreads, and totals
@@ -46,6 +47,7 @@ Before release, confirm:
   - `SUPABASE_SERVICE_ROLE_KEY`
   - `ODDS_API_KEY`
   - `CRON_TOKEN`
+  - `BETA_INVITE_CODE`
   - `OPS_ADMIN_EMAILS`
   - `DISCORD_WEBHOOK_URL`
   - `DISCORD_ALERT_WEBHOOK_URL`
@@ -57,10 +59,11 @@ Before release, confirm:
   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
   - `CRON_SECRET`
   - `CRON_TOKEN`
+  - `BETA_INVITE_CODE`
   - `OPS_ADMIN_EMAILS`
   - `NEXT_PUBLIC_DISCORD_INVITE_URL`
 - Database
-  - all numbered migrations through `database/migration_018_player_prop_model_weights_and_research_rls.sql`
+  - all numbered migrations through `database/migration_020_beta_invite_code_access.sql`
   - no pending schema changes that exist only under `backend/sql/`
 
 ## Launch-Day Checklist

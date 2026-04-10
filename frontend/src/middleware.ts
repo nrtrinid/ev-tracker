@@ -1,12 +1,25 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import {
+  betaInviteCodeEnabled,
+} from "@/lib/server/beta-access-utils";
+import {
+  normalizeEmail,
+  parseAdminAllowlist,
+} from "@/lib/server/admin-access-utils";
 
 export async function middleware(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+  const isLoginPath = pathname.startsWith("/login");
+  const isBetaAccessPath = pathname.startsWith("/beta-access");
+  const isBetaAccessApiPath = pathname.startsWith("/api/beta-access");
+
   // Allow Vercel cron endpoints to run without Supabase auth redirects.
   // These endpoints are protected separately via CRON_SECRET checks inside the route handlers.
   if (
-    request.nextUrl.pathname.startsWith("/api/cron/") ||
-    request.nextUrl.pathname.startsWith("/api/backend/")
+    pathname.startsWith("/api/cron/") ||
+    pathname.startsWith("/api/backend/") ||
+    isBetaAccessApiPath
   ) {
     return NextResponse.next();
   }
@@ -40,14 +53,41 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   // Redirect unauthenticated users to /login
-  if (!user && !request.nextUrl.pathname.startsWith("/login")) {
+  if (!user && !isLoginPath && !isBetaAccessPath) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
   }
 
-  // Redirect authenticated users away from /login
-  if (user && request.nextUrl.pathname.startsWith("/login")) {
+  if (user) {
+    const inviteCodeEnabled = betaInviteCodeEnabled(process.env.BETA_INVITE_CODE);
+    const adminAllowlist = parseAdminAllowlist(process.env.OPS_ADMIN_EMAILS);
+    const userEmail = user.email ? normalizeEmail(user.email) : "";
+    const isAdmin = !!userEmail && adminAllowlist.includes(userEmail);
+
+    let hasBetaAccess = !inviteCodeEnabled || isAdmin;
+    if (!hasBetaAccess) {
+      const { data } = await supabase
+        .from("settings")
+        .select("beta_access_granted")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      hasBetaAccess = !!data?.beta_access_granted;
+    }
+
+    if (!hasBetaAccess && !isBetaAccessPath) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/beta-access";
+      return NextResponse.redirect(url);
+    }
+
+    if (!hasBetaAccess) {
+      return supabaseResponse;
+    }
+  }
+
+  // Redirect authenticated beta-approved users away from public auth pages
+  if (user && (isLoginPath || isBetaAccessPath)) {
     const url = request.nextUrl.clone();
     url.pathname = "/";
     return NextResponse.redirect(url);

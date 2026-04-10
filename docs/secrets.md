@@ -48,6 +48,7 @@ What you want to see:
 
 - Never paste real secrets into docs, fixtures, or examples.
 - Never commit real webhook URLs.
+- `BETA_INVITE_CODE` and `OPS_ADMIN_EMAILS` are configuration values, but they still belong in env files rather than source.
 - `NEXT_PUBLIC_DISCORD_INVITE_URL` is intentionally public-facing; do not treat it like a secret.
 - Prefer placeholders in `.env.example`.
 - If a credential was shared anywhere outside your local machine, assume rotation is required.

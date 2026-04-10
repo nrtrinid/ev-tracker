@@ -26,6 +26,7 @@ test.describe("backend proxy utils", () => {
     expect(isAllowedBackendProxyPath("/parlay-slips/slip-1/log")).toBeTruthy();
     expect(isAllowedBackendProxyPath("/api/board/latest/surface")).toBeTruthy();
     expect(isAllowedBackendProxyPath("/api/scan-markets")).toBeTruthy();
+    expect(isAllowedBackendProxyPath("/beta/access/grant")).toBeTruthy();
 
     expect(isAllowedBackendProxyPath("/api/ops/status")).toBeFalsy();
     expect(isAllowedBackendProxyPath("/api/cron/trigger-backend")).toBeFalsy();

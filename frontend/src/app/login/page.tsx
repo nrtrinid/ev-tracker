@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { sendAnalyticsEvent } from "@/lib/analytics";
+import { grantBetaAccess } from "@/lib/api";
 import { createClient } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,10 +13,39 @@ export default function LoginPage() {
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    if (searchParams.get("beta") === "restricted") {
+      setError("This account still needs the beta invite code. Sign in, then enter the code once to continue.");
+    }
+  }, [searchParams]);
+
+  const verifyBetaAccess = async (targetInviteCode: string) => {
+    const response = await fetch("/api/beta-access", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ inviteCode: targetInviteCode }),
+    });
+
+    if (response.ok) {
+      return;
+    }
+
+    const data = await response.json().catch(() => ({}));
+    const message =
+      typeof data?.error === "string" && data.error.trim().length > 0
+        ? data.error
+        : "That invite code is not valid.";
+    throw new Error(message);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -27,7 +57,9 @@ export default function LoginPage() {
 
     try {
       if (isSignUp) {
-        const { error } = await supabase.auth.signUp({ email, password });
+        await verifyBetaAccess(inviteCode);
+
+        const { data, error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
         void sendAnalyticsEvent({
           eventName: "signup_completed",
@@ -37,8 +69,22 @@ export default function LoginPage() {
             method: "email_password",
           },
         });
+
+        if (data.session) {
+          try {
+            await grantBetaAccess(inviteCode, data.session.access_token);
+          } catch (grantError) {
+            await supabase.auth.signOut();
+            throw grantError;
+          }
+          setMessage("Your beta account is ready. Redirecting to Markets...");
+          router.push("/");
+          router.refresh();
+          return;
+        }
+
         setMessage(
-          "Your beta account is ready. No email confirmation is required during private beta. Please use a real email for support, updates, and password recovery."
+          "Account created. Check your email for the confirmation step, then sign in and enter the invite code once."
         );
       } else {
         const { error } = await supabase.auth.signInWithPassword({
@@ -74,6 +120,14 @@ export default function LoginPage() {
           </span>
           <p className="text-sm text-muted-foreground mt-1">
             {isSignUp ? "Create your beta account" : "Sign in to your beta account"}
+          </p>
+          <p className="text-xs text-muted-foreground mt-2">
+            {isSignUp
+              ? "Ask your inviter for the beta code. You only need to redeem it once per account."
+              : "If your account has not been approved yet, you will be asked for the beta code after sign-in."}
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Simple shared phrases work well here. Spaces and dashes do not matter.
           </p>
           {discordInviteUrl && (
             <a
@@ -126,6 +180,29 @@ export default function LoginPage() {
                 autoComplete={isSignUp ? "new-password" : "current-password"}
               />
             </div>
+
+            {isSignUp && (
+              <div>
+                <label
+                  htmlFor="inviteCode"
+                  className="block text-sm font-medium text-foreground mb-1.5"
+                >
+                  Invite Code
+                </label>
+                <Input
+                  id="inviteCode"
+                  type="text"
+                  value={inviteCode}
+                  onChange={(e) => setInviteCode(e.target.value)}
+                  placeholder="daily drop"
+                  required
+                  autoComplete="one-time-code"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  You can type a short phrase like <span className="font-medium text-foreground">daily drop</span>. Spaces and punctuation are ignored.
+                </p>
+              </div>
+            )}
 
             {error && (
               <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">

@@ -125,6 +125,9 @@ def get_user_settings(db, user_id: str) -> dict:
         "k_factor_smoothing": 700.0,
         "k_factor_clamp_min": 0.50,
         "k_factor_clamp_max": 0.95,
+        "beta_access_granted": False,
+        "beta_access_granted_at": None,
+        "beta_access_method": None,
         "onboarding_state": {
             "version": 2,
             "completed": [],

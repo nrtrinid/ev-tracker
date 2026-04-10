@@ -228,6 +228,36 @@ export async function applyOnboardingEvent(
   });
 }
 
+export async function grantBetaAccess(
+  inviteCode: string,
+  accessTokenOverride?: string | null,
+): Promise<{ ok: boolean; granted: boolean }> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  if (accessTokenOverride) {
+    headers.Authorization = `Bearer ${accessTokenOverride}`;
+    const res = await fetch(`${API_URL}/beta/access/grant`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ invite_code: inviteCode }),
+    });
+
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: "Unknown error" }));
+      throw new Error(error.detail || `API error: ${res.status}`);
+    }
+
+    return res.json();
+  }
+
+  return fetchAPI<{ ok: boolean; granted: boolean }>("/beta/access/grant", {
+    method: "POST",
+    body: JSON.stringify({ invite_code: inviteCode }),
+  });
+}
+
 // ============ EV Calculator API ============
 
 export async function calculateEV(params: {

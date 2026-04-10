@@ -155,6 +155,8 @@ ODDS_API_KEY=your-odds-api-key
 ENVIRONMENT=development
 LOG_LEVEL=INFO
 CRON_TOKEN=your-random-cron-token
+BETA_INVITE_CODE="Daily Drop"
+OPS_ADMIN_EMAILS=ops@example.com
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 DISCORD_ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...
 DISCORD_DEBUG_WEBHOOK_URL=https://discord.com/api/webhooks/...
@@ -222,6 +224,7 @@ BACKEND_BASE_URL=http://localhost:8000
 CRON_SECRET=your-random-cron-secret
 CRON_TOKEN=your-backend-cron-token
 OPS_ADMIN_EMAILS=ops@example.com
+BETA_INVITE_CODE="Daily Drop"
 NEXT_PUBLIC_DISCORD_INVITE_URL=https://discord.gg/your-beta-invite
 ```
 
@@ -235,12 +238,13 @@ That keeps browser requests same-origin through the Next proxy while server-side
 
 Before inviting testers onto `main`:
 
-- Apply numbered database migrations in order through `database/migration_018_player_prop_model_weights_and_research_rls.sql`
+- Apply numbered database migrations in order through `database/migration_020_beta_invite_code_access.sql`
 - Treat `backend/sql/` as legacy reference only, not part of the normal bootstrap path
-- Confirm `OPS_ADMIN_EMAILS`, cron secrets, and Discord webhook env vars are present in production
+- Confirm `BETA_INVITE_CODE`, `OPS_ADMIN_EMAILS`, cron secrets, and Discord webhook env vars are present in production
+- Use a short shared invite phrase for `BETA_INVITE_CODE`; formatting is forgiving, so `Daily Drop`, `daily-drop`, and `dailydrop` all match
 - Run both Discord validation routes and confirm alert/debug messages land in the right channels
 - Verify `/health`, `/ready`, and `/api/ops/status` after deploy
-- Smoke the main tester journey: sign up, browse the board, log a bet, settle a bet, and confirm balances update
+- Smoke the main tester journey: sign up with the invite code, browse the board, log a bet, settle a bet, and confirm balances update
 
 ### Internal operator console
 

@@ -14,6 +14,7 @@ const PREFIX_ALLOWED_BACKEND_PROXY_PATHS = [
   "/transactions",
   "/parlay-slips",
   "/api/board",
+  "/beta/access",
 ] as const;
 
 export function normalizeBackendProxyPath(pathSegments: string[]): string | null {

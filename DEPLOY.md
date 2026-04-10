@@ -46,11 +46,13 @@ NEXT_PUBLIC_DISCORD_INVITE_URL=https://discord.gg/your-beta-invite
 
 This keeps browser traffic same-origin through Next while server-side bridge routes still proxy to Hetzner directly.
 
+When you set `BETA_INVITE_CODE`, prefer a short spoken phrase like `Daily Drop`. The app ignores case, spaces, and punctuation, so testers can type `daily drop`, `daily-drop`, or `dailydrop`.
+
 ## Schema Parity Before Beta
 
 Before a trusted-beta release, confirm production has:
 
-- all numbered migrations through `database/migration_018_player_prop_model_weights_and_research_rls.sql`
+- all numbered migrations through `database/migration_020_beta_invite_code_access.sql`
 - no outstanding schema changes that exist only under `backend/sql/`
 
 Numbered migrations in `database/` are the canonical schema history. This repo still uses your current Supabase apply workflow, so apply any pending numbered files in order before calling the release ready.
@@ -110,6 +112,7 @@ Backend / VPS:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `ODDS_API_KEY`
 - `CRON_TOKEN`
+- `BETA_INVITE_CODE`
 - `OPS_ADMIN_EMAILS`
 - `DISCORD_WEBHOOK_URL`
 - `DISCORD_ALERT_WEBHOOK_URL`
@@ -123,6 +126,7 @@ Frontend / Vercel:
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `CRON_SECRET`
 - `CRON_TOKEN`
+- `BETA_INVITE_CODE`
 - `OPS_ADMIN_EMAILS`
 - `NEXT_PUBLIC_DISCORD_INVITE_URL`
 
