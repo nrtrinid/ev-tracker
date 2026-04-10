@@ -1,5 +1,10 @@
 import type { MarketSide, ParlayCartLeg, PromoType, ScannedBetData } from "@/lib/types";
 import { calculateStealthStake, decimalToAmerican } from "@/lib/utils";
+import {
+  buildStraightBetEntryLabel,
+  getStraightBetMarketDisplay,
+  getStraightBetMarketValue,
+} from "./straight-bet-labels";
 
 import type { ScannerLens } from "./scanner-ui-model";
 
@@ -120,12 +125,15 @@ export function buildScannerLogBetInitialValues(params: {
     };
   }
 
+  const straightBetLabel = buildStraightBetEntryLabel(side);
+  const straightBetMarketValue = getStraightBetMarketValue(side);
+
   return {
     surface: side.surface,
     sportsbook: side.sportsbook,
     sport: sportDisplay,
-    event: `${side.team} ML`,
-    market: "ML",
+    event: straightBetLabel,
+    market: straightBetMarketValue,
     odds_american: side.book_odds,
     promo_type: promoType,
     boost_percent: boostPct,
@@ -137,7 +145,8 @@ export function buildScannerLogBetInitialValues(params: {
     source_event_id: side.event_id ?? undefined,
     source_market_key: side.market_key ?? "h2h",
     source_selection_key: side.selection_key ?? undefined,
-    selection_side: side.team,
+    selection_side: side.selection_side ?? side.team,
+    line_value: side.line_value ?? undefined,
     true_prob_at_entry: side.true_prob,
     raw_kelly_stake: rawKellyStake,
     stealth_kelly_stake: stealthKellyStake,
@@ -188,6 +197,7 @@ export function buildParlayCartLeg(side: MarketSide): ParlayCartLeg {
 
   const selectionKey = side.selection_key ?? `${side.event_id ?? side.commence_time}:${side.team}`;
   const deviggedFairOdds = fairAmericanFromTrueProbability(side.true_prob);
+  const straightBetLabel = buildStraightBetEntryLabel(side);
   return {
     id: `${side.surface}:${selectionKey}:${side.sportsbook}`,
     surface: side.surface,
@@ -199,14 +209,15 @@ export function buildParlayCartLeg(side: MarketSide): ParlayCartLeg {
     referenceOddsAmerican: deviggedFairOdds ?? side.pinnacle_odds,
     referenceTrueProbability: side.true_prob,
     referenceSource: "pinnacle",
-    display: `${side.team} ML`,
+    display: straightBetLabel,
     event: side.event,
     sport: side.sport,
     commenceTime: side.commence_time,
     correlationTags: [side.event_id ?? side.event, side.team],
     team: side.team,
-    selectionSide: side.team,
-    marketDisplay: "Moneyline",
+    selectionSide: side.selection_side ?? side.team,
+    lineValue: side.line_value ?? undefined,
+    marketDisplay: getStraightBetMarketDisplay(side),
     sourceEventId: side.event_id ?? undefined,
     sourceMarketKey: side.market_key ?? "h2h",
     sourceSelectionKey: selectionKey,

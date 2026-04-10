@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
 import importlib
 import sys
+import types
 
+import pytest
 from services.daily_board import _select_daily_games
 
 
@@ -64,4 +66,89 @@ def test_daily_board_selection_does_not_import_espn_modules():
     with open(src, "r", encoding="utf-8") as f:
         contents = f.read()
     assert "espn_scoreboard" not in contents
+
+
+@pytest.mark.asyncio
+async def test_run_daily_board_drop_limits_game_lines_to_nba_and_mlb(monkeypatch):
+    import services.daily_board as daily_board
+    import services.odds_api as odds_api
+    import services.player_props as player_props
+    import services.scan_markets as scan_markets
+
+    featured_calls: list[str] = []
+    game_line_scan_calls: list[tuple[str, str]] = []
+    manual_scan_supported_sports: list[list[str]] = []
+
+    async def _fake_fetch_featured_lines_slate(*, sport: str, source: str):
+        featured_calls.append(sport)
+        if sport == "basketball_nba":
+            games = [_game("nba-1", "2026-05-27T02:00:00Z", offers=3)]
+        else:
+            games = [_game("mlb-1", "2026-05-27T19:00:00Z", offers=2)]
+        return {
+            "sport": sport,
+            "games": games,
+            "events_fetched": len(games),
+            "api_requests_remaining": "95",
+        }
+
+    async def _fake_fetch_events(sport: str, source: str):
+        assert sport == "basketball_nba"
+        assert source == "scheduled_board_drop_props_events"
+        return ([{"id": "evt-1"}], types.SimpleNamespace(headers={"x-requests-remaining": "94"}))
+
+    async def _fake_get_cached_or_scan(sport: str, source: str = "unknown"):
+        game_line_scan_calls.append((sport, source))
+        return {
+            "sides": [{"sport": sport, "event": f"{sport} matchup"}],
+            "events_fetched": 1,
+            "events_with_both_books": 1,
+            "api_requests_remaining": "93",
+            "fetched_at": 1_700_000_000.0,
+        }
+
+    async def _fake_scan_player_props_for_event_ids(*, sport: str, event_ids: list[str], markets: list[str], source: str):
+        assert sport == "basketball_nba"
+        assert event_ids == ["evt-1"]
+        assert source == "scheduled_board_drop"
+        return {
+            "sides": [{"sport": sport, "player_name": "Example Player", "market": markets[0]}],
+            "events_fetched": 1,
+            "events_with_both_books": 1,
+            "api_requests_remaining": "92",
+            "scanned_at": "2026-03-27T00:00:00Z",
+        }
+
+    def _fake_manual_scan_sports_for_env(*, environment: str, supported_sports: list[str]) -> list[str]:
+        manual_scan_supported_sports.append(list(supported_sports))
+        return list(supported_sports)
+
+    monkeypatch.setattr(odds_api, "fetch_featured_lines_slate", _fake_fetch_featured_lines_slate, raising=True)
+    monkeypatch.setattr(odds_api, "fetch_events", _fake_fetch_events, raising=True)
+    monkeypatch.setattr(odds_api, "get_cached_or_scan", _fake_get_cached_or_scan, raising=True)
+    monkeypatch.setattr(player_props, "scan_player_props_for_event_ids", _fake_scan_player_props_for_event_ids, raising=True)
+    monkeypatch.setattr(
+        scan_markets,
+        "manual_scan_sports_for_env",
+        _fake_manual_scan_sports_for_env,
+        raising=True,
+    )
+
+    result = await daily_board.run_daily_board_drop(
+        db=None,
+        source="scheduled_board_drop",
+        scan_label="Final Board / Bet Placement Scan",
+        mst_anchor_time="15:30",
+        retry_supabase=lambda fn: fn(),
+        log_event=lambda *_args, **_kwargs: None,
+    )
+
+    assert featured_calls == ["basketball_nba", "baseball_mlb"]
+    assert manual_scan_supported_sports == [["basketball_nba", "baseball_mlb"]]
+    assert game_line_scan_calls == [
+        ("basketball_nba", "scheduled_board_drop"),
+        ("baseball_mlb", "scheduled_board_drop"),
+    ]
+    assert result["game_line_sports_scanned"] == ["basketball_nba", "baseball_mlb"]
+    assert result["featured_games_count"] == 2
 

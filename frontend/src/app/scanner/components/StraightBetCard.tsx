@@ -7,6 +7,7 @@ import { ONBOARDING_HIGHLIGHT_TARGETS } from "@/lib/onboarding-guidance";
 import type { MarketSide } from "@/lib/types";
 import { calculateStealthStake, cn, formatCurrency, formatOdds } from "@/lib/utils";
 import { buildScannerActionModel, canAddScannerLensToParlayCart } from "../scanner-ui-model";
+import { buildStraightBetCardTitle } from "../straight-bet-labels";
 import { buildEventNicknameLabel } from "./event-nickname-label";
 import { getStandardEdgeColorClass } from "./scanner-card-colors";
 
@@ -91,41 +92,10 @@ function getDuplicateBadge(duplicateState: MarketSide["scanner_duplicate_state"]
   return null;
 }
 
-function formatLineToken(value: number, options?: { includePlus?: boolean }): string {
-  const includePlus = options?.includePlus ?? false;
-  const normalized = Number.parseFloat(value.toFixed(2));
-  const token = `${normalized}`.replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
-  if (includePlus && normalized > 0 && !token.startsWith("+")) return `+${token}`;
-  return token;
-}
-
 function formatMarketBadge(marketKey: string): string {
   if (marketKey === "spreads") return "SPR";
   if (marketKey === "totals") return "TOT";
   return "ML";
-}
-
-function buildStraightCardTitle(side: MarketSide): string {
-  const marketKey = String(side.market_key || "h2h").toLowerCase();
-  const selectionSide = String(side.selection_side || "").toLowerCase();
-
-  if (marketKey === "totals") {
-    const sideLabel = selectionSide === "under" ? "Under" : selectionSide === "over" ? "Over" : side.team || "Total";
-    if (typeof side.line_value === "number" && Number.isFinite(side.line_value)) {
-      return `${sideLabel} ${formatLineToken(side.line_value)}`;
-    }
-    return sideLabel;
-  }
-
-  if (marketKey === "spreads") {
-    const teamLabel = side.team || (selectionSide === "home" ? "Home" : selectionSide === "away" ? "Away" : "Team");
-    if (typeof side.line_value === "number" && Number.isFinite(side.line_value)) {
-      return `${teamLabel} ${formatLineToken(side.line_value, { includePlus: true })}`;
-    }
-    return teamLabel;
-  }
-
-  return side.team || side.event;
 }
 
 function formatPropMarketLabel(marketKey: string | undefined | null): string {
@@ -169,7 +139,7 @@ export function StraightBetCard({
   const straightMarketKey = String(side.market_key || "h2h").toLowerCase();
   const cardTitle = isPlayerProp
     ? (side.display_name || side.player_name || side.team || "Player prop")
-    : buildStraightCardTitle(side);
+    : buildStraightBetCardTitle(side);
   const marketLabel = isPlayerProp
     ? formatPropMarketLabel(side.market_key)
     : formatMarketBadge(straightMarketKey);

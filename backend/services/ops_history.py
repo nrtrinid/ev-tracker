@@ -16,6 +16,7 @@ RECENT_SCAN_SESSION_LIMIT = 18
 RECENT_RAW_CALL_QUERY_LIMIT = 200
 RECENT_SCAN_DETAIL_QUERY_LIMIT = 200
 BOARD_DROP_SOURCES = {"scheduled_board_drop", "ops_trigger_board_drop", "cron_board_drop"}
+SCHEDULED_SCAN_JOB_KINDS = ("scheduled_board_drop", "scheduled_scan")
 
 _PRUNE_LOCK = threading.Lock()
 _LAST_PRUNE_ATTEMPT_MONOTONIC = 0.0
@@ -454,6 +455,25 @@ def _select_latest_job_run(
     return rows[0]
 
 
+def _select_latest_job_run_any(
+    *,
+    db: Any,
+    retry_supabase: Callable[[Callable[[], Any]], Any] | None,
+    job_kinds: tuple[str, ...],
+) -> dict[str, Any] | None:
+    latest_row: dict[str, Any] | None = None
+    latest_timestamp = -1.0
+    for job_kind in job_kinds:
+        row = _select_latest_job_run(db=db, retry_supabase=retry_supabase, job_kind=job_kind)
+        if not isinstance(row, dict):
+            continue
+        captured_at = _parse_timestamp(row.get("captured_at")) or 0.0
+        if latest_row is None or captured_at >= latest_timestamp:
+            latest_row = row
+            latest_timestamp = captured_at
+    return latest_row
+
+
 def _select_recent_job_runs(
     *,
     db: Any,
@@ -676,7 +696,11 @@ def load_scheduler_job_snapshot(
         "jit_clv": _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="jit_clv"),
         "clv_finalize": _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="clv_finalize"),
         "auto_settle": _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="auto_settle"),
-        "scheduled_scan": _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="scheduled_scan"),
+        "scheduled_scan": _select_latest_job_run_any(
+            db=resolved_db,
+            retry_supabase=retry_supabase,
+            job_kinds=SCHEDULED_SCAN_JOB_KINDS,
+        ),
     }
 
 
@@ -776,8 +800,10 @@ def load_ops_status_snapshot(
         clv_finalize = _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="clv_finalize")
         clv_daily = _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="clv_daily")
         clv_replay = _select_latest_job_run(db=resolved_db, retry_supabase=retry_supabase, job_kind="clv_replay")
-        scheduler = _select_latest_job_run(
-            db=resolved_db, retry_supabase=retry_supabase, job_kind="scheduled_scan"
+        scheduler = _select_latest_job_run_any(
+            db=resolved_db,
+            retry_supabase=retry_supabase,
+            job_kinds=SCHEDULED_SCAN_JOB_KINDS,
         )
         ops_trigger = _select_latest_job_run(
             db=resolved_db, retry_supabase=retry_supabase, job_kind="ops_trigger_scan"

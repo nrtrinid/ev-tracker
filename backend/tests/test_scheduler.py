@@ -117,7 +117,7 @@ async def test_uses_america_phoenix_timezone_when_available(monkeypatch):
     scheduler = main.app.state.scheduler
     assert scheduler.started is True
 
-    scan_jobs = [j for j in scheduler.jobs if j["func"] == main._run_scheduled_scan_job]
+    scan_jobs = [j for j in scheduler.jobs if j["func"] == main._run_scheduled_board_drop_job]
     assert len(scan_jobs) == 2
     assert {(j["trigger"].hour, j["trigger"].minute) for j in scan_jobs} == {(10, 30), (15, 30)}
     assert all(getattr(j["trigger"], "timezone", None) == main.PHOENIX_TZ for j in scan_jobs)
@@ -145,7 +145,7 @@ async def test_skips_scheduled_scans_cleanly_if_phoenix_zone_cannot_load(monkeyp
     await main.start_scheduler()
     scheduler = main.app.state.scheduler
 
-    scan_jobs = [j for j in scheduler.jobs if j["func"] == main._run_scheduled_scan_job]
+    scan_jobs = [j for j in scheduler.jobs if j["func"] == main._run_scheduled_board_drop_job]
     assert scan_jobs == []
 
     out = capsys.readouterr().out
@@ -153,73 +153,94 @@ async def test_skips_scheduled_scans_cleanly_if_phoenix_zone_cannot_load(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_scheduled_scan_job_continues_if_one_sport_scan_throws(monkeypatch):
+async def test_scheduled_board_drop_job_runs_daily_board_pipeline(monkeypatch):
     main = _reload_main(monkeypatch)
 
     called = []
 
-    async def fake_get_cached_or_scan(sport, source="unknown"):
-        called.append(sport)
-        if sport == "bad_sport":
-            raise RuntimeError("boom")
-        return {"sides": [], "events_fetched": 1, "events_with_both_books": 1}
+    async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
+        called.append(
+            {
+                "db_is_none": db is None,
+                "source": source,
+                "scan_label": scan_label,
+                "mst_anchor_time": mst_anchor_time,
+                "retry_supabase_is_callable": callable(retry_supabase),
+                "log_event_is_callable": callable(log_event),
+            }
+        )
+        return {
+            "straight_sides": 6,
+            "props_sides": 4,
+            "featured_games_count": 3,
+            "game_line_sports_scanned": ["basketball_nba", "baseball_mlb"],
+            "props_events_scanned": 7,
+            "game_lines_events_fetched": 2,
+            "game_lines_events_with_both_books": 2,
+            "game_lines_api_requests_remaining": "91",
+            "props_events_fetched": 7,
+            "props_events_with_both_books": 6,
+            "props_api_requests_remaining": "90",
+            "fresh_straight_sides": [],
+            "fresh_prop_sides": [],
+        }
 
-    import services.odds_api as odds_api
-    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["good1", "bad_sport", "good2"], raising=True)
-    monkeypatch.setattr(odds_api, "get_cached_or_scan", fake_get_cached_or_scan, raising=True)
+    import services.daily_board as daily_board
 
-    await main._run_scheduled_scan_job()
+    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_run_daily_board_drop, raising=True)
 
-    assert called == ["good1", "bad_sport", "good2"]
+    await main._run_scheduled_board_drop_job()
+
+    assert len(called) == 1
+    assert called[0]["source"] == "scheduled_board_drop"
+    assert called[0]["scan_label"] in {"Early-Look / Injury-Watch Scan", "Final Board / Bet Placement Scan"}
+    assert called[0]["mst_anchor_time"] in {"10:30", "15:30"}
+    assert called[0]["retry_supabase_is_callable"] is True
+    assert called[0]["log_event_is_callable"] is True
 
 
 @pytest.mark.asyncio
-async def test_scheduled_scan_job_calls_get_cached_or_scan_for_all_supported_sports(monkeypatch):
+async def test_scheduled_scan_aliases_use_board_drop_job(monkeypatch):
     main = _reload_main(monkeypatch)
 
-    called = []
+    calls: list[str] = []
 
-    async def fake_get_cached_or_scan(sport, source="unknown"):
-        called.append(sport)
-        return {"sides": [1], "events_fetched": 1, "events_with_both_books": 1}
+    async def _fake_run_scheduled_board_drop_job():
+        calls.append("scheduled_board_drop")
 
-    import services.odds_api as odds_api
-    sports = ["s1", "s2", "s3", "s4"]
-    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", sports, raising=True)
-    monkeypatch.setattr(odds_api, "get_cached_or_scan", fake_get_cached_or_scan, raising=True)
+    monkeypatch.setattr(main, "_run_scheduled_board_drop_job", _fake_run_scheduled_board_drop_job, raising=True)
 
     await main._run_scheduled_scan_job()
+    await main._run_early_look_scan_job()
 
-    assert called == sports
+    assert calls == ["scheduled_board_drop", "scheduled_board_drop"]
 
 
 @pytest.mark.asyncio
-async def test_scheduled_scan_job_timed_ping_mode_sends_single_board_alert(monkeypatch):
+async def test_scheduled_board_drop_job_timed_ping_mode_sends_single_board_alert(monkeypatch):
     main = _reload_main(monkeypatch)
     monkeypatch.setenv("DISCORD_SCAN_ALERT_MODE", "timed_ping")
 
-    async def fake_get_cached_or_scan(_sport, source="unknown"):
+    async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
         return {
-            "sides": [
-                {
-                    "sport": "basketball_nba",
-                    "event": "Lakers @ Celtics",
-                    "commence_time": "2026-03-19T20:00:00Z",
-                    "team": "Lakers",
-                    "sportsbook": "DraftKings",
-                    "book_odds": 120,
-                    "ev_percentage": 2.1,
-                }
-            ],
-            "events_fetched": 1,
-            "events_with_both_books": 1,
-            "api_requests_remaining": "99",
-            "cache_hit": True,
+            "straight_sides": 5,
+            "props_sides": 3,
+            "featured_games_count": 2,
+            "game_line_sports_scanned": ["basketball_nba", "baseball_mlb"],
+            "props_events_scanned": 5,
+            "game_lines_events_fetched": 2,
+            "game_lines_events_with_both_books": 2,
+            "game_lines_api_requests_remaining": "99",
+            "props_events_fetched": 5,
+            "props_events_with_both_books": 4,
+            "props_api_requests_remaining": "98",
+            "fresh_straight_sides": [],
+            "fresh_prop_sides": [],
         }
 
-    import services.odds_api as odds_api
-    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)
-    monkeypatch.setattr(odds_api, "get_cached_or_scan", fake_get_cached_or_scan, raising=True)
+    import services.daily_board as daily_board
+
+    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_run_daily_board_drop, raising=True)
 
     import services.discord_alerts as discord_alerts
 
@@ -240,7 +261,7 @@ async def test_scheduled_scan_job_timed_ping_mode_sends_single_board_alert(monke
     monkeypatch.setattr(discord_alerts, "schedule_alerts", _fail_if_edge_alerts_called, raising=True)
     monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
 
-    await main._run_scheduled_scan_job()
+    await main._run_scheduled_board_drop_job()
 
     assert len(sent) == 1
     payload, message_type = sent[0]
@@ -250,6 +271,8 @@ async def test_scheduled_scan_job_timed_ping_mode_sends_single_board_alert(monke
     snapshot = main.app.state.ops_status["last_scheduler_scan"]
     assert snapshot["scan_alert_mode"] == "timed_ping"
     assert snapshot["alerts_scheduled"] == 0
+    assert snapshot["straight_sides"] == 5
+    assert snapshot["props_sides"] == 3
     assert snapshot["board_alert_attempted"] is True
     assert snapshot["board_alert_delivery_status"] == "delivered"
     assert snapshot["board_alert_http_status"] == 204
@@ -820,21 +843,29 @@ async def test_scan_latest_enriches_duplicate_state_from_cached_payload(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_scheduled_scan_ops_status_includes_autolog_summary(monkeypatch):
+async def test_scheduled_board_drop_ops_status_includes_autolog_summary(monkeypatch):
     main = _reload_main(monkeypatch)
 
-    import services.odds_api as odds_api
-    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)
-
-    async def _fake_cached_or_scan(_sport, source="unknown"):
+    async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
         return {
-            "sides": [],
-            "events_fetched": 0,
-            "events_with_both_books": 0,
-            "api_requests_remaining": "99",
+            "straight_sides": 0,
+            "props_sides": 0,
+            "featured_games_count": 0,
+            "game_line_sports_scanned": ["basketball_nba", "baseball_mlb"],
+            "props_events_scanned": 0,
+            "game_lines_events_fetched": 0,
+            "game_lines_events_with_both_books": 0,
+            "game_lines_api_requests_remaining": "99",
+            "props_events_fetched": 0,
+            "props_events_with_both_books": 0,
+            "props_api_requests_remaining": "99",
+            "fresh_straight_sides": [],
+            "fresh_prop_sides": [],
         }
 
-    monkeypatch.setattr(odds_api, "get_cached_or_scan", _fake_cached_or_scan, raising=True)
+    import services.daily_board as daily_board
+
+    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_run_daily_board_drop, raising=True)
 
     async def _fake_autolog(db, *, run_id: str, sides: list[dict]):
         return {
@@ -847,7 +878,7 @@ async def test_scheduled_scan_ops_status_includes_autolog_summary(monkeypatch):
 
     monkeypatch.setattr(main, "_run_longshot_autolog_for_sides", _fake_autolog, raising=True)
 
-    await main._run_scheduled_scan_job()
+    await main._run_scheduled_board_drop_job()
 
     snapshot = main.app.state.ops_status["last_scheduler_scan"]
     assert isinstance(snapshot, dict)

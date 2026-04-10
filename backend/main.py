@@ -1231,37 +1231,35 @@ async def _run_auto_settler_job():
         )
 
 
-async def _run_scheduled_scan_job():
-    """
-    Scheduled scan job: warms the same cache used by GET /api/scan-markets by
-    calling services.odds_api.get_cached_or_scan across SUPPORTED_SPORTS.
+async def _run_scheduled_board_drop_job():
+    """Run the trusted-beta board pipeline for the scheduled 10:30 and 3:30 windows."""
+    from services.daily_board import run_daily_board_drop
+    from services.discord_alerts import (
+        DiscordDeliveryError,
+        build_board_drop_alert_payload,
+        get_last_schedule_stats,
+        schedule_alerts,
+        send_discord_webhook,
+    )
 
-    Player props are intentionally excluded here and remain manual-only.
-    """
-    from services.odds_api import append_scan_activity, get_cached_or_scan, SUPPORTED_SPORTS
-
-    run_id = _new_run_id("scheduled_scan")
+    run_id = _new_run_id("scheduled_board_drop")
     started = datetime.now(UTC).isoformat()
     started_at = time.monotonic()
     scan_window = _scheduled_scan_window()
     scan_alert_mode = _scan_alert_mode()
     _record_scheduler_heartbeat("scheduled_scan", run_id, "started")
     _log_event(
-        "scheduler.scan.started",
+        "scheduler.board_drop.started",
         run_id=run_id,
         started_at=started + "Z",
         scan_window=scan_window,
         scan_alert_mode=scan_alert_mode,
     )
 
-    total_sides = 0
     alerts_scheduled = 0
     hard_errors = 0
-    all_sides: list[dict] = []
-    total_events = 0
-    total_with_both = 0
-    min_remaining: str | None = None
-    oldest_fetched: float | None = None
+    fresh_straight_sides: list[dict] = []
+    fresh_prop_sides: list[dict] = []
     alert_skip_totals = {
         "skipped_memory_dedupe": 0,
         "skipped_shared_dedupe": 0,
@@ -1275,250 +1273,146 @@ async def _run_scheduled_scan_job():
         "webhook_source": None,
         "error": None,
     }
-    from services.discord_alerts import (
-        DiscordDeliveryError,
-        build_board_drop_alert_payload,
-        get_last_schedule_stats,
-        schedule_alerts,
-        send_discord_webhook,
-    )
+    result: dict[str, Any] = {
+        "straight_sides": 0,
+        "props_sides": 0,
+        "featured_games_count": 0,
+        "game_line_sports_scanned": [],
+        "game_lines_events_fetched": 0,
+        "game_lines_events_with_both_books": 0,
+        "game_lines_api_requests_remaining": None,
+        "props_events_fetched": 0,
+        "props_events_with_both_books": 0,
+        "props_api_requests_remaining": None,
+        "props_events_scanned": 0,
+    }
 
-    for sport_key in SUPPORTED_SPORTS:
-        sport_started_at = time.monotonic()
-        try:
-            result = await get_cached_or_scan(sport_key, source="scheduled_scan")
-            scan_duration_ms = round((time.monotonic() - sport_started_at) * 1000, 2)
-            sides_count = len(result.get("sides") or [])
-            fetched = result.get("events_fetched")
-            with_both = result.get("events_with_both_books")
-            sides = result.get("sides") or []
-            append_scan_activity(
-                scan_session_id=run_id,
-                source="scheduled_scan",
-                surface="straight_bets",
-                scan_scope="all",
-                requested_sport=None,
-                sport=sport_key,
-                actor_label=None,
-                run_id=run_id,
-                cache_hit=bool(result.get("cache_hit")),
-                outbound_call_made=not bool(result.get("cache_hit")),
-                duration_ms=scan_duration_ms,
-                events_fetched=int(fetched or 0),
-                events_with_both_books=int(with_both or 0),
-                sides_count=sides_count,
-                api_requests_remaining=result.get("api_requests_remaining"),
-                status_code=200,
-                error_type=None,
-                error_message=None,
-            )
-            all_sides.extend(sides)
-            await _apply_fresh_straight_scan_followups(result, source="scheduled_scan")
-            total_sides += len(sides)
-            total_events += int(fetched or 0)
-            total_with_both += int(with_both or 0)
-
-            rem = result.get("api_requests_remaining")
-            if rem is not None:
-                try:
-                    r = int(rem)
-                    min_remaining = str(r) if min_remaining is None else str(min(r, int(min_remaining)))
-                except ValueError:
-                    min_remaining = str(rem)
-
-            ft = result.get("fetched_at")
-            if ft is not None:
-                oldest_fetched = ft if oldest_fetched is None else min(oldest_fetched, ft)
-
-            if scan_alert_mode == DISCORD_SCAN_ALERT_MODE_EDGE_LIVE:
-                alerts_scheduled += schedule_alerts(sides)
-                schedule_stats = get_last_schedule_stats()
-                alert_skip_totals["skipped_memory_dedupe"] += int(schedule_stats.get("skipped_memory_dedupe") or 0)
-                alert_skip_totals["skipped_shared_dedupe"] += int(schedule_stats.get("skipped_shared_dedupe") or 0)
-                alert_skip_totals["skipped_threshold"] += int(schedule_stats.get("skipped_threshold") or 0)
-            else:
-                schedule_stats = {
-                    "mode": scan_alert_mode,
-                    "candidates_seen": len(sides),
-                    "scheduled": 0,
-                    "skipped_memory_dedupe": 0,
-                    "skipped_shared_dedupe": 0,
-                    "skipped_threshold": len(sides),
-                    "skipped_total": len(sides),
-                }
-            _log_event(
-                "scheduler.scan.sport_completed",
-                run_id=run_id,
-                sport=sport_key,
-                sides=sides_count,
-                events_fetched=fetched,
-                events_with_both_books=with_both,
-                discord_alert_schedule=schedule_stats,
-                scan_alert_mode=scan_alert_mode,
-            )
-        except httpx.HTTPStatusError as e:
-            scan_duration_ms = round((time.monotonic() - sport_started_at) * 1000, 2)
-            remaining = None
-            status_code = e.response.status_code if e.response is not None else None
-            if e.response is not None:
-                remaining = e.response.headers.get("x-requests-remaining") or e.response.headers.get("x-request-remaining")
-            append_scan_activity(
-                scan_session_id=run_id,
-                source="scheduled_scan",
-                surface="straight_bets",
-                scan_scope="all",
-                requested_sport=None,
-                sport=sport_key,
-                actor_label=None,
-                run_id=run_id,
-                cache_hit=False,
-                outbound_call_made=True,
-                duration_ms=scan_duration_ms,
-                events_fetched=0,
-                events_with_both_books=0,
-                sides_count=0,
-                api_requests_remaining=remaining,
-                status_code=status_code,
-                error_type=type(e).__name__,
-                error_message=str(e),
-            )
-            if e.response is not None and e.response.status_code == 404:
-                _log_event(
-                    "scheduler.scan.sport_skipped",
-                    run_id=run_id,
-                    sport=sport_key,
-                    status=404,
-                    reason="no odds",
-                )
-                continue
-            _log_event(
-                "scheduler.scan.sport_failed",
-                level="error",
-                run_id=run_id,
-                sport=sport_key,
-                error_class=type(e).__name__,
-                error=str(e),
-            )
-            hard_errors += 1
-        except Exception as e:
-            scan_duration_ms = round((time.monotonic() - sport_started_at) * 1000, 2)
-            append_scan_activity(
-                scan_session_id=run_id,
-                source="scheduled_scan",
-                surface="straight_bets",
-                scan_scope="all",
-                requested_sport=None,
-                sport=sport_key,
-                actor_label=None,
-                run_id=run_id,
-                cache_hit=False,
-                outbound_call_made=False,
-                duration_ms=scan_duration_ms,
-                events_fetched=0,
-                events_with_both_books=0,
-                sides_count=0,
-                api_requests_remaining=None,
-                status_code=None,
-                error_type=type(e).__name__,
-                error_message=str(e),
-            )
-            # Never crash the server/scheduler; log and continue.
-            _log_event(
-                "scheduler.scan.sport_failed",
-                level="error",
-                run_id=run_id,
-                sport=sport_key,
-                error_class=type(e).__name__,
-                error=str(e),
-            )
-            hard_errors += 1
-
-    scanned_at = (
-        datetime.fromtimestamp(oldest_fetched, tz=UTC).isoformat().replace("+00:00", "Z")
-        if oldest_fetched
-        else _utc_now_iso()
-    )
-
-    # Keep Scanner's "latest scan" payload in sync for scheduled runs, not only manual scans.
     try:
-        _persist_latest_full_scan(
+        result = await run_daily_board_drop(
             db=get_db(),
-            surface="straight_bets",
-            sport="all",
-            sides=all_sides,
-            events_fetched=total_events,
-            events_with_both_books=total_with_both,
-            api_requests_remaining=min_remaining,
-            scanned_at=scanned_at,
+            source="scheduled_board_drop",
+            scan_label=scan_window["label"],
+            mst_anchor_time=scan_window["anchor_time_mst"],
             retry_supabase=_retry_supabase,
             log_event=_log_event,
         )
-    except Exception as e:
+        fresh_straight_sides = [
+            side for side in (result.get("fresh_straight_sides") or []) if isinstance(side, dict)
+        ]
+        fresh_prop_sides = [
+            side for side in (result.get("fresh_prop_sides") or []) if isinstance(side, dict)
+        ]
+
+        candidates_seen = len(fresh_straight_sides) + len(fresh_prop_sides)
+        if scan_alert_mode == DISCORD_SCAN_ALERT_MODE_EDGE_LIVE:
+            alerts_scheduled += schedule_alerts([*fresh_straight_sides, *fresh_prop_sides])
+            schedule_stats = get_last_schedule_stats()
+            alert_skip_totals["skipped_memory_dedupe"] += int(schedule_stats.get("skipped_memory_dedupe") or 0)
+            alert_skip_totals["skipped_shared_dedupe"] += int(schedule_stats.get("skipped_shared_dedupe") or 0)
+            alert_skip_totals["skipped_threshold"] += int(schedule_stats.get("skipped_threshold") or 0)
+        else:
+            schedule_stats = {
+                "mode": scan_alert_mode,
+                "candidates_seen": candidates_seen,
+                "scheduled": 0,
+                "skipped_memory_dedupe": 0,
+                "skipped_shared_dedupe": 0,
+                "skipped_threshold": candidates_seen,
+                "skipped_total": candidates_seen,
+            }
+
         _log_event(
-            "scheduler.scan.latest_cache_persist_failed",
-            level="warning",
+            "scheduler.board_drop.scan_completed",
             run_id=run_id,
-            error_class=type(e).__name__,
-            error=str(e),
+            straight_sides=result.get("straight_sides"),
+            props_sides=result.get("props_sides"),
+            featured_games_count=result.get("featured_games_count"),
+            game_line_sports=result.get("game_line_sports_scanned"),
+            props_events_scanned=result.get("props_events_scanned"),
+            discord_alert_schedule=schedule_stats,
+            scan_alert_mode=scan_alert_mode,
+        )
+    except Exception as exc:
+        hard_errors = 1
+        _log_event(
+            "scheduler.board_drop.failed",
+            level="error",
+            run_id=run_id,
+            error_class=type(exc).__name__,
+            error=str(exc),
         )
 
     finished = datetime.now(UTC).isoformat()
     autolog_summary = None
     try:
-        autolog_summary = await _run_longshot_autolog_for_sides(db=get_db(), run_id=run_id, sides=all_sides)
-    except Exception as e:
+        autolog_summary = await _run_longshot_autolog_for_sides(
+            db=get_db(),
+            run_id=run_id,
+            sides=fresh_straight_sides,
+        )
+    except Exception as exc:
         autolog_summary = {
             "enabled": _is_paper_experiment_autolog_enabled(),
-            "error": f"{type(e).__name__}: {e}",
+            "error": f"{type(exc).__name__}: {exc}",
         }
         _log_event(
-            "scheduler.scan.autolog.failed",
+            "scheduler.board_drop.autolog.failed",
             level="error",
             run_id=run_id,
-            error_class=type(e).__name__,
-            error=str(e),
+            error_class=type(exc).__name__,
+            error=str(exc),
         )
 
     if scan_alert_mode == DISCORD_SCAN_ALERT_MODE_TIMED_PING:
-        board_alert_payload = build_board_drop_alert_payload(
-            window_label=scan_window["label"],
-            anchor_time_mst=scan_window["anchor_time_mst"],
-            result={
-                "props_sides": 0,
-                "straight_sides": total_sides,
-                "featured_games_count": total_events,
-            },
-        )
-        try:
-            delivery = await send_discord_webhook(board_alert_payload, message_type="alert")
+        if hard_errors == 0:
+            board_alert_payload = build_board_drop_alert_payload(
+                window_label=scan_window["label"],
+                anchor_time_mst=scan_window["anchor_time_mst"],
+                result={
+                    "props_sides": result.get("props_sides"),
+                    "straight_sides": result.get("straight_sides"),
+                    "featured_games_count": result.get("featured_games_count"),
+                },
+            )
+            try:
+                delivery = await send_discord_webhook(board_alert_payload, message_type="alert")
+                board_alert = {
+                    "attempted": True,
+                    "delivery_status": delivery.get("delivery_status") if isinstance(delivery, dict) else "delivered",
+                    "status_code": delivery.get("status_code") if isinstance(delivery, dict) else None,
+                    "route_kind": delivery.get("route_kind") if isinstance(delivery, dict) else None,
+                    "webhook_source": delivery.get("webhook_source") if isinstance(delivery, dict) else None,
+                    "error": None,
+                }
+            except DiscordDeliveryError as exc:
+                board_alert = {
+                    "attempted": True,
+                    "delivery_status": "failed",
+                    "status_code": exc.status_code,
+                    "route_kind": exc.route_kind,
+                    "webhook_source": exc.webhook_source,
+                    "error": str(exc),
+                }
+            except Exception as exc:
+                board_alert = {
+                    "attempted": True,
+                    "delivery_status": "failed_unexpected",
+                    "status_code": None,
+                    "route_kind": None,
+                    "webhook_source": None,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+        else:
             board_alert = {
-                "attempted": True,
-                "delivery_status": delivery.get("delivery_status") if isinstance(delivery, dict) else "delivered",
-                "status_code": delivery.get("status_code") if isinstance(delivery, dict) else None,
-                "route_kind": delivery.get("route_kind") if isinstance(delivery, dict) else None,
-                "webhook_source": delivery.get("webhook_source") if isinstance(delivery, dict) else None,
-                "error": None,
-            }
-        except DiscordDeliveryError as exc:
-            board_alert = {
-                "attempted": True,
-                "delivery_status": "failed",
-                "status_code": exc.status_code,
-                "route_kind": exc.route_kind,
-                "webhook_source": exc.webhook_source,
-                "error": str(exc),
-            }
-        except Exception as exc:
-            board_alert = {
-                "attempted": True,
-                "delivery_status": "failed_unexpected",
+                "attempted": False,
+                "delivery_status": "skipped_due_to_errors",
                 "status_code": None,
                 "route_kind": None,
                 "webhook_source": None,
-                "error": f"{type(exc).__name__}: {exc}",
+                "error": None,
             }
         _log_event(
-            "scheduler.scan.board_alert",
+            "scheduler.board_drop.alert",
             run_id=run_id,
             scan_window=scan_window,
             delivery_status=board_alert.get("delivery_status"),
@@ -1528,10 +1422,34 @@ async def _run_scheduled_scan_job():
             error=board_alert.get("error"),
         )
 
+    total_sides = int(result.get("straight_sides") or 0) + int(result.get("props_sides") or 0)
+    total_events = int(result.get("game_lines_events_fetched") or 0) + int(result.get("props_events_fetched") or 0)
+    total_with_both = int(result.get("game_lines_events_with_both_books") or 0) + int(
+        result.get("props_events_with_both_books") or 0
+    )
+    remaining_candidates: list[int] = []
+    remaining_fallback: str | None = None
+    for raw in (
+        result.get("game_lines_api_requests_remaining"),
+        result.get("props_api_requests_remaining"),
+    ):
+        if raw is None:
+            continue
+        if remaining_fallback is None:
+            remaining_fallback = str(raw)
+        try:
+            remaining_candidates.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    min_remaining = str(min(remaining_candidates)) if remaining_candidates else remaining_fallback
+    duration_ms = round((time.monotonic() - started_at) * 1000, 2)
+
     _log_event(
-        "scheduler.scan.completed",
+        "scheduler.board_drop.completed",
         run_id=run_id,
         finished_at=finished + "Z",
+        straight_sides=result.get("straight_sides"),
+        props_sides=result.get("props_sides"),
         total_sides=total_sides,
         alerts_scheduled=alerts_scheduled,
         alert_skip_totals=alert_skip_totals,
@@ -1539,16 +1457,15 @@ async def _run_scheduled_scan_job():
         scan_window=scan_window,
         scan_alert_mode=scan_alert_mode,
         board_alert=board_alert,
-        duration_ms=round((time.monotonic() - started_at) * 1000, 2),
+        duration_ms=duration_ms,
     )
-    duration_ms = round((time.monotonic() - started_at) * 1000, 2)
     if hard_errors:
         _record_scheduler_heartbeat(
             "scheduled_scan",
             run_id,
             "failure",
             duration_ms=duration_ms,
-            error=f"{hard_errors} sport(s) failed",
+            error="scheduled board drop failed",
         )
     else:
         _record_scheduler_heartbeat(
@@ -1567,6 +1484,9 @@ async def _run_scheduled_scan_job():
             "duration_ms": duration_ms,
             "board_drop": True,
             "total_sides": total_sides,
+            "straight_sides": int(result.get("straight_sides") or 0),
+            "props_sides": int(result.get("props_sides") or 0),
+            "featured_games_count": int(result.get("featured_games_count") or 0),
             "alerts_scheduled": alerts_scheduled,
             "alert_skip_totals": alert_skip_totals,
             "scan_window": scan_window,
@@ -1576,20 +1496,22 @@ async def _run_scheduled_scan_job():
             "board_alert_delivery_status": board_alert.get("delivery_status"),
             "board_alert_http_status": board_alert.get("status_code"),
             "board_alert_error": board_alert.get("error"),
+            "game_line_sports_scanned": result.get("game_line_sports_scanned") or [],
+            "props_events_scanned": int(result.get("props_events_scanned") or 0),
             "hard_errors": hard_errors,
             "captured_at": finished + "Z",
             "autolog_summary": autolog_summary,
         },
     )
     _persist_ops_job_run(
-        job_kind="scheduled_scan",
+        job_kind="scheduled_board_drop",
         source="scheduler",
         status="completed" if hard_errors == 0 else "completed_with_errors",
         run_id=run_id,
         scan_session_id=run_id,
-        surface="straight_bets",
+        surface="board_drop",
         scan_scope="all",
-        requested_sport="all",
+        requested_sport="board",
         captured_at=finished + "Z",
         started_at=started + "Z",
         finished_at=finished + "Z",
@@ -1610,11 +1532,16 @@ async def _run_scheduled_scan_job():
             "board_alert_delivery_status": board_alert.get("delivery_status"),
             "board_alert_http_status": board_alert.get("status_code"),
             "board_alert_error": board_alert.get("error"),
+            "result_summary": {
+                "straight_sides": int(result.get("straight_sides") or 0),
+                "props_sides": int(result.get("props_sides") or 0),
+                "featured_games_count": int(result.get("featured_games_count") or 0),
+                "game_line_sports_scanned": result.get("game_line_sports_scanned") or [],
+                "props_events_scanned": int(result.get("props_events_scanned") or 0),
+            },
         },
     )
 
-    # Optional heartbeat so we can confirm the scheduled scan ran even when it finds no lines.
-    # Send only when enabled and when no alerts were scheduled.
     if (
         scan_alert_mode == DISCORD_SCAN_ALERT_MODE_EDGE_LIVE
         and os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1"
@@ -1623,8 +1550,8 @@ async def _run_scheduled_scan_job():
         payload = {
             "embeds": [
                 {
-                    "title": "Scheduled scan complete (no alerts)",
-                    "description": "The scheduled scan ran successfully but found no qualifying lines to alert on.",
+                    "title": "Scheduled board drop complete (no alerts)",
+                    "description": "The scheduled board drop ran successfully but found no qualifying lines to alert on.",
                     "fields": [
                         {"name": "Started (UTC)", "value": started + "Z", "inline": True},
                         {"name": "Finished (UTC)", "value": finished + "Z", "inline": True},
@@ -1637,9 +1564,14 @@ async def _run_scheduled_scan_job():
         asyncio.create_task(send_discord_webhook(payload, message_type="heartbeat"))
 
 
+async def _run_scheduled_scan_job():
+    """Legacy compatibility alias for scheduled scan invocations."""
+    await _run_scheduled_board_drop_job()
+
+
 async def _run_early_look_scan_job():
     """Legacy compatibility alias for early-look scan invocations."""
-    await _run_scheduled_scan_job()
+    await _run_scheduled_board_drop_job()
 
 
 async def _piggyback_clv(sides: list[dict]):
@@ -1697,11 +1629,11 @@ async def start_scheduler():
 
         for hour, minute in scheduled_scan_times:
             scheduler.add_job(
-                _run_scheduled_scan_job,
+                _run_scheduled_board_drop_job,
                 CronTrigger(hour=hour, minute=minute, timezone=PHOENIX_TZ),
             )
     else:
-        print("[Scheduler] Phoenix timezone unavailable; skipping scheduled scan jobs.")
+        print("[Scheduler] Phoenix timezone unavailable; skipping scheduled board drop jobs.")
     scheduler.start()
     app.state.scheduler_started_at = _utc_now_iso()
     if hasattr(scheduler, "get_jobs"):

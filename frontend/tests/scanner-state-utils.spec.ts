@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+import { buildStraightBetCardTitle } from "@/app/scanner/straight-bet-labels";
 import {
   buildParlayCartLeg,
   buildScannerLogBetInitialValues,
@@ -59,6 +60,25 @@ const BASE_PROP_SIDE: MarketSide = {
   best_logged_odds_american: null,
   current_odds_american: 105,
   matched_pending_bet_id: null,
+};
+
+const BASE_SPREAD_SIDE: MarketSide = {
+  ...BASE_SIDE,
+  market_key: "spreads",
+  selection_key: "evt-1|spreads|lakers|+1.5",
+  selection_side: "away",
+  line_value: 1.5,
+};
+
+const BASE_TOTAL_SIDE: MarketSide = {
+  ...BASE_SIDE,
+  sport: "baseball_mlb",
+  market_key: "totals",
+  selection_key: "evt-9|totals|over|8",
+  selection_side: "over",
+  line_value: 8,
+  team: "Over",
+  event: "Yankees @ Red Sox",
 };
 
 test.describe("scanner state utils", () => {
@@ -149,6 +169,62 @@ test.describe("scanner state utils", () => {
     expect(out.referenceSource).toBe("pinnacle");
     expect(out.team).toBe("Lakers");
     expect(out.marketDisplay).toBe("Moneyline");
+  });
+
+  test("buildStraightBetCardTitle formats spreads and totals with user-facing labels", async () => {
+    expect(buildStraightBetCardTitle(BASE_SPREAD_SIDE)).toBe("Lakers +1.5");
+    expect(buildStraightBetCardTitle(BASE_TOTAL_SIDE)).toBe("Over 8 runs");
+    expect(
+      buildStraightBetCardTitle({
+        ...BASE_TOTAL_SIDE,
+        sport: "basketball_nba",
+        line_value: 210,
+      })
+    ).toBe("Over 210 points");
+  });
+
+  test("buildScannerLogBetInitialValues preserves spread and total labels", async () => {
+    const spreadOut = buildScannerLogBetInitialValues({
+      side: BASE_SPREAD_SIDE,
+      activeLens: "standard",
+      boostPercent: 30,
+      sportDisplayMap: { basketball_nba: "NBA" },
+      kellyMultiplier: 1,
+      bankroll: 1000,
+    });
+    const totalOut = buildScannerLogBetInitialValues({
+      side: BASE_TOTAL_SIDE,
+      activeLens: "standard",
+      boostPercent: 30,
+      sportDisplayMap: { baseball_mlb: "MLB" },
+      kellyMultiplier: 1,
+      bankroll: 1000,
+    });
+
+    expect(spreadOut.event).toBe("Lakers +1.5");
+    expect(spreadOut.market).toBe("Spread");
+    expect(spreadOut.selection_side).toBe("away");
+    expect(spreadOut.line_value).toBe(1.5);
+
+    expect(totalOut.event).toBe("Over 8 runs");
+    expect(totalOut.market).toBe("Total");
+    expect(totalOut.selection_side).toBe("over");
+    expect(totalOut.line_value).toBe(8);
+  });
+
+  test("buildParlayCartLeg uses descriptive spread and total labels", async () => {
+    const spreadOut = buildParlayCartLeg(BASE_SPREAD_SIDE);
+    const totalOut = buildParlayCartLeg(BASE_TOTAL_SIDE);
+
+    expect(spreadOut.display).toBe("Lakers +1.5");
+    expect(spreadOut.marketDisplay).toBe("Spread");
+    expect(spreadOut.selectionSide).toBe("away");
+    expect(spreadOut.lineValue).toBe(1.5);
+
+    expect(totalOut.display).toBe("Over 8 runs");
+    expect(totalOut.marketDisplay).toBe("Total");
+    expect(totalOut.selectionSide).toBe("over");
+    expect(totalOut.lineValue).toBe(8);
   });
 
   test("buildParlayCartLeg uses de-vigged true probability for straight-bet fair odds", async () => {

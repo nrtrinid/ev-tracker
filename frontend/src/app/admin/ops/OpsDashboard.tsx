@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, HelpCircle, RefreshCcw, XCircle } from "lucide-react";
+import { toast } from "sonner";
 
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { adminRefreshMarkets, adminTriggerAutoSettle } from "@/lib/api";
 import { useAnalyticsSummary, useAnalyticsUserDrilldown, useOperatorStatus } from "@/lib/hooks";
 import type {
   OddsApiActivityCall,
@@ -555,6 +557,8 @@ export function OpsDashboard() {
   const query = useOperatorStatus();
   const analyticsQuery = useAnalyticsSummary(7);
   const analyticsUserQuery = useAnalyticsUserDrilldown(7, 25, 12);
+  const [isRefreshingBoard, setIsRefreshingBoard] = useState(false);
+  const [isTriggeringAutoSettle, setIsTriggeringAutoSettle] = useState(false);
   const [showAllOddsScans, setShowAllOddsScans] = useState(false);
   const [showAllOddsCalls, setShowAllOddsCalls] = useState(false);
   const queryErrorMessage = query.error instanceof Error ? query.error.message : null;
@@ -595,6 +599,51 @@ export function OpsDashboard() {
   const analytics = analyticsQuery.data;
   const analyticsUsers = analyticsUserQuery.data;
 
+  async function refreshAllPanels() {
+    await Promise.all([
+      query.refetch(),
+      analyticsQuery.refetch(),
+      analyticsUserQuery.refetch(),
+    ]);
+  }
+
+  async function handleRefreshBoard() {
+    try {
+      setIsRefreshingBoard(true);
+      const result = await adminRefreshMarkets();
+      toast.success("Daily drop refresh started", {
+        description: result.board_drop
+          ? `Completed board refresh for ${result.total_sides ?? 0} surfaced picks.`
+          : `Completed refresh run ${result.run_id}.`,
+      });
+      await refreshAllPanels();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not refresh daily drop.";
+      toast.error("Daily drop refresh failed", { description: message });
+    } finally {
+      setIsRefreshingBoard(false);
+    }
+  }
+
+  async function handleTriggerAutoSettle() {
+    try {
+      setIsTriggeringAutoSettle(true);
+      const result = await adminTriggerAutoSettle();
+      toast.success("Auto-settle run started", {
+        description:
+          result.settled > 0
+            ? `Settled ${result.settled} bet${result.settled === 1 ? "" : "s"}.`
+            : `Run ${result.run_id} completed with no bets needing grading.`,
+      });
+      await refreshAllPanels();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not run auto-settle.";
+      toast.error("Auto-settle failed", { description: message });
+    } finally {
+      setIsTriggeringAutoSettle(false);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-background">
       <div className="container mx-auto max-w-4xl px-4 py-6 space-y-4 pb-20">
@@ -616,10 +665,28 @@ export function OpsDashboard() {
               type="button"
               variant="outline"
               size="sm"
+              onClick={handleRefreshBoard}
+              disabled={isAnyFetching || isRefreshingBoard || isTriggeringAutoSettle}
+            >
+              <RefreshCcw className={`h-4 w-4 mr-1.5 ${isRefreshingBoard ? "animate-spin" : ""}`} />
+              Refresh Daily Drop
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleTriggerAutoSettle}
+              disabled={isAnyFetching || isTriggeringAutoSettle || isRefreshingBoard}
+            >
+              <RefreshCcw className={`h-4 w-4 mr-1.5 ${isTriggeringAutoSettle ? "animate-spin" : ""}`} />
+              Run Auto-Settle
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
               onClick={() => {
-                query.refetch();
-                analyticsQuery.refetch();
-                analyticsUserQuery.refetch();
+                void refreshAllPanels();
               }}
               disabled={isAnyFetching}
             >
