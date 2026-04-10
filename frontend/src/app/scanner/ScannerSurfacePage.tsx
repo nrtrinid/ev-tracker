@@ -582,16 +582,8 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
 
   const handleStartPlaceFlow = (side: MarketSide) => {
     const betData = buildReviewCandidate(side);
-    setScannerReviewCandidate({
-      surface,
-      bet: betData,
-      createdAt: new Date().toISOString(),
-    });
-    if (!tutorialScannerActive) {
-      toast("Step 2 of 3 saved", {
-        description: `Place it at ${side.sportsbook}, then come back here to review and log it.`,
-      });
-    }
+    clearScannerReviewCandidate();
+    openLogDrawer(betData);
   };
 
   const handleReviewSavedCandidate = () => {

@@ -730,7 +730,6 @@ export default function MarketsPage() {
     onboardingCompleted,
     onboardingDismissed,
     scannerReviewCandidate,
-    setScannerReviewCandidate,
     clearScannerReviewCandidate,
     tutorialSession,
     saveTutorialPracticeBet,
@@ -1637,18 +1636,8 @@ export default function MarketsPage() {
 
   const handleStartPlaceFlow = (side: MarketSide) => {
     void (async () => {
-      let actionSide = side;
-      if (side.surface === "player_props") {
-        try {
-          actionSide = await enrichPlayerPropSideForActions(side);
-        } catch {
-          toast.error("Could not load prop detail for the place flow.");
-          return;
-        }
-      }
-
       const betData = buildScannerLogBetInitialValues({
-        side: actionSide,
+        side,
         activeLens,
         boostPercent,
         sportDisplayMap: SPORT_KEY_TO_DISPLAY,
@@ -1656,17 +1645,24 @@ export default function MarketsPage() {
         bankroll,
       });
 
-      setScannerReviewCandidate({
-        surface: actionSide.surface,
-        bet: betData,
-        createdAt: new Date().toISOString(),
+      clearScannerReviewCandidate();
+
+      void sendAnalyticsEvent({
+        eventName: "log_bet_opened",
+        route: "/",
+        appArea: "scanner",
+        properties: {
+          surface: side.surface,
+          drawer_mode: tutorialBoardActive ? "tutorial_practice" : "standard",
+          tutorial_mode: tutorialBoardActive,
+          source: "place_flow",
+        },
       });
 
-      if (!tutorialBoardActive) {
-        toast("Step 2 of 3 saved", {
-          description: `Place it at ${actionSide.sportsbook}, then come back to Markets and tap Review Saved Pick.`,
-        });
-      }
+      setDrawerInitialValues(betData);
+      setDrawerPracticeMode(tutorialBoardActive);
+      setDrawerKey(Date.now());
+      setDrawerOpen(true);
     })();
   };
 
