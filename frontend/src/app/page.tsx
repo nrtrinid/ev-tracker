@@ -30,6 +30,7 @@ import { useKellySettings } from "@/lib/kelly-context";
 import { useOnboardingHighlight } from "@/lib/onboarding-highlight";
 import { ONBOARDING_HIGHLIGHT_TARGETS } from "@/lib/onboarding-guidance";
 import { createClient } from "@/lib/supabase";
+import { expandTeamAliasSearchQuery, matchesTeamAliasSearch } from "@/lib/team-search-aliases";
 import { JourneyCoach } from "@/components/JourneyCoach";
 import { LogBetDrawer } from "@/components/LogBetDrawer";
 import { ONBOARDING_STEPS } from "@/lib/onboarding";
@@ -58,7 +59,7 @@ import type {
 type MarketsViewMode = "opportunities" | "browse" | "pickem";
 type BoardTimeFilter = "today" | "upcoming" | "all_games" | "today_closed";
 type PrimaryMode = "player_props" | "straight_bets" | "promos";
-type PromosSubmode = "all" | "boosts" | "bonus_bets" | "qualifiers";
+type PromosSubmode = "boosts" | "bonus_bets" | "qualifiers";
 type StraightBetMarketFilter = "all" | "h2h" | "spreads" | "totals";
 
 // Pick'em is filtered out when surface === "straight_bets" in the render
@@ -78,16 +79,6 @@ const PROMOS_SUBMODES: Array<{
   activeText: string;
   iconText: string;
 }> = [
-  {
-    id: "all",
-    label: "All",
-    description: "All promo-ready lines",
-    icon: TrendingUp,
-    activeBg: "bg-profit/8",
-    activeBorder: "border-profit/25",
-    activeText: "text-profit",
-    iconText: "text-profit",
-  },
   {
     id: "boosts",
     label: "Boosts",
@@ -757,7 +748,7 @@ export default function MarketsPage() {
   // ── UI state ─────────────────────────────────────────────────────────────
   const [primaryMode, setPrimaryMode] = useState<PrimaryMode>("player_props");
   const [viewMode, setViewMode] = useState<MarketsViewMode>("opportunities");
-  const [promosSubmode, setPromosSubmode] = useState<PromosSubmode>("all");
+  const [promosSubmode, setPromosSubmode] = useState<PromosSubmode>("boosts");
 
   // Per-surface book selections — persisted in localStorage (see hydrate / persist effects below)
   const [selectedPropBooks, setSelectedPropBooks] = useState<string[]>(DEFAULT_PLAYER_PROP_BOOKS);
@@ -890,11 +881,12 @@ export default function MarketsPage() {
   }, [boostPercent, boostHydrated]);
 
   useEffect(() => {
+    const normalizedPlayerPropsSearch = expandTeamAliasSearchQuery(deferredPlayerPropsSearchQuery.trim());
     const nextFilters = {
       books: [...selectedPropBooks].sort(),
       timeFilter,
       market: propMarketFilter,
-      search: deferredPlayerPropsSearchQuery.trim(),
+      search: normalizedPlayerPropsSearch,
     };
     const handle = window.setTimeout(() => {
       setPlayerPropsQueryFilters((current) => {
@@ -1207,10 +1199,9 @@ export default function MarketsPage() {
 
   const activeLens = useMemo(() => {
     if (primaryMode !== "promos") return "standard";
-    if (promosSubmode === "boosts") return "profit_boost";
     if (promosSubmode === "bonus_bets") return "bonus_bet";
     if (promosSubmode === "qualifiers") return "qualifier";
-    return "standard";
+    return "profit_boost";
   }, [primaryMode, promosSubmode]);
 
   const rankedSides = useMemo(() => {
@@ -1283,9 +1274,9 @@ export default function MarketsPage() {
         ? timeFiltered.filter((s) => String(s.market_key ?? "").toLowerCase() === straightBetMarketFilter)
         : timeFiltered;
     if (!searchQuery.trim()) return marketFiltered;
-    const q = searchQuery.toLowerCase();
+    const q = searchQuery.trim();
     return marketFiltered.filter((s) => {
-      const haystack = [
+      return matchesTeamAliasSearch(q, [
         s.event,
         s.event_short ?? "",
         s.sport,
@@ -1296,10 +1287,7 @@ export default function MarketsPage() {
         "team_short" in s ? (s as { team_short?: string }).team_short : "",
         "opponent" in s ? (s as { opponent?: string }).opponent : "",
         "opponent_short" in s ? (s as { opponent_short?: string }).opponent_short : "",
-      ]
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(q);
+      ]);
     });
   }, [activePlayerPropsListPage?.items, rankedSides, searchQuery, straightBetMarketFilter, timeFilter, primaryMode]);
   const todayOpenCount = useMemo(
@@ -1841,7 +1829,7 @@ export default function MarketsPage() {
             ))}
         {primaryMode === "promos" && (
           <div className="w-full space-y-2 animate-fade-in">
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               {PROMOS_SUBMODES.map((mode, index) => {
                 const Icon = mode.icon;
                 const isActive = promosSubmode === mode.id;

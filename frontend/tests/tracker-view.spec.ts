@@ -85,12 +85,18 @@ test.describe("tracker source helpers", () => {
       sportsbook: "DraftKings",
       promo_type: "bonus_bet",
     });
+    const thunderBet = makeBet({
+      event: "Los Angeles Lakers @ Oklahoma City Thunder",
+      sportsbook: "FanDuel",
+      promo_type: "standard",
+    });
 
     expect(matchesTrackerSourceFilter(coreParlay, "core")).toBe(true);
     expect(matchesTrackerSourceFilter(promoBet, "core")).toBe(false);
     expect(matchesTrackerFilters(coreParlay, { source: "core", sportsbook: "FanDuel", search: "nuggets" })).toBe(true);
     expect(matchesTrackerFilters(coreParlay, { source: "core", sportsbook: "DraftKings", search: "nuggets" })).toBe(false);
     expect(matchesTrackerFilters(promoBet, { source: "promos", sportsbook: "all", search: "kings" })).toBe(true);
+    expect(matchesTrackerFilters(thunderBet, { source: "core", sportsbook: "FanDuel", search: "okc" })).toBe(true);
   });
 });
 

@@ -11,6 +11,7 @@ import {
   calculateLensRetention,
 } from "@/app/scanner/scanner-lenses";
 import { buildScannerActionModel } from "../scanner-ui-model";
+import { buildEventNicknameLabel } from "./event-nickname-label";
 import { getStandardEdgeColorClass } from "./scanner-card-colors";
 
 interface PlayerPropCardProps {
@@ -187,7 +188,7 @@ export function PlayerPropCard({
 
         {/* Row 2: matchup + game time */}
         <p className="mt-0.5 text-xs text-muted-foreground">
-          {side.event} • {formatGameTime(side.commence_time)}
+          {buildEventNicknameLabel(side.event)} • {formatGameTime(side.commence_time)}
         </p>
 
         {/* Row 3: book odds, fair odds, trust signal */}

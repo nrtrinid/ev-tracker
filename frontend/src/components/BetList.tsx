@@ -35,6 +35,7 @@ import {
   parseTrackerSourceFilter,
   parseTrackerTab,
 } from "@/lib/tracker-view";
+import { parseParlayLegsFromBet } from "@/lib/parlay-bet-meta";
 import { formatCurrency, formatOdds, cn, formatRelativeTime, formatShortDate, formatFullDateTime, americanToDecimal, decimalToAmerican, calculateImpliedProb } from "@/lib/utils";
 import {
   SPORTSBOOK_BADGE_COLORS,
@@ -149,6 +150,21 @@ function formatGameStartCompact(isoString: string): string {
   });
 }
 
+function formatParlayLegSportLabel(sport: string): string {
+  const normalized = sport.trim();
+  if (!normalized) {
+    return "";
+  }
+
+  const key = normalized.toLowerCase();
+  const sportLabel = key.split("_").pop();
+  if (sportLabel && sportLabel !== key) {
+    return sportLabel.toUpperCase();
+  }
+
+  return normalized;
+}
+
 // ============ SHARED BET CARD BASE ============
 // Compact layout with context-aware data row
 interface BetCardBaseProps {
@@ -163,6 +179,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
   const borderColor = SPORTSBOOK_BADGE_COLORS[bet.sportsbook] || "bg-gray-400";
   const textColor = SPORTSBOOK_TEXT_COLORS[bet.sportsbook] || "text-gray-600";
   const promoConfig = PROMO_TYPE_CONFIG[bet.promo_type] || PROMO_TYPE_CONFIG.standard;
+  const parlayLegs = parseParlayLegsFromBet(bet);
   
   // Short promo label (BB, 30%, etc.)
   const promoLabel = bet.promo_type === "boost_custom" && bet.boost_percent 
@@ -360,10 +377,93 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
               </div>
             )}
 
-            {/* ── Row 2: Metadata footer ── */}
+            {/* ── Row 2: Parlay leg-level CLV (when available) ── */}
+            {parlayLegs && (
+              <div
+                className={cn(
+                  "space-y-1.5",
+                  bet.pinnacle_odds_at_entry != null ? "pt-3 border-t border-border" : ""
+                )}
+              >
+                <p className="text-muted-foreground text-[11px] font-medium">Parlay Legs ({parlayLegs.length})</p>
+                <div className="space-y-1.5">
+                  {parlayLegs.map((leg, index) => {
+                    const legCloseOdds =
+                      typeof leg.pinnacle_odds_at_close === "number" ? leg.pinnacle_odds_at_close : null;
+                    const legLatestOdds =
+                      typeof leg.latest_reference_odds === "number" ? leg.latest_reference_odds : null;
+                    const legClvPercent =
+                      typeof leg.clv_ev_percent === "number" ? leg.clv_ev_percent : null;
+                    const hasLegClose = legCloseOdds !== null;
+                    const hasLegLatest = legLatestOdds !== null;
+                    const hasLegClv = legClvPercent !== null;
+                    return (
+                      <div
+                        key={leg.id || `leg-${index}`}
+                        className="rounded-md border border-border/70 bg-muted/20 px-3 py-1.5 space-y-1"
+                      >
+                        <p className="text-xs font-medium text-foreground">{leg.display}</p>
+                        <p className="text-[10px] leading-snug text-muted-foreground">{formatParlayLegSportLabel(leg.sport)} {leg.event ? `• ${leg.event}` : ""}</p>
+                        <div className="grid grid-cols-3 gap-x-3 gap-y-1 pt-0.5">
+                          <div>
+                            <p className="text-muted-foreground text-[11px] mb-0">Your Odds</p>
+                            <p className="font-mono text-xs font-semibold">{formatOdds(leg.oddsAmerican)}</p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground text-[11px] mb-0">Closing Odds</p>
+                            {hasLegClose ? (
+                              <p className="font-mono text-xs font-semibold">{formatOdds(legCloseOdds)}</p>
+                            ) : hasLegLatest ? (
+                              <p className="font-mono text-xs text-muted-foreground">
+                                {formatOdds(legLatestOdds)} latest
+                              </p>
+                            ) : (
+                              <p className="text-[11px] text-muted-foreground italic">Pending…</p>
+                            )}
+                          </div>
+                          <div className="flex flex-col items-start">
+                            <p className="text-muted-foreground text-[11px] mb-0">CLV</p>
+                            {hasLegClv ? (
+                              <span
+                                className={cn(
+                                  "inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold leading-none font-mono self-start",
+                                  leg.beat_close
+                                    ? "bg-[#4A7C59]/15 text-[#4A7C59]"
+                                    : "bg-[#B85C38]/15 text-[#B85C38]"
+                                )}
+                              >
+                                CLV&nbsp;
+                                {legClvPercent >= 0 ? "+" : ""}
+                                {legClvPercent.toFixed(2)}%
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium leading-none bg-muted text-muted-foreground">
+                                CLV ⏳
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        {leg.reference_updated_at && (
+                          <p className="text-[10px] text-muted-foreground/50">
+                            Close snapshot {formatRelativeTime(leg.reference_updated_at)}
+                          </p>
+                        )}
+                        {!leg.reference_updated_at && leg.latest_reference_updated_at && (
+                          <p className="text-[10px] text-muted-foreground/50">
+                            Latest reference {formatRelativeTime(leg.latest_reference_updated_at)}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ── Row 3: Metadata footer ── */}
             <div className={cn(
               "grid grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-2 pt-3",
-              bet.pinnacle_odds_at_entry != null ? "border-t border-border" : ""
+              bet.pinnacle_odds_at_entry != null || parlayLegs ? "border-t border-border" : ""
             )}>
               <div>
                 <p className="text-muted-foreground/60 text-xs mb-0.5">Req. Win %</p>

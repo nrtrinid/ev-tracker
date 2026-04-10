@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import type { PrizePicksComparisonCard as PrizePicksComparisonCardType } from "@/lib/types";
 import { formatOdds } from "@/lib/utils";
+import { buildEventNicknameLabel } from "./event-nickname-label";
 
 interface PrizePicksComparisonCardProps {
   card: PrizePicksComparisonCardType;
@@ -81,7 +82,7 @@ export function PrizePicksComparisonCard({
               </span>
             </div>
 
-            <p className="line-clamp-1 text-xs text-muted-foreground">{card.event}</p>
+            <p className="line-clamp-1 text-xs text-muted-foreground">{buildEventNicknameLabel(card.event)}</p>
             <p className="text-[11px] text-muted-foreground">
               Sportsbook consensus leans {lean} at {percentLabel(leanProbability)} on this exact line.
             </p>

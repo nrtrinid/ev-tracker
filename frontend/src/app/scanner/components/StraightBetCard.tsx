@@ -7,6 +7,7 @@ import { ONBOARDING_HIGHLIGHT_TARGETS } from "@/lib/onboarding-guidance";
 import type { MarketSide } from "@/lib/types";
 import { calculateStealthStake, cn, formatCurrency, formatOdds } from "@/lib/utils";
 import { buildScannerActionModel, canAddScannerLensToParlayCart } from "../scanner-ui-model";
+import { buildEventNicknameLabel } from "./event-nickname-label";
 import { getStandardEdgeColorClass } from "./scanner-card-colors";
 
 interface StraightBetCardProps {
@@ -259,7 +260,7 @@ export function StraightBetCard({
 
         {/* Row 2: matchup + game time */}
         <p className="mt-0.5 text-xs text-muted-foreground">
-          {side.event} • {formatGameTime(side.commence_time)}
+          {buildEventNicknameLabel(side.event)} • {formatGameTime(side.commence_time)}
         </p>
 
         {/* Row 3: book odds + fair odds + duplicate context */}

@@ -1,5 +1,6 @@
 import type { Bet } from "@/lib/types";
 
+import { matchesTeamAliasSearch } from "@/lib/team-search-aliases";
 import { matchesTrackerSourceFilter, type TrackerSourceFilter } from "@/lib/tracker-source";
 
 export type TrackerTab = "pending" | "history";
@@ -58,7 +59,7 @@ export function buildTrackerViewQuery(state: TrackerViewState): string {
 }
 
 export function matchesTrackerSearch(bet: Bet, rawSearch: string): boolean {
-  const search = normalizeTrackerSearch(rawSearch).toLocaleLowerCase();
+  const search = normalizeTrackerSearch(rawSearch);
 
   if (!search) {
     return true;
@@ -69,9 +70,11 @@ export function matchesTrackerSearch(bet: Bet, rawSearch: string): boolean {
     bet.market,
     bet.sport,
     bet.sportsbook,
+    bet.clv_team,
+    bet.participant_name,
   ];
 
-  return haystacks.some((value) => value.toLocaleLowerCase().includes(search));
+  return matchesTeamAliasSearch(search, haystacks);
 }
 
 export function matchesTrackerFilters(bet: Bet, filters: Pick<TrackerViewState, "source" | "sportsbook" | "search">): boolean {
