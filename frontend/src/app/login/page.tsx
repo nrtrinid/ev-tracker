@@ -126,9 +126,6 @@ function LoginPageContent() {
               ? "Ask your inviter for the beta code. You only need to redeem it once per account."
               : "If your account has not been approved yet, you will be asked for the beta code after sign-in."}
           </p>
-          <p className="text-xs text-muted-foreground mt-1">
-            Simple shared phrases work well here. Spaces and dashes do not matter.
-          </p>
           {discordInviteUrl && (
             <a
               href={discordInviteUrl}
@@ -194,13 +191,10 @@ function LoginPageContent() {
                   type="text"
                   value={inviteCode}
                   onChange={(e) => setInviteCode(e.target.value)}
-                  placeholder="daily drop"
+                  placeholder="Enter invite code"
                   required
                   autoComplete="one-time-code"
                 />
-                <p className="mt-1 text-xs text-muted-foreground">
-                  You can type a short phrase like <span className="font-medium text-foreground">daily drop</span>. Spaces and punctuation are ignored.
-                </p>
               </div>
             )}
 

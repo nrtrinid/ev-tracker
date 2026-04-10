@@ -71,13 +71,10 @@ export default function BetaAccessPage() {
               type="text"
               value={inviteCode}
               onChange={(e) => setInviteCode(e.target.value)}
-              placeholder="daily drop"
+              placeholder="Enter invite code"
               required
               autoComplete="one-time-code"
             />
-            <p className="mt-1 text-xs text-muted-foreground">
-              Short shared phrases work well here. <span className="font-medium text-foreground">daily drop</span>, <span className="font-medium text-foreground">daily-drop</span>, and <span className="font-medium text-foreground">dailydrop</span> all match the same code.
-            </p>
           </div>
           {error ? (
             <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">
