@@ -12,7 +12,7 @@ interface ScannerResultsPaneProps {
   playerPropsView?: "sportsbooks" | "pickem";
   activeLens: "standard" | "profit_boost" | "bonus_bet" | "qualifier";
   tutorialMode?: boolean;
-  results: Array<MarketSide & { _retention?: number; _boostedEV?: number; _qualifierHold?: number }>;
+  results: Array<MarketSide & { _retention?: number; _boostedEV?: number }>;
   pickemCards?: PickEmBoardCard[];
   sourceCount: number;
   rawSourceCount: number;
@@ -28,7 +28,7 @@ interface ScannerResultsPaneProps {
   canLoadMore: boolean;
   isLoadingMore?: boolean;
   onLoadMore: () => void;
-  onAddPickEmToSlip: (card: PickEmBoardCard) => void;
+  onAddPickEmToSlip: (pick: PickEmBoardCard) => void;
   onLogBet: (side: MarketSide) => void;
   onAddToCart: (side: MarketSide) => void;
   onStartPlaceFlow: (side: MarketSide) => void;
@@ -82,34 +82,34 @@ export function ScannerResultsPane({
           Pick&apos;em support uses all scanned books for exact-line consensus. My Books only affects the sportsbook card view.
         </p>
       )}
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
         {isPropsSurface
           ? isPickEmView
-            ? `${pickemCards.length} of ${filteredCount} pick'em lines`
-            : `${results.length} of ${filteredCount} ${activeLens === "standard" ? "opportunities" : "props"}`
+            ? `Showing ${pickemCards.length} of ${sourceCount} available pick'em board lines`
+            : `Showing ${results.length} of ${sourceCount} available props`
           : tutorialMode
-            ? `${results.length} of ${filteredCount} tutorial lines`
-            : `${results.length} of ${filteredCount} ${
+            ? `Showing ${results.length} of ${filteredCount} Tutorial Lines`
+            : `Showing ${results.length} of ${filteredCount} ${
               activeLens === "standard"
-                ? "+EV lines"
+                ? "+EV Lines"
                 : activeLens === "bonus_bet"
-                  ? "bonus bet targets"
+                  ? "Bonus Bet Targets"
                   : activeLens === "profit_boost"
-                    ? "boost opportunities"
-                    : "qualifier candidates"
+                    ? "Boost Opportunities"
+                    : "Qualifier Candidates"
             }`}
-      </p>
+      </h2>
 
       {(isPickEmView ? pickemCards.length === 0 : results.length === 0) ? (
-        <Card className="border-dashed border-border/60 bg-muted/10 animate-slide-up" style={{ animationDelay: "120ms", animationFillMode: "both" }}>
-          <CardContent className="py-10 text-center">
-            <p className="text-sm font-medium text-foreground animate-fade-in" style={{ animationDelay: "180ms", animationFillMode: "both" }}>
+        <Card className="border-dashed">
+          <CardContent className="py-8 text-center">
+            <p className="text-sm text-muted-foreground">
               {scanExpiredOutOfPregame
                 ? isPickEmView
-                  ? `${rawSourceCount} pick'em lines scanned — none still pregame.`
+                  ? `${rawSourceCount} pick'em board lines were scanned, but none are still pregame.`
                   : isPropsSurface
-                    ? `${rawSourceCount} props scanned — none still pregame.`
-                    : `${rawSourceCount} plays scanned — none still pregame.`
+                    ? `${rawSourceCount} props were scanned, but none are still pregame.`
+                    : `${rawSourceCount} plays were scanned, but none are still pregame.`
                 : isPickEmView && nullState === "backend_empty"
                 ? pickemEmptyMessage ||
                   "No supported pick'em board lines are available for this scan yet."
@@ -124,12 +124,12 @@ export function ScannerResultsPane({
                         ? "No clean qualifier candidates are in range right now."
                         : "No strong boost opportunities are standing out at this percentage."
                 : isPickEmView
-                  ? `${sourceCount} pick'em lines available — filters hiding all of them.`
+                  ? `${sourceCount} pick'em board lines were available, but your current filters hid all of them.`
                   : isPropsSurface
-                  ? `${sourceCount} props scanned — filters hiding all of them.`
-                  : "Filters are hiding all available plays."}
+                  ? `${sourceCount} props were scanned, but your current filters hid all of them.`
+                  : "Your current filters are hiding all of the available plays."}
             </p>
-            <p className="mt-2 text-xs text-muted-foreground animate-fade-in" style={{ animationDelay: "230ms", animationFillMode: "both" }}>
+            <p className="mt-2 text-xs text-muted-foreground">
               {scanExpiredOutOfPregame
                 ? "Started games are hidden by default. Refresh to load the current slate."
                 : isPickEmView && nullState === "backend_empty"
@@ -140,7 +140,7 @@ export function ScannerResultsPane({
                 : "Try Reset, loosen Safer Odds, or turn off Hide Logged to see more options."}
             </p>
             {nullState === "filter_empty" && (
-              <p className="mt-2 text-xs text-muted-foreground animate-fade-in" style={{ animationDelay: "280ms", animationFillMode: "both" }}>{activeResultFilterSummary}</p>
+              <p className="mt-2 text-xs text-muted-foreground">{activeResultFilterSummary}</p>
             )}
           </CardContent>
         </Card>
@@ -158,7 +158,7 @@ export function ScannerResultsPane({
           />
         ) : isPropsSurface ? (
           <PlayerPropList
-            results={results as Array<Extract<MarketSide, { surface: "player_props" }> & { _retention?: number; _boostedEV?: number; _qualifierHold?: number }>}
+            results={results as Array<Extract<MarketSide, { surface: "player_props" }> & { _retention?: number; _boostedEV?: number }>}
             activeLens={activeLens}
             boostPercent={boostPercent}
             kellyMultiplier={kellyMultiplier}

@@ -56,9 +56,9 @@
     --color-neutral-subtle: 35 20% 92%;
 
     /* ── EV tier colors (scanner result cards) ── */
-    --color-ev-low:        30 16% 37%;   /* muted-foreground — below 1.5% */
-    --color-ev-mid:        134 26% 39%;  /* profit green — 1.5–3.5% */
-    --color-ev-high:       210 40% 40%;  /* steel blue — 3.5–5.5% (#3B6C8E) */
+    --color-ev-low:        30 16% 37%;   /* muted-foreground — below 2.0% */
+    --color-ev-mid:        134 26% 39%;  /* profit green — 2.0–4.0% */
+    --color-ev-high:       210 40% 40%;  /* steel blue — 4.0–5.5% (#3B6C8E) */
     --color-ev-elite:      290 43% 40%;  /* muted purple — 5.5%+ (#9A3F86) */
 
     /* ── Bonus bet accent ── */

@@ -90,6 +90,57 @@ function getDuplicateBadge(duplicateState: MarketSide["scanner_duplicate_state"]
   return null;
 }
 
+function formatLineToken(value: number, options?: { includePlus?: boolean }): string {
+  const includePlus = options?.includePlus ?? false;
+  const normalized = Number.parseFloat(value.toFixed(2));
+  const token = `${normalized}`.replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
+  if (includePlus && normalized > 0 && !token.startsWith("+")) return `+${token}`;
+  return token;
+}
+
+function formatMarketBadge(marketKey: string): string {
+  if (marketKey === "spreads") return "SPR";
+  if (marketKey === "totals") return "TOT";
+  return "ML";
+}
+
+function buildStraightCardTitle(side: MarketSide): string {
+  const marketKey = String(side.market_key || "h2h").toLowerCase();
+  const selectionSide = String(side.selection_side || "").toLowerCase();
+
+  if (marketKey === "totals") {
+    const sideLabel = selectionSide === "under" ? "Under" : selectionSide === "over" ? "Over" : side.team || "Total";
+    if (typeof side.line_value === "number" && Number.isFinite(side.line_value)) {
+      return `${sideLabel} ${formatLineToken(side.line_value)}`;
+    }
+    return sideLabel;
+  }
+
+  if (marketKey === "spreads") {
+    const teamLabel = side.team || (selectionSide === "home" ? "Home" : selectionSide === "away" ? "Away" : "Team");
+    if (typeof side.line_value === "number" && Number.isFinite(side.line_value)) {
+      return `${teamLabel} ${formatLineToken(side.line_value, { includePlus: true })}`;
+    }
+    return teamLabel;
+  }
+
+  return side.team || side.event;
+}
+
+function formatPropMarketLabel(marketKey: string | undefined | null): string {
+  const key = (marketKey ?? "").trim();
+  const map: Record<string, string> = {
+    player_points: "PTS",
+    player_rebounds: "REB",
+    player_assists: "AST",
+    player_threes: "3PM",
+    player_points_rebounds_assists: "PRA",
+  };
+  if (map[key]) return map[key];
+  if (!key) return "PROP";
+  return key.replace(/^player_/, "").replaceAll("_", " ").toUpperCase();
+}
+
 export function StraightBetCard({
   side,
   activeLens,
@@ -113,6 +164,14 @@ export function StraightBetCard({
 
   const duplicateState = side.scanner_duplicate_state ?? "new";
   const duplicateBadge = getDuplicateBadge(duplicateState);
+  const isPlayerProp = side.surface === "player_props";
+  const straightMarketKey = String(side.market_key || "h2h").toLowerCase();
+  const cardTitle = isPlayerProp
+    ? (side.display_name || side.player_name || side.team || "Player prop")
+    : buildStraightCardTitle(side);
+  const marketLabel = isPlayerProp
+    ? formatPropMarketLabel(side.market_key)
+    : formatMarketBadge(straightMarketKey);
   const canAddToCart = canAddScannerLensToParlayCart(activeLens);
   const selectionKey = side.selection_key ?? `${side.event_id ?? side.commence_time}:${side.team}`;
   const legId = `${side.surface}:${selectionKey}:${side.sportsbook}`;
@@ -174,7 +233,7 @@ export function StraightBetCard({
                 {sportDisplayMap[side.sport] || side.sport}
               </span>
               <span className="rounded bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                ML
+                {marketLabel}
               </span>
               {duplicateBadge && (
                 <span className={duplicateBadge.className}>{duplicateBadge.label}</span>
@@ -190,7 +249,7 @@ export function StraightBetCard({
 
         {/* Row 1: team + suggested stake */}
         <div className="flex items-start justify-between gap-2">
-          <p className="line-clamp-1 text-sm font-semibold leading-snug">{side.team}</p>
+          <p className="line-clamp-1 text-sm font-semibold leading-snug">{cardTitle}</p>
           {activeLens === "standard" && (
             <p className="shrink-0 whitespace-nowrap text-[10px] text-muted-foreground">
               Suggested: <span className="font-mono text-foreground">{formatCurrency(stealthKellyStake)}</span>

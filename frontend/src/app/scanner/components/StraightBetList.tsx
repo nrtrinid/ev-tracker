@@ -41,7 +41,7 @@ export function StraightBetList({
       <div className="space-y-2">
         {results.map((side, idx) => (
           <div
-            key={`${side.sportsbook}-${side.team}-${side.event}-${idx}`}
+            key={`${side.surface}-${side.selection_key ?? `${side.sportsbook}-${side.event}-${idx}`}`}
             className="animate-slide-up"
             style={{ animationDelay: `${idx * 40}ms` }}
           >

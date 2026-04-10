@@ -150,22 +150,90 @@ function formatAnalyticsEventLabel(eventName: string): string {
   return eventName.replaceAll("_", " ");
 }
 
-function deriveScannerState(data: OperatorStatusResponse | undefined): HealthState {
-  if (!data) return "unknown";
+function deriveScannerHealth(data: OperatorStatusResponse | undefined): {
+  state: HealthState;
+  reason: string | null;
+} {
+  if (!data) return { state: "unknown", reason: null };
   const scheduler = data.ops?.last_scheduler_scan;
   const cron = data.ops?.last_ops_trigger_scan;
   const manual = data.ops?.last_manual_scan;
+  const schedulerExpected = data.runtime?.scheduler_expected !== false;
+  const scheduledScanFresh = data.scheduler_freshness?.jobs?.scheduled_scan?.fresh;
+  const schedulerFreshnessReason = data.scheduler_freshness?.reason;
+  const scheduledScanStaleAfterSeconds = Number(
+    data.scheduler_freshness?.jobs?.scheduled_scan?.stale_after_seconds || 20 * 60 * 60,
+  );
   const schedulerAge = ageMinutes(scheduler?.finished_at || scheduler?.captured_at);
   const cronAge = ageMinutes(cron?.finished_at || cron?.captured_at);
   const manualAge = ageMinutes(manual?.captured_at);
   const schedulerErrors = Number(scheduler?.hard_errors || 0);
   const cronErrors = Number(cron?.error_count || 0);
+  const recencyWarningMinutes = 12 * 60;
+  const scheduledErrorWindowMinutes = Math.ceil(scheduledScanStaleAfterSeconds / 60);
+  const hasRecentSchedulerErrors =
+    schedulerErrors > 0 && schedulerAge !== null && schedulerAge <= scheduledErrorWindowMinutes;
+  const hasRecentCronErrors = cronErrors > 0 && cronAge !== null && cronAge <= recencyWarningMinutes;
+  const hasRecentSuccessfulScheduledRun =
+    schedulerAge !== null && schedulerAge <= scheduledErrorWindowMinutes && schedulerErrors === 0;
 
-  if (schedulerAge === null && cronAge === null && manualAge === null) return "unknown";
-  if (schedulerErrors > 0 || cronErrors > 0) return "warning";
-  if ((schedulerAge !== null && schedulerAge > 180) || (cronAge !== null && cronAge > 180)) return "warning";
-  if (manualAge !== null && manualAge > 180) return "warning";
-  return "healthy";
+  if (schedulerAge === null && cronAge === null && manualAge === null) {
+    return { state: "unknown", reason: "No scan runs recorded yet." };
+  }
+
+  if (schedulerExpected) {
+    // Daily-drop schedules are sparse by design; trust backend freshness windows.
+    if (hasRecentSchedulerErrors || hasRecentCronErrors) {
+      return {
+        state: "warning",
+        reason: hasRecentSchedulerErrors
+          ? `Recent scheduled run reported ${schedulerErrors} error${schedulerErrors === 1 ? "" : "s"}.`
+          : `Recent ops-trigger run reported ${cronErrors} error${cronErrors === 1 ? "" : "s"}.`,
+      };
+    }
+    if (scheduledScanFresh === false) {
+      return {
+        state: "warning",
+        reason: `Scheduled scan freshness check is stale (>${Math.round(scheduledErrorWindowMinutes / 60)}h window).`,
+      };
+    }
+    if (scheduledScanFresh === true) {
+      return { state: "healthy", reason: null };
+    }
+
+    // External-scheduler split: API process may have no in-process heartbeats.
+    if (schedulerFreshnessReason === "scheduler heartbeats unavailable") {
+      if (hasRecentSuccessfulScheduledRun) {
+        return { state: "healthy", reason: null };
+      }
+      return {
+        state: "warning",
+        reason: "No in-process scheduler heartbeat and no recent successful scheduled scan found.",
+      };
+    }
+
+    if (data.checks?.scheduler_freshness === false) {
+      return { state: "warning", reason: "Scheduler freshness check is failing." };
+    }
+    return { state: "healthy", reason: null };
+  }
+
+  // In manual/ops-trigger mode, keep a softer recency warning threshold.
+  if (hasRecentSchedulerErrors || hasRecentCronErrors) {
+    return {
+      state: "warning",
+      reason: hasRecentCronErrors
+        ? `Recent ops-trigger run reported ${cronErrors} error${cronErrors === 1 ? "" : "s"}.`
+        : `Recent scheduled run reported ${schedulerErrors} error${schedulerErrors === 1 ? "" : "s"}.`,
+    };
+  }
+  if ((cronAge !== null && cronAge > recencyWarningMinutes) || (manualAge !== null && manualAge > recencyWarningMinutes)) {
+    return {
+      state: "warning",
+      reason: `No recent ops-trigger/manual scan in the last ${Math.round(recencyWarningMinutes / 60)}h.`,
+    };
+  }
+  return { state: "healthy", reason: null };
 }
 
 function deriveSettlementState(data: OperatorStatusResponse | undefined): HealthState {
@@ -494,7 +562,9 @@ export function OpsDashboard() {
   const analyticsUsersErrorMessage = analyticsUserQuery.error instanceof Error ? analyticsUserQuery.error.message : null;
   const isAnyFetching = query.isFetching || analyticsQuery.isFetching || analyticsUserQuery.isFetching;
 
-  const automationState = useMemo(() => deriveScannerState(query.data), [query.data]);
+  const automationHealth = useMemo(() => deriveScannerHealth(query.data), [query.data]);
+  const automationState = automationHealth.state;
+  const automationWarningReason = automationHealth.reason;
   const settlementState = useMemo(() => deriveSettlementState(query.data), [query.data]);
   const oddsApiState = useMemo(() => deriveOddsApiState(query.data), [query.data]);
 
@@ -587,6 +657,12 @@ export function OpsDashboard() {
                 label="Recent run errors"
                 value={String(Number(schedulerScan?.hard_errors || 0) + Number(cronScan?.error_count || 0))}
               />
+
+              {automationState === "warning" && automationWarningReason && (
+                <p className="text-xs text-[#5C4D2E] bg-[#C4A35A]/10 border border-[#C4A35A]/30 rounded px-2 py-1">
+                  Why warning: {automationWarningReason}
+                </p>
+              )}
 
               {noScanRunsYet && (
                 <p className="text-xs text-muted-foreground pt-1">
@@ -925,7 +1001,7 @@ export function OpsDashboard() {
                         <span>Sessions</span>
                         <span>Bets</span>
                         <span>Last error</span>
-                        <span>Follow-up tag</span>
+                        <span>Follow-up</span>
                       </div>
 
                       {analyticsUsers.users.map((user) => (
@@ -936,8 +1012,12 @@ export function OpsDashboard() {
                           <summary className="cursor-pointer list-none">
                             <div className="md:grid md:grid-cols-[1.5fr_1.2fr_1fr_1fr_0.7fr_0.8fr_1fr_1fr] md:gap-2 space-y-1 md:space-y-0">
                               <div>
-                                <p className="font-mono text-[11px] text-foreground">{user.user_label}</p>
-                                <p className="text-[11px] text-muted-foreground">{user.user_id ? "user_id" : "anonymous session"}</p>
+                                <p className="font-mono text-[11px] text-foreground">{user.user_email || user.user_label}</p>
+                                {user.user_id ? (
+                                  user.user_email ? <p className="text-[11px] text-muted-foreground">{user.user_id}</p> : null
+                                ) : (
+                                  <p className="text-[11px] text-muted-foreground">anonymous session</p>
+                                )}
                               </div>
                               <p className="text-[11px] text-muted-foreground">{formatIsoWithRelative(user.last_seen_at)}</p>
                               <p className="text-[11px]">{formatTutorialStatusLabel(user.tutorial_status)}</p>

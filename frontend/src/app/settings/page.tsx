@@ -41,8 +41,10 @@ export default function SettingsPage() {
   const updateSettings = useUpdateSettings();
   const applyOnboardingEvent = useApplyOnboardingEvent();
   const completedOnboardingSteps = settings?.onboarding_state?.completed ?? [];
-  const completedCoreSteps = ONBOARDING_CORE_FLOW.filter((step) => completedOnboardingSteps.includes(step)).length;
-  const completedOptionalSteps = ONBOARDING_OPTIONAL_FLOW.filter((step) => completedOnboardingSteps.includes(step)).length;
+  const dismissedOnboardingSteps = settings?.onboarding_state?.dismissed ?? [];
+  const resolvedOnboardingSteps = new Set([...completedOnboardingSteps, ...dismissedOnboardingSteps]);
+  const completedCoreSteps = ONBOARDING_CORE_FLOW.filter((step) => resolvedOnboardingSteps.has(step)).length;
+  const completedOptionalSteps = ONBOARDING_OPTIONAL_FLOW.filter((step) => resolvedOnboardingSteps.has(step)).length;
 
   // Transaction form state
   const [showTxForm, setShowTxForm] = useState(false);
@@ -532,6 +534,8 @@ export default function SettingsPage() {
                   Core workflow: <span className="font-medium text-foreground">{completedCoreSteps}</span> / {ONBOARDING_CORE_FLOW.length}
                   <br />
                   Optional parlay branch: <span className="font-medium text-foreground">{completedOptionalSteps}</span> / {ONBOARDING_OPTIONAL_FLOW.length}
+                  <br />
+                  <span className="text-xs">(Counts include completed and dismissed tutorial prompts.)</span>
                 </div>
                 <Button
                   variant="outline"

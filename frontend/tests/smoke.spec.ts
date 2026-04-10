@@ -198,42 +198,32 @@ test.describe("smoke", () => {
     await resetOnboarding(page);
 
     await page.goto("/");
-    await expect(
-      page.getByText(/Learn the scanner with one practice ticket|Open Tutorial Scanner/i).first()
-    ).toBeVisible({ timeout: 10000 });
-    await page.getByRole("link", { name: /Open Tutorial Scanner/i }).click();
+    await expect(page.getByRole("button", { name: /Start Walkthrough/i })).toBeVisible({ timeout: 10000 });
+    await page.getByRole("button", { name: /Start Walkthrough/i }).click();
 
-    await expect(page).toHaveURL(/\/scanner/, { timeout: 10000 });
-    await expect(page.getByText(/Run the tutorial scan to load practice lines/i)).toBeVisible({ timeout: 10000 });
-    await expect(page.getByRole("button", { name: /Standard EV/i })).toBeVisible({ timeout: 10000 });
-    await expect(page.getByPlaceholder(/search/i)).toBeVisible({ timeout: 10000 });
-    await expect(page.getByRole("button", { name: /Run Tutorial Scan/i })).toBeVisible({ timeout: 10000 });
-    await page.getByRole("button", { name: /Run Tutorial Scan/i }).click();
-
-    await expect(page.getByRole("button", { name: /Practice Log Bet/i })).toHaveCount(4, { timeout: 10000 });
-    await expect(page.getByRole("button", { name: /Practice Log Bet/i }).first()).toBeVisible({ timeout: 10000 });
-    await page.getByRole("button", { name: /Practice Log Bet/i }).first().click();
+    await expect(page.getByText(/Simulated Daily Drops Board/i)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: /Practice Log Ticket/i }).first()).toBeVisible({ timeout: 10000 });
+    await page.getByRole("button", { name: /Practice Log Ticket/i }).first().click();
 
     await expect(page.getByRole("heading", { name: "Log Bet" })).toBeVisible({ timeout: 5000 });
     await page.getByPlaceholder("150").fill("132");
     await page.getByPlaceholder("$25").fill("10");
     await page.getByRole("button", { name: /Save Practice Ticket/i }).click();
+    await expect(page.getByRole("heading", { name: "Log Bet" })).not.toBeVisible({ timeout: 10000 });
 
-    await expect(page).toHaveURL(/\/scanner/, { timeout: 10000 });
-    await expect(page.getByRole("link", { name: /Go to Home/i })).toBeVisible({ timeout: 10000 });
-    await page.getByRole("link", { name: /Go to Home/i }).click();
-
-    await expect(page).toHaveURL("/", { timeout: 10000 });
+    await page.getByRole("link", { name: /^Bets$/i }).click();
+    await expect(page).toHaveURL(/\/bets/, { timeout: 10000 });
     await expect(page.getByText(/Tutorial Practice Ticket/i)).toBeVisible({ timeout: 10000 });
     await expect(page.getByRole("button", { name: /Finish Tutorial/i })).toBeVisible({ timeout: 10000 });
     await page.getByRole("button", { name: /Finish Tutorial/i }).click();
 
+    await expect(page).toHaveURL(/\/?\?onboarding=complete/, { timeout: 10000 });
+    await expect(page.getByText(/Tutorial Complete/i).first()).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: /Start Walkthrough/i })).not.toBeVisible({ timeout: 10000 });
+
+    await page.goto("/bets");
     await expect(page.getByText(/Tutorial Practice Ticket/i)).not.toBeVisible({ timeout: 10000 });
     await expect(page.getByRole("button", { name: /Finish Tutorial/i })).not.toBeVisible({ timeout: 10000 });
-    await expect(page.getByRole("link", { name: /Open Tutorial Scanner/i })).not.toBeVisible({ timeout: 10000 });
-    await page.getByRole("link", { name: /^Scan$/i }).click();
-    await expect(page).toHaveURL(/\/scanner/, { timeout: 10000 });
-    await expect(page.getByRole("button", { name: /Run Tutorial Scan/i })).not.toBeVisible({ timeout: 5000 });
   });
 
   test("beginner guidance appears across home, scanner, and parlay", async ({ page }) => {
@@ -242,15 +232,12 @@ test.describe("smoke", () => {
     await resetOnboarding(page);
 
     await page.goto("/");
-    await expect(
-      page.getByText(/Learn the scanner with one practice ticket|Open Tutorial Scanner/i).first()
-    ).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: /Start Walkthrough/i })).toBeVisible({ timeout: 10000 });
 
     await page.goto("/scanner");
-    await expect(page.getByText(/Run the tutorial scan to load practice lines/i).first()).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: /Run Tutorial Scan/i })).toBeVisible({ timeout: 10000 });
     await expect(page.getByRole("button", { name: /Standard EV/i })).toBeVisible({ timeout: 10000 });
     await expect(page.getByPlaceholder(/search/i)).toBeVisible({ timeout: 10000 });
-    await expect(page.getByRole("button", { name: /Run Tutorial Scan/i })).toBeVisible({ timeout: 10000 });
 
     await page.goto("/parlay");
     await expect(page.getByText(/Optional Step/i)).toBeVisible({ timeout: 10000 });
@@ -263,14 +250,14 @@ test.describe("smoke", () => {
     await resetOnboarding(page);
 
     await page.goto("/");
-    await expect(page.getByRole("link", { name: /Open Tutorial Scanner/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: /Start Walkthrough/i })).toBeVisible({ timeout: 10000 });
     await page.getByRole("button", { name: /Hide coach/i }).click();
 
-    await expect(page.getByRole("link", { name: /Open Tutorial Scanner/i })).not.toBeVisible({ timeout: 10000 });
-    await expect(page.getByRole("button", { name: /Jump to Open Bets/i })).not.toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: /Start Walkthrough/i })).not.toBeVisible({ timeout: 10000 });
+    await page.reload();
+    await expect(page.getByRole("button", { name: /Start Walkthrough/i })).not.toBeVisible({ timeout: 10000 });
 
     await page.goto("/scanner");
-    await expect(page.getByRole("button", { name: /Run Tutorial Scan/i })).not.toBeVisible({ timeout: 10000 });
-    await expect(page.getByRole("button", { name: /Go to Home/i })).not.toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: /Reload Tutorial Lines|Run Tutorial Scan/i })).not.toBeVisible({ timeout: 10000 });
   });
 });

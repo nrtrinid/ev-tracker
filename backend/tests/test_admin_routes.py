@@ -92,9 +92,13 @@ def test_research_opportunities_summary_impl_delegates_to_summary_builder():
         recent_opportunities=[],
     )
 
+    def _get_summary(provided_db):
+        assert provided_db is db
+        return expected
+
     out = research_opportunities_summary_impl(
         get_db=lambda: db,
-        get_summary=lambda provided_db: expected if provided_db is db else None,
+        get_summary=_get_summary,
     )
 
     assert out == expected

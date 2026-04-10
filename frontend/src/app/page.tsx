@@ -233,8 +233,30 @@ function sanitizeStoredBooks(stored: unknown, allowed: readonly string[], fallba
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+const PHOENIX_WALL_CLOCK_AS_UTC_OFFSET_MS = 7 * 60 * 60 * 1000;
+
+function parseScanTimestampMs(iso: string): number | null {
+  const parsed = new Date(iso).getTime();
+  if (Number.isNaN(parsed)) return null;
+
+  // Some older payloads stored Phoenix wall-clock time with a trailing Z.
+  // If that happens, the timestamp appears ~7h older than reality.
+  if (!iso.endsWith("Z")) return parsed;
+
+  const shifted = parsed + PHOENIX_WALL_CLOCK_AS_UTC_OFFSET_MS;
+  const now = Date.now();
+  const parsedDistance = Math.abs(now - parsed);
+  const shiftedDistance = Math.abs(now - shifted);
+
+  if (shifted <= now + 15 * 60 * 1000 && shiftedDistance + 60 * 1000 < parsedDistance) {
+    return shifted;
+  }
+  return parsed;
+}
+
 function minutesAgo(iso: string): number {
-  const then = new Date(iso).getTime();
+  const then = parseScanTimestampMs(iso);
+  if (then === null) return 0;
   return Math.max(0, Math.floor((Date.now() - then) / 60_000));
 }
 
@@ -1117,10 +1139,12 @@ export default function MarketsPage() {
   const featuredLineBuckets = useMemo(() => parseFeaturedLines(board?.game_context), [board?.game_context]);
   const featuredDerivedSides = useMemo(() => buildFeaturedDerivedSides(featuredLineBuckets), [featuredLineBuckets]);
 
+  const displayScannedAt = activeScanData?.scanned_at ?? boardMeta?.scanned_at ?? null;
+
   const boardAgeMinutes = useMemo(() => {
-    if (boardMeta?.scanned_at) return minutesAgo(boardMeta.scanned_at);
+    if (displayScannedAt) return minutesAgo(displayScannedAt);
     return null;
-  }, [boardMeta?.scanned_at]);
+  }, [displayScannedAt]);
 
   const dailyDropWindows = useMemo(() => getDailyDropWindowsLocal(), []);
 
@@ -1129,13 +1153,12 @@ export default function MarketsPage() {
       const nextDropUtcMs = getNextPhoenixDropUtcMs(new Date());
       const nextDropLocal = new Date(nextDropUtcMs);
       const localTime = nextDropLocal.toLocaleString(undefined, {
-        weekday: "short",
         hour: "numeric",
         minute: "2-digit",
       });
-      return `Next scan: ${localTime}`;
+      return `Next scan ${localTime}`;
     } catch {
-      return `Next scan: ${dailyDropWindows.localLabel}`;
+      return `Next scan ${dailyDropWindows.localLabel}`;
     }
   }, [dailyDropWindows.localLabel]);
 
@@ -1165,6 +1188,13 @@ export default function MarketsPage() {
     const local = new Date(utcMs).toLocaleString(undefined, { hour: "numeric", minute: "2-digit" });
     return `${scanLabel} • ${local} local`;
   }, [board?.game_context]);
+
+  const boardAgeDetail = useMemo(() => {
+    const parts: string[] = [];
+    if (scanWindowLabel) parts.push(scanWindowLabel);
+    parts.push(nextDropLabel);
+    return parts.join(" • ");
+  }, [nextDropLabel, scanWindowLabel]);
 
   const allSides = useMemo(() => {
     if (primaryMode === "player_props") {
@@ -1720,31 +1750,37 @@ export default function MarketsPage() {
       />
 
       {showCompletionCard && (
-        <div className="rounded-lg border border-sky-500/35 bg-sky-100/45 px-4 py-3 text-sm text-sky-950">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em]">Tutorial Complete</p>
-          <p className="mt-1 font-medium">You are all set. Good luck out there.</p>
-          <p className="mt-1 text-xs text-sky-900/85">
-            Your onboarding walkthrough is finished and you are now on the live Markets workflow.
-          </p>
-          <button
-            type="button"
-            className="mt-3 inline-flex h-9 items-center rounded-md border border-sky-700/25 bg-background/90 px-3 text-xs font-medium text-sky-900 transition-colors hover:bg-background"
-            onClick={handleDismissCompletionCard}
-          >
-            I&apos;m all set
-          </button>
+        <div className="rounded-lg border border-primary/30 bg-primary/8 overflow-hidden animate-slide-up">
+          <div className="h-0.5 w-full bg-gradient-to-r from-primary/40 via-primary to-primary/40" />
+          <div className="px-4 py-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-primary">Tutorial Complete</p>
+            <p className="mt-1 text-sm font-semibold text-foreground">You are all set. Good luck out there.</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Onboarding walkthrough finished. You are now on the live Markets workflow.
+            </p>
+            <button
+              type="button"
+              className="mt-3 inline-flex h-8 items-center rounded-md border border-border/70 bg-background/80 px-3 text-xs font-medium text-foreground transition-colors hover:bg-background hover:border-border active:scale-[0.98]"
+              onClick={handleDismissCompletionCard}
+            >
+              I&apos;m all set
+            </button>
+          </div>
         </div>
       )}
 
       {tutorialBoardActive && primaryMode === "straight_bets" && (
-        <div className="rounded-lg border border-sky-400/45 bg-sky-100/40 px-4 py-3 text-sm text-sky-950">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em]">Simulated Daily Drops Board</p>
-          <p className="mt-1">
-            These lines are tutorial-only samples. No live odds, no real sportsbook deep links, and no real bet logging.
-          </p>
-          <p className="mt-1 text-xs text-sky-900/90">
-            Live board windows are {dailyDropWindows.mstLabel}, which is about {dailyDropWindows.localLabel} in your timezone.
-          </p>
+        <div className="rounded-lg border border-primary/25 bg-primary/6 overflow-hidden animate-slide-up">
+          <div className="h-0.5 w-full bg-gradient-to-r from-primary/30 via-primary/60 to-primary/30" />
+          <div className="px-4 py-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-primary">Simulated Daily Drops Board</p>
+            <p className="mt-1 text-xs text-foreground">
+              These lines are tutorial-only samples. No live odds, no real sportsbook deep links, and no real bet logging.
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Live board windows are {dailyDropWindows.mstLabel}, about {dailyDropWindows.localLabel} in your timezone.
+            </p>
+          </div>
         </div>
       )}
 
@@ -1754,13 +1790,9 @@ export default function MarketsPage() {
         {isBoardLoading ? (
           <p className="text-[11px] text-muted-foreground">Loading…</p>
         ) : boardAgeMinutes !== null ? (
-          <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
+          <p className="flex items-center gap-1 text-[11px] text-muted-foreground" title={boardAgeDetail}>
             <Clock className="h-3 w-3 shrink-0" />
-            <span>
-              {formatBoardAge(boardAgeMinutes)}
-              {scanWindowLabel ? ` · ${scanWindowLabel}` : ""}
-              {!scanWindowLabel ? ` · ${nextDropLabel}` : ""}
-            </span>
+            <span>Updated {formatBoardAge(boardAgeMinutes)} • {nextDropLabel}</span>
           </p>
         ) : isEmptyBoard && !isBoardLoading ? (
           <p className="text-[11px] text-muted-foreground">

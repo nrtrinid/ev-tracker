@@ -125,6 +125,15 @@ function StatCell({ label, value }: { label: string; value: string }) {
   );
 }
 
+function BreakdownMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded border border-border/60 bg-background/60 px-2 py-1">
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-0.5 font-mono text-[11px] tabular-nums text-foreground">{value}</p>
+    </div>
+  );
+}
+
 function DataNotLoaded() {
   return (
     <div className="rounded-md border border-dashed border-border px-3 py-2 text-sm text-muted-foreground">
@@ -151,41 +160,23 @@ function ModelCalibrationBreakdownTable({ rows }: { rows: ModelCalibrationBreakd
   return (
     <div className="space-y-1.5">
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">By model</p>
-      <div className="rounded-md border border-border/70 bg-muted/20 px-2.5 py-2">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[540px] table-fixed text-xs">
-            <colgroup>
-              <col className="w-[28%]" />
-              <col className="w-[12%]" />
-              <col className="w-[12%]" />
-              <col className="w-[16%]" />
-              <col className="w-[16%]" />
-              <col className="w-[16%]" />
-            </colgroup>
-            <thead>
-              <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                <th className="pb-1.5 text-left font-medium">Model</th>
-                <th className="pb-1.5 text-right font-medium">Valid</th>
-                <th className="pb-1.5 text-right font-medium">Paired</th>
-                <th className="pb-1.5 text-right font-medium">&gt;Close</th>
-                <th className="pb-1.5 text-right font-medium">Avg CLV</th>
-                <th className="pb-1.5 text-right font-medium">Brier</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.slice(0, 8).map((row) => (
-                <tr key={row.key} className="border-t border-border/50">
-                  <td className="py-1.5 pr-2 text-muted-foreground truncate">{row.key}</td>
-                  <td className="py-1.5 text-right font-mono tabular-nums">{formatCount(row.valid_close_count)}</td>
-                  <td className="py-1.5 text-right font-mono tabular-nums">{formatCount(row.paired_close_count)}</td>
-                  <td className="py-1.5 text-right font-mono tabular-nums">{formatPercent(row.beat_close_pct)}</td>
-                  <td className="py-1.5 text-right font-mono tabular-nums">{formatPercent(row.avg_clv_percent)}</td>
-                  <td className="py-1.5 text-right font-mono tabular-nums">{formatScore(row.avg_brier_score)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div className="space-y-1.5">
+        {rows.slice(0, 8).map((row) => (
+          <div key={row.key} className="rounded-md border border-border/70 bg-muted/20 px-2.5 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="truncate text-xs font-medium text-foreground">{row.key}</p>
+              <p className="font-mono text-[11px] tabular-nums text-muted-foreground">
+                Valid {formatCount(row.valid_close_count)}
+              </p>
+            </div>
+            <div className="mt-1.5 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+              <BreakdownMetric label="Paired" value={formatCount(row.paired_close_count)} />
+              <BreakdownMetric label=">Close" value={formatPercent(row.beat_close_pct)} />
+              <BreakdownMetric label="Avg CLV" value={formatPercent(row.avg_clv_percent)} />
+              <BreakdownMetric label="Brier" value={formatScore(row.avg_brier_score)} />
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -197,38 +188,22 @@ function PickEmProbabilityBucketTable({ rows }: { rows: PickEmResearchBreakdownI
   return (
     <div className="space-y-1.5">
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">By probability bucket</p>
-      <div className="rounded-md border border-border/70 bg-muted/20 px-2.5 py-2">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[520px] table-fixed text-xs">
-            <colgroup>
-              <col className="w-[30%]" />
-              <col className="w-[14%]" />
-              <col className="w-[18%]" />
-              <col className="w-[18%]" />
-              <col className="w-[20%]" />
-            </colgroup>
-            <thead>
-              <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                <th className="pb-1.5 text-left font-medium">Bucket</th>
-                <th className="pb-1.5 text-right font-medium">Settled</th>
-                <th className="pb-1.5 text-right font-medium">Expected</th>
-                <th className="pb-1.5 text-right font-medium">Actual</th>
-                <th className="pb-1.5 text-right font-medium">Delta</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.slice(0, 8).map((row) => (
-                <tr key={row.key} className="border-t border-border/50">
-                  <td className="py-1.5 pr-2 text-muted-foreground truncate">{row.key}</td>
-                  <td className="py-1.5 text-right font-mono tabular-nums">{formatCount(row.settled_count)}</td>
-                  <td className="py-1.5 text-right font-mono tabular-nums">{formatPercent(row.expected_hit_rate_pct)}</td>
-                  <td className="py-1.5 text-right font-mono tabular-nums">{formatPercent(row.actual_hit_rate_pct)}</td>
-                  <td className="py-1.5 text-right font-mono tabular-nums">{formatPercent(row.hit_rate_delta_pct_points, 2)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div className="space-y-1.5">
+        {rows.slice(0, 8).map((row) => (
+          <div key={row.key} className="rounded-md border border-border/70 bg-muted/20 px-2.5 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="truncate text-xs font-medium text-foreground">{row.key}</p>
+              <p className="font-mono text-[11px] tabular-nums text-muted-foreground">
+                Settled {formatCount(row.settled_count)}
+              </p>
+            </div>
+            <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+              <BreakdownMetric label="Expected" value={formatPercent(row.expected_hit_rate_pct)} />
+              <BreakdownMetric label="Actual" value={formatPercent(row.actual_hit_rate_pct)} />
+              <BreakdownMetric label="Delta" value={formatPercent(row.hit_rate_delta_pct_points, 2)} />
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -336,8 +311,8 @@ export function ResearchDiagnosticsDashboard() {
           </CardContent>
         </Card>
 
-        <div className="grid gap-4 lg:grid-cols-3">
-          <Card>
+        <div className="grid gap-4 xl:grid-cols-2">
+          <Card className="xl:col-span-2">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between gap-2">
                 <h2 className="text-base font-semibold">CLV Research Tracker</h2>

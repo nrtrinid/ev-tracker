@@ -4,7 +4,6 @@ import type { OnboardingStepId, ScannerSurface } from "@/lib/types";
 export type JourneyCoachRoute = "home" | "scanner" | "parlay" | "bets";
 export type JourneyCoachActionCommand =
   | "start_tutorial"
-  | "clear_tutorial"
   | "review_scanner_pick"
   | "finish_tutorial";
 
@@ -326,7 +325,7 @@ const JOURNEY_COACH_CANDIDATES: readonly JourneyCoachCandidateDefinition[] = [
       persistStep: ONBOARDING_STEPS.PARLAY_BUILDER,
       eyebrow: "Optional Step",
       title: "Build parlays after you find Daily Drops plays",
-      body: "The simplest beginner path is still one ticket at a time. When you want a multi-leg preview, add a couple of legs from Markets first.",
+      body: "The simplest beginner path is still one ticket at a time. When you want a multi-leg preview, add a couple of legs from Markets first by clicking the + button.",
       actions: [
         {
           label: "Find Legs in Markets",

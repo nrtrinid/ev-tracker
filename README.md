@@ -270,8 +270,10 @@ A small but meaningful test suite protects EV math, settlement/profit logic, sch
 - **Backend unit tests** (math layer): `cd backend && pytest tests/test_calculations.py -v` — or unit-only by marker: `cd backend && pytest -m "not integration" -v`
 - **Backend hardening tests** (scheduler + odds activity): `cd backend && pytest tests/test_scheduler.py tests/test_odds_api_activity.py -v`
 - **Backend integration tests** (requires test Supabase and auth user): From `backend/` with venv + full deps (`pip install -r requirements.txt`): Set `TESTING=1`, `SUPABASE_URL` (or `TEST_SUPABASE_URL`), and `TEST_USER_ID`. Then: Windows PowerShell: `$env:TESTING="1"; pytest tests/test_api.py -v` — macOS/Linux: `TESTING=1 pytest tests/test_api.py -v`. By marker: `$env:TESTING="1"; pytest -m integration -v` (Windows) or `TESTING=1 pytest -m integration -v` (macOS/Linux). Set `TEST_USER_ID` to a UUID that exists in your test project’s `auth.users`, or create a user and use its id. Optional: `TEST_SUPABASE_URL` and `TEST_SUPABASE_SERVICE_ROLE_KEY` for a separate test project.
-- **Playwright smoke tests** (run with frontend and backend dev servers up): From `frontend/`: `npm install`, then `npx playwright install`, then `npm run test:e2e`. Set PLAYWRIGHT_TEST_EMAIL and PLAYWRIGHT_TEST_PASSWORD so tests can log in; otherwise smoke tests are skipped.
-- **Operator access tests**: `cd frontend && npm run test:ops-utils` and (with non-admin creds) `npm run test:ops-access`.
+- **Frontend build + typecheck**: `cd frontend && npm run build && npm run typecheck`
+- **Playwright browser smoke** (run with frontend and backend dev servers up): From `frontend/`: `npm install`, then `npx playwright install`, then `npm run test:smoke:list`, `npm run test:smoke`, or `npm run test:e2e` for the broader browser-only set. Set `PLAYWRIGHT_TEST_EMAIL` and `PLAYWRIGHT_TEST_PASSWORD` so smoke tests can log in; otherwise they skip cleanly.
+- **Operator access tests**: `cd frontend && npm run test:ops-utils` and (with non-admin creds) `npm run test:ops-access`
+- **Quarantined frontend utility specs**: `cd frontend && npm run test:quarantined` when you want extra signal without making those suites beta-blocking.
 - **CI**: GitHub Actions runs backend unit tests and the integration marker. Integration tests skip cleanly when test Supabase secrets are not configured. Playwright remains local-only.
 
 ---

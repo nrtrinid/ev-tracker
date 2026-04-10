@@ -2,10 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, CheckCircle2, Circle, Sparkles, X } from "lucide-react";
+import { ArrowRight, CheckCircle2, Circle, MapPin, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { STRAIGHT_BETS_TUTORIAL_STEP } from "@/app/scanner/scanner-tutorial";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
 import { useApplyOnboardingEvent, useBets, useSettings } from "@/lib/hooks";
@@ -32,12 +31,8 @@ interface JourneyCoachProps {
 }
 
 function renderActionIcon(icon: JourneyCoachAction["icon"]) {
-  if (icon === "check") {
-    return <CheckCircle2 className="ml-2 h-4 w-4" />;
-  }
-  if (icon === "arrow") {
-    return <ArrowRight className="ml-2 h-4 w-4" />;
-  }
+  if (icon === "check") return <CheckCircle2 className="ml-2 h-3.5 w-3.5" />;
+  if (icon === "arrow") return <ArrowRight className="ml-2 h-3.5 w-3.5" />;
   return null;
 }
 
@@ -194,20 +189,12 @@ export function JourneyCoach({
   };
 
   const handleActionCommand = (command?: JourneyCoachActionCommand) => {
-    if (!command) {
-      return;
-    }
+    if (!command) return;
 
     if (command === "start_tutorial") {
       startTutorialSession("straight_bets");
       markTutorialScanSeeded();
       onStartTutorial?.();
-      return;
-    }
-
-    if (command === "clear_tutorial") {
-      clearTutorialSession();
-      clearHighlight();
       return;
     }
 
@@ -225,75 +212,91 @@ export function JourneyCoach({
     }
   };
 
-  if (!isHydrated || !candidate) {
-    return null;
-  }
+  if (!isHydrated || !candidate) return null;
 
   if (candidate.persistStep) {
     const hidden =
       onboardingCompleted.includes(candidate.persistStep) ||
       onboardingDismissed.includes(candidate.persistStep);
-    if (hidden) {
-      return null;
-    }
+    if (hidden) return null;
   }
 
-  if (candidate.dismissStep && onboardingDismissed.includes(candidate.dismissStep)) {
-    return null;
-  }
+  if (candidate.dismissStep && onboardingDismissed.includes(candidate.dismissStep)) return null;
+  if (temporarilyHiddenKey === candidate.key) return null;
 
-  if (temporarilyHiddenKey === candidate.key) {
-    return null;
-  }
+  // Determine if this card has a primary CTA (first non-outline action)
+  const primaryAction = candidate.actions?.find((a) => !a.variant || a.variant === "default");
+  const secondaryActions = candidate.actions?.filter((a) => a !== primaryAction) ?? [];
 
   return (
-    <Card className="border-primary/20 bg-primary/10">
-      <CardContent className="space-y-4 p-4">
+    <div className="rounded-lg border border-primary/25 bg-card overflow-hidden animate-slide-up">
+      {/* Amber accent bar at top */}
+      <div className="h-0.5 w-full bg-gradient-to-r from-primary/60 via-primary to-primary/60" />
+
+      <div className="p-4 space-y-3.5">
+        {/* Header row */}
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
-              {candidate.eyebrow}
-            </p>
-            <h2 className="mt-1 text-base font-semibold text-foreground">{candidate.title}</h2>
-            <p className="mt-1 text-sm text-muted-foreground">{candidate.body}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="rounded-full bg-background/80 p-2 text-primary">
-              <Sparkles className="h-4 w-4" />
+          <div className="flex items-start gap-2.5 min-w-0">
+            <div className="mt-0.5 shrink-0 rounded-md bg-primary/12 p-1.5 text-primary">
+              <MapPin className="h-3.5 w-3.5" />
             </div>
-            {candidate.persistStep && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 shrink-0"
-                onClick={() => handleDismiss(candidate.persistStep!)}
-                aria-label="Hide coach"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            )}
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-primary">
+                {candidate.eyebrow}
+              </p>
+              <h2 className="mt-0.5 text-sm font-semibold text-foreground leading-snug">
+                {candidate.title}
+              </h2>
+              <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                {candidate.body}
+              </p>
+            </div>
           </div>
+          {candidate.persistStep && (
+            <button
+              type="button"
+              className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+              onClick={() => handleDismiss(candidate.persistStep!)}
+              aria-label="Dismiss"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
 
+        {/* Step tracker */}
         {candidate.steps && (
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-3 gap-1.5">
             {candidate.steps.map((step, index) => (
               <div
                 key={step.label}
                 className={cn(
-                  "rounded-lg border px-3 py-2 text-center",
-                  step.active ? "border-primary/35 bg-background/80" : "border-border bg-background/50"
+                  "rounded border px-2.5 py-2 text-center transition-colors",
+                  step.complete
+                    ? "border-primary/20 bg-primary/8"
+                    : step.active
+                      ? "border-primary/35 bg-primary/12"
+                      : "border-border/50 bg-background/40"
                 )}
               >
                 <div className="flex items-center justify-center">
                   {step.complete ? (
-                    <CheckCircle2 className="h-4 w-4 text-primary" />
+                    <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
                   ) : (
-                    <Circle className={cn("h-4 w-4", step.active ? "text-primary" : "text-muted-foreground/50")} />
+                    <Circle
+                      className={cn(
+                        "h-3.5 w-3.5",
+                        step.active ? "text-primary" : "text-muted-foreground/40"
+                      )}
+                    />
                   )}
                 </div>
-                <p className="mt-1 text-[11px] font-medium text-foreground">
+                <p
+                  className={cn(
+                    "mt-1 text-[10px] font-medium leading-tight",
+                    step.complete || step.active ? "text-foreground" : "text-muted-foreground/60"
+                  )}
+                >
                   {index + 1}. {step.label}
                 </p>
               </div>
@@ -301,75 +304,124 @@ export function JourneyCoach({
           </div>
         )}
 
+        {/* Detail block */}
         {candidate.detailTitle && (
-          <div className="rounded-lg border border-border bg-background/80 px-3 py-2">
-            <p className="text-sm font-medium text-foreground">{candidate.detailTitle}</p>
+          <div className="rounded border border-border/60 bg-background/60 px-3 py-2">
+            <p className="text-xs font-medium text-foreground">{candidate.detailTitle}</p>
             {candidate.detailBody && (
-              <p className="mt-0.5 text-xs text-muted-foreground">{candidate.detailBody}</p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">{candidate.detailBody}</p>
             )}
           </div>
         )}
 
+        {/* Actions */}
         {candidate.actions && candidate.actions.length > 0 ? (
-          <div className="flex flex-col gap-2 sm:flex-row">
-            {candidate.actions.map((action) => {
-              const actionTarget = getActionTarget(action.command);
-              const handleClick = () => {
-                handleActionCommand(action.command);
-                if (action.hideOnClick) {
+          <div className="flex flex-col gap-2">
+            {/* Primary CTA — full width, visually prominent */}
+            {primaryAction && (
+              <ActionButton
+                action={primaryAction}
+                isPrimary
+                onCommand={handleActionCommand}
+                onHide={() => {
                   clearHighlight();
                   if (candidate.dismissStep) {
                     handleDismiss(candidate.dismissStep);
                   } else {
                     setTemporarilyHiddenKey(candidate.key);
                   }
-                }
-                if (action.completeStepOnClick && candidate.persistStep) {
-                  handleComplete(candidate.persistStep);
-                }
-              };
-
-              if (action.href) {
-                return (
-                  <Button
+                }}
+                onComplete={() => {
+                  if (candidate.persistStep) handleComplete(candidate.persistStep);
+                }}
+              />
+            )}
+            {/* Secondary actions — row */}
+            {secondaryActions.length > 0 && (
+              <div className="flex gap-2">
+                {secondaryActions.map((action) => (
+                  <ActionButton
                     key={action.label}
-                    asChild
-                    variant={action.variant ?? "default"}
-                    className="h-11 flex-1"
-                  >
-                    <Link
-                      href={action.href}
-                      data-onboarding-target={actionTarget}
-                      onClick={handleClick}
-                    >
-                      {action.label}
-                      {renderActionIcon(action.icon)}
-                    </Link>
-                  </Button>
-                );
-              }
-
-              return (
-                <Button
-                  key={action.label}
-                  type="button"
-                  variant={action.variant ?? "default"}
-                  className="h-11 flex-1"
-                  data-onboarding-target={actionTarget}
-                  onClick={handleClick}
-                >
-                  {action.label}
-                  {renderActionIcon(action.icon)}
-                </Button>
-              );
-            })}
+                    action={action}
+                    isPrimary={false}
+                    onCommand={handleActionCommand}
+                    onHide={() => {
+                      clearHighlight();
+                      if (candidate.dismissStep) {
+                        handleDismiss(candidate.dismissStep);
+                      } else {
+                        setTemporarilyHiddenKey(candidate.key);
+                      }
+                    }}
+                    onComplete={() => {
+                      if (candidate.persistStep) handleComplete(candidate.persistStep);
+                    }}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         ) : candidate.persistStep ? (
-          <Button type="button" className="h-11 w-full sm:w-auto" onClick={() => handleComplete(candidate.persistStep!)}>
+          <Button
+            type="button"
+            size="sm"
+            className="w-full h-9 text-xs font-semibold"
+            onClick={() => handleComplete(candidate.persistStep!)}
+          >
             Got It
           </Button>
         ) : null}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
+  );
+}
+
+// ── ActionButton helper ───────────────────────────────────────────────────────
+
+interface ActionButtonProps {
+  action: JourneyCoachAction;
+  isPrimary: boolean;
+  onCommand: (command?: JourneyCoachActionCommand) => void;
+  onHide: () => void;
+  onComplete: () => void;
+}
+
+function ActionButton({ action, isPrimary, onCommand, onHide, onComplete }: ActionButtonProps) {
+  const actionTarget = getActionTarget(action.command);
+
+  const handleClick = () => {
+    onCommand(action.command);
+    if (action.hideOnClick) onHide();
+    if (action.completeStepOnClick) onComplete();
+  };
+
+  const baseClass = isPrimary
+    ? "w-full h-9 rounded-md px-4 text-xs font-semibold transition-all duration-150 active:scale-[0.98] flex items-center justify-center bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
+    : "flex-1 h-8 rounded-md px-3 text-xs font-medium transition-all duration-150 active:scale-[0.98] flex items-center justify-center border border-border/70 bg-background/60 text-muted-foreground hover:text-foreground hover:bg-muted/50 hover:border-border";
+
+  if (action.href) {
+    return (
+      <Link
+        href={action.href}
+        data-onboarding-target={actionTarget}
+        onClick={handleClick}
+        className={baseClass}
+      >
+        {action.label}
+        {renderActionIcon(action.icon)}
+      </Link>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      data-onboarding-target={actionTarget}
+      onClick={handleClick}
+      className={baseClass}
+    >
+      {action.label}
+      {renderActionIcon(action.icon)}
+    </button>
   );
 }

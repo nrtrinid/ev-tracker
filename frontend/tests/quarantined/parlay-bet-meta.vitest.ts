@@ -1,3 +1,4 @@
+// Quarantined until the frontend utility specs move to a dedicated unit-test runner.
 import { expect, test } from "vitest";
 
 import { normalizeParlayLegFromRaw, parseParlayLegsFromBet } from "@/lib/parlay-bet-meta";

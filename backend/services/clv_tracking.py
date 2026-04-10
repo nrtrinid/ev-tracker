@@ -1621,7 +1621,7 @@ def update_scan_opportunity_reference_snapshots(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     if not sides:
-        return _normalize_snapshot_summary(_new_snapshot_update_summary())
+        return {"latest_updated": 0, "close_updated": 0}
 
     straight_snapshot_by_event, straight_snapshot_by_time = build_reference_snapshots(sides)
     straight_exact_snapshot_by_event, straight_exact_snapshot_by_time = build_straight_exact_reference_snapshots(sides)
@@ -1638,7 +1638,7 @@ def update_scan_opportunity_reference_snapshots(
         and not prop_snapshot_by_event
         and not prop_snapshot_by_time
     ):
-        return _normalize_snapshot_summary(_new_snapshot_update_summary())
+        return {"latest_updated": 0, "close_updated": 0}
 
     from services.research_opportunities import is_missing_scan_opportunities_error
 
@@ -1811,4 +1811,7 @@ def update_scan_opportunity_reference_snapshots(
                 _mark_snapshot_reason(summary, "write_failed")
                 raise
 
-    return _normalize_snapshot_summary(summary)
+    return {
+        "latest_updated": int(summary.get("latest_updated", 0)),
+        "close_updated": int(summary.get("close_updated", 0)),
+    }

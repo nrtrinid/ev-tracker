@@ -34,10 +34,37 @@ def _extract_bearer_token(authorization: str | None) -> str | None:
     return token or None
 
 
-async def _optional_user_id_from_authorization(authorization: str | None) -> str | None:
+def _extract_user_email(user: Any) -> str | None:
+    if user is None:
+        return None
+
+    email = getattr(user, "email", None)
+    if not isinstance(email, str):
+        if isinstance(user, dict):
+            email = user.get("email")
+        else:
+            raw = getattr(user, "model_dump", None)
+            if callable(raw):
+                try:
+                    dumped = raw()
+                except Exception:
+                    dumped = None
+                if isinstance(dumped, dict):
+                    email = dumped.get("email")
+
+    if not isinstance(email, str):
+        return None
+
+    normalized = email.strip()
+    if not normalized:
+        return None
+    return normalized[:320]
+
+
+async def _optional_user_from_authorization(authorization: str | None) -> tuple[str | None, str | None]:
     token = _extract_bearer_token(authorization)
     if not token:
-        return None
+        return None, None
 
     try:
         import main
@@ -46,11 +73,12 @@ async def _optional_user_id_from_authorization(authorization: str | None) -> str
         response = await run_in_threadpool(supabase.auth.get_user, token)
         user = response.user
     except Exception:
-        return None
+        return None, None
 
-    if not user or not user.id:
-        return None
-    return str(user.id)
+    if not user or not getattr(user, "id", None):
+        return None, None
+
+    return str(user.id), _extract_user_email(user)
 
 
 @router.post("/analytics/events")
@@ -65,11 +93,16 @@ async def ingest_analytics_event(
     if not is_supported_analytics_event(event_name):
         raise HTTPException(status_code=422, detail="Unsupported analytics event")
 
-    user_id = await _optional_user_id_from_authorization(authorization)
+    user_id, user_email = await _optional_user_from_authorization(authorization)
     session_id = normalize_session_id(payload.session_id) or normalize_session_id(x_session_id)
 
     if not user_id and not session_id:
         raise HTTPException(status_code=422, detail="session_id is required for anonymous analytics events")
+
+    properties = dict(payload.properties or {})
+    if user_email:
+        # Always set from authenticated identity so clients cannot spoof this field.
+        properties["user_email"] = user_email
 
     inserted = capture_analytics_event(
         db=main.get_db(),
@@ -81,7 +114,7 @@ async def ingest_analytics_event(
         session_id=session_id,
         route=payload.route,
         app_area=payload.app_area,
-        properties=payload.properties,
+        properties=properties,
         dedupe_key=payload.dedupe_key,
     )
 

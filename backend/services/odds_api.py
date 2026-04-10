@@ -16,6 +16,7 @@ from collections import deque
 import threading
 from datetime import datetime, timezone, timedelta
 from typing import Any
+from types import SimpleNamespace
 from dotenv import load_dotenv
 from calculations import american_to_decimal, kelly_fraction
 from services.sportsbook_deeplinks import resolve_sportsbook_deeplink
@@ -49,7 +50,7 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _log_event(event: str, *, level: str = "info", **fields) -> None:
+def _log_event(event: str, *, level: str | int = "info", **fields: Any) -> None:
     payload = {
         "event": event,
         "timestamp": _utc_now_iso(),
@@ -57,7 +58,7 @@ def _log_event(event: str, *, level: str = "info", **fields) -> None:
         "correlation_id": get_correlation_id(),
         **fields,
     }
-    getattr(logger, level.lower(), logger.info)(json.dumps(payload, default=str))
+    getattr(logger, str(level).lower(), logger.info)(json.dumps(payload, default=str))
 
 
 def _short_error_message(message: str | None) -> str | None:
@@ -1028,13 +1029,18 @@ async def scan_for_ev(sport: str = "basketball_nba") -> dict:
         if not pin_outcomes:
             continue
 
-        pin_home = pin_outcomes.get(home)
-        pin_away = pin_outcomes.get(away)
-        if None in (pin_home, pin_away):
+        pin_home_raw = pin_outcomes.get(home)
+        pin_away_raw = pin_outcomes.get(away)
+        if pin_home_raw is None or pin_away_raw is None:
             continue
+        pin_home = float(pin_home_raw)
+        pin_away = float(pin_away_raw)
         draw_key = _find_draw_key(pin_outcomes, home, away)
         if draw_key:
-            true_probs_n = devig_outcomes({home: pin_home, away: pin_away, draw_key: pin_outcomes[draw_key]})
+            draw_price_raw = pin_outcomes.get(draw_key)
+            if draw_price_raw is None:
+                continue
+            true_probs_n = devig_outcomes({home: pin_home, away: pin_away, draw_key: float(draw_price_raw)})
             if not true_probs_n:
                 continue
             true_probs = {"team_a": true_probs_n[home], "team_b": true_probs_n[away]}
@@ -1050,10 +1056,12 @@ async def scan_for_ev(sport: str = "basketball_nba") -> dict:
                 continue
             book_outcomes = book_market["outcomes"]
 
-            book_home = book_outcomes.get(home)
-            book_away = book_outcomes.get(away)
-            if None in (book_home, book_away):
+            book_home_raw = book_outcomes.get(home)
+            book_away_raw = book_outcomes.get(away)
+            if book_home_raw is None or book_away_raw is None:
                 continue
+            book_home = float(book_home_raw)
+            book_away = float(book_away_raw)
 
             had_any_book = True
 
@@ -1685,7 +1693,7 @@ async def run_jit_clv_snatcher(db, *, include_summary: bool = False) -> int | di
         )
     except Exception as e:
         if is_missing_scan_opportunities_error(e):
-            opportunity_result = type("EmptyResult", (), {"data": []})()
+            opportunity_result = SimpleNamespace(data=[])
         else:
             raise
     try:
@@ -1698,7 +1706,7 @@ async def run_jit_clv_snatcher(db, *, include_summary: bool = False) -> int | di
         )
     except Exception as e:
         if is_missing_pickem_research_observations_error(e):
-            pickem_result = type("EmptyResult", (), {"data": []})()
+            pickem_result = SimpleNamespace(data=[])
         else:
             raise
 
@@ -2739,13 +2747,18 @@ async def scan_all_sides(sport: str = "basketball_nba", source: str = "unknown")
         if not pin_outcomes:
             continue
 
-        pin_home = pin_outcomes.get(home)
-        pin_away = pin_outcomes.get(away)
-        if None in (pin_home, pin_away):
+        pin_home_raw = pin_outcomes.get(home)
+        pin_away_raw = pin_outcomes.get(away)
+        if pin_home_raw is None or pin_away_raw is None:
             continue
+        pin_home = float(pin_home_raw)
+        pin_away = float(pin_away_raw)
         draw_key = _find_draw_key(pin_outcomes, home, away)
         if draw_key:
-            true_probs_n = devig_outcomes({home: pin_home, away: pin_away, draw_key: pin_outcomes[draw_key]})
+            draw_price_raw = pin_outcomes.get(draw_key)
+            if draw_price_raw is None:
+                continue
+            true_probs_n = devig_outcomes({home: pin_home, away: pin_away, draw_key: float(draw_price_raw)})
             if not true_probs_n:
                 continue
             true_probs = {"team_a": true_probs_n[home], "team_b": true_probs_n[away]}

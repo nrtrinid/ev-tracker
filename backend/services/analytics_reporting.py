@@ -174,6 +174,18 @@ def _trimmed_str(value: Any) -> str | None:
     return normalized if normalized else None
 
 
+def _email_from_row(row: dict[str, Any]) -> str | None:
+    properties = row.get("properties")
+    if not isinstance(properties, dict):
+        return None
+
+    for key in ("user_email", "email", "userEmail"):
+        candidate = _trimmed_str(properties.get(key))
+        if candidate and "@" in candidate and len(candidate) <= 200:
+            return candidate
+    return None
+
+
 def _actor_key(user_id: str | None, session_id: str | None) -> str | None:
     if user_id:
         return f"user:{user_id}"
@@ -208,6 +220,7 @@ def summarize_analytics_user_rows(
             continue
 
         user_id = _trimmed_str(row.get("user_id"))
+        user_email = _email_from_row(row)
         session_id = _trimmed_str(row.get("session_id"))
         actor_key = _actor_key(user_id, session_id)
         if actor_key is None:
@@ -218,11 +231,14 @@ def summarize_analytics_user_rows(
             {
                 "actor_key": actor_key,
                 "user_id": user_id,
+                "user_email": user_email,
                 "entries": [],
             },
         )
         if bucket.get("user_id") is None and user_id is not None:
             bucket["user_id"] = user_id
+        if bucket.get("user_email") is None and user_email is not None:
+            bucket["user_email"] = user_email
 
         bucket["entries"].append(
             {
@@ -303,6 +319,7 @@ def summarize_analytics_user_rows(
             activity_status = "active"
 
         user_id = bucket.get("user_id")
+        user_email = bucket.get("user_email")
         actor_id = user_id or latest_session_id or bucket["actor_key"]
         user_label = _compact_id(actor_id)
 
@@ -323,6 +340,7 @@ def summarize_analytics_user_rows(
             {
                 "actor_key": bucket["actor_key"],
                 "user_id": user_id,
+                "user_email": user_email,
                 "user_label": user_label,
                 "is_anonymous": user_id is None,
                 "joined_at": _iso_z(first_seen_at),

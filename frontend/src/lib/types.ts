@@ -841,6 +841,7 @@ export interface AnalyticsUserLatestSession {
 export interface AnalyticsUserDrilldownRow {
   actor_key: string;
   user_id: string | null;
+  user_email?: string | null;
   user_label: string;
   is_anonymous: boolean;
   joined_at: string;

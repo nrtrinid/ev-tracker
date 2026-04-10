@@ -218,22 +218,32 @@ export function OnboardingHighlightProvider({ children }: { children: ReactNode 
       {children}
       {state.target && spotlightStyle && (
         <div className="pointer-events-none fixed inset-0 z-[90]">
+          {/* Dim overlay with spotlight cutout */}
           <div
-            className="absolute rounded-xl border border-primary/70 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)] transition-all duration-200"
+            className="absolute rounded-lg border border-primary/50 transition-all duration-200"
             style={
               isNonModalTarget
                 ? {
                     ...spotlightStyle,
-                    boxShadow: "0 10px 30px rgba(59,130,246,0.18)",
+                    boxShadow: "0 0 0 9999px rgba(0,0,0,0.38), 0 0 0 2px hsl(var(--primary) / 0.5), 0 4px 20px hsl(var(--primary) / 0.2)",
                   }
-                : spotlightStyle
+                : {
+                    ...spotlightStyle,
+                    boxShadow: "0 0 0 9999px rgba(0,0,0,0.5), 0 0 0 2px hsl(var(--primary) / 0.6), 0 4px 24px hsl(var(--primary) / 0.25)",
+                  }
             }
           />
+          {/* Tooltip */}
           {state.message && (
-            <div className="absolute left-1/2 top-6 w-[min(34rem,calc(100%-2rem))] -translate-x-1/2 rounded-lg border border-primary/35 bg-card/95 px-3 py-2 text-sm shadow-lg backdrop-blur-sm">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">Guided Step</p>
-              <p className="mt-1 font-medium text-foreground">{state.message.title}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">{state.message.body}</p>
+            <div className="absolute left-1/2 top-5 w-[min(30rem,calc(100%-2.5rem))] -translate-x-1/2 overflow-hidden rounded-lg border border-primary/30 bg-card shadow-xl backdrop-blur-sm">
+              <div className="h-0.5 w-full bg-gradient-to-r from-primary/40 via-primary to-primary/40" />
+              <div className="px-3.5 py-2.5">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-primary">
+                  Guided Step
+                </p>
+                <p className="mt-1 text-sm font-semibold text-foreground">{state.message.title}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">{state.message.body}</p>
+              </div>
             </div>
           )}
         </div>
