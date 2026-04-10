@@ -34,6 +34,8 @@ interface BettingPlatformState {
   onboardingDismissed: OnboardingStepId[];
 }
 
+type OnboardingHydrationSource = "local" | "remote";
+
 interface BettingPlatformContextValue extends BettingPlatformState {
   isHydrated: boolean;
   addCartLeg: (leg: ParlayCartLeg) => { added: boolean; reason?: string };
@@ -73,6 +75,34 @@ const defaultState: BettingPlatformState = {
 function arraysEqual(left: OnboardingStepId[], right: OnboardingStepId[]) {
   if (left.length !== right.length) return false;
   return left.every((value, index) => value === right[index]);
+}
+
+function mergeUniqueSteps(...groups: OnboardingStepId[][]) {
+  return sanitizeOnboardingSteps(groups.flat());
+}
+
+export function resolveHydratedOnboardingState(
+  current: Pick<BettingPlatformState, "onboardingCompleted" | "onboardingDismissed">,
+  payload: { completed?: OnboardingStepId[]; dismissed?: OnboardingStepId[] } | null | undefined,
+  source: OnboardingHydrationSource = "local",
+) {
+  const payloadCompleted = sanitizeOnboardingSteps(payload?.completed ?? current.onboardingCompleted);
+  const payloadDismissed = sanitizeOnboardingSteps(payload?.dismissed ?? current.onboardingDismissed);
+
+  const nextCompleted = source === "remote"
+    ? mergeUniqueSteps(current.onboardingCompleted, payloadCompleted)
+    : payloadCompleted;
+
+  const mergedDismissed = source === "remote"
+    ? mergeUniqueSteps(current.onboardingDismissed, payloadDismissed)
+    : payloadDismissed;
+
+  const nextDismissed = mergedDismissed.filter((step) => !nextCompleted.includes(step));
+
+  return {
+    completed: nextCompleted,
+    dismissed: nextDismissed,
+  };
 }
 
 const BettingPlatformContext = createContext<BettingPlatformContextValue | null>(null);
@@ -343,8 +373,11 @@ export function BettingPlatformProvider({ children }: { children: React.ReactNod
       if (current.onboardingCompleted.includes(step)) {
         return current;
       }
+      const shouldClearTutorial = step === "tutorial_scanner_straight_bets";
       const nextState = {
         ...current,
+        scannerReviewCandidate: shouldClearTutorial ? null : current.scannerReviewCandidate,
+        tutorialSession: shouldClearTutorial ? null : current.tutorialSession,
         onboardingCompleted: [...current.onboardingCompleted, step],
         onboardingDismissed: current.onboardingDismissed.filter((value) => value !== step),
       };
@@ -361,8 +394,11 @@ export function BettingPlatformProvider({ children }: { children: React.ReactNod
       if (current.onboardingDismissed.includes(step)) {
         return current;
       }
+      const shouldClearTutorial = step === "tutorial_scanner_straight_bets";
       const nextState = {
         ...current,
+        scannerReviewCandidate: shouldClearTutorial ? null : current.scannerReviewCandidate,
+        tutorialSession: shouldClearTutorial ? null : current.tutorialSession,
         onboardingDismissed: [...current.onboardingDismissed, step],
       };
       persistBettingPlatformState(nextState);
@@ -372,26 +408,29 @@ export function BettingPlatformProvider({ children }: { children: React.ReactNod
 
   const hydrateOnboarding = useCallback((
     payload: { completed?: OnboardingStepId[]; dismissed?: OnboardingStepId[] } | null | undefined,
-    _source: "local" | "remote" = "local"
+    source: OnboardingHydrationSource = "local"
   ) => {
-    void _source;
     setState((current) => {
-      const payloadCompleted = sanitizeOnboardingSteps(payload?.completed ?? current.onboardingCompleted);
-      const payloadDismissed = sanitizeOnboardingSteps(payload?.dismissed ?? current.onboardingDismissed).filter(
-        (step) => !payloadCompleted.includes(step)
+      const resolved = resolveHydratedOnboardingState(current, payload, source);
+      const nextCompleted = resolved.completed;
+      const nextDismissed = resolved.dismissed;
+      const shouldClearTutorial = (
+        nextCompleted.includes("tutorial_scanner_straight_bets") ||
+        nextDismissed.includes("tutorial_scanner_straight_bets")
       );
-      const nextCompleted = payloadCompleted;
-      const nextDismissed = payloadDismissed;
 
       if (
         arraysEqual(current.onboardingCompleted, nextCompleted) &&
-        arraysEqual(current.onboardingDismissed, nextDismissed)
+        arraysEqual(current.onboardingDismissed, nextDismissed) &&
+        (!shouldClearTutorial || (current.tutorialSession === null && current.scannerReviewCandidate === null))
       ) {
         return current;
       }
 
       const nextState = {
         ...current,
+        scannerReviewCandidate: shouldClearTutorial ? null : current.scannerReviewCandidate,
+        tutorialSession: shouldClearTutorial ? null : current.tutorialSession,
         onboardingCompleted: nextCompleted,
         onboardingDismissed: nextDismissed,
       };
