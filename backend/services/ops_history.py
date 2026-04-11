@@ -17,6 +17,7 @@ RECENT_RAW_CALL_QUERY_LIMIT = 200
 RECENT_SCAN_DETAIL_QUERY_LIMIT = 200
 BOARD_DROP_SOURCES = {"scheduled_board_drop", "ops_trigger_board_drop", "cron_board_drop"}
 SCHEDULED_SCAN_JOB_KINDS = ("scheduled_board_drop", "scheduled_scan")
+OPS_TRIGGER_SCAN_JOB_KINDS = ("ops_trigger_board_drop", "ops_trigger_scan")
 
 _PRUNE_LOCK = threading.Lock()
 _LAST_PRUNE_ATTEMPT_MONOTONIC = 0.0
@@ -388,6 +389,7 @@ def _build_recent_scan_sessions(rows: list[dict[str, Any]]) -> list[dict[str, An
                 "details": [],
                 "_latest_ts_epoch": _parse_timestamp(row.get("captured_at")) or 0,
                 "_min_remaining_numeric": None,
+                "_surfaces": set(),
             }
             grouped[session_id] = current
 
@@ -421,12 +423,20 @@ def _build_recent_scan_sessions(rows: list[dict[str, Any]]) -> list[dict[str, An
             current["error_count"] += 1
             current["has_errors"] = True
 
+        surface = str(row.get("surface") or "").strip()
+        if surface:
+            current["_surfaces"].add(surface)
+
         current["details"].append(_sanitize_scan_activity_row(row))
 
     recent = sorted(grouped.values(), key=lambda row: row.get("_latest_ts_epoch") or 0, reverse=True)[
         :RECENT_SCAN_SESSION_LIMIT
     ]
     for row in recent:
+        surfaces = row.pop("_surfaces", set())
+        source = str(row.get("source") or "").strip().lower()
+        if source in BOARD_DROP_SOURCES or len(surfaces) > 1:
+            row["surface"] = "board_drop"
         row.pop("_latest_ts_epoch", None)
         row.pop("_min_remaining_numeric", None)
     return recent
@@ -549,6 +559,18 @@ def _map_scan_run(row: dict[str, Any]) -> dict[str, Any]:
         mapped["scan_window"] = meta.get("scan_window")
     if meta and "autolog_summary" in meta:
         mapped["autolog_summary"] = meta.get("autolog_summary")
+    if row.get("surface") == "board_drop":
+        mapped["board_drop"] = True
+    if meta and isinstance(meta.get("result_summary"), dict):
+        result_summary = meta.get("result_summary") or {}
+        mapped["board_drop"] = True
+        mapped["result"] = result_summary
+        if "props_events_scanned" in result_summary:
+            mapped["props_events_scanned"] = result_summary.get("props_events_scanned")
+        if "featured_games_count" in result_summary:
+            mapped["featured_games_count"] = result_summary.get("featured_games_count")
+        if "game_line_sports_scanned" in result_summary:
+            mapped["game_line_sports_scanned"] = result_summary.get("game_line_sports_scanned")
     if meta:
         board_alert = meta.get("board_alert") if isinstance(meta.get("board_alert"), dict) else None
         if board_alert is not None:
@@ -805,8 +827,10 @@ def load_ops_status_snapshot(
             retry_supabase=retry_supabase,
             job_kinds=SCHEDULED_SCAN_JOB_KINDS,
         )
-        ops_trigger = _select_latest_job_run(
-            db=resolved_db, retry_supabase=retry_supabase, job_kind="ops_trigger_scan"
+        ops_trigger = _select_latest_job_run_any(
+            db=resolved_db,
+            retry_supabase=retry_supabase,
+            job_kinds=OPS_TRIGGER_SCAN_JOB_KINDS,
         )
         auto_settle = _select_latest_job_run(
             db=resolved_db, retry_supabase=retry_supabase, job_kind="auto_settle"

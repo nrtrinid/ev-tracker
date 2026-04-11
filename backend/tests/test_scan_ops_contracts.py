@@ -720,23 +720,36 @@ def test_ops_status_contract_shape_degraded(monkeypatch, auth_client):
 
 @pytest.mark.integration
 def test_ops_trigger_scan_contract_shape(auth_client, monkeypatch):
-    import services.odds_api as odds_api
+    import services.daily_board as daily_board
     import services.discord_alerts as discord_alerts
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
+    monkeypatch.setenv("DISCORD_SCAN_ALERT_MODE", "edge_live")
 
-    async def _fake_get_cached_or_scan(_sport: str, source: str = "ops_trigger_scan"):
-        assert source == "ops_trigger_scan"
+    async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
+        assert source == "ops_trigger_board_drop"
+        assert scan_label == "Ops Manual Board Refresh"
+        assert mst_anchor_time is None
         return {
-            "sides": [{"team": "Lakers"}, {"team": "Warriors"}],
-            "events_fetched": 1,
-            "events_with_both_books": 1,
-            "api_requests_remaining": "496",
+            "straight_sides": 6,
+            "props_sides": 4,
+            "featured_games_count": 3,
+            "game_line_sports_scanned": ["basketball_nba", "baseball_mlb"],
+            "props_events_scanned": 7,
+            "selected_event_ids": ["evt-1", "evt-2"],
+            "selected_games": [{"event_id": "evt-1"}],
+            "game_lines_events_fetched": 2,
+            "game_lines_events_with_both_books": 2,
+            "game_lines_api_requests_remaining": "91",
+            "props_events_fetched": 7,
+            "props_events_with_both_books": 6,
+            "props_api_requests_remaining": "90",
+            "fresh_straight_sides": [{"surface": "straight_bets"}],
+            "fresh_prop_sides": [{"surface": "player_props"}],
         }
 
-    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)
-    monkeypatch.setattr(odds_api, "get_cached_or_scan", _fake_get_cached_or_scan, raising=True)
-    monkeypatch.setattr(discord_alerts, "schedule_alerts", lambda _sides: 0, raising=True)
+    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_run_daily_board_drop, raising=True)
+    monkeypatch.setattr(discord_alerts, "schedule_alerts", lambda sides: len(sides), raising=True)
 
     resp = auth_client.post("/api/ops/trigger/scan", headers={"X-Ops-Token": "ops-secret"})
     assert resp.status_code == 200
@@ -744,10 +757,12 @@ def test_ops_trigger_scan_contract_shape(auth_client, monkeypatch):
     body = resp.json()
     assert isinstance(body.get("ok"), bool)
     assert isinstance(body.get("run_id"), str)
-    assert isinstance(body.get("sports_scanned"), list)
+    assert body.get("board_drop") is True
     assert isinstance(body.get("errors"), list)
     assert isinstance(body.get("total_sides"), int)
     assert isinstance(body.get("alerts_scheduled"), int)
+    assert body["total_sides"] == 10
+    assert body["result"]["props_sides"] == 4
 
 
 @pytest.mark.integration

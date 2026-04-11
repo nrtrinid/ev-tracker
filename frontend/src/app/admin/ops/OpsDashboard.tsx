@@ -283,12 +283,15 @@ function deriveOddsApiState(data: OperatorStatusResponse | undefined): HealthSta
 function formatSourceLabel(source?: string | null): string {
   const normalized = source?.trim().toLowerCase();
   if (normalized === "manual_scan") return "Manual";
-  if (normalized === "scheduled_scan") return "Scheduler";
-  if (normalized === "ops_trigger_scan" || normalized === "cron_scan") return "Ops trigger";
+  if (normalized === "scheduled_scan" || normalized === "scheduled_board_drop") return "Scheduler";
+  if (normalized === "ops_trigger_scan" || normalized === "ops_trigger_board_drop" || normalized === "cron_scan") {
+    return "Ops trigger";
+  }
   return source || "Unknown";
 }
 
 function formatSurfaceLabel(surface?: string | null): string {
+  if (surface === "board_drop") return "Daily board";
   if (surface === "player_props") return "Player props";
   if (surface === "straight_bets") return "Straight bets";
   return "Unknown surface";
@@ -351,7 +354,7 @@ function buildFallbackScanSession({
 }: {
   timestamp: string | null | undefined;
   source: string;
-  surface: "straight_bets" | "player_props";
+  surface: "straight_bets" | "player_props" | "board_drop";
   scanScope: "all" | "single_sport";
   requestedSport: string | null;
   actorLabel: string | null;
@@ -437,7 +440,7 @@ function buildFallbackOddsActivity(data: OperatorStatusResponse | undefined): {
     {
       activity_kind: "raw_call" as const,
       timestamp: scheduler?.finished_at || scheduler?.captured_at,
-      source: "scheduled_scan",
+      source: scheduler?.board_drop ? "scheduled_board_drop" : "scheduled_scan",
       endpoint: "/sports/{sport}/odds",
       sport: null,
       cache_hit: undefined,
@@ -451,7 +454,7 @@ function buildFallbackOddsActivity(data: OperatorStatusResponse | undefined): {
     {
       activity_kind: "raw_call" as const,
       timestamp: cron?.finished_at || cron?.captured_at,
-      source: "ops_trigger_scan",
+      source: cron?.board_drop ? "ops_trigger_board_drop" : "ops_trigger_scan",
       endpoint: "/sports/{sport}/odds",
       sport: null,
       cache_hit: undefined,
@@ -502,8 +505,8 @@ function buildFallbackOddsActivity(data: OperatorStatusResponse | undefined): {
     }),
     buildFallbackScanSession({
       timestamp: scheduler?.finished_at || scheduler?.captured_at,
-      source: "scheduled_scan",
-      surface: "straight_bets",
+      source: scheduler?.board_drop ? "scheduled_board_drop" : "scheduled_scan",
+      surface: scheduler?.board_drop ? "board_drop" : "straight_bets",
       scanScope: "all",
       requestedSport: null,
       actorLabel: null,
@@ -517,8 +520,8 @@ function buildFallbackOddsActivity(data: OperatorStatusResponse | undefined): {
     }),
     buildFallbackScanSession({
       timestamp: cron?.finished_at || cron?.captured_at,
-      source: "ops_trigger_scan",
-      surface: "straight_bets",
+      source: cron?.board_drop ? "ops_trigger_board_drop" : "ops_trigger_scan",
+      surface: cron?.board_drop ? "board_drop" : "straight_bets",
       scanScope: "all",
       requestedSport: null,
       actorLabel: null,

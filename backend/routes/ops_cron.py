@@ -3,6 +3,7 @@ import os
 import time
 from datetime import datetime, UTC
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
@@ -16,6 +17,12 @@ from models import (
 
 
 router = APIRouter()
+DISCORD_SCAN_ALERT_MODE_TIMED_PING = "timed_ping"
+DISCORD_SCAN_ALERT_MODE_EDGE_LIVE = "edge_live"
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _raise_if_delivery_disabled(delivery: Any, *, run_id: str, fallback_message_type: str) -> None:
@@ -60,7 +67,7 @@ async def cron_run_scan_impl(
     from services.odds_api import append_scan_activity, get_cached_or_scan, SUPPORTED_SPORTS
     from services.discord_alerts import get_last_schedule_stats, schedule_alerts
 
-    started = datetime.now(UTC).isoformat() + "Z"
+    started = _utc_now_iso()
     scanned = []
     errors: list[dict] = []
     total_sides = 0
@@ -210,7 +217,7 @@ async def cron_run_scan_impl(
                 error=str(e),
             )
 
-    finished = datetime.now(UTC).isoformat() + "Z"
+    finished = _utc_now_iso()
     duration_ms = round((time.monotonic() - started_clock) * 1000, 2)
     log_event(
         f"{log_prefix}.completed",
@@ -293,6 +300,287 @@ async def cron_run_scan_impl(
             "events_with_both_books": total_with_both,
         },
         "sports_scanned": scanned,
+        "errors": errors,
+        "total_sides": total_sides,
+        "alerts_scheduled": alerts_scheduled,
+        "alert_skip_totals": alert_skip_totals,
+    }
+
+
+async def cron_run_board_drop_impl(
+    x_cron_token: str | None,
+    *,
+    require_valid_cron_token: Callable[[str | None], None],
+    new_run_id: Callable[[str], str],
+    log_event: Callable[..., None],
+    set_ops_status: Callable[[str, dict], None],
+    persist_ops_job_run: Callable[..., None],
+    get_db: Callable[[], Any],
+    retry_supabase: Callable[[Callable[[], Any]], Any] | None,
+    run_id_prefix: str = "ops_board_drop",
+    log_prefix: str = "ops.trigger.board_drop",
+    board_drop_source: str = "ops_trigger_board_drop",
+    ops_status_key: str = "last_ops_trigger_scan",
+    scan_label: str = "Ops Manual Board Refresh",
+) -> dict[str, Any]:
+    require_valid_cron_token(x_cron_token)
+
+    run_id = new_run_id(run_id_prefix)
+    started_clock = time.monotonic()
+    started = _utc_now_iso()
+    log_event(f"{log_prefix}.started", run_id=run_id, started_at=started, scan_label=scan_label)
+
+    from services.daily_board import run_daily_board_drop
+    from services.discord_alerts import (
+        DiscordDeliveryError,
+        build_board_drop_alert_payload,
+        get_last_schedule_stats,
+        schedule_alerts,
+        send_discord_webhook,
+    )
+    try:
+        manual_anchor_time_mst = datetime.now(UTC).astimezone(ZoneInfo("America/Phoenix")).strftime("%H:%M")
+    except Exception:
+        manual_anchor_time_mst = datetime.now(UTC).strftime("%H:%M")
+
+    errors: list[dict[str, Any]] = []
+    alerts_scheduled = 0
+    alert_skip_totals = {
+        "skipped_memory_dedupe": 0,
+        "skipped_shared_dedupe": 0,
+        "skipped_threshold": 0,
+    }
+    board_alert = {
+        "attempted": False,
+        "delivery_status": "not_attempted",
+        "status_code": None,
+        "route_kind": None,
+        "webhook_source": None,
+        "error": None,
+    }
+    result: dict[str, Any] = {
+        "straight_sides": 0,
+        "props_sides": 0,
+        "featured_games_count": 0,
+        "game_line_sports_scanned": [],
+        "props_events_scanned": 0,
+        "selected_event_ids": [],
+        "selected_games": [],
+        "game_lines_events_fetched": 0,
+        "game_lines_events_with_both_books": 0,
+        "game_lines_api_requests_remaining": None,
+        "props_events_fetched": 0,
+        "props_events_with_both_books": 0,
+        "props_api_requests_remaining": None,
+        "fresh_straight_sides": [],
+        "fresh_prop_sides": [],
+    }
+
+    try:
+        result = await run_daily_board_drop(
+            db=get_db(),
+            source=board_drop_source,
+            scan_label=scan_label,
+            mst_anchor_time=None,
+            retry_supabase=retry_supabase,
+            log_event=log_event,
+        )
+
+        fresh_straight_sides = [
+            side for side in (result.get("fresh_straight_sides") or []) if isinstance(side, dict)
+        ]
+        fresh_prop_sides = [
+            side for side in (result.get("fresh_prop_sides") or []) if isinstance(side, dict)
+        ]
+        scan_alert_mode = (os.getenv("DISCORD_SCAN_ALERT_MODE") or DISCORD_SCAN_ALERT_MODE_TIMED_PING).strip().lower()
+        if scan_alert_mode == DISCORD_SCAN_ALERT_MODE_EDGE_LIVE:
+            alerts_scheduled += schedule_alerts([*fresh_straight_sides, *fresh_prop_sides])
+            schedule_stats = get_last_schedule_stats()
+            alert_skip_totals["skipped_memory_dedupe"] += int(schedule_stats.get("skipped_memory_dedupe") or 0)
+            alert_skip_totals["skipped_shared_dedupe"] += int(schedule_stats.get("skipped_shared_dedupe") or 0)
+            alert_skip_totals["skipped_threshold"] += int(schedule_stats.get("skipped_threshold") or 0)
+            log_event(
+                f"{log_prefix}.alert_schedule",
+                run_id=run_id,
+                discord_alert_schedule=schedule_stats,
+                scan_alert_mode=scan_alert_mode,
+            )
+        else:
+            board_alert_payload = build_board_drop_alert_payload(
+                window_label=scan_label,
+                anchor_time_mst=manual_anchor_time_mst,
+                result={
+                    "props_sides": result.get("props_sides"),
+                    "straight_sides": result.get("straight_sides"),
+                    "featured_games_count": result.get("featured_games_count"),
+                },
+            )
+            try:
+                delivery = await send_discord_webhook(board_alert_payload, message_type="alert")
+                _raise_if_delivery_disabled(delivery, run_id=run_id, fallback_message_type="alert")
+                board_alert = {
+                    "attempted": True,
+                    "delivery_status": delivery.get("delivery_status") if isinstance(delivery, dict) else "delivered",
+                    "status_code": delivery.get("status_code") if isinstance(delivery, dict) else None,
+                    "route_kind": delivery.get("route_kind") if isinstance(delivery, dict) else None,
+                    "webhook_source": delivery.get("webhook_source") if isinstance(delivery, dict) else None,
+                    "error": None,
+                }
+            except DiscordDeliveryError as exc:
+                board_alert = {
+                    "attempted": True,
+                    "delivery_status": "failed",
+                    "status_code": exc.status_code,
+                    "route_kind": exc.route_kind,
+                    "webhook_source": exc.webhook_source,
+                    "error": str(exc),
+                }
+            except Exception as exc:
+                board_alert = {
+                    "attempted": True,
+                    "delivery_status": "failed_unexpected",
+                    "status_code": None,
+                    "route_kind": None,
+                    "webhook_source": None,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            log_event(
+                f"{log_prefix}.board_alert",
+                run_id=run_id,
+                scan_alert_mode=scan_alert_mode,
+                delivery_status=board_alert.get("delivery_status"),
+                status_code=board_alert.get("status_code"),
+                route_kind=board_alert.get("route_kind"),
+                webhook_source=board_alert.get("webhook_source"),
+                error=board_alert.get("error"),
+            )
+    except Exception as exc:
+        errors.append({"error": str(exc), "error_class": type(exc).__name__})
+        log_event(
+            f"{log_prefix}.failed",
+            level="error",
+            run_id=run_id,
+            error_class=type(exc).__name__,
+            error=str(exc),
+        )
+
+    finished = _utc_now_iso()
+    duration_ms = round((time.monotonic() - started_clock) * 1000, 2)
+    total_sides = int(result.get("straight_sides") or 0) + int(result.get("props_sides") or 0)
+    total_events = int(result.get("game_lines_events_fetched") or 0) + int(result.get("props_events_fetched") or 0)
+    total_with_both = int(result.get("game_lines_events_with_both_books") or 0) + int(
+        result.get("props_events_with_both_books") or 0
+    )
+    remaining_candidates: list[int] = []
+    remaining_fallback: str | None = None
+    for raw in (
+        result.get("game_lines_api_requests_remaining"),
+        result.get("props_api_requests_remaining"),
+    ):
+        if raw is None:
+            continue
+        if remaining_fallback is None:
+            remaining_fallback = str(raw)
+        try:
+            remaining_candidates.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    min_remaining = str(min(remaining_candidates)) if remaining_candidates else remaining_fallback
+
+    log_event(
+        f"{log_prefix}.completed",
+        run_id=run_id,
+        total_sides=total_sides,
+        straight_sides=int(result.get("straight_sides") or 0),
+        props_sides=int(result.get("props_sides") or 0),
+        alerts_scheduled=alerts_scheduled,
+        alert_skip_totals=alert_skip_totals,
+        error_count=len(errors),
+        duration_ms=duration_ms,
+    )
+
+    status_payload = {
+        "run_id": run_id,
+        "started_at": started,
+        "finished_at": finished,
+        "duration_ms": duration_ms,
+        "board_drop": True,
+        "total_sides": total_sides,
+        "straight_sides": int(result.get("straight_sides") or 0),
+        "props_sides": int(result.get("props_sides") or 0),
+        "featured_games_count": int(result.get("featured_games_count") or 0),
+        "alerts_scheduled": alerts_scheduled,
+        "alert_skip_totals": alert_skip_totals,
+        "error_count": len(errors),
+        "errors": errors,
+        "captured_at": finished,
+        "props_events_scanned": int(result.get("props_events_scanned") or 0),
+        "game_line_sports_scanned": result.get("game_line_sports_scanned") or [],
+        "result": {
+            "straight_sides": int(result.get("straight_sides") or 0),
+            "props_sides": int(result.get("props_sides") or 0),
+            "featured_games_count": int(result.get("featured_games_count") or 0),
+            "props_events_scanned": int(result.get("props_events_scanned") or 0),
+            "selected_event_ids": result.get("selected_event_ids") or [],
+            "selected_games": result.get("selected_games") or [],
+            "duration_ms": duration_ms,
+        },
+        "board_alert": board_alert,
+        "board_alert_attempted": bool(board_alert.get("attempted")),
+        "board_alert_delivery_status": board_alert.get("delivery_status"),
+        "board_alert_http_status": board_alert.get("status_code"),
+        "board_alert_error": board_alert.get("error"),
+    }
+    set_ops_status(ops_status_key, status_payload)
+
+    persist_ops_job_run(
+        job_kind="ops_trigger_board_drop",
+        source="ops_trigger",
+        status="completed" if not errors else "completed_with_errors",
+        run_id=run_id,
+        scan_session_id=run_id,
+        surface="board_drop",
+        scan_scope="all",
+        requested_sport="board",
+        captured_at=finished,
+        started_at=started,
+        finished_at=finished,
+        duration_ms=duration_ms,
+        events_fetched=total_events,
+        events_with_both_books=total_with_both,
+        total_sides=total_sides,
+        alerts_scheduled=alerts_scheduled,
+        error_count=len(errors),
+        errors=errors,
+        api_requests_remaining=min_remaining,
+        meta={
+            "alert_skip_totals": alert_skip_totals,
+            "board_alert": board_alert,
+            "board_alert_attempted": bool(board_alert.get("attempted")),
+            "board_alert_delivery_status": board_alert.get("delivery_status"),
+            "board_alert_http_status": board_alert.get("status_code"),
+            "board_alert_error": board_alert.get("error"),
+            "result_summary": {
+                "straight_sides": int(result.get("straight_sides") or 0),
+                "props_sides": int(result.get("props_sides") or 0),
+                "featured_games_count": int(result.get("featured_games_count") or 0),
+                "props_events_scanned": int(result.get("props_events_scanned") or 0),
+                "game_line_sports_scanned": result.get("game_line_sports_scanned") or [],
+                "selected_event_ids": result.get("selected_event_ids") or [],
+                "selected_games": result.get("selected_games") or [],
+                "duration_ms": duration_ms,
+            },
+        },
+    )
+
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "started_at": started,
+        "finished_at": finished,
+        "duration_ms": duration_ms,
+        "board_drop": True,
+        "result": status_payload["result"],
         "errors": errors,
         "total_sides": total_sides,
         "alerts_scheduled": alerts_scheduled,
@@ -848,21 +1136,20 @@ async def ops_trigger_scan(
 ):
     import main
 
-    return await cron_run_scan_impl(
+    return await cron_run_board_drop_impl(
         x_cron_token=x_ops_token or x_cron_token,
         require_valid_cron_token=lambda token: main._require_ops_token(token, None),
         new_run_id=main._new_run_id,
         log_event=main._log_event,
         set_ops_status=main._set_ops_status,
         persist_ops_job_run=main._persist_ops_job_run,
-        apply_fresh_scan_followups=lambda result: main._apply_fresh_straight_scan_followups(
-            result,
-            source="ops_trigger_scan",
-        ),
-        run_id_prefix="ops_scan",
-        log_prefix="ops.trigger.scan",
-        scan_source="ops_trigger_scan",
+        get_db=main.get_db,
+        retry_supabase=main._retry_supabase,
+        run_id_prefix="ops_board_drop",
+        log_prefix="ops.trigger.board_drop",
+        board_drop_source="ops_trigger_board_drop",
         ops_status_key="last_ops_trigger_scan",
+        scan_label="Ops Manual Board Refresh",
     )
 
 

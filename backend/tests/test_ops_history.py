@@ -184,7 +184,7 @@ def test_load_ops_status_snapshot_prefers_durable_rows_and_rebuilds_activity():
                     },
                 },
                 {
-                    "job_kind": "ops_trigger_scan",
+                    "job_kind": "ops_trigger_board_drop",
                     "source": "ops_trigger",
                     "status": "completed_with_errors",
                     "run_id": "ops-1",
@@ -196,6 +196,16 @@ def test_load_ops_status_snapshot_prefers_durable_rows_and_rebuilds_activity():
                     "alerts_scheduled": 0,
                     "error_count": 1,
                     "errors": [{"sport": "basketball_nba", "error": "boom"}],
+                    "surface": "board_drop",
+                    "meta": {
+                        "result_summary": {
+                            "straight_sides": 10,
+                            "props_sides": 8,
+                            "featured_games_count": 3,
+                            "props_events_scanned": 6,
+                            "game_line_sports_scanned": ["basketball_nba", "baseball_mlb"],
+                        }
+                    },
                 },
                 {
                     "job_kind": "auto_settle",
@@ -316,6 +326,8 @@ def test_load_ops_status_snapshot_prefers_durable_rows_and_rebuilds_activity():
     assert snapshot["last_scheduler_scan"]["board_alert_http_status"] == 429
     assert snapshot["last_scheduler_scan"]["board_alert_error"] == "rate limited"
     assert snapshot["last_ops_trigger_scan"]["error_count"] == 1
+    assert snapshot["last_ops_trigger_scan"]["board_drop"] is True
+    assert snapshot["last_ops_trigger_scan"]["result"]["props_sides"] == 8
     assert snapshot["last_auto_settle"]["settled"] == 5
     assert snapshot["last_auto_settle_summary"]["skipped_totals"] == {"missing_score": 2}
     assert snapshot["last_readiness_failure"]["db_error"] == "database timeout"

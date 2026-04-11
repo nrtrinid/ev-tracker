@@ -541,7 +541,7 @@ export interface OddsApiActivityScanDetail {
   activity_kind?: "scan_detail";
   timestamp?: string | null;
   source?: string | null;
-  surface?: ScannerSurface | null;
+  surface?: ScannerSurface | "board_drop" | null;
   scan_scope?: "all" | "single_sport" | string | null;
   requested_sport?: string | null;
   sport?: string | null;
@@ -565,7 +565,7 @@ export interface OddsApiActivityScanSession {
   scan_session_id?: string | null;
   timestamp?: string | null;
   source?: string | null;
-  surface?: ScannerSurface | null;
+  surface?: ScannerSurface | "board_drop" | null;
   scan_scope?: "all" | "single_sport" | string | null;
   requested_sport?: string | null;
   actor_label?: string | null;
@@ -649,10 +649,21 @@ export interface OperatorStatusResponse {
       finished_at?: string;
       duration_ms?: number;
       total_sides?: number;
+      props_events_scanned?: number;
+      featured_games_count?: number;
       alerts_scheduled?: number;
       error_count?: number;
       errors?: unknown[];
       captured_at?: string;
+      board_drop?: boolean;
+      result?: {
+        selected_event_ids?: string[];
+        selected_games?: Array<Record<string, unknown>>;
+        props_sides?: number;
+        props_events_scanned?: number;
+        featured_games_count?: number;
+        duration_ms?: number;
+      } | null;
     } | null;
     last_manual_scan?: {
       captured_at?: string;
@@ -769,7 +780,11 @@ export interface OpsTriggerScanResponse {
   board_drop: boolean;
   errors: Array<Record<string, unknown>>;
   result?: {
+    straight_sides?: number;
     props_sides?: number;
+    featured_games_count?: number;
+    props_events_scanned?: number;
+    game_line_sports_scanned?: string[];
     selected_event_ids?: string[];
     selected_games?: Array<Record<string, unknown>>;
     duration_ms?: number;
