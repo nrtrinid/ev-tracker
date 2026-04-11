@@ -720,11 +720,13 @@ def test_ops_status_contract_shape_degraded(monkeypatch, auth_client):
 
 @pytest.mark.integration
 def test_ops_trigger_scan_contract_shape(auth_client, monkeypatch):
+    import main
     import services.daily_board as daily_board
     import services.discord_alerts as discord_alerts
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
     monkeypatch.setenv("DISCORD_SCAN_ALERT_MODE", "edge_live")
+    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
 
     async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
         assert source == "ops_trigger_board_drop"
