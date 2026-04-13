@@ -112,8 +112,8 @@ export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>
             className={cn(
               "h-12 w-10 flex items-center justify-center rounded-l-md border-r border-input bg-background font-mono text-base font-medium transition-all shrink-0",
               isPositive
-                ? "text-[#4A7C59] hover:bg-[#4A7C59]/5 hover:border-[#4A7C59]/20"
-                : "text-[#B85C38] hover:bg-[#B85C38]/5 hover:border-[#B85C38]/20"
+                ? "text-color-profit-fg hover:bg-color-profit-subtle hover:border-color-profit/20"
+                : "text-color-loss-fg hover:bg-color-loss-subtle hover:border-color-loss/20"
             )}
             tabIndex={-1}
           >

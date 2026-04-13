@@ -11,10 +11,10 @@ import { useBettingPlatformStore } from "@/lib/betting-platform-store";
 import { ONBOARDING_HIGHLIGHT_TARGETS } from "@/lib/onboarding-guidance";
 
 const tabs = [
-  { href: "/", label: "Markets", icon: Grid2X2 },
+  { href: "/",        label: "Markets", icon: Grid2X2  },
   { href: "/builder", label: "Builder", icon: BarChart3 },
-  { href: "/bets", label: "Bets", icon: History },
-  { href: "/more", label: "More", icon: MoreHorizontal },
+  { href: "/bets",    label: "Bets",    icon: History   },
+  { href: "/more",    label: "More",    icon: MoreHorizontal },
 ];
 
 export function BottomNav() {
@@ -27,7 +27,6 @@ export function BottomNav() {
   if (pathname === "/login") return null;
 
   const showStatus = hasUserFacingSyncIssue(readiness);
-  const statusLabel = "Sync issue";
 
   const handleSignOut = async () => {
     await signOut();
@@ -45,26 +44,29 @@ export function BottomNav() {
 
   return (
     <>
-      {/* Top header: slim logo + status strip */}
-      <header className="sticky top-0 z-20 border-b border-border bg-card/90 backdrop-blur-sm">
+      {/* Top header — slim logo + status strip */}
+      <header className="sticky top-0 z-20 border-b border-border bg-card/95 backdrop-blur-sm">
         <div className="container mx-auto px-4 py-2.5 flex items-center justify-between max-w-2xl">
           <Link href="/" className="flex items-center gap-2 group">
-            <div className="w-7 h-7 rounded-md bg-foreground flex items-center justify-center shadow-sm">
+            {/* Logo mark — foreground on background creates clear contrast in both modes */}
+            <div className="w-7 h-7 rounded-md bg-foreground flex items-center justify-center">
               <span className="text-background font-bold text-xs tracking-tight">EV</span>
             </div>
             <span className="text-sm font-semibold text-foreground tracking-tight">Tracker</span>
           </Link>
 
           <div className="flex items-center gap-2">
+            {/* Sync issue badge — semantic tokens, not hardcoded colors */}
             {showStatus && (
               <span
-                className="flex items-center gap-1 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive"
+                className="flex items-center gap-1 rounded-md border border-color-loss/30 bg-color-loss-subtle px-2 py-0.5 text-[10px] font-medium text-color-loss-fg"
                 title="Core services are temporarily unavailable"
               >
                 <Activity className="h-3 w-3" />
-                {statusLabel}
+                Sync issue
               </span>
             )}
+            {/* Sign out — subordinate but readable, destructive on hover */}
             <button
               onClick={handleSignOut}
               className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-destructive hover:bg-muted transition-colors"
@@ -98,13 +100,17 @@ export function BottomNav() {
                   }
                   className={cn(
                     "relative flex flex-1 flex-col items-center justify-center gap-1 py-3 text-[11px] font-medium transition-colors",
+                    // Active: full foreground. Inactive: muted — clear 2-level hierarchy
                     active
                       ? "text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
+                      : "text-muted-foreground hover:text-foreground/80"
                   )}
                 >
                   <div className="relative">
-                    <Icon className="h-5 w-5" strokeWidth={active ? 2.5 : 1.75} />
+                    <Icon
+                      className="h-5 w-5"
+                      strokeWidth={active ? 2.25 : 1.75}
+                    />
                     {showBadge && (
                       <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-0.5 text-[9px] font-bold text-primary-foreground">
                         {cart.length}
@@ -112,6 +118,7 @@ export function BottomNav() {
                     )}
                   </div>
                   <span>{tab.label}</span>
+                  {/* Active indicator — top edge, primary color */}
                   {active && (
                     <span className="absolute top-0 left-1/2 h-0.5 w-8 -translate-x-1/2 rounded-full bg-primary" />
                   )}

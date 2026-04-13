@@ -71,6 +71,14 @@ interface ScannerResultFiltersProps {
   onResetFilters: () => void;
 }
 
+// Selected filter button style — semantic, works in light + dark
+const FILTER_SELECTED = "border-color-profit/40 bg-color-profit-subtle text-color-profit-fg";
+const FILTER_IDLE = "border-border bg-background text-muted-foreground hover:text-foreground";
+const FILTER_IDLE_FULL = "border-border bg-background text-foreground";
+
+// Boost selected style — uses primary/gold accent
+const BOOST_SELECTED = "border-primary/40 bg-primary/15 text-primary";
+
 function formatPropMarketLabel(value: string) {
   return value.replaceAll("_", " ");
 }
@@ -206,7 +214,7 @@ export function ScannerResultFilters({
             value={filters.searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder={searchPlaceholder}
-            className="h-10 rounded-md border border-border bg-background pl-9 pr-3 text-sm"
+            className="h-10 rounded-md border border-border bg-background pl-9 pr-3 text-sm border-b-border"
           />
         </div>
 
@@ -256,9 +264,7 @@ export function ScannerResultFilters({
                       onClick={() => onTimePresetChange(option.value)}
                       className={cn(
                         "rounded-md border px-2 py-1.5 text-xs font-medium transition-colors",
-                        filters.timePreset === option.value
-                          ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
-                          : "border-border bg-background text-foreground"
+                        filters.timePreset === option.value ? FILTER_SELECTED : FILTER_IDLE_FULL
                       )}
                     >
                       {option.label}
@@ -278,9 +284,7 @@ export function ScannerResultFilters({
                         onClick={() => onEdgeMinChange(edge)}
                         className={cn(
                           "rounded-md border px-2 py-1.5 text-xs font-medium transition-colors",
-                          filters.edgeMinStandard === edge
-                            ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
-                            : "border-border bg-background text-foreground"
+                          filters.edgeMinStandard === edge ? FILTER_SELECTED : FILTER_IDLE_FULL
                         )}
                       >
                         {edge === 0 ? "All +EV" : `${edge.toFixed(1)}%+`}
@@ -299,9 +303,7 @@ export function ScannerResultFilters({
                       onClick={() => onHideLongshotsChange(!filters.hideLongshots)}
                       className={cn(
                         "w-full rounded-md border px-3 py-2 text-left text-sm transition-colors",
-                        filters.hideLongshots
-                          ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
-                          : "border-border bg-background text-foreground"
+                        filters.hideLongshots ? FILTER_SELECTED : FILTER_IDLE_FULL
                       )}
                     >
                       Hide longshots (&gt; +500)
@@ -311,9 +313,7 @@ export function ScannerResultFilters({
                       onClick={() => onHideAlreadyLoggedChange(!filters.hideAlreadyLogged)}
                       className={cn(
                         "w-full rounded-md border px-3 py-2 text-left text-sm transition-colors",
-                        filters.hideAlreadyLogged
-                          ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
-                          : "border-border bg-background text-foreground"
+                        filters.hideAlreadyLogged ? FILTER_SELECTED : FILTER_IDLE_FULL
                       )}
                     >
                       Hide already logged
@@ -330,9 +330,7 @@ export function ScannerResultFilters({
                           onClick={() => onRiskPresetChange(option.value)}
                           className={cn(
                             "w-full rounded-md border px-3 py-2 text-left transition-colors",
-                            filters.riskPreset === option.value
-                              ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
-                              : "border-border bg-background text-foreground"
+                            filters.riskPreset === option.value ? FILTER_SELECTED : FILTER_IDLE_FULL
                           )}
                         >
                           <span className="block text-sm font-medium">{option.label}</span>
@@ -353,9 +351,7 @@ export function ScannerResultFilters({
                       onClick={() => onPropMarketChange("all")}
                       className={cn(
                         "rounded-md border px-2 py-1.5 text-xs font-medium transition-colors",
-                        filters.propMarket === "all"
-                          ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
-                          : "border-border bg-background text-foreground"
+                        filters.propMarket === "all" ? FILTER_SELECTED : FILTER_IDLE_FULL
                       )}
                     >
                       All markets
@@ -367,9 +363,7 @@ export function ScannerResultFilters({
                         onClick={() => onPropMarketChange(market)}
                         className={cn(
                           "rounded-md border px-2 py-1.5 text-xs font-medium capitalize transition-colors",
-                          filters.propMarket === market
-                            ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
-                            : "border-border bg-background text-foreground"
+                          filters.propMarket === market ? FILTER_SELECTED : FILTER_IDLE_FULL
                         )}
                       >
                         {formatPropMarketLabel(market)}
@@ -390,9 +384,7 @@ export function ScannerResultFilters({
                         onClick={() => onPropSideChange(side)}
                         className={cn(
                           "rounded-md border px-2 py-1.5 text-xs font-medium capitalize transition-colors",
-                          filters.propSide === side
-                            ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
-                            : "border-border bg-background text-foreground"
+                          filters.propSide === side ? FILTER_SELECTED : FILTER_IDLE_FULL
                         )}
                       >
                         {side}
@@ -412,9 +404,7 @@ export function ScannerResultFilters({
           onClick={() => onTimePresetChange(filters.timePreset === "starting_soon" ? "all" : "starting_soon")}
           className={cn(
             "whitespace-nowrap rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors",
-            filters.timePreset === "starting_soon"
-              ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
-              : "border-border bg-background text-muted-foreground hover:text-foreground"
+            filters.timePreset === "starting_soon" ? FILTER_SELECTED : FILTER_IDLE
           )}
         >
           Starting Soon
@@ -426,9 +416,7 @@ export function ScannerResultFilters({
               onClick={() => onRiskPresetChange(filters.riskPreset === "safer" ? "any" : "safer")}
               className={cn(
                 "whitespace-nowrap rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors",
-                filters.riskPreset === "safer"
-                  ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
-                  : "border-border bg-background text-muted-foreground hover:text-foreground"
+                filters.riskPreset === "safer" ? FILTER_SELECTED : FILTER_IDLE
               )}
             >
               Safer Odds
@@ -438,9 +426,7 @@ export function ScannerResultFilters({
               onClick={() => onHideAlreadyLoggedChange(!filters.hideAlreadyLogged)}
               className={cn(
                 "whitespace-nowrap rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors",
-                filters.hideAlreadyLogged
-                  ? "border-[#4A7C59]/45 bg-[#4A7C59]/12 text-[#2E5D39]"
-                  : "border-border bg-background text-muted-foreground hover:text-foreground"
+                filters.hideAlreadyLogged ? FILTER_SELECTED : FILTER_IDLE
               )}
             >
               Hide Logged
@@ -454,7 +440,7 @@ export function ScannerResultFilters({
           <Button
             type="button"
             variant="secondary"
-            className="hidden h-8 border border-[#C4A35A]/35 bg-[#C4A35A]/10 px-2.5 text-xs text-[#5C4D2E] hover:bg-[#C4A35A]/20 md:inline-flex"
+            className="hidden h-8 border border-primary/30 bg-primary/10 px-2.5 text-xs text-primary hover:bg-primary/20 md:inline-flex"
             onClick={() => setMobileBoostOpen(true)}
           >
             Boost: {boostPercent}%
@@ -462,7 +448,7 @@ export function ScannerResultFilters({
           <Button
             type="button"
             variant="secondary"
-            className="h-8 border border-[#C4A35A]/35 bg-[#C4A35A]/10 px-2.5 text-xs text-[#5C4D2E] hover:bg-[#C4A35A]/20 md:hidden"
+            className="h-8 border border-primary/30 bg-primary/10 px-2.5 text-xs text-primary hover:bg-primary/20 md:hidden"
             onClick={() => setMobileBoostOpen(true)}
           >
             Boost: {boostPercent}%
@@ -486,8 +472,8 @@ export function ScannerResultFilters({
                       className={cn(
                         "rounded-md border px-2 py-1.5 text-xs font-medium transition-colors",
                         boostPercent === preset && customBoostInput === ""
-                          ? "border-[#C4A35A]/40 bg-[#C4A35A]/25 text-[#5C4D2E]"
-                          : "border-border bg-background text-foreground"
+                          ? BOOST_SELECTED
+                          : FILTER_IDLE_FULL
                       )}
                     >
                       {preset}%
@@ -504,8 +490,8 @@ export function ScannerResultFilters({
                     value={customBoostInput}
                     onChange={(e) => onCustomBoostInputChange(e.target.value)}
                     className={cn(
-                      "h-8 w-20 rounded-md border bg-background px-2 text-xs font-medium text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-[#C4A35A]/50",
-                      customBoostInput !== "" ? "border-[#C4A35A]/40" : "border-border"
+                      "h-8 w-20 rounded-md border bg-background px-2 text-xs font-medium text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/50",
+                      customBoostInput !== "" ? "border-primary/40" : "border-border"
                     )}
                   />
                   <span className="text-xs text-muted-foreground">%</span>
@@ -523,7 +509,7 @@ export function ScannerResultFilters({
             {activeFilterChips.slice(0, 3).map((chip) => (
               <span
                 key={chip}
-                className="rounded-full border border-[#4A7C59]/20 bg-[#4A7C59]/8 px-2 py-0.5 text-[10px] text-[#2E5D39]"
+                className="rounded-full border border-color-profit/25 bg-color-profit-subtle px-2 py-0.5 text-[10px] text-color-profit-fg"
               >
                 {chip}
               </span>

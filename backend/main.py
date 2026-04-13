@@ -1179,6 +1179,16 @@ async def _run_auto_settler_job():
         summary = get_last_auto_settler_summary()
         if summary:
             _set_ops_status("last_auto_settle_summary", summary)
+        summary_meta = None
+        if isinstance(summary, dict):
+            summary_meta = {}
+            if isinstance(summary.get("sports"), list):
+                summary_meta["sports"] = summary.get("sports")
+            for key in ("ml_settled", "props_settled", "parlays_settled", "pickem_research_settled"):
+                if summary.get(key) is not None:
+                    summary_meta[key] = summary.get(key)
+            if not summary_meta:
+                summary_meta = None
         _persist_ops_job_run(
             job_kind="auto_settle",
             source="scheduler",
@@ -1190,7 +1200,7 @@ async def _run_auto_settler_job():
             duration_ms=round((time.monotonic() - started_at) * 1000, 2),
             settled=settled,
             skipped_totals=summary.get("skipped_totals") if isinstance(summary, dict) else None,
-            meta={"sports": summary.get("sports")} if isinstance(summary, dict) and isinstance(summary.get("sports"), list) else None,
+            meta=summary_meta,
         )
         if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1":
             from services.discord_alerts import send_discord_webhook
@@ -1443,6 +1453,18 @@ async def _run_scheduled_board_drop_job():
             continue
     min_remaining = str(min(remaining_candidates)) if remaining_candidates else remaining_fallback
     duration_ms = round((time.monotonic() - started_at) * 1000, 2)
+    result_summary = dict(result.get("summary") or {})
+    if not result_summary:
+        result_summary = {
+            "straight_sides": int(result.get("straight_sides") or 0),
+            "props_sides": int(result.get("props_sides") or 0),
+            "featured_games_count": int(result.get("featured_games_count") or 0),
+            "game_line_sports_scanned": result.get("game_line_sports_scanned") or [],
+            "props_events_scanned": int(result.get("props_events_scanned") or 0),
+        }
+    result_summary.setdefault("scan_label", scan_window["label"])
+    result_summary.setdefault("anchor_time_mst", scan_window["anchor_time_mst"])
+    result_summary["duration_ms"] = duration_ms
 
     _log_event(
         "scheduler.board_drop.completed",
@@ -1498,6 +1520,7 @@ async def _run_scheduled_board_drop_job():
             "board_alert_error": board_alert.get("error"),
             "game_line_sports_scanned": result.get("game_line_sports_scanned") or [],
             "props_events_scanned": int(result.get("props_events_scanned") or 0),
+            "result": result_summary,
             "hard_errors": hard_errors,
             "captured_at": finished + "Z",
             "autolog_summary": autolog_summary,
@@ -1532,13 +1555,7 @@ async def _run_scheduled_board_drop_job():
             "board_alert_delivery_status": board_alert.get("delivery_status"),
             "board_alert_http_status": board_alert.get("status_code"),
             "board_alert_error": board_alert.get("error"),
-            "result_summary": {
-                "straight_sides": int(result.get("straight_sides") or 0),
-                "props_sides": int(result.get("props_sides") or 0),
-                "featured_games_count": int(result.get("featured_games_count") or 0),
-                "game_line_sports_scanned": result.get("game_line_sports_scanned") or [],
-                "props_events_scanned": int(result.get("props_events_scanned") or 0),
-            },
+            "result_summary": result_summary,
         },
     )
 
@@ -1606,12 +1623,12 @@ async def start_scheduler():
     scheduler = AsyncIOScheduler()
     # Every 5 min: capture closing Pinnacle lines for games starting within 20 min
     scheduler.add_job(_run_jit_clv_snatcher_job, IntervalTrigger(minutes=5))
-    # 4:00 AM Phoenix daily: auto-grade completed ML bets via /scores.
+    # 4:00 AM and 10:00 PM Phoenix daily: auto-grade completed ML bets via /scores.
     # Explicit timezone keeps scheduler behavior consistent across hosts.
     auto_settle_trigger = (
-        CronTrigger(hour=4, minute=0, timezone=PHOENIX_TZ)
+        CronTrigger(hour="4,22", minute=0, timezone=PHOENIX_TZ)
         if PHOENIX_TZ is not None
-        else CronTrigger(hour=4, minute=0)
+        else CronTrigger(hour="4,22", minute=0)
     )
     scheduler.add_job(
         _run_auto_settler_job,
@@ -3075,6 +3092,16 @@ async def ops_trigger_auto_settle(
     summary = get_last_auto_settler_summary()
     if summary:
         _set_ops_status("last_auto_settle_summary", summary)
+    summary_meta = None
+    if isinstance(summary, dict):
+        summary_meta = {}
+        if isinstance(summary.get("sports"), list):
+            summary_meta["sports"] = summary.get("sports")
+        for key in ("ml_settled", "props_settled", "parlays_settled", "pickem_research_settled"):
+            if summary.get(key) is not None:
+                summary_meta[key] = summary.get(key)
+        if not summary_meta:
+            summary_meta = None
     _persist_ops_job_run(
         job_kind="auto_settle",
         source="ops_trigger",
@@ -3086,7 +3113,7 @@ async def ops_trigger_auto_settle(
         duration_ms=duration_ms,
         settled=settled,
         skipped_totals=summary.get("skipped_totals") if isinstance(summary, dict) else None,
-        meta={"sports": summary.get("sports")} if isinstance(summary, dict) and isinstance(summary.get("sports"), list) else None,
+        meta=summary_meta,
     )
 
     if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1":

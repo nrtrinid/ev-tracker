@@ -9,7 +9,12 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { adminRefreshMarkets, adminTriggerAutoSettle } from "@/lib/api";
 import { useAnalyticsSummary, useAnalyticsUserDrilldown, useOperatorStatus } from "@/lib/hooks";
+import { OddsApiActivityCard } from "./OddsApiActivityCard";
 import type {
+  AutoSettleRunStatus,
+  AutoSettleSummary,
+  BoardDropResultSummary,
+  BoardDropRunStatus,
   OddsApiActivityCall,
   OddsApiActivityScanDetail,
   OddsApiActivityScanSession,
@@ -152,14 +157,13 @@ function formatAnalyticsEventLabel(eventName: string): string {
   return eventName.replaceAll("_", " ");
 }
 
-function deriveScannerHealth(data: OperatorStatusResponse | undefined): {
+function deriveBoardAutomationHealth(data: OperatorStatusResponse | undefined): {
   state: HealthState;
   reason: string | null;
 } {
   if (!data) return { state: "unknown", reason: null };
   const scheduler = data.ops?.last_scheduler_scan;
   const cron = data.ops?.last_ops_trigger_scan;
-  const manual = data.ops?.last_manual_scan;
   const schedulerExpected = data.runtime?.scheduler_expected !== false;
   const scheduledScanFresh = data.scheduler_freshness?.jobs?.scheduled_scan?.fresh;
   const schedulerFreshnessReason = data.scheduler_freshness?.reason;
@@ -168,7 +172,6 @@ function deriveScannerHealth(data: OperatorStatusResponse | undefined): {
   );
   const schedulerAge = ageMinutes(scheduler?.finished_at || scheduler?.captured_at);
   const cronAge = ageMinutes(cron?.finished_at || cron?.captured_at);
-  const manualAge = ageMinutes(manual?.captured_at);
   const schedulerErrors = Number(scheduler?.hard_errors || 0);
   const cronErrors = Number(cron?.error_count || 0);
   const recencyWarningMinutes = 12 * 60;
@@ -179,8 +182,8 @@ function deriveScannerHealth(data: OperatorStatusResponse | undefined): {
   const hasRecentSuccessfulScheduledRun =
     schedulerAge !== null && schedulerAge <= scheduledErrorWindowMinutes && schedulerErrors === 0;
 
-  if (schedulerAge === null && cronAge === null && manualAge === null) {
-    return { state: "unknown", reason: "No scan runs recorded yet." };
+  if (schedulerAge === null && cronAge === null) {
+    return { state: "unknown", reason: "No daily board runs recorded yet." };
   }
 
   if (schedulerExpected) {
@@ -189,14 +192,14 @@ function deriveScannerHealth(data: OperatorStatusResponse | undefined): {
       return {
         state: "warning",
         reason: hasRecentSchedulerErrors
-          ? `Recent scheduled run reported ${schedulerErrors} error${schedulerErrors === 1 ? "" : "s"}.`
-          : `Recent ops-trigger run reported ${cronErrors} error${cronErrors === 1 ? "" : "s"}.`,
+          ? `Recent scheduled board drop reported ${schedulerErrors} error${schedulerErrors === 1 ? "" : "s"}.`
+          : `Recent ops-trigger board refresh reported ${cronErrors} error${cronErrors === 1 ? "" : "s"}.`,
       };
     }
     if (scheduledScanFresh === false) {
       return {
         state: "warning",
-        reason: `Scheduled scan freshness check is stale (>${Math.round(scheduledErrorWindowMinutes / 60)}h window).`,
+        reason: `Scheduled board-drop freshness check is stale (>${Math.round(scheduledErrorWindowMinutes / 60)}h window).`,
       };
     }
     if (scheduledScanFresh === true) {
@@ -210,29 +213,29 @@ function deriveScannerHealth(data: OperatorStatusResponse | undefined): {
       }
       return {
         state: "warning",
-        reason: "No in-process scheduler heartbeat and no recent successful scheduled scan found.",
+        reason: "No in-process scheduler heartbeat and no recent successful scheduled board drop found.",
       };
     }
 
     if (data.checks?.scheduler_freshness === false) {
-      return { state: "warning", reason: "Scheduler freshness check is failing." };
+      return { state: "warning", reason: "Board scheduler freshness check is failing." };
     }
     return { state: "healthy", reason: null };
   }
 
-  // In manual/ops-trigger mode, keep a softer recency warning threshold.
+  // In external/ops-trigger mode, keep a softer recency warning threshold.
   if (hasRecentSchedulerErrors || hasRecentCronErrors) {
     return {
       state: "warning",
       reason: hasRecentCronErrors
-        ? `Recent ops-trigger run reported ${cronErrors} error${cronErrors === 1 ? "" : "s"}.`
-        : `Recent scheduled run reported ${schedulerErrors} error${schedulerErrors === 1 ? "" : "s"}.`,
+        ? `Recent ops-trigger board refresh reported ${cronErrors} error${cronErrors === 1 ? "" : "s"}.`
+        : `Recent scheduled board drop reported ${schedulerErrors} error${schedulerErrors === 1 ? "" : "s"}.`,
     };
   }
-  if ((cronAge !== null && cronAge > recencyWarningMinutes) || (manualAge !== null && manualAge > recencyWarningMinutes)) {
+  if (cronAge === null || cronAge > recencyWarningMinutes) {
     return {
       state: "warning",
-      reason: `No recent ops-trigger/manual scan in the last ${Math.round(recencyWarningMinutes / 60)}h.`,
+      reason: `No recent ops-trigger board refresh in the last ${Math.round(recencyWarningMinutes / 60)}h.`,
     };
   }
   return { state: "healthy", reason: null };
@@ -240,21 +243,12 @@ function deriveScannerHealth(data: OperatorStatusResponse | undefined): {
 
 function deriveSettlementState(data: OperatorStatusResponse | undefined): HealthState {
   if (!data) return "unknown";
-  const settle = data.ops?.last_auto_settle;
+  const recentRuns = getRecentAutoSettleRuns(data);
+  const settle = recentRuns[0] ?? data.ops?.last_auto_settle ?? null;
   const summary = data.ops?.last_auto_settle_summary;
-  const skipTotals = summary?.skipped_totals;
-  const skipCount = Object.values(skipTotals || {}).reduce((acc, item) => {
-    const parsed = typeof item === "number" ? item : 0;
-    return acc + parsed;
-  }, 0);
-
-  const actionableSkips = [
-    Number(skipTotals?.ambiguous_match || 0),
-    Number(skipTotals?.missing_scores || 0),
-    Number(skipTotals?.db_update_failed || 0),
-    Number(skipTotals?.missing_clv_team || 0),
-    Number(skipTotals?.missing_commence_time || 0),
-  ].reduce((acc, value) => acc + value, 0);
+  const skipTotals = summary?.skipped_totals ?? settle?.skipped_totals;
+  const skipCount = countSkippedTotals(skipTotals);
+  const actionableSkips = countActionableSkips(skipTotals);
 
   if (!settle) return "unknown";
   const settleAge = ageMinutes(settle.finished_at || settle.captured_at);
@@ -278,6 +272,161 @@ function deriveOddsApiState(data: OperatorStatusResponse | undefined): HealthSta
   if (errorsLastHour >= 3) return "degraded";
   if (errorsLastHour > 0) return "warning";
   return "healthy";
+}
+
+function countSkippedTotals(skippedTotals?: Record<string, number> | null): number {
+  return Object.values(skippedTotals || {}).reduce((acc, value) => acc + (typeof value === "number" ? value : 0), 0);
+}
+
+function countActionableSkips(skippedTotals?: Record<string, number> | null): number {
+  return [
+    Number(skippedTotals?.ambiguous_match || 0),
+    Number(skippedTotals?.missing_scores || 0),
+    Number(skippedTotals?.db_update_failed || 0),
+    Number(skippedTotals?.missing_clv_team || 0),
+    Number(skippedTotals?.missing_commence_time || 0),
+  ].reduce((acc, value) => acc + value, 0);
+}
+
+function getBoardRunTimestamp(run?: Pick<BoardDropRunStatus, "finished_at" | "captured_at"> | null): string | null {
+  return run?.finished_at || run?.captured_at || null;
+}
+
+function getLatestBoardRun(
+  scheduler?: BoardDropRunStatus | null,
+  cron?: BoardDropRunStatus | null,
+): BoardDropRunStatus | null {
+  const candidates = [scheduler, cron].filter(Boolean) as BoardDropRunStatus[];
+  if (!candidates.length) return null;
+  return [...candidates].sort((left, right) => {
+    const leftTs = parseOpsTimestamp(getBoardRunTimestamp(left))?.getTime() || 0;
+    const rightTs = parseOpsTimestamp(getBoardRunTimestamp(right))?.getTime() || 0;
+    return rightTs - leftTs;
+  })[0] ?? null;
+}
+
+function formatBoardWindowLabel(run?: BoardDropRunStatus | null): string {
+  if (!run) return "Unknown";
+  const scanWindow = (run as { scan_window?: { label?: string } | null }).scan_window?.label ?? null;
+  return run.result?.scan_label || scanWindow || "Unknown";
+}
+
+function formatBoardMixLabel(result?: BoardDropResultSummary | null, fallbackTotalSides?: number | null): string {
+  if (!result && fallbackTotalSides === null) return "Unknown";
+  const parts: string[] = [];
+  if (typeof result?.straight_sides === "number") parts.push(`${result.straight_sides} lines`);
+  if (typeof result?.props_sides === "number") parts.push(`${result.props_sides} props`);
+  if (typeof result?.featured_games_count === "number") parts.push(`${result.featured_games_count} featured`);
+  if (!parts.length && typeof fallbackTotalSides === "number") {
+    parts.push(`${fallbackTotalSides} total sides`);
+  }
+  return parts.join(" / ") || "Unknown";
+}
+
+function formatPropsFunnelLabel(result?: BoardDropResultSummary | null): string {
+  if (!result) return "Unknown";
+  const parts: string[] = [];
+  if (typeof result.props_candidate_sides === "number") parts.push(`${result.props_candidate_sides} candidates`);
+  if (typeof result.props_quality_gate_filtered === "number") parts.push(`${result.props_quality_gate_filtered} filtered`);
+  if (typeof result.props_sides === "number") parts.push(`${result.props_sides} surfaced`);
+  return parts.join(" / ") || "Unknown";
+}
+
+function formatBoardAlertLabel(run?: BoardDropRunStatus | null): string {
+  if (!run) return "Unknown";
+  const attempted = run.board_alert_attempted ?? run.board_alert?.attempted ?? false;
+  const deliveryStatus = run.board_alert_delivery_status ?? run.board_alert?.delivery_status ?? null;
+  const statusCode = run.board_alert_http_status ?? run.board_alert?.status_code ?? null;
+  if (deliveryStatus) return statusCode ? `${deliveryStatus} (${statusCode})` : deliveryStatus;
+  if (attempted) return "Attempted";
+  return "Not attempted";
+}
+
+function formatAutoSettleSourceLabel(source?: string | null): string {
+  const normalized = (source || "").trim().toLowerCase();
+  if (normalized === "scheduler" || normalized === "auto_settle_scheduler") return "Scheduler";
+  if (normalized === "cron" || normalized === "auto_settle_cron") return "Cron";
+  if (normalized === "ops_trigger" || normalized === "auto_settle_ops_trigger") return "Ops trigger";
+  if (normalized === "manual_cli") return "Manual CLI";
+  return source || "Unknown";
+}
+
+function getRecentAutoSettleRuns(data: OperatorStatusResponse | undefined): AutoSettleRunStatus[] {
+  const recent = Array.isArray(data?.ops?.recent_auto_settle_runs) ? [...data.ops.recent_auto_settle_runs] : [];
+  const fallback = data?.ops?.last_auto_settle
+    ? {
+        ...data.ops.last_auto_settle,
+        skipped_totals: data.ops.last_auto_settle_summary?.skipped_totals ?? data.ops.last_auto_settle.skipped_totals,
+        sports: data.ops.last_auto_settle_summary?.sports ?? data.ops.last_auto_settle.sports,
+        ml_settled: data.ops.last_auto_settle_summary?.ml_settled ?? data.ops.last_auto_settle.ml_settled,
+        props_settled: data.ops.last_auto_settle_summary?.props_settled ?? data.ops.last_auto_settle.props_settled,
+        parlays_settled: data.ops.last_auto_settle_summary?.parlays_settled ?? data.ops.last_auto_settle.parlays_settled,
+        pickem_research_settled:
+          data.ops.last_auto_settle_summary?.pickem_research_settled ?? data.ops.last_auto_settle.pickem_research_settled,
+      }
+    : null;
+  const runs = fallback ? [fallback, ...recent] : recent;
+  const deduped: AutoSettleRunStatus[] = [];
+  const seen = new Set<string>();
+  for (const run of runs) {
+    const key = [
+      run.run_id || "",
+      run.source || "",
+      run.finished_at || run.captured_at || "",
+    ].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(run);
+  }
+  return deduped.sort((left, right) => {
+    const leftTs = parseOpsTimestamp(left.finished_at || left.captured_at)?.getTime() || 0;
+    const rightTs = parseOpsTimestamp(right.finished_at || right.captured_at)?.getTime() || 0;
+    return rightTs - leftTs;
+  });
+}
+
+function formatObservedRunTimes(runs: AutoSettleRunStatus[]): string {
+  const labels = new Map<number, string>();
+  for (const run of runs) {
+    const timestamp = run.finished_at || run.captured_at;
+    const parsed = parseOpsTimestamp(timestamp);
+    if (!parsed) continue;
+    const minuteOfDay = parsed.getHours() * 60 + parsed.getMinutes();
+    if (!labels.has(minuteOfDay)) {
+      labels.set(minuteOfDay, formatCompactTime(timestamp));
+    }
+  }
+  return Array.from(labels.entries())
+    .sort((left, right) => left[0] - right[0])
+    .map(([, label]) => label)
+    .join(" / ") || "Unknown";
+}
+
+function formatAutoSettleBreakdown(
+  summary?: AutoSettleSummary | null,
+  fallbackRun?: AutoSettleRunStatus | null,
+): string {
+  const total = summary?.total_settled ?? fallbackRun?.settled;
+  const ml = summary?.ml_settled ?? fallbackRun?.ml_settled;
+  const props = summary?.props_settled ?? fallbackRun?.props_settled;
+  const parlays = summary?.parlays_settled ?? fallbackRun?.parlays_settled;
+  const pickem = summary?.pickem_research_settled ?? fallbackRun?.pickem_research_settled;
+  const parts: string[] = [];
+  if (typeof total === "number") parts.push(`${total} total`);
+  if (typeof ml === "number") parts.push(`ML ${ml}`);
+  if (typeof props === "number") parts.push(`Props ${props}`);
+  if (typeof parlays === "number") parts.push(`Parlays ${parlays}`);
+  if (typeof pickem === "number") parts.push(`Research ${pickem}`);
+  return parts.join(" / ") || "Unknown";
+}
+
+function formatSkippedSignal(skippedTotals?: Record<string, number> | null): string {
+  if (!skippedTotals) return "Unknown";
+  const total = countSkippedTotals(skippedTotals);
+  if (total === 0) return "No skips recorded";
+  const actionable = countActionableSkips(skippedTotals);
+  if (actionable === 0) return `${total} total / passive`;
+  return `${total} total / ${actionable} actionable`;
 }
 
 function formatSourceLabel(source?: string | null): string {
@@ -569,7 +718,7 @@ export function OpsDashboard() {
   const analyticsUsersErrorMessage = analyticsUserQuery.error instanceof Error ? analyticsUserQuery.error.message : null;
   const isAnyFetching = query.isFetching || analyticsQuery.isFetching || analyticsUserQuery.isFetching;
 
-  const automationHealth = useMemo(() => deriveScannerHealth(query.data), [query.data]);
+  const automationHealth = useMemo(() => deriveBoardAutomationHealth(query.data), [query.data]);
   const automationState = automationHealth.state;
   const automationWarningReason = automationHealth.reason;
   const settlementState = useMemo(() => deriveSettlementState(query.data), [query.data]);
@@ -580,6 +729,7 @@ export function OpsDashboard() {
   const manualScan = query.data?.ops?.last_manual_scan;
   const autoSettle = query.data?.ops?.last_auto_settle;
   const settleSummary = query.data?.ops?.last_auto_settle_summary;
+  const recentAutoSettleRuns = useMemo(() => getRecentAutoSettleRuns(query.data), [query.data]);
   const oddsApiActivity = query.data?.ops?.odds_api_activity;
   const oddsFallback = useMemo(() => buildFallbackOddsActivity(query.data), [query.data]);
   const oddsSummary = oddsApiActivity?.summary ?? oddsFallback.summary;
@@ -593,12 +743,16 @@ export function OpsDashboard() {
   const oddsCallsDefaultVisible = 4;
   const oddsVisibleScans = showAllOddsScans ? oddsRecentScans : oddsRecentScans.slice(0, oddsScansDefaultVisible);
   const oddsVisibleCalls = showAllOddsCalls ? oddsRecentCalls : oddsRecentCalls.slice(0, oddsCallsDefaultVisible);
-  const primaryScanMode = query.data?.runtime?.scheduler_expected === false ? "Ops trigger / manual" : "Scheduler";
-  const noScanRunsYet = !schedulerScan && !cronScan && !manualScan;
-  const noSettlementRunsYet = !autoSettle && !settleSummary;
+  const primaryBoardMode =
+    query.data?.runtime?.scheduler_expected === false ? "Ops trigger refreshes" : "Scheduler automation";
+  const latestBoardRun = useMemo(() => getLatestBoardRun(schedulerScan, cronScan), [schedulerScan, cronScan]);
+  const latestBoardResult = latestBoardRun?.result ?? null;
+  const noBoardRunsYet = !schedulerScan && !cronScan;
+  const noSettlementRunsYet = recentAutoSettleRuns.length === 0 && !settleSummary;
 
-  const skippedTotals = settleSummary?.skipped_totals || {};
-  const skippedEntries = Object.entries(skippedTotals);
+  const latestSkippedTotals = settleSummary?.skipped_totals ?? recentAutoSettleRuns[0]?.skipped_totals ?? null;
+  const skippedEntries = Object.entries(latestSkippedTotals || {});
+  const latestAutoSettleRun = recentAutoSettleRuns[0] ?? autoSettle ?? null;
   const analytics = analyticsQuery.data;
   const analyticsUsers = analyticsUserQuery.data;
 
@@ -654,7 +808,7 @@ export function OpsDashboard() {
           <div>
             <h1 className="text-xl font-semibold">Operator Status</h1>
             <p className="text-sm text-muted-foreground mt-0.5">
-              Focused health view for active scanner, settlement, odds, and beta-decision systems.
+              Focused health view for daily board automation, settlement cadence, odds usage, and beta-decision systems.
             </p>
             <p className="text-xs text-muted-foreground mt-1">
               Last snapshot: {formatTime(query.data?.timestamp)}
@@ -714,15 +868,22 @@ export function OpsDashboard() {
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <h2 className="font-semibold">Scanner Automation</h2>
+                <h2 className="font-semibold">Daily Board Automation</h2>
                 <StatusBadge state={automationState} />
               </div>
             </CardHeader>
             <CardContent className="space-y-2">
-              <Row label="Primary mode" value={primaryScanMode} />
-              <Row label="Last scheduled scan" value={formatTime(schedulerScan?.finished_at || schedulerScan?.captured_at)} />
-              <Row label="Last ops-triggered scan" value={formatTime(cronScan?.finished_at || cronScan?.captured_at)} />
-              <Row label="Last manual scan" value={formatTime(manualScan?.captured_at)} />
+              <Row label="Primary mode" value={primaryBoardMode} />
+              <Row label="Last scheduled board drop" value={formatTime(getBoardRunTimestamp(schedulerScan))} />
+              <Row label="Last ops board refresh" value={formatTime(getBoardRunTimestamp(cronScan))} />
+              <Row label="Last manual market scan" value={formatTime(manualScan?.captured_at)} />
+              <Row label="Latest board window" value={formatBoardWindowLabel(latestBoardRun)} />
+              <Row
+                label="Latest board mix"
+                value={formatBoardMixLabel(latestBoardResult, latestBoardRun?.total_sides ?? null)}
+              />
+              <Row label="Latest props funnel" value={formatPropsFunnelLabel(latestBoardResult)} />
+              <Row label="Discord publish" value={formatBoardAlertLabel(latestBoardRun)} />
               <Row
                 label="Recent run errors"
                 value={String(Number(schedulerScan?.hard_errors || 0) + Number(cronScan?.error_count || 0))}
@@ -734,9 +895,9 @@ export function OpsDashboard() {
                 </p>
               )}
 
-              {noScanRunsYet && (
+              {noBoardRunsYet && (
                 <p className="text-xs text-muted-foreground pt-1">
-                  No scheduler or cron scans recorded yet. This is expected in local development until a run is triggered.
+                  No scheduled or ops-triggered board drops are recorded yet. This is expected in local development until a run is triggered.
                 </p>
               )}
             </CardContent>
@@ -750,9 +911,43 @@ export function OpsDashboard() {
               </div>
             </CardHeader>
             <CardContent className="space-y-2">
-              <Row label="Last auto-settle run" value={formatTime(autoSettle?.finished_at || autoSettle?.captured_at)} />
-              <Row label="Settled count" value={scalarOrUnknown(autoSettle?.settled ?? settleSummary?.total_settled)} />
+              <Row
+                label="Latest auto-settle run"
+                value={formatTime(latestAutoSettleRun?.finished_at || latestAutoSettleRun?.captured_at)}
+              />
+              <Row label="Latest source" value={formatAutoSettleSourceLabel(latestAutoSettleRun?.source)} />
+              <Row label="Observed run times" value={formatObservedRunTimes(recentAutoSettleRuns)} />
+              <Row
+                label="Latest breakdown"
+                value={formatAutoSettleBreakdown(settleSummary, latestAutoSettleRun)}
+              />
+              <Row label="Latest skip signal" value={formatSkippedSignal(latestSkippedTotals)} />
               <Row label="Summary captured" value={formatTime(settleSummary?.captured_at)} />
+              {recentAutoSettleRuns.length > 0 && (
+                <div className="pt-1">
+                  <p className="text-xs text-muted-foreground mb-1">Recent runs</p>
+                  <div className="space-y-1.5">
+                    {recentAutoSettleRuns.slice(0, 4).map((run) => (
+                      <div key={run.run_id || `${run.source}-${run.finished_at || run.captured_at || "unknown"}`} className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
+                        <div className="flex items-center justify-between gap-3 text-xs">
+                          <span className="font-medium">{formatAutoSettleSourceLabel(run.source)}</span>
+                          <span className="font-mono text-[11px] text-right">
+                            {formatTimeWithRelative(run.finished_at || run.captured_at, "Unknown")}
+                          </span>
+                        </div>
+                        <div className="mt-1 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                          <span>Settled</span>
+                          <span className="font-mono text-foreground">{scalarOrUnknown(run.settled)}</span>
+                        </div>
+                        <div className="mt-1 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                          <span>Skip signal</span>
+                          <span className="font-mono text-foreground">{formatSkippedSignal(run.skipped_totals)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {skippedEntries.length ? (
                 <div className="pt-1">
                   <p className="text-xs text-muted-foreground mb-1">Skipped totals</p>
@@ -769,12 +964,15 @@ export function OpsDashboard() {
               )}
               {noSettlementRunsYet && (
                 <p className="text-xs text-muted-foreground">
-                  No auto-settlement runs recorded yet. In local mode this is normal before first run.
+                  No auto-settlement runs are recorded yet. In local mode this is normal before the first run.
                 </p>
               )}
             </CardContent>
           </Card>
 
+          <OddsApiActivityCard data={query.data} />
+
+          {false && (
           <Card className="md:col-span-2">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
@@ -943,6 +1141,7 @@ export function OpsDashboard() {
               )}
             </CardContent>
           </Card>
+          )}
 
           <Card className="md:col-span-2">
             <CardHeader className="pb-3">

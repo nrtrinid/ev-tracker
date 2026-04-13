@@ -22,7 +22,7 @@ export function ScannerAppliedFilterChips({
         {visible.map((chip) => (
           <span
             key={chip}
-            className="rounded-full border border-[#4A7C59]/20 bg-[#4A7C59]/8 px-2 py-0.5 text-[11px] text-[#2E5D39]"
+            className="rounded-full border border-color-profit/25 bg-color-profit-subtle px-2 py-0.5 text-[11px] text-color-profit-fg"
           >
             {chip}
           </span>

@@ -6,6 +6,7 @@ import { AuthProvider } from "@/lib/auth-context";
 import { KellyProvider } from "@/lib/kelly-context";
 import { BettingPlatformProvider } from "@/lib/betting-platform-store";
 import { OnboardingHighlightProvider } from "@/lib/onboarding-highlight";
+import { ThemeProvider } from "@/lib/theme-context";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -26,14 +27,16 @@ export function Providers({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <KellyProvider>
-          <OnboardingHighlightProvider>
-            <BettingPlatformProvider>{children}</BettingPlatformProvider>
-          </OnboardingHighlightProvider>
-        </KellyProvider>
-      </AuthProvider>
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <KellyProvider>
+            <OnboardingHighlightProvider>
+              <BettingPlatformProvider>{children}</BettingPlatformProvider>
+            </OnboardingHighlightProvider>
+          </KellyProvider>
+        </AuthProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }

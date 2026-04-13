@@ -143,6 +143,20 @@ def _ensure_surface_in_place(sides: list[Any], *, surface: str) -> None:
             side["surface"] = surface
 
 
+def _coerce_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_optional_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _cap_payload_sides(
     payload: dict[str, Any],
     *,
@@ -674,6 +688,91 @@ async def run_daily_board_drop(
         )
 
     duration_ms = round((time.monotonic() - started_at) * 1000, 2)
+    props_diagnostics = props_result.get("diagnostics") if isinstance(props_result.get("diagnostics"), dict) else {}
+    board_props_counts = (
+        board_props_artifacts_summary if isinstance(board_props_artifacts_summary, dict) else {}
+    )
+    game_lines_summary = {
+        "sports_scanned": sports_to_scan,
+        "events_fetched": int(straight_aggregate.get("total_events") or 0),
+        "events_with_both_books": int(straight_aggregate.get("total_with_both") or 0),
+        "api_requests_remaining": straight_aggregate.get("min_remaining"),
+        "surfaced_sides": len(straight_sides),
+        "fresh_sides_count": len(straight_aggregate.get("fresh_sides") or []),
+    }
+    player_props_summary = {
+        "events_scanned": len(full_slate_event_ids),
+        "events_fetched": int(props_result.get("events_fetched") or 0),
+        "events_with_both_books": int(props_result.get("events_with_both_books") or 0),
+        "api_requests_remaining": props_result.get("api_requests_remaining"),
+        "events_skipped_pregame": _coerce_int(props_diagnostics.get("events_skipped_pregame")),
+        "events_with_results": _coerce_int(props_diagnostics.get("events_with_results")),
+        "candidate_sides": _coerce_int(props_diagnostics.get("candidate_sides_count")),
+        "quality_gate_filtered": _coerce_int(props_diagnostics.get("quality_gate_filtered_count")),
+        "quality_gate_min_reference_bookmakers": _coerce_optional_int(
+            props_diagnostics.get("quality_gate_min_reference_bookmakers")
+        ),
+        "pickem_quality_gate_min_reference_bookmakers": _coerce_optional_int(
+            props_diagnostics.get("pickem_quality_gate_min_reference_bookmakers")
+        ),
+        "pickem_cards_count": _coerce_int(
+            props_diagnostics.get("pickem_cards_count"),
+            default=len(props_result.get("pickem_cards") or []),
+        ),
+        "markets_requested": (
+            list(props_diagnostics.get("markets_requested") or [])
+            if isinstance(props_diagnostics.get("markets_requested"), list)
+            else list(DAILY_BOARD_PROP_MARKETS)
+        ),
+        "surfaced_sides": len(props_sides),
+        "board_items": {
+            "browse_total": _coerce_int(board_props_counts.get("browse_total"), default=len(props_sides)),
+            "opportunities_total": _coerce_int(board_props_counts.get("opportunities_total")),
+            "pickem_total": _coerce_int(
+                board_props_counts.get("pickem_total"),
+                default=len(props_result.get("pickem_cards") or []),
+            ),
+            "legacy_total": _coerce_int(board_props_counts.get("legacy_total")),
+            "detail_total": _coerce_int(board_props_counts.get("detail_total")),
+        },
+    }
+    board_summary = {
+        "scan_label": scan_label,
+        "anchor_time_mst": mst_anchor_time,
+        "selected_event_ids": selected_event_ids,
+        "selected_event_count": len(selected_event_ids),
+        "selected_games": selected_games,
+        "selected_games_count": len(selected_games),
+        "props_scan_event_ids": full_slate_event_ids,
+        "props_scan_event_count": len(full_slate_event_ids),
+        "straight_sides": len(straight_sides),
+        "props_sides": len(props_sides),
+        "total_sides": len(straight_sides) + len(props_sides),
+        "featured_games_count": len(featured_nba_games) + len(featured_mlb_games),
+        "game_line_sports_scanned": sports_to_scan,
+        "game_lines_events_fetched": game_lines_summary["events_fetched"],
+        "game_lines_events_with_both_books": game_lines_summary["events_with_both_books"],
+        "game_lines_api_requests_remaining": game_lines_summary["api_requests_remaining"],
+        "props_events_scanned": player_props_summary["events_scanned"],
+        "props_events_fetched": player_props_summary["events_fetched"],
+        "props_events_with_both_books": player_props_summary["events_with_both_books"],
+        "props_api_requests_remaining": player_props_summary["api_requests_remaining"],
+        "props_candidate_sides": player_props_summary["candidate_sides"],
+        "props_quality_gate_filtered": player_props_summary["quality_gate_filtered"],
+        "props_events_skipped_pregame": player_props_summary["events_skipped_pregame"],
+        "props_events_with_results": player_props_summary["events_with_results"],
+        "props_quality_gate_min_reference_bookmakers": player_props_summary[
+            "quality_gate_min_reference_bookmakers"
+        ],
+        "props_pickem_quality_gate_min_reference_bookmakers": player_props_summary[
+            "pickem_quality_gate_min_reference_bookmakers"
+        ],
+        "props_pickem_cards_count": player_props_summary["pickem_cards_count"],
+        "player_props_board_artifacts": player_props_summary["board_items"],
+        "game_lines": game_lines_summary,
+        "player_props": player_props_summary,
+        "duration_ms": duration_ms,
+    }
     log_event(
         "daily_board.drop.completed",
         run_id=run_id,
@@ -709,10 +808,26 @@ async def run_daily_board_drop(
         "props_events_fetched": int(props_result.get("events_fetched") or 0),
         "props_events_with_both_books": int(props_result.get("events_with_both_books") or 0),
         "props_api_requests_remaining": props_result.get("api_requests_remaining"),
+        "props_candidate_sides": _coerce_int(props_diagnostics.get("candidate_sides_count")),
+        "props_quality_gate_filtered": _coerce_int(props_diagnostics.get("quality_gate_filtered_count")),
+        "props_events_skipped_pregame": _coerce_int(props_diagnostics.get("events_skipped_pregame")),
+        "props_events_with_results": _coerce_int(props_diagnostics.get("events_with_results")),
+        "props_quality_gate_min_reference_bookmakers": _coerce_optional_int(
+            props_diagnostics.get("quality_gate_min_reference_bookmakers")
+        ),
+        "props_pickem_quality_gate_min_reference_bookmakers": _coerce_optional_int(
+            props_diagnostics.get("pickem_quality_gate_min_reference_bookmakers")
+        ),
+        "props_pickem_cards_count": _coerce_int(
+            props_diagnostics.get("pickem_cards_count"),
+            default=len(props_result.get("pickem_cards") or []),
+        ),
+        "player_props_board_artifacts": player_props_summary["board_items"],
         "duration_ms": duration_ms,
         "fresh_straight_sides_count": len(straight_aggregate.get("fresh_sides") or []),
         "fresh_prop_sides_count": len(props_sides) if isinstance(props_sides, list) else 0,
         "fresh_straight_sides": straight_aggregate.get("fresh_sides") or [],
         "fresh_prop_sides": props_sides if isinstance(props_sides, list) else [],
+        "summary": board_summary,
     }
 

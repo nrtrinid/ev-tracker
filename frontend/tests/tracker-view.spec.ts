@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { getTrackerSource, matchesTrackerSourceFilter } from "@/lib/tracker-source";
+import { buildTrackedBetCardTitle } from "@/lib/straight-bet-labels";
 import {
   buildTrackerViewQuery,
   matchesTrackerFilters,
@@ -97,6 +98,75 @@ test.describe("tracker source helpers", () => {
     expect(matchesTrackerFilters(coreParlay, { source: "core", sportsbook: "DraftKings", search: "nuggets" })).toBe(false);
     expect(matchesTrackerFilters(promoBet, { source: "promos", sportsbook: "all", search: "kings" })).toBe(true);
     expect(matchesTrackerFilters(thunderBet, { source: "core", sportsbook: "FanDuel", search: "okc" })).toBe(true);
+  });
+
+  test("rebuilds spread and total titles from logged straight-bet metadata", async () => {
+    expect(
+      buildTrackedBetCardTitle(
+        makeBet({
+          event: "Over",
+          sport: "MLB",
+          market: "Total",
+          source_market_key: "totals",
+          selection_side: "over",
+          line_value: 8,
+          clv_team: "Over",
+        })
+      )
+    ).toBe("Over 8 runs");
+
+    expect(
+      buildTrackedBetCardTitle(
+        makeBet({
+          event: "Over",
+          sport: "NBA",
+          market: "Total",
+          source_market_key: "totals",
+          selection_side: "over",
+          line_value: 210,
+          clv_team: "Over",
+        })
+      )
+    ).toBe("Over 210 points");
+
+    expect(
+      buildTrackedBetCardTitle(
+        makeBet({
+          event: "Cleveland Guardians",
+          sport: "MLB",
+          market: "Spread",
+          source_market_key: "spreads",
+          selection_side: "away",
+          line_value: 1.5,
+          clv_team: "Cleveland Guardians",
+        })
+      )
+    ).toBe("Cleveland Guardians +1.5");
+  });
+
+  test("tracker search matches rebuilt spread and total labels", async () => {
+    const totalBet = makeBet({
+      event: "Over",
+      sport: "NBA",
+      market: "Total",
+      source_market_key: "totals",
+      selection_side: "over",
+      line_value: 210,
+      clv_team: "Over",
+    });
+    const spreadBet = makeBet({
+      event: "Cleveland Guardians",
+      sport: "MLB",
+      market: "Spread",
+      source_market_key: "spreads",
+      selection_side: "away",
+      line_value: 1.5,
+      clv_team: "Cleveland Guardians",
+    });
+
+    expect(matchesTrackerFilters(totalBet, { source: "all", sportsbook: "all", search: "210" })).toBe(true);
+    expect(matchesTrackerFilters(totalBet, { source: "all", sportsbook: "all", search: "over 210 points" })).toBe(true);
+    expect(matchesTrackerFilters(spreadBet, { source: "all", sportsbook: "all", search: "guardians +1.5" })).toBe(true);
   });
 });
 

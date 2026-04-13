@@ -72,21 +72,21 @@ function getDuplicateBadge(duplicateState: MarketSide["scanner_duplicate_state"]
     return {
       label: "Better Now",
       className:
-        "rounded border border-[#4A7C59]/35 bg-[#4A7C59]/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#2E5D39]",
+        "rounded border border-color-profit/35 bg-color-profit-subtle px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-color-profit-fg",
     };
   }
   if (duplicateState === "already_logged") {
     return {
       label: "Already Placed",
       className:
-        "rounded border border-[#B85C38]/35 bg-[#B85C38]/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#8B3D20]",
+        "rounded border border-color-loss/35 bg-color-loss-subtle px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-color-loss-fg",
     };
   }
   if (duplicateState === "logged_elsewhere") {
     return {
       label: "Logged Elsewhere",
       className:
-        "rounded border border-[#C4A35A]/35 bg-[#C4A35A]/12 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#6B5E4F]",
+        "rounded border border-primary/30 bg-primary/8 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground",
     };
   }
   return null;
@@ -177,10 +177,10 @@ export function StraightBetCard({
   } else if (activeLens === "profit_boost") {
     metricColorClass = boostedEV > 0 ? "text-primary" : "text-muted-foreground";
   } else if (activeLens === "bonus_bet") {
-    metricColorClass = "text-[#0EA5A4]";
+    metricColorClass = "text-[hsl(var(--color-bonus))]";
   } else if (activeLens === "qualifier") {
-    if (side.ev_percentage < -2) metricColorClass = "text-[#B85C38]";
-    else if (side.ev_percentage >= 0) metricColorClass = "text-[#4A7C59]";
+    if (side.ev_percentage < -2) metricColorClass = "text-color-loss-fg";
+    else if (side.ev_percentage >= 0) metricColorClass = "text-color-profit-fg";
   }
 
   return (
@@ -263,7 +263,7 @@ export function StraightBetCard({
         {/* Row 4: action row */}
         {tutorialMode ? (
           <div className="mt-1.5 border-t border-border/60 pt-1.5">
-            <p className="mb-2 rounded border border-sky-300/45 bg-sky-100/45 px-2 py-1.5 text-[11px] text-sky-900">
+            <p className="mb-2 rounded border border-border bg-muted/50 px-2 py-1.5 text-[11px] text-muted-foreground">
               Simulated tutorial line. Normally you would place this at {bookAbbrev(side.sportsbook)} first. For now, just open a practice log.
             </p>
             <Button

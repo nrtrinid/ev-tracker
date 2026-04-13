@@ -68,10 +68,10 @@ function calculateHold(odds1: number, odds2: number): {
 }
 
 const qualityConfig = {
-  excellent: { label: "Excellent", color: "text-[#4A7C59]", bg: "bg-[#4A7C59]/10", desc: "Sharp line, great for +EV" },
-  good: { label: "Good", color: "text-[#4A7C59]", bg: "bg-[#4A7C59]/5", desc: "Solid market, reasonable vig" },
-  fair: { label: "Fair", color: "text-[#C4A35A]", bg: "bg-[#C4A35A]/10", desc: "Average hold, acceptable" },
-  poor: { label: "Poor", color: "text-[#B85C38]", bg: "bg-[#B85C38]/10", desc: "High vig, less favorable" },
+  excellent: { label: "Excellent", color: "text-color-profit-fg", bg: "bg-color-profit-subtle", desc: "Sharp line, great for +EV" },
+  good:      { label: "Good",      color: "text-color-profit-fg", bg: "bg-color-profit-subtle/50", desc: "Solid market, reasonable vig" },
+  fair:      { label: "Fair",      color: "text-primary",         bg: "bg-primary/10",             desc: "Average hold, acceptable" },
+  poor:      { label: "Poor",      color: "text-color-loss-fg",   bg: "bg-color-loss-subtle",      desc: "High vig, less favorable" },
 };
 
 // ============ ODDS CONVERTER LOGIC ============
@@ -253,10 +253,10 @@ export default function ToolsPage() {
                 {/* Bonus Bet Conversion */}
                 <div className={cn(
                   "rounded-lg p-3 border",
-                  holdResult.bonusConversion1 >= 0.70 
-                    ? "bg-[#4A7C59]/10 border-[#4A7C59]/30" 
+                  holdResult.bonusConversion1 >= 0.70
+                    ? "bg-color-profit-subtle border-color-profit/30"
                     : holdResult.bonusConversion1 < 0.60
-                    ? "bg-[#B85C38]/10 border-[#B85C38]/30"
+                    ? "bg-color-loss-subtle border-color-loss/30"
                     : "bg-muted border-border"
                 )}>
                   <div className="flex items-center gap-2 mb-1">
@@ -265,10 +265,10 @@ export default function ToolsPage() {
                   </div>
                   <p className={cn(
                     "text-2xl font-bold font-mono",
-                    holdResult.bonusConversion1 >= 0.70 
-                      ? "text-[#4A7C59]" 
+                    holdResult.bonusConversion1 >= 0.70
+                      ? "text-color-profit-fg"
                       : holdResult.bonusConversion1 < 0.60
-                      ? "text-[#B85C38]"
+                      ? "text-color-loss-fg"
                       : "text-foreground"
                   )}>
                     {(holdResult.bonusConversion1 * 100).toFixed(1)}%

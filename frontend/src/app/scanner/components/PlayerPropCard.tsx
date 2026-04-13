@@ -133,7 +133,7 @@ export function PlayerPropCard({
   } else if (activeLens === "profit_boost") {
     metricColorClass = boostedEV > 0 ? "text-primary" : "text-muted-foreground";
   } else if (activeLens === "bonus_bet") {
-    metricColorClass = "text-[#0EA5A4]";
+    metricColorClass = "text-[hsl(var(--color-bonus))]";
   } else if (activeLens === "qualifier") {
     metricColorClass = hold <= 3 ? "text-profit" : hold <= 6 ? "text-foreground" : "text-muted-foreground";
   }

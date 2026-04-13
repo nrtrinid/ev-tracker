@@ -36,6 +36,8 @@ import {
   parseTrackerTab,
 } from "@/lib/tracker-view";
 import { parseParlayLegsFromBet } from "@/lib/parlay-bet-meta";
+import { buildTrackedBetCardTitle } from "@/lib/straight-bet-labels";
+import { getTrackerSettlementState } from "@/lib/tracker-settlement-state";
 import { formatCurrency, formatOdds, cn, formatRelativeTime, formatShortDate, formatFullDateTime, americanToDecimal, decimalToAmerican, calculateImpliedProb } from "@/lib/utils";
 import {
   SPORTSBOOK_BADGE_COLORS,
@@ -66,36 +68,36 @@ const resultConfig: Record<
 > = {
   pending: {
     label: "Pending",
-    color: "text-[#C4A35A]",
-    bgColor: "bg-[#C4A35A]/10",
+    color: "text-color-pending-fg",
+    bgColor: "bg-color-pending-subtle",
     icon: <Clock className="h-3.5 w-3.5" />,
     stampClass: "stamp",
   },
   win: {
     label: "Win",
-    color: "text-[#4A7C59]",
-    bgColor: "bg-[#4A7C59]/20",
+    color: "text-color-profit-fg",
+    bgColor: "bg-color-profit-subtle",
     icon: <Check className="h-3.5 w-3.5" />,
     stampClass: "stamp-win",
   },
   loss: {
     label: "Loss",
-    color: "text-[#B85C38]",
-    bgColor: "bg-[#B85C38]/20",
+    color: "text-color-loss-fg",
+    bgColor: "bg-color-loss-subtle",
     icon: <X className="h-3.5 w-3.5" />,
     stampClass: "stamp-loss",
   },
   push: {
     label: "Push",
-    color: "text-[#6B5E4F]",
-    bgColor: "bg-[#6B5E4F]/15",
+    color: "text-color-neutral-fg",
+    bgColor: "bg-color-neutral-subtle",
     icon: <Minus className="h-3.5 w-3.5" />,
     stampClass: "stamp-push",
   },
   void: {
     label: "Void",
-    color: "text-[#6B5E4F]",
-    bgColor: "bg-[#6B5E4F]/15",
+    color: "text-color-neutral-fg",
+    bgColor: "bg-color-neutral-subtle",
     icon: <Minus className="h-3.5 w-3.5" />,
     stampClass: "stamp",
   },
@@ -180,6 +182,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
   const textColor = SPORTSBOOK_TEXT_COLORS[bet.sportsbook] || "text-gray-600";
   const promoConfig = PROMO_TYPE_CONFIG[bet.promo_type] || PROMO_TYPE_CONFIG.standard;
   const parlayLegs = parseParlayLegsFromBet(bet);
+  const displayTitle = buildTrackedBetCardTitle(bet);
   
   // Short promo label (BB, 30%, etc.)
   const promoLabel = bet.promo_type === "boost_custom" && bet.boost_percent 
@@ -209,7 +212,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
             {/* Primary: Event name */}
-            <p className="font-semibold text-sm leading-tight">{bet.event}</p>
+            <p className="font-semibold text-sm leading-tight">{displayTitle}</p>
             {/* Secondary: Sportsbook [Badge] Sport Market */}
             <div className="flex items-center gap-1.5 mt-1 flex-wrap">
               <span className={cn("w-2 h-2 rounded-full shrink-0", borderColor)} />
@@ -230,8 +233,8 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
                 <span className={cn(
                   "px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none",
                   bet.beat_close
-                    ? "bg-[#4A7C59]/15 text-[#4A7C59]"
-                    : "bg-[#B85C38]/15 text-[#B85C38]"
+                    ? "bg-color-profit-subtle text-color-profit-fg"
+                    : "bg-color-loss-subtle text-color-loss-fg"
                 )}>
                   CLV {bet.clv_ev_percent >= 0 ? "+" : ""}{bet.clv_ev_percent.toFixed(1)}%
                 </span>
@@ -275,7 +278,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
           {/* EV - Col 2 on mobile, Col 3 on desktop */}
           <div className="order-2 md:order-3">
             <p className="text-muted-foreground text-xs">EV</p>
-            <p className={cn("font-mono font-semibold", bet.ev_total >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}
+            <p className={cn("font-mono font-semibold", bet.ev_total >= 0 ? "text-color-profit-fg" : "text-color-loss-fg")}
                style={{ whiteSpace: "nowrap" }}>
               {bet.ev_total >= 0 ? "+" : ""}{formatCurrency(bet.ev_total)}{" "}
               <span className="font-normal text-xs opacity-70">
@@ -294,7 +297,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
             <p className={cn(
               "font-mono font-semibold",
               mode === "settled"
-                ? bet.real_profit !== null && bet.real_profit >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]"
+                ? bet.real_profit !== null && bet.real_profit >= 0 ? "text-color-profit-fg" : "text-color-loss-fg"
                 : "text-foreground"
             )} style={{ whiteSpace: "nowrap" }}>
               {mode === "settled"
@@ -347,7 +350,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
                     {bet.clv_ev_percent != null ? (
                       <p className={cn(
                         "font-mono text-sm font-semibold",
-                        bet.beat_close ? "text-[#4A7C59]" : "text-[#B85C38]"
+                        bet.beat_close ? "text-color-profit-fg" : "text-color-loss-fg"
                       )}>
                         {bet.clv_ev_percent >= 0 ? "+" : ""}{bet.clv_ev_percent.toFixed(2)}%
                       </p>
@@ -428,8 +431,8 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
                                 className={cn(
                                   "inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold leading-none font-mono self-start",
                                   leg.beat_close
-                                    ? "bg-[#4A7C59]/15 text-[#4A7C59]"
-                                    : "bg-[#B85C38]/15 text-[#B85C38]"
+                                    ? "bg-color-profit-subtle text-color-profit-fg"
+                                    : "bg-color-loss-subtle text-color-loss-fg"
                                 )}
                               >
                                 CLV&nbsp;
@@ -536,7 +539,7 @@ function TutorialPracticeCard({
         </div>
         <div>
           <p className="text-xs text-muted-foreground">Practice EV</p>
-          <p className={cn("font-mono font-semibold", bet.ev_total >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]")}>
+          <p className={cn("font-mono font-semibold", bet.ev_total >= 0 ? "text-color-profit-fg" : "text-color-loss-fg")}>
             {bet.ev_total >= 0 ? "+" : ""}
             {formatCurrency(bet.ev_total)}
           </p>
@@ -555,7 +558,7 @@ function TutorialPracticeCard({
 }
 
 // ============ PENDING CARD ============
-// Action-focused with big Win/Loss buttons
+// Pending tickets favor status clarity first, then manual grading when needed.
 interface PendingCardProps {
   bet: Bet;
   onEdit: (bet: Bet) => void;
@@ -564,6 +567,14 @@ interface PendingCardProps {
 }
 
 function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps) {
+  const settlementState = getTrackerSettlementState(bet);
+  const [manualControlsOpen, setManualControlsOpen] = useState(
+    settlementState.showManualControlsByDefault,
+  );
+
+  useEffect(() => {
+    setManualControlsOpen(settlementState.showManualControlsByDefault);
+  }, [settlementState.kind, settlementState.showManualControlsByDefault]);
 
   const headerRight = (
     <DropdownMenu>
@@ -598,7 +609,7 @@ function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps
               disabled={bet.result === "win"}
               className={cn(bet.result === "win" && "opacity-50")}
             >
-              {bet.result === "win" ? <Check className="h-4 w-4 mr-2" /> : <Check className="h-4 w-4 mr-2 text-green-600" />}
+              {bet.result === "win" ? <Check className="h-4 w-4 mr-2" /> : <Check className="h-4 w-4 mr-2 text-color-profit-fg" />}
               Mark Win {bet.result === "win" && "✓"}
             </DropdownMenuItem>
             <DropdownMenuItem 
@@ -606,7 +617,7 @@ function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps
               disabled={bet.result === "loss"}
               className={cn(bet.result === "loss" && "opacity-50")}
             >
-              {bet.result === "loss" ? <Check className="h-4 w-4 mr-2" /> : <X className="h-4 w-4 mr-2 text-red-600" />}
+              {bet.result === "loss" ? <Check className="h-4 w-4 mr-2" /> : <X className="h-4 w-4 mr-2 text-color-loss-fg" />}
               Mark Loss {bet.result === "loss" && "✓"}
             </DropdownMenuItem>
             <DropdownMenuItem 
@@ -628,7 +639,7 @@ function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps
           </DropdownMenuSubContent>
         </DropdownMenuSub>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => onDelete(bet)} className="text-red-600">
+        <DropdownMenuItem onClick={() => onDelete(bet)} className="text-destructive">
           <Trash2 className="h-4 w-4 mr-2" />
           Delete
         </DropdownMenuItem>
@@ -652,22 +663,62 @@ function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps
     onResultChange(bet, "loss", "pending");
   };
 
+  const statusBadgeClass =
+    settlementState.kind === "manual_only"
+      ? "bg-color-neutral-subtle text-color-neutral-fg"
+      : settlementState.kind === "needs_grading"
+        ? "bg-color-pending-subtle text-color-pending-fg"
+        : "bg-color-pending-subtle text-color-pending-fg";
+
   const footer = (
-    <div className="flex gap-2 pt-2 border-t border-border mt-1">
-      <button
-        className="flex-1 h-8 min-h-[44px] flex items-center justify-center gap-1.5 text-sm font-medium rounded-md text-[#4A7C59] border border-[#4A7C59]/30 bg-[#4A7C59]/10 hover:bg-[#4A7C59]/20 active:bg-[#4A7C59]/25 active:scale-[0.98] transition-all duration-150"
-        onClick={handleWin}
-      >
-        <Check className="h-4 w-4" />
-        Mark Win
-      </button>
-      <button
-        className="flex-1 h-8 min-h-[44px] flex items-center justify-center gap-1.5 text-sm font-medium rounded-md text-[#B85C38] border border-[#B85C38]/30 bg-[#B85C38]/10 hover:bg-[#B85C38]/20 active:bg-[#B85C38]/25 active:scale-[0.98] transition-all duration-150"
-        onClick={handleLoss}
-      >
-        <X className="h-4 w-4" />
-        Mark Loss
-      </button>
+    <div className="pt-2 border-t border-border mt-1 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span
+              className={cn(
+                "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em]",
+                statusBadgeClass,
+              )}
+            >
+              {settlementState.badgeLabel}
+            </span>
+          </div>
+          <p className="mt-2 text-sm font-medium text-foreground">{settlementState.title}</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            {settlementState.description}
+          </p>
+        </div>
+        {!settlementState.showManualControlsByDefault && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-9 shrink-0"
+            onClick={() => setManualControlsOpen((open) => !open)}
+          >
+            {manualControlsOpen ? "Hide manual actions" : "Settle manually"}
+          </Button>
+        )}
+      </div>
+      {manualControlsOpen && (
+        <div className="flex gap-2">
+          <button
+            className="flex-1 h-8 min-h-[44px] flex items-center justify-center gap-1.5 text-sm font-medium rounded-md text-color-profit-fg border border-color-profit/30 bg-color-profit-subtle hover:bg-color-profit/20 active:scale-[0.98] transition-all duration-150"
+            onClick={handleWin}
+          >
+            <Check className="h-4 w-4" />
+            Mark Win
+          </button>
+          <button
+            className="flex-1 h-8 min-h-[44px] flex items-center justify-center gap-1.5 text-sm font-medium rounded-md text-color-loss-fg border border-color-loss/30 bg-color-loss-subtle hover:bg-color-loss/20 active:scale-[0.98] transition-all duration-150"
+            onClick={handleLoss}
+          >
+            <X className="h-4 w-4" />
+            Mark Loss
+          </button>
+        </div>
+      )}
     </div>
   );
 
@@ -747,7 +798,7 @@ function HistoryCard({ bet, onEdit, onResultChange, onDelete }: HistoryCardProps
                 disabled={bet.result === "win"}
                 className={cn(bet.result === "win" && "opacity-50")}
               >
-                {bet.result === "win" ? <Check className="h-4 w-4 mr-2" /> : <Check className="h-4 w-4 mr-2 text-green-600" />}
+                {bet.result === "win" ? <Check className="h-4 w-4 mr-2" /> : <Check className="h-4 w-4 mr-2 text-color-profit-fg" />}
                 Change to Win {bet.result === "win" && "✓"}
               </DropdownMenuItem>
               <DropdownMenuItem 
@@ -755,7 +806,7 @@ function HistoryCard({ bet, onEdit, onResultChange, onDelete }: HistoryCardProps
                 disabled={bet.result === "loss"}
                 className={cn(bet.result === "loss" && "opacity-50")}
               >
-                {bet.result === "loss" ? <Check className="h-4 w-4 mr-2" /> : <X className="h-4 w-4 mr-2 text-red-600" />}
+                {bet.result === "loss" ? <Check className="h-4 w-4 mr-2" /> : <X className="h-4 w-4 mr-2 text-color-loss-fg" />}
                 Change to Loss {bet.result === "loss" && "✓"}
               </DropdownMenuItem>
               <DropdownMenuItem 
@@ -777,7 +828,7 @@ function HistoryCard({ bet, onEdit, onResultChange, onDelete }: HistoryCardProps
             </DropdownMenuSubContent>
           </DropdownMenuSub>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => onDelete(bet)} className="text-red-600">
+          <DropdownMenuItem onClick={() => onDelete(bet)} className="text-destructive">
             <Trash2 className="h-4 w-4 mr-2" />
             Delete
           </DropdownMenuItem>
@@ -1069,7 +1120,7 @@ export function BetList({
   if (error) {
     return (
       <Card>
-        <CardContent className="py-8 text-center text-red-600">
+        <CardContent className="py-8 text-center text-destructive">
           Failed to load bets. Is the backend running?
         </CardContent>
       </Card>
@@ -1128,9 +1179,9 @@ export function BetList({
               {visiblePendingCount > 0 && (
                 <span className={cn(
                   "text-xs font-mono font-semibold px-1.5 rounded",
-                  activeTab === "pending" 
-                    ? "bg-[#C4A35A]/20 text-[#8B7355]" 
-                    : "bg-[#C4A35A]/10 text-[#8B7355]/70"
+                  activeTab === "pending"
+                    ? "bg-color-pending-subtle text-color-pending-fg"
+                    : "bg-color-pending-subtle/60 text-color-pending-fg/60"
                 )}>
                   {visiblePendingCount}
                 </span>
@@ -1202,7 +1253,7 @@ export function BetList({
                   <span className="ml-auto text-xs text-muted-foreground">
                     Balance: <span className="font-mono font-semibold text-foreground">{formatCurrency(selectedBalance.balance)}</span>
                     {pendingCashForBook.length > 0 && (
-                      <> · Open: <span className="font-mono font-semibold text-[#C4A35A]">{formatCurrency(pendingCashForBook.reduce((s, b) => s + b.stake, 0))}</span></>
+                      <> · Open: <span className="font-mono font-semibold text-color-pending-fg">{formatCurrency(pendingCashForBook.reduce((s, b) => s + b.stake, 0))}</span></>
                     )}
                   </span>
                 )}
@@ -1221,13 +1272,13 @@ export function BetList({
               {activeTab === "pending" ? (
                 <>
                   <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
-                    {hasPendingFilterEmpty ? "Filtered View" : pendingBets.length > 0 ? "Step 3: Check Results" : "Open Bets"}
+                    {hasPendingFilterEmpty ? "Filtered View" : "Open Bets"}
                   </p>
                   <h3 className="mt-1 text-sm font-semibold text-foreground">
                     {hasPendingFilterEmpty
                       ? "Your filters are hiding your open bets"
                       : pendingBets.length > 0
-                      ? "Mark finished tickets here"
+                      ? "Track pending tickets here"
                       : allSettledBets.length > 0
                       ? "You're caught up for now"
                       : "Your logged bets will land here"}
@@ -1236,7 +1287,7 @@ export function BetList({
                     {hasPendingFilterEmpty
                       ? "Clear the current filters or switch books if you want to check every open ticket."
                       : pendingBets.length > 0
-                      ? "When a game settles at the sportsbook, tap Mark Win or Mark Loss. Use the menu if you need Push or Void."
+                      ? "Most eligible tickets settle automatically after games finish. Manual-only bets and anything the auto-settler misses can still be graded here."
                       : allSettledBets.length > 0
                       ? "You do not have any open bets right now. Review Past Bets or scan for another play when you're ready."
                       : "After you log a play, it stays in Open Bets until the result is in."}
@@ -1343,7 +1394,7 @@ export function BetList({
                 <p
                   className={cn(
                     "font-mono font-semibold",
-                    pendingEvTotal >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]",
+                    pendingEvTotal >= 0 ? "text-color-profit-fg" : "text-color-loss-fg",
                   )}
                 >
                   {pendingEvTotal >= 0 ? "+" : ""}
@@ -1373,7 +1424,7 @@ export function BetList({
                 <p
                   className={cn(
                     "font-mono font-semibold",
-                    settledEvTotal >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]",
+                    settledEvTotal >= 0 ? "text-color-profit-fg" : "text-color-loss-fg",
                   )}
                 >
                   {settledEvTotal >= 0 ? "+" : ""}
@@ -1385,7 +1436,7 @@ export function BetList({
                 <p
                   className={cn(
                     "font-mono font-semibold",
-                    settledProfitTotal >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]",
+                    settledProfitTotal >= 0 ? "text-color-profit-fg" : "text-color-loss-fg",
                   )}
                 >
                   {settledProfitTotal >= 0 ? "+" : ""}

@@ -46,7 +46,7 @@ export default function BetaAccessPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-soft">
-        <span className="inline-flex rounded-full border border-[#C4A35A]/35 bg-[#C4A35A]/12 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#6B5728]">
+        <span className="inline-flex rounded-full border border-primary/35 bg-primary/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">
           Trusted beta
         </span>
         <h1 className="mt-3 text-xl font-semibold text-foreground">Enter Beta Code</h1>

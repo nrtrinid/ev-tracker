@@ -498,6 +498,20 @@ async def cron_run_board_drop_impl(
         error_count=len(errors),
         duration_ms=duration_ms,
     )
+    result_summary = dict(result.get("summary") or {})
+    if not result_summary:
+        result_summary = {
+            "straight_sides": int(result.get("straight_sides") or 0),
+            "props_sides": int(result.get("props_sides") or 0),
+            "featured_games_count": int(result.get("featured_games_count") or 0),
+            "props_events_scanned": int(result.get("props_events_scanned") or 0),
+            "game_line_sports_scanned": result.get("game_line_sports_scanned") or [],
+            "selected_event_ids": result.get("selected_event_ids") or [],
+            "selected_games": result.get("selected_games") or [],
+        }
+    result_summary.setdefault("scan_label", scan_label)
+    result_summary.setdefault("anchor_time_mst", manual_anchor_time_mst)
+    result_summary["duration_ms"] = duration_ms
 
     status_payload = {
         "run_id": run_id,
@@ -516,15 +530,7 @@ async def cron_run_board_drop_impl(
         "captured_at": finished,
         "props_events_scanned": int(result.get("props_events_scanned") or 0),
         "game_line_sports_scanned": result.get("game_line_sports_scanned") or [],
-        "result": {
-            "straight_sides": int(result.get("straight_sides") or 0),
-            "props_sides": int(result.get("props_sides") or 0),
-            "featured_games_count": int(result.get("featured_games_count") or 0),
-            "props_events_scanned": int(result.get("props_events_scanned") or 0),
-            "selected_event_ids": result.get("selected_event_ids") or [],
-            "selected_games": result.get("selected_games") or [],
-            "duration_ms": duration_ms,
-        },
+        "result": result_summary,
         "board_alert": board_alert,
         "board_alert_attempted": bool(board_alert.get("attempted")),
         "board_alert_delivery_status": board_alert.get("delivery_status"),
@@ -560,16 +566,7 @@ async def cron_run_board_drop_impl(
             "board_alert_delivery_status": board_alert.get("delivery_status"),
             "board_alert_http_status": board_alert.get("status_code"),
             "board_alert_error": board_alert.get("error"),
-            "result_summary": {
-                "straight_sides": int(result.get("straight_sides") or 0),
-                "props_sides": int(result.get("props_sides") or 0),
-                "featured_games_count": int(result.get("featured_games_count") or 0),
-                "props_events_scanned": int(result.get("props_events_scanned") or 0),
-                "game_line_sports_scanned": result.get("game_line_sports_scanned") or [],
-                "selected_event_ids": result.get("selected_event_ids") or [],
-                "selected_games": result.get("selected_games") or [],
-                "duration_ms": duration_ms,
-            },
+            "result_summary": result_summary,
         },
     )
 
@@ -648,6 +645,16 @@ async def cron_run_auto_settle_impl(
     summary = get_last_auto_settler_summary()
     if summary:
         set_ops_status("last_auto_settle_summary", summary)
+    summary_meta = None
+    if isinstance(summary, dict):
+        summary_meta = {}
+        if isinstance(summary.get("sports"), list):
+            summary_meta["sports"] = summary.get("sports")
+        for key in ("ml_settled", "props_settled", "parlays_settled", "pickem_research_settled"):
+            if summary.get(key) is not None:
+                summary_meta[key] = summary.get(key)
+        if not summary_meta:
+            summary_meta = None
     persist_ops_job_run(
         job_kind="auto_settle",
         source=ops_status_source,
@@ -659,7 +666,7 @@ async def cron_run_auto_settle_impl(
         duration_ms=duration_ms,
         settled=settled,
         skipped_totals=summary.get("skipped_totals") if isinstance(summary, dict) else None,
-        meta={"sports": summary.get("sports")} if isinstance(summary, dict) and isinstance(summary.get("sports"), list) else None,
+        meta=summary_meta,
     )
 
     if os.getenv("DISCORD_AUTO_SETTLE_HEARTBEAT") == "1":

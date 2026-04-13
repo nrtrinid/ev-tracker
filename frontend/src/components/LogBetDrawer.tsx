@@ -437,8 +437,8 @@ export function LogBetDrawer({
               className={cn(
                 "mb-4 rounded-lg border px-3 py-2 text-xs",
                 isTutorialPracticeFlow
-                  ? "border-sky-300/50 bg-sky-100/45 text-sky-900"
-                  : "border-[#B85C38]/30 bg-[#B85C38]/10 text-[#8B3D20]"
+                  ? "border-border bg-muted/50 text-muted-foreground"
+                  : "border-color-loss/30 bg-color-loss-subtle text-color-loss-fg"
               )}
             >
               {duplicateState === "better_now" ? (
@@ -695,7 +695,7 @@ export function LogBetDrawer({
               />
               <div className="mt-1">
                 {invalidBoost ? (
-                  <p className="text-xs text-[#B85C38]">Enter a value between 0 and 300.</p>
+                  <p className="text-xs text-color-loss-fg">Enter a value between 0 and 300.</p>
                 ) : (
                   <p className="text-xs text-muted-foreground">Using {boostPercentClamped.toFixed(0)}% boost.</p>
                 )}
@@ -950,8 +950,8 @@ export function LogBetDrawer({
                 className={cn(
                   "rounded-lg border p-3 mb-4 space-y-1.5",
                   ev.evTotal >= 0
-                    ? "bg-[#4A7C59]/10 border-[#4A7C59]/20"
-                    : "bg-[#B85C38]/10 border-[#B85C38]/20"
+                    ? "bg-color-profit-subtle border-color-profit/20"
+                    : "bg-color-loss-subtle border-color-loss/20"
                 )}
               >
                 <div className="flex justify-between items-center">
@@ -959,7 +959,7 @@ export function LogBetDrawer({
                   <span
                     className={cn(
                       "font-mono font-semibold",
-                      ev.evTotal >= 0 ? "text-[#4A7C59]" : "text-[#B85C38]"
+                      ev.evTotal >= 0 ? "text-color-profit-fg" : "text-color-loss-fg"
                     )}
                   >
                     {ev.evTotal >= 0 ? "+" : ""}

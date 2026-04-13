@@ -34,7 +34,7 @@ export function ScannerContextControls({
             className={cn(
               "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
               boostPercent === preset && customBoostInput === ""
-                ? "border border-[#C4A35A]/40 bg-[#C4A35A]/25 text-[#5C4D2E]"
+                ? "border border-primary/40 bg-primary/15 text-primary"
                 : "bg-muted text-muted-foreground hover:bg-secondary"
             )}
           >
@@ -51,8 +51,8 @@ export function ScannerContextControls({
             value={customBoostInput}
             onChange={(e) => onCustomBoostInputChange(e.target.value)}
             className={cn(
-              "w-16 rounded-md border bg-muted px-2 py-1 text-xs font-medium text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-[#C4A35A]/50",
-              customBoostInput !== "" ? "border-[#C4A35A]/40" : "border-transparent"
+              "w-16 rounded-md border bg-muted px-2 py-1 text-xs font-medium text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/50",
+              customBoostInput !== "" ? "border-primary/40" : "border-transparent"
             )}
           />
           {customBoostInput !== "" && <span className="text-xs text-muted-foreground">%</span>}

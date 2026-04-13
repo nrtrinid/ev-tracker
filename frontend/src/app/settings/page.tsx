@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, formatCurrency } from "@/lib/utils";
-import { Plus, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, Target as TargetIcon } from "lucide-react";
+import { Plus, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, Target as TargetIcon, Moon, Sun } from "lucide-react";
 import { TrustedBetaCard } from "@/components/TrustedBetaCard";
 import {
   useApplyOnboardingEvent,
@@ -22,6 +22,7 @@ import { ONBOARDING_CORE_FLOW, ONBOARDING_OPTIONAL_FLOW } from "@/lib/onboarding
 import { SPORTSBOOKS } from "@/lib/types";
 import type { Transaction, TransactionType } from "@/lib/types";
 import { useKellySettings } from "@/lib/kelly-context";
+import { useThemePreference } from "@/lib/theme-context";
 
 export default function SettingsPage() {
   const { data: transactions } = useTransactions();
@@ -35,6 +36,7 @@ export default function SettingsPage() {
     setBankrollOverride,
     setKellyMultiplier,
   } = useKellySettings();
+  const { theme, setTheme } = useThemePreference();
   const { clearTutorialSession, clearScannerReviewCandidate, hydrateOnboarding } = useBettingPlatformStore();
   const createTransaction = useCreateTransaction();
   const deleteTransaction = useDeleteTransaction();
@@ -107,6 +109,39 @@ export default function SettingsPage() {
   return (
     <main className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-6 space-y-6 max-w-2xl">
+        <Card>
+          <CardHeader className="pb-2">
+            <h2 className="font-semibold">Appearance</h2>
+            <p className="text-sm text-muted-foreground">
+              Choose how EV Tracker looks on this device. This preference is stored locally in this browser.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={theme === "dark" ? "default" : "outline"}
+                onClick={() => setTheme("dark")}
+              >
+                <Moon className="mr-1.5 h-4 w-4" />
+                Dark
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={theme === "light" ? "default" : "outline"}
+                onClick={() => setTheme("light")}
+              >
+                <Sun className="mr-1.5 h-4 w-4" />
+                Light
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Current theme: <span className="font-mono font-semibold text-foreground">{theme}</span>
+            </p>
+          </CardContent>
+        </Card>
         {settingsLoading ? (
           <>
             <Card>
@@ -465,9 +500,9 @@ export default function SettingsPage() {
                         >
                           <div className="flex items-center gap-3">
                             {tx.type === "deposit" ? (
-                              <ArrowDownCircle className="h-4 w-4 text-green-600" />
+                              <ArrowDownCircle className="h-4 w-4 text-color-profit-fg" />
                             ) : (
-                              <ArrowUpCircle className="h-4 w-4 text-red-600" />
+                              <ArrowUpCircle className="h-4 w-4 text-color-loss-fg" />
                             )}
                             <div>
                               <p className="text-sm font-medium">{tx.sportsbook}</p>
@@ -480,7 +515,7 @@ export default function SettingsPage() {
                           <div className="flex items-center gap-2">
                             <span className={cn(
                               "text-sm font-semibold",
-                              tx.type === "deposit" ? "text-green-600" : "text-red-600"
+                              tx.type === "deposit" ? "text-color-profit-fg" : "text-color-loss-fg"
                             )}>
                               {tx.type === "deposit" ? "+" : "-"}{formatCurrency(tx.amount)}
                             </span>
@@ -488,7 +523,7 @@ export default function SettingsPage() {
                               variant="ghost"
                               size="sm"
                               onClick={() => handleDeleteTransaction(tx)}
-                              className="h-7 w-7 p-0 text-muted-foreground hover:text-red-600"
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </Button>
@@ -511,7 +546,7 @@ export default function SettingsPage() {
                       {balances.map((b) => (
                         <div key={b.sportsbook} className="flex justify-between p-2 rounded bg-muted">
                           <span>{b.sportsbook}</span>
-                          <span className={cn("font-medium", b.balance >= 0 ? "text-green-600" : "text-red-600")}>
+                          <span className={cn("font-medium", b.balance >= 0 ? "text-color-profit-fg" : "text-color-loss-fg")}>
                             {formatCurrency(b.balance)}
                           </span>
                         </div>

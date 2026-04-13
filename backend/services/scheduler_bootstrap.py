@@ -3,9 +3,9 @@ from typing import Any, Callable
 
 def build_auto_settle_trigger(*, cron_trigger_cls, phoenix_tz):
     return (
-        cron_trigger_cls(hour=4, minute=0, timezone=phoenix_tz)
+        cron_trigger_cls(hour="4,22", minute=0, timezone=phoenix_tz)
         if phoenix_tz is not None
-        else cron_trigger_cls(hour=4, minute=0)
+        else cron_trigger_cls(hour="4,22", minute=0)
     )
 
 

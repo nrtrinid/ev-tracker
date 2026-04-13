@@ -151,4 +151,7 @@ async def test_run_daily_board_drop_limits_game_lines_to_nba_and_mlb(monkeypatch
     ]
     assert result["game_line_sports_scanned"] == ["basketball_nba", "baseball_mlb"]
     assert result["featured_games_count"] == 2
+    assert result["summary"]["game_lines"]["sports_scanned"] == ["basketball_nba", "baseball_mlb"]
+    assert result["summary"]["player_props"]["events_scanned"] == 1
+    assert result["summary"]["player_props"]["board_items"]["browse_total"] == 1
 

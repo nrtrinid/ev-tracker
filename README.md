@@ -308,6 +308,13 @@ For beta testing, keep `main` stable and do active work on `dev`.
 
 See [docs/workflow.md](./docs/workflow.md) for the lightweight workflow and pre-merge checklist.
 
+## Design Docs
+
+UI direction and future design-agent guidance live here:
+
+- [docs/design/design-direction.md](./docs/design/design-direction.md)
+- [docs/design/agent-ui-rules.md](./docs/design/agent-ui-rules.md)
+
 ---
 
 ## Stack

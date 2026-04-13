@@ -37,7 +37,7 @@ export function PlayerPropDiagnosticsPanel({ diagnostics }: PlayerPropDiagnostic
     : `${diagnostics.curated_games.length} shortlisted -> ${diagnostics.matched_event_count} curated matches -> ${diagnostics.events_fetched} prop requests -> ${diagnostics.sides_count} props`;
 
   return (
-    <Card className="border-[#4A7C59]/20 bg-[#4A7C59]/[0.04]">
+    <Card className="border-color-profit/20 bg-color-profit-subtle/30">
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Scan diagnostics</CardTitle>
         <CardDescription>
@@ -45,18 +45,18 @@ export function PlayerPropDiagnosticsPanel({ diagnostics }: PlayerPropDiagnostic
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="rounded-md border border-[#3B6C8E]/20 bg-[#3B6C8E]/10 px-3 py-2 text-sm font-medium text-[#2D5673]">
+        <div className="rounded-md border border-color-ev-high/20 bg-color-ev-high/10 px-3 py-2 text-sm font-medium text-foreground">
           {scanSummary}
         </div>
 
         {usedOddsFallback && diagnostics.fallback_reason && (
-          <div className="rounded-md border border-[#C4A35A]/35 bg-[#C4A35A]/10 px-3 py-2 text-xs text-[#5C4D2E]">
+          <div className="rounded-md border border-primary/30 bg-primary/8 px-3 py-2 text-xs text-primary">
             {diagnostics.fallback_reason}
           </div>
         )}
 
         {curatedJoinMissed && !usedOddsFallback && (
-          <div className="rounded-md border border-[#C4A35A]/35 bg-[#C4A35A]/10 px-3 py-2 text-xs text-[#5C4D2E]">
+          <div className="rounded-md border border-primary/30 bg-primary/8 px-3 py-2 text-xs text-primary">
             The sportsbook event list loaded, but none of the curated games matched it, so no
             per-game prop requests were sent.
           </div>
@@ -123,14 +123,14 @@ export function PlayerPropDiagnosticsPanel({ diagnostics }: PlayerPropDiagnostic
                 <p className="text-sm font-medium">
                   {game.away_team} @ {game.home_team}
                 </p>
-                <span className="rounded-full border border-[#C4A35A]/35 bg-[#C4A35A]/10 px-2 py-0.5 text-[10px] text-[#8B7355]">
+                <span className="rounded-full border border-primary/30 bg-primary/8 px-2 py-0.5 text-[10px] text-primary">
                   {selectionReasonLabel(game.selection_reason)}
                 </span>
                 <span
                   className={
                     game.matched
-                      ? "rounded-full border border-[#4A7C59]/30 bg-[#4A7C59]/10 px-2 py-0.5 text-[10px] text-[#2E5D39]"
-                      : "rounded-full border border-[#B85C38]/30 bg-[#B85C38]/10 px-2 py-0.5 text-[10px] text-[#8B3D20]"
+                      ? "rounded-full border border-color-profit/30 bg-color-profit-subtle px-2 py-0.5 text-[10px] text-color-profit-fg"
+                      : "rounded-full border border-color-loss/30 bg-color-loss-subtle px-2 py-0.5 text-[10px] text-color-loss-fg"
                   }
                 >
                   {game.matched ? "Matched" : "Unmatched"}

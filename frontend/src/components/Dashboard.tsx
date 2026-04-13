@@ -63,7 +63,7 @@ export function Dashboard() {
         beatClose={{ beatClosePct, avgClvPct: avgCLV, trackedCount: clvBets.length }}
       />
       {showDegradedHint && (
-        <div className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-[#B85C38]/30 bg-[#B85C38]/10 px-2.5 py-1.5 text-xs text-[#8B3D20]">
+        <div className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-color-loss/30 bg-color-loss-subtle px-2.5 py-1.5 text-xs text-color-loss-fg">
           <AlertTriangle className="h-3.5 w-3.5" />
           {degradedLabel}
         </div>

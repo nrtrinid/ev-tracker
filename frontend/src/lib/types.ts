@@ -583,6 +583,131 @@ export interface OddsApiActivityScanSession {
   details?: OddsApiActivityScanDetail[];
 }
 
+export interface BoardDropGameLinesSummary {
+  sports_scanned?: string[];
+  events_fetched?: number;
+  events_with_both_books?: number;
+  api_requests_remaining?: string | number | null;
+  surfaced_sides?: number;
+  fresh_sides_count?: number;
+}
+
+export interface BoardDropPlayerPropsBoardItemsSummary {
+  browse_total?: number;
+  opportunities_total?: number;
+  pickem_total?: number;
+  legacy_total?: number;
+  detail_total?: number;
+}
+
+export interface BoardDropPlayerPropsSummary {
+  events_scanned?: number;
+  events_fetched?: number;
+  events_with_both_books?: number;
+  api_requests_remaining?: string | number | null;
+  events_skipped_pregame?: number;
+  events_with_results?: number;
+  candidate_sides?: number;
+  quality_gate_filtered?: number;
+  quality_gate_min_reference_bookmakers?: number | null;
+  pickem_quality_gate_min_reference_bookmakers?: number | null;
+  pickem_cards_count?: number;
+  markets_requested?: string[];
+  surfaced_sides?: number;
+  board_items?: BoardDropPlayerPropsBoardItemsSummary | null;
+}
+
+export interface BoardDropResultSummary {
+  scan_label?: string | null;
+  anchor_time_mst?: string | null;
+  selected_event_ids?: string[];
+  selected_event_count?: number;
+  selected_games?: Array<Record<string, unknown>>;
+  selected_games_count?: number;
+  props_scan_event_ids?: string[];
+  props_scan_event_count?: number;
+  straight_sides?: number;
+  props_sides?: number;
+  total_sides?: number;
+  featured_games_count?: number;
+  game_line_sports_scanned?: string[];
+  game_lines_events_fetched?: number;
+  game_lines_events_with_both_books?: number;
+  game_lines_api_requests_remaining?: string | number | null;
+  props_events_scanned?: number;
+  props_events_fetched?: number;
+  props_events_with_both_books?: number;
+  props_api_requests_remaining?: string | number | null;
+  props_candidate_sides?: number;
+  props_quality_gate_filtered?: number;
+  props_events_skipped_pregame?: number;
+  props_events_with_results?: number;
+  props_quality_gate_min_reference_bookmakers?: number | null;
+  props_pickem_quality_gate_min_reference_bookmakers?: number | null;
+  props_pickem_cards_count?: number;
+  player_props_board_artifacts?: BoardDropPlayerPropsBoardItemsSummary | null;
+  game_lines?: BoardDropGameLinesSummary | null;
+  player_props?: BoardDropPlayerPropsSummary | null;
+  duration_ms?: number;
+}
+
+export interface BoardDropRunStatus {
+  run_id?: string;
+  started_at?: string;
+  finished_at?: string;
+  duration_ms?: number;
+  total_sides?: number;
+  straight_sides?: number;
+  props_sides?: number;
+  props_events_scanned?: number;
+  featured_games_count?: number;
+  alerts_scheduled?: number;
+  captured_at?: string;
+  board_drop?: boolean;
+  game_line_sports_scanned?: string[];
+  result?: BoardDropResultSummary | null;
+  board_alert?: {
+    attempted?: boolean;
+    delivery_status?: string | null;
+    status_code?: number | null;
+    route_kind?: string | null;
+    webhook_source?: string | null;
+    error?: string | null;
+  } | null;
+  board_alert_attempted?: boolean;
+  board_alert_delivery_status?: string | null;
+  board_alert_http_status?: number | null;
+  board_alert_error?: string | null;
+}
+
+export interface AutoSettleRunStatus {
+  source?: string;
+  run_id?: string;
+  started_at?: string;
+  finished_at?: string;
+  duration_ms?: number;
+  settled?: number;
+  captured_at?: string;
+  status?: string;
+  skipped_totals?: Record<string, number>;
+  sports?: Array<Record<string, unknown>>;
+  ml_settled?: number;
+  props_settled?: number;
+  parlays_settled?: number;
+  pickem_research_settled?: number;
+}
+
+export interface AutoSettleSummary {
+  captured_at?: string;
+  total_settled?: number;
+  skipped_totals?: Record<string, number>;
+  sports?: Array<Record<string, unknown>>;
+  ml_settled?: number;
+  props_settled?: number;
+  parlays_settled?: number;
+  pickem_research_settled?: number;
+}
+
 export interface OperatorStatusResponse {
   timestamp: string;
   runtime: {
@@ -606,33 +731,15 @@ export interface OperatorStatusResponse {
   db_error?: string | null;
   scheduler_freshness?: BackendReadiness["scheduler_freshness"];
   ops?: {
-    last_scheduler_scan?: {
-      run_id?: string;
+    last_scheduler_scan?: (BoardDropRunStatus & {
       scan_window?: {
         label?: string;
         anchor_timezone?: string;
         anchor_time_mst?: string;
       } | null;
-      started_at?: string;
-      finished_at?: string;
-      duration_ms?: number;
-      total_sides?: number;
-      props_events_scanned?: number;
-      featured_games_count?: number;
-      alerts_scheduled?: number;
       hard_errors?: number;
-      captured_at?: string;
-      board_drop?: boolean;
-      result?: {
-        selected_event_ids?: string[];
-        props_scan_event_ids?: string[];
-        selected_games?: Array<Record<string, unknown>>;
-        props_sides?: number;
-        props_events_scanned?: number;
-        featured_games_count?: number;
-        duration_ms?: number;
-      } | null;
-    } | null;
+      autolog_summary?: Record<string, unknown> | null;
+    }) | null;
     last_jit_clv?: {
       source?: string;
       run_id?: string;
@@ -643,28 +750,10 @@ export interface OperatorStatusResponse {
       captured_at?: string;
       status?: string;
     } | null;
-    last_ops_trigger_scan?: {
-      run_id?: string;
-      started_at?: string;
-      finished_at?: string;
-      duration_ms?: number;
-      total_sides?: number;
-      props_events_scanned?: number;
-      featured_games_count?: number;
-      alerts_scheduled?: number;
+    last_ops_trigger_scan?: (BoardDropRunStatus & {
       error_count?: number;
       errors?: unknown[];
-      captured_at?: string;
-      board_drop?: boolean;
-      result?: {
-        selected_event_ids?: string[];
-        selected_games?: Array<Record<string, unknown>>;
-        props_sides?: number;
-        props_events_scanned?: number;
-        featured_games_count?: number;
-        duration_ms?: number;
-      } | null;
-    } | null;
+    }) | null;
     last_manual_scan?: {
       captured_at?: string;
       sport?: string;
@@ -673,21 +762,9 @@ export interface OperatorStatusResponse {
       total_sides?: number;
       api_requests_remaining?: string | number | null;
     } | null;
-    last_auto_settle?: {
-      source?: string;
-      run_id?: string;
-      started_at?: string;
-      finished_at?: string;
-      duration_ms?: number;
-      settled?: number;
-      captured_at?: string;
-    } | null;
-    last_auto_settle_summary?: {
-      captured_at?: string;
-      total_settled?: number;
-      skipped_totals?: Record<string, number>;
-      sports?: Array<Record<string, unknown>>;
-    } | null;
+    last_auto_settle?: AutoSettleRunStatus | null;
+    last_auto_settle_summary?: AutoSettleSummary | null;
+    recent_auto_settle_runs?: AutoSettleRunStatus[] | null;
     last_readiness_failure?: {
       captured_at?: string;
       checks?: Record<string, boolean>;
@@ -779,16 +856,7 @@ export interface OpsTriggerScanResponse {
   alerts_scheduled: number;
   board_drop: boolean;
   errors: Array<Record<string, unknown>>;
-  result?: {
-    straight_sides?: number;
-    props_sides?: number;
-    featured_games_count?: number;
-    props_events_scanned?: number;
-    game_line_sports_scanned?: string[];
-    selected_event_ids?: string[];
-    selected_games?: Array<Record<string, unknown>>;
-    duration_ms?: number;
-  } | null;
+  result?: BoardDropResultSummary | null;
 }
 
 /** Response from POST /api/ops/trigger/auto-settle (proxied via admin). */

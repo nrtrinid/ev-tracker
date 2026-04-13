@@ -43,7 +43,7 @@ class _DummyState:
 def test_build_auto_settle_trigger_uses_timezone_when_available():
     tz = object()
     trigger = build_auto_settle_trigger(cron_trigger_cls=_DummyCronTrigger, phoenix_tz=tz)
-    assert trigger.hour == 4
+    assert trigger.hour == "4,22"
     assert trigger.minute == 0
     assert trigger.timezone is tz
 

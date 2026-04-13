@@ -1,5 +1,6 @@
 import type { Bet } from "@/lib/types";
 
+import { buildTrackedBetCardTitle } from "@/lib/straight-bet-labels";
 import { matchesTeamAliasSearch } from "@/lib/team-search-aliases";
 import { matchesTrackerSourceFilter, type TrackerSourceFilter } from "@/lib/tracker-source";
 
@@ -67,11 +68,14 @@ export function matchesTrackerSearch(bet: Bet, rawSearch: string): boolean {
 
   const haystacks = [
     bet.event,
+    buildTrackedBetCardTitle(bet),
     bet.market,
     bet.sport,
     bet.sportsbook,
     bet.clv_team,
     bet.participant_name,
+    bet.selection_side,
+    bet.line_value == null ? null : String(bet.line_value),
   ];
 
   return matchesTeamAliasSearch(search, haystacks);

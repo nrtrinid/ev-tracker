@@ -51,6 +51,7 @@ def build_empty_ops_status() -> dict[str, Any]:
         "last_manual_scan": None,
         "last_auto_settle": None,
         "last_auto_settle_summary": None,
+        "recent_auto_settle_runs": [],
         "last_readiness_failure": None,
         "odds_api_activity": build_empty_odds_api_activity_snapshot(),
     }
@@ -602,8 +603,9 @@ def _map_scan_run(row: dict[str, Any]) -> dict[str, Any]:
     return mapped
 
 
-def _map_last_auto_settle(row: dict[str, Any]) -> dict[str, Any]:
-    return {
+def _map_auto_settle_run(row: dict[str, Any]) -> dict[str, Any]:
+    meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+    mapped = {
         "source": row.get("source"),
         "run_id": row.get("run_id"),
         "started_at": row.get("started_at"),
@@ -611,7 +613,19 @@ def _map_last_auto_settle(row: dict[str, Any]) -> dict[str, Any]:
         "duration_ms": row.get("duration_ms"),
         "settled": row.get("settled"),
         "captured_at": row.get("captured_at"),
+        "status": row.get("status"),
+        "skipped_totals": row.get("skipped_totals"),
     }
+    if isinstance(meta.get("sports"), list):
+        mapped["sports"] = meta.get("sports")
+    for key in ("ml_settled", "props_settled", "parlays_settled", "pickem_research_settled"):
+        if meta.get(key) is not None:
+            mapped[key] = meta.get(key)
+    return mapped
+
+
+def _map_last_auto_settle(row: dict[str, Any]) -> dict[str, Any]:
+    return _map_auto_settle_run(row)
 
 
 def _map_last_jit_clv(row: dict[str, Any]) -> dict[str, Any]:
@@ -681,12 +695,16 @@ def load_recent_clv_job_runs(
 
 def _map_last_auto_settle_summary(row: dict[str, Any]) -> dict[str, Any]:
     meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
-    return {
+    mapped = {
         "captured_at": row.get("captured_at"),
         "total_settled": row.get("settled"),
         "skipped_totals": row.get("skipped_totals"),
         "sports": meta.get("sports"),
     }
+    for key in ("ml_settled", "props_settled", "parlays_settled", "pickem_research_settled"):
+        if meta.get(key) is not None:
+            mapped[key] = meta.get(key)
+    return mapped
 
 
 def _map_last_readiness_failure(row: dict[str, Any]) -> dict[str, Any]:
@@ -835,6 +853,12 @@ def load_ops_status_snapshot(
         auto_settle = _select_latest_job_run(
             db=resolved_db, retry_supabase=retry_supabase, job_kind="auto_settle"
         )
+        recent_auto_settle_runs = _select_recent_job_runs(
+            db=resolved_db,
+            retry_supabase=retry_supabase,
+            job_kind="auto_settle",
+            limit=6,
+        )
         readiness = _select_latest_job_run(
             db=resolved_db, retry_supabase=retry_supabase, job_kind="readiness_failure"
         )
@@ -865,6 +889,10 @@ def load_ops_status_snapshot(
     if auto_settle:
         ops["last_auto_settle"] = _map_last_auto_settle(auto_settle)
         ops["last_auto_settle_summary"] = _map_last_auto_settle_summary(auto_settle)
+    if recent_auto_settle_runs:
+        ops["recent_auto_settle_runs"] = [
+            _map_auto_settle_run(row) for row in recent_auto_settle_runs
+        ]
     if readiness:
         ops["last_readiness_failure"] = _map_last_readiness_failure(readiness)
 

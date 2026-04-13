@@ -77,62 +77,77 @@
     --profit: var(--color-profit);
     --loss: var(--color-loss);
     --pending: var(--color-pending);
+
+    color-scheme: light;
   }
 
   .dark {
-    /* Dark slate field guide — warm charcoal, not pure black */
-    --background: 220 13% 13%;
-    --foreground: 40 18% 88%;
-    
-    --surface-card: 220 11% 17%;
-    --surface-card-fg: 40 18% 88%;
-    --surface-elevated: 220 11% 19%;
-    --surface-elevated-fg: 40 18% 88%;
-    --surface-overlay: 220 13% 8%;
-    
+    /* Dark field guide — warm charcoal base, not cool slate */
+
+    /* ── Page surfaces ── */
+    --background:          30 10% 10%;   /* #1C1812 very dark warm charcoal */
+    --foreground:          38 22% 90%;   /* #EDE8DF warm off-white — primary text */
+
+    /* ── Card surfaces ── */
+    /* Cards must be clearly distinct from the page background */
+    --surface-card:        30 9% 15%;    /* #272219 warm dark brown — card bg */
+    --surface-card-fg:     38 22% 90%;
+    --surface-elevated:    30 9% 19%;    /* #302920 slightly lighter — modals/popovers */
+    --surface-elevated-fg: 38 22% 90%;
+    --surface-overlay:     30 10% 6%;    /* near-black for backdrop tint */
+
+    /* ── Legacy aliases ── */
     --card: var(--surface-card);
     --card-foreground: var(--surface-card-fg);
     --popover: var(--surface-elevated);
     --popover-foreground: var(--surface-elevated-fg);
-    
-    --primary: 43 42% 52%;
-    --primary-foreground: 36 30% 13%;
-    --secondary: 220 10% 21%;
-    --secondary-foreground: 40 18% 88%;
-    --muted: 220 10% 21%;
-    --muted-foreground: 220 7% 52%;
-    --accent: 43 42% 52%;
-    --accent-foreground: 36 30% 13%;
-    --destructive: 18 52% 48%;
-    --destructive-foreground: 40 18% 88%;
-    --border: 220 9% 22%;
-    --input: 220 9% 22%;
-    --ring: 43 42% 52%;
-    
-    --color-profit: 134 32% 44%;
-    --color-profit-fg: 134 32% 65%;
-    --color-profit-subtle: 134 32% 15%;
-    --color-loss: 18 50% 48%;
-    --color-loss-fg: 18 50% 68%;
-    --color-loss-subtle: 18 50% 15%;
-    --color-pending: 43 42% 52%;
-    --color-pending-fg: 43 42% 72%;
-    --color-pending-subtle: 43 42% 15%;
-    --color-neutral: 220 7% 52%;
-    --color-neutral-fg: 220 7% 72%;
-    --color-neutral-subtle: 220 7% 18%;
-    
-    --color-ev-low: 220 7% 52%;
-    --color-ev-mid: 134 32% 44%;
-    --color-ev-high: 210 40% 50%;
-    --color-ev-elite: 290 43% 50%;
-    
-    --color-bonus: 181 87% 45%;
-    
+
+    /* ── Brand / interactive ── */
+    --primary:             43 55% 58%;   /* #C9A84C warm gold — slightly brighter than light */
+    --primary-foreground:  30 10% 10%;
+    --secondary:           30 8% 20%;
+    --secondary-foreground: 38 22% 90%;
+    --muted:               30 8% 20%;
+    --muted-foreground:    34 12% 55%;   /* #8C7D6A warm mid-tone — secondary text */
+    --accent:              43 55% 58%;
+    --accent-foreground:   30 10% 10%;
+    --destructive:         18 52% 50%;
+    --destructive-foreground: 38 22% 90%;
+
+    /* ── Borders / inputs ── */
+    /* Borders are critical in dark mode — they create layer separation */
+    --border:              30 8% 22%;    /* #3A3028 warm dark border — visible but quiet */
+    --input:               30 8% 22%;
+    --ring:                43 55% 58%;
+
+    /* ── Semantic state colors ── */
+    --color-profit:        134 35% 48%;  /* #4E8A5F muted forest green */
+    --color-profit-fg:     134 40% 68%;  /* #7DC494 lighter green for text */
+    --color-profit-subtle: 134 30% 13%;  /* very dark green tint for badge bg */
+    --color-loss:          18 52% 52%;   /* #C4623C dusty terracotta */
+    --color-loss-fg:       18 55% 70%;   /* #E09070 lighter rust for text */
+    --color-loss-subtle:   18 45% 14%;   /* very dark rust tint for badge bg */
+    --color-pending:       43 55% 58%;   /* warm gold */
+    --color-pending-fg:    43 60% 74%;   /* lighter gold for text */
+    --color-pending-subtle: 43 40% 14%;  /* very dark amber tint for badge bg */
+    --color-neutral:       34 12% 55%;   /* matches muted-foreground */
+    --color-neutral-fg:    34 12% 70%;
+    --color-neutral-subtle: 30 8% 18%;
+
+    /* ── EV tier colors ── */
+    --color-ev-low:        34 12% 55%;   /* muted warm gray */
+    --color-ev-mid:        134 35% 48%;  /* profit green */
+    --color-ev-high:       210 45% 55%;  /* steel blue */
+    --color-ev-elite:      290 40% 55%;  /* muted purple */
+
+    /* ── Bonus bet accent ── */
+    --color-bonus:         181 70% 48%;
+
+    /* ── Legacy aliases ── */
     --profit: var(--color-profit);
     --loss: var(--color-loss);
     --pending: var(--color-pending);
-    
+
     color-scheme: dark;
   }
 }
@@ -200,6 +215,37 @@
     background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 1200 1200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.2' numOctaves='5' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
   }
   
+  /* ── Text hierarchy utilities ──────────────────────────────────────────── */
+  /* Use these instead of raw text-foreground / text-muted-foreground        */
+  /* to ensure consistent 4-level hierarchy across light and dark mode.      */
+
+  /* Level 1 — primary content: titles, key values, odds, EV numbers */
+  .text-hi {
+    color: hsl(var(--foreground));
+  }
+
+  /* Level 2 — supporting content: event names, matchup context, labels */
+  .text-mid {
+    color: hsl(var(--muted-foreground));
+  }
+
+  /* Level 3 — quiet metadata: timestamps, helper text, secondary labels */
+  /* Light: ~45% lightness. Dark: ~38% lightness. Readable but clearly subordinate. */
+  .text-lo {
+    color: hsl(var(--foreground) / 0.45);
+  }
+  .dark .text-lo {
+    color: hsl(34 10% 40%);
+  }
+
+  /* Level 4 — ghost / decorative: dividers, placeholder text, disabled states */
+  .text-ghost {
+    color: hsl(var(--foreground) / 0.28);
+  }
+  .dark .text-ghost {
+    color: hsl(34 8% 30%);
+  }
+
   /* Friendly monospace for numbers - tabular for ledger alignment */
   .font-mono {
     font-family: 'JetBrains Mono', ui-monospace, monospace;
@@ -339,9 +385,9 @@
 
 /* ── Dark mode overrides ──────────────────────────────────────────────────── */
 
-/* Reduce paper grain — visible texture on dark is too noisy */
+/* Reduce paper grain in dark — subtle warmth, not noise */
 .dark body::before {
-  opacity: 0.04;
+  opacity: 0.06;
 }
 
 /* Stamps use multiply blend which darkens — switch to normal on dark */

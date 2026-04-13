@@ -82,7 +82,7 @@ export function ScannerResultsPane({
           Pick&apos;em support uses all scanned books for exact-line consensus. My Books only affects the sportsbook card view.
         </p>
       )}
-      <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         {isPropsSurface
           ? isPickEmView
             ? `Showing ${pickemCards.length} of ${sourceCount} available pick'em board lines`
@@ -98,7 +98,7 @@ export function ScannerResultsPane({
                     ? "Boost Opportunities"
                     : "Qualifier Candidates"
             }`}
-      </h2>
+      </p>
 
       {(isPickEmView ? pickemCards.length === 0 : results.length === 0) ? (
         <Card className="border-dashed">

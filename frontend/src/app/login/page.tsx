@@ -109,13 +109,13 @@ function LoginPageContent() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="flex flex-col items-center mb-8">
-          <div className="w-14 h-14 rounded-xl bg-[#2C2416] flex items-center justify-center shadow-md mb-3">
-            <span className="text-[#FAF8F5] font-bold text-xl tracking-tight">
+          <div className="w-14 h-14 rounded-xl bg-foreground flex items-center justify-center shadow-md mb-3">
+            <span className="text-background font-bold text-xl tracking-tight">
               EV
             </span>
           </div>
           <h1 className="text-xl font-semibold text-foreground">EV Tracker</h1>
-          <span className="mt-2 inline-flex rounded-full border border-[#C4A35A]/35 bg-[#C4A35A]/12 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#6B5728]">
+          <span className="mt-2 inline-flex rounded-full border border-primary/35 bg-primary/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">
             Trusted beta
           </span>
           <p className="text-sm text-muted-foreground mt-1">
@@ -205,7 +205,7 @@ function LoginPageContent() {
             )}
 
             {message && (
-              <p className="text-sm text-[#4A7C59] bg-[#4A7C59]/10 px-3 py-2 rounded-md">
+              <p className="text-sm text-color-profit-fg bg-color-profit-subtle px-3 py-2 rounded-md">
                 {message}
               </p>
             )}
