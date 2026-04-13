@@ -92,10 +92,14 @@ async def test_run_daily_board_drop_limits_game_lines_to_nba_and_mlb(monkeypatch
             "api_requests_remaining": "95",
         }
 
+    prop_event_sources: list[tuple[str, str]] = []
+    prop_scan_calls: list[tuple[str, list[str], list[str], str]] = []
+
     async def _fake_fetch_events(sport: str, source: str):
-        assert sport == "basketball_nba"
-        assert source == "scheduled_board_drop_props_events"
-        return ([{"id": "evt-1"}], types.SimpleNamespace(headers={"x-requests-remaining": "94"}))
+        prop_event_sources.append((sport, source))
+        assert source == f"scheduled_board_drop_{sport}_props_events"
+        event_id = "evt-nba-1" if sport == "basketball_nba" else "evt-mlb-1"
+        return ([{"id": event_id}], types.SimpleNamespace(headers={"x-requests-remaining": "94"}))
 
     async def _fake_get_cached_or_scan(sport: str, source: str = "unknown"):
         game_line_scan_calls.append((sport, source))
@@ -108,8 +112,9 @@ async def test_run_daily_board_drop_limits_game_lines_to_nba_and_mlb(monkeypatch
         }
 
     async def _fake_scan_player_props_for_event_ids(*, sport: str, event_ids: list[str], markets: list[str], source: str):
-        assert sport == "basketball_nba"
-        assert event_ids == ["evt-1"]
+        prop_scan_calls.append((sport, list(event_ids), list(markets), source))
+        expected_event_ids = ["evt-nba-1"] if sport == "basketball_nba" else ["evt-mlb-1"]
+        assert event_ids == expected_event_ids
         assert source == "scheduled_board_drop"
         return {
             "sides": [{"sport": sport, "player_name": "Example Player", "market": markets[0]}],
@@ -145,13 +150,18 @@ async def test_run_daily_board_drop_limits_game_lines_to_nba_and_mlb(monkeypatch
 
     assert featured_calls == ["basketball_nba", "baseball_mlb"]
     assert manual_scan_supported_sports == [["basketball_nba", "baseball_mlb"]]
+    assert prop_event_sources == [
+        ("basketball_nba", "scheduled_board_drop_basketball_nba_props_events"),
+        ("baseball_mlb", "scheduled_board_drop_baseball_mlb_props_events"),
+    ]
     assert game_line_scan_calls == [
         ("basketball_nba", "scheduled_board_drop"),
         ("baseball_mlb", "scheduled_board_drop"),
     ]
+    assert [call[0] for call in prop_scan_calls] == ["basketball_nba", "baseball_mlb"]
     assert result["game_line_sports_scanned"] == ["basketball_nba", "baseball_mlb"]
     assert result["featured_games_count"] == 2
     assert result["summary"]["game_lines"]["sports_scanned"] == ["basketball_nba", "baseball_mlb"]
-    assert result["summary"]["player_props"]["events_scanned"] == 1
-    assert result["summary"]["player_props"]["board_items"]["browse_total"] == 1
+    assert result["summary"]["player_props"]["events_scanned"] == 2
+    assert result["summary"]["player_props"]["board_items"]["browse_total"] == 2
 

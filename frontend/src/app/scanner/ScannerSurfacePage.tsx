@@ -20,6 +20,7 @@ import {
   type ScannerTimePreset,
 } from "@/lib/scanner-filters";
 import { createClient } from "@/lib/supabase";
+import { formatPlayerPropMarketLabel } from "@/lib/player-prop-markets";
 import type {
   MarketSide,
   ScannedBetData,
@@ -60,6 +61,7 @@ import {
 const SPORT_KEY_TO_DISPLAY: Record<string, string> = {
   basketball_nba: "NBA",
   basketball_ncaab: "NCAAB",
+  baseball_mlb: "MLB",
 };
 
 const STRAIGHT_BET_BOOKS = ["DraftKings", "FanDuel", "BetMGM", "Caesars", "ESPN Bet"];
@@ -125,15 +127,17 @@ function filterPickEmBoardCards(params: {
   cards: PickEmBoardCard[];
   searchQuery: string;
   timePreset: ScannerTimePreset;
+  propSport: string;
   propMarket: string;
   pickEmSide: "all" | "over" | "under";
   now?: Date;
 }): PickEmBoardCard[] {
-  const { cards, searchQuery, timePreset, propMarket, pickEmSide } = params;
+  const { cards, searchQuery, timePreset, propSport, propMarket, pickEmSide } = params;
   const now = params.now ?? new Date();
   const normalizedQuery = normalizeScannerSearch(searchQuery);
 
   return cards.filter((card) => {
+    if (propSport !== "all" && card.sport !== propSport) return false;
     if (propMarket !== "all" && card.market_key !== propMarket) return false;
     if (pickEmSide !== "all" && card.consensus_side !== pickEmSide) return false;
     if (!matchesScannerComparisonTimePreset(card.commence_time, timePreset, now)) return false;
@@ -225,6 +229,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
     hideLongshots: boolean;
     hideAlreadyLogged: boolean;
     riskPreset: ScannerRiskPreset;
+    propSport: string;
     propMarket: string;
     propSide: "all" | "over" | "under";
   }> | undefined;
@@ -262,6 +267,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
   const [hideLongshots, setHideLongshots] = useState(persistedFilters?.hideLongshots ?? DEFAULT_RESULT_FILTERS.hideLongshots);
   const [hideAlreadyLogged, setHideAlreadyLogged] = useState(persistedFilters?.hideAlreadyLogged ?? DEFAULT_RESULT_FILTERS.hideAlreadyLogged);
   const [riskPreset, setRiskPreset] = useState<ScannerRiskPreset>(persistedFilters?.riskPreset ?? DEFAULT_RESULT_FILTERS.riskPreset);
+  const [propSport, setPropSport] = useState(persistedFilters?.propSport ?? DEFAULT_RESULT_FILTERS.propSport);
   const [propMarket, setPropMarket] = useState(persistedFilters?.propMarket ?? DEFAULT_RESULT_FILTERS.propMarket);
   const [propSide, setPropSide] = useState<"all" | "over" | "under">(persistedFilters?.propSide ?? DEFAULT_RESULT_FILTERS.propSide);
   const [pickEmSide, setPickEmSide] = useState<"all" | "over" | "under">("all");
@@ -291,6 +297,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
     setHideLongshots(false);
     setHideAlreadyLogged(false);
     setRiskPreset("any");
+    setPropSport("all");
     setBoostPercent(30);
     setCustomBoostInput("");
     setPropMarket("all");
@@ -309,6 +316,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
       hideLongshots,
       hideAlreadyLogged,
       riskPreset,
+      propSport,
       propMarket,
       propSide,
     });
@@ -319,6 +327,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
     edgeMinStandard,
     hideAlreadyLogged,
     hideLongshots,
+    propSport,
     propMarket,
     propSide,
     riskPreset,
@@ -445,11 +454,12 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
         hideLongshots,
         hideAlreadyLogged,
         riskPreset,
+        propSport,
         propMarket,
         propSide,
       },
     });
-  }, [edgeMinStandard, effectiveLens, fullResults, hideAlreadyLogged, hideLongshots, propMarket, propSide, riskPreset, searchQuery, timePreset]);
+  }, [edgeMinStandard, effectiveLens, fullResults, hideAlreadyLogged, hideLongshots, propMarket, propSide, propSport, riskPreset, searchQuery, timePreset]);
 
   const availableResultCount = useMemo(() => {
     return fullResults.filter((side) => isPregameCommenceTime(side.commence_time)).length;
@@ -461,11 +471,12 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
         cards: pickEmSourceCards,
         searchQuery,
         timePreset,
+        propSport,
         propMarket,
         pickEmSide,
       })
     );
-  }, [pickEmSide, pickEmSourceCards, propMarket, searchQuery, timePreset]);
+  }, [pickEmSide, pickEmSourceCards, propMarket, propSport, searchQuery, timePreset]);
 
   const availablePickEmSourceCount = useMemo(() => {
     return pickEmSourceCards.filter((card) => isPregameCommenceTime(card.commence_time)).length;
@@ -483,11 +494,12 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
         hideLongshots: isPickEmSubview ? false : hideLongshots,
         hideAlreadyLogged: isPickEmSubview ? false : hideAlreadyLogged,
         riskPreset: isPickEmSubview ? "any" : riskPreset,
+        propSport,
         propMarket,
-          propSide: isPickEmSubview ? pickEmSide : propSide,
+        propSide: isPickEmSubview ? pickEmSide : propSide,
       },
     });
-  }, [edgeMinStandard, effectiveLens, hideAlreadyLogged, hideLongshots, isPickEmSubview, pickEmSide, propMarket, propSide, riskPreset, searchQuery, surface, timePreset]);
+  }, [edgeMinStandard, effectiveLens, hideAlreadyLogged, hideLongshots, isPickEmSubview, pickEmSide, propMarket, propSide, propSport, riskPreset, searchQuery, surface, timePreset]);
 
   const nullState = useMemo(() => {
     return classifyScannerNullState({
@@ -498,7 +510,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
 
   useEffect(() => {
     setVisibleCount(10);
-  }, [effectiveScanData, effectiveLens, boostPercent, selectedBooks, hideLongshots, hideAlreadyLogged, riskPreset, edgeMinStandard, timePreset, searchQuery, propMarket, propSide, playerPropsView]);
+  }, [effectiveScanData, effectiveLens, boostPercent, selectedBooks, hideLongshots, hideAlreadyLogged, riskPreset, edgeMinStandard, timePreset, searchQuery, propMarket, propSide, propSport, playerPropsView]);
 
   const results = useMemo(() => filteredResults.slice(0, visibleCount), [filteredResults, visibleCount]);
   const visiblePickEmCards = useMemo(
@@ -517,13 +529,25 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
       .forEach((side) => markets.add(side.market_key));
     return Array.from(markets).sort((left, right) => left.localeCompare(right));
   }, [effectiveScanData, surface]);
+  const availablePropSports = useMemo(() => {
+    if (surface !== "player_props" || !effectiveScanData) return [];
+    const sports = new Set<string>();
+    effectiveScanData.sides
+      .filter((side): side is Extract<MarketSide, { surface: "player_props" }> => side.surface === "player_props")
+      .forEach((side) => {
+        if (side.sport) sports.add(side.sport);
+      });
+    return Array.from(sports).sort((left, right) => left.localeCompare(right));
+  }, [effectiveScanData, surface]);
   const pickEmEmptyMessage =
     isPickEmSubview && pickEmSourceCards.length === 0
       ? "No pick'em board lines were available from the current sportsbook scan."
       : null;
   const pickEmEmptySubMessage =
     pickEmEmptyMessage
-      ? "This board only shows supported NBA points, rebounds, assists, and threes lines when at least one sportsbook has both sides posted on the same number."
+      ? `This board only shows supported prop markets when at least one sportsbook has both sides posted on the same number.${availablePropMarkets.length > 0 ? ` Active markets are: ${availablePropMarkets
+          .map((market) => formatPlayerPropMarketLabel(market))
+          .join(", ")}.` : ""}`
       : null;
   const activeReviewCandidate = scannerReviewCandidate?.surface === surface ? scannerReviewCandidate : null;
 
@@ -533,6 +557,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
     setHideLongshots(DEFAULT_RESULT_FILTERS.hideLongshots);
     setHideAlreadyLogged(DEFAULT_RESULT_FILTERS.hideAlreadyLogged);
     setRiskPreset(DEFAULT_RESULT_FILTERS.riskPreset);
+    setPropSport(DEFAULT_RESULT_FILTERS.propSport);
     setPropMarket(DEFAULT_RESULT_FILTERS.propMarket);
     setPropSide(DEFAULT_RESULT_FILTERS.propSide);
     setBoostPercent(30);
@@ -759,6 +784,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
               hideLongshots,
               hideAlreadyLogged,
               riskPreset,
+              propSport,
               propMarket,
               propSide,
             }}
@@ -772,6 +798,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
             hasActiveFilters={hasActiveSecondaryFilters}
             sharedPropsOnly={isPickEmSubview}
             searchPlaceholder={surfaceConfig.searchPlaceholder}
+            availablePropSports={availablePropSports}
             availablePropMarkets={availablePropMarkets}
             onSearchChange={setSearchQuery}
             onTimePresetChange={setTimePreset}
@@ -779,6 +806,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
             onHideLongshotsChange={setHideLongshots}
             onHideAlreadyLoggedChange={setHideAlreadyLogged}
             onRiskPresetChange={setRiskPreset}
+            onPropSportChange={setPropSport}
             onPropMarketChange={setPropMarket}
             onPropSideChange={isPickEmSubview ? setPickEmSide : setPropSide}
             onPresetSelect={(preset) => {

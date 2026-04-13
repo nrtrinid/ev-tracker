@@ -3,6 +3,7 @@ import { Check, ChevronRight, ExternalLink, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import type { PlayerPropMarketSide } from "@/lib/types";
+import { formatPlayerPropMarketBadge } from "@/lib/player-prop-markets";
 import { calculateStealthStake, cn, formatCurrency, formatOdds } from "@/lib/utils";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
 import {
@@ -72,20 +73,6 @@ function getDuplicateBadge(duplicateState: PlayerPropMarketSide["scanner_duplica
     };
   }
   return null;
-}
-
-function formatPropMarketLabel(marketKey: string | undefined | null): string {
-  const key = (marketKey ?? "").trim();
-  const map: Record<string, string> = {
-    player_points: "PTS",
-    player_rebounds: "REB",
-    player_assists: "AST",
-    player_threes: "3PM",
-    player_points_rebounds_assists: "PRA",
-  };
-  if (map[key]) return map[key];
-  if (!key) return "Prop";
-  return key.replace(/^player_/, "").replaceAll("_", " ").toUpperCase();
 }
 
 export function PlayerPropCard({
@@ -162,7 +149,7 @@ export function PlayerPropCard({
               {sportDisplayMap[side.sport] || side.sport}
             </span>
             <span className="rounded bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-              {formatPropMarketLabel(side.market_key)}
+              {formatPlayerPropMarketBadge(side.market_key)}
             </span>
             {duplicateBadge && (
               <span className={duplicateBadge.className}>{duplicateBadge.label}</span>

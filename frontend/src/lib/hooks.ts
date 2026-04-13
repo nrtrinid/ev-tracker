@@ -50,6 +50,7 @@ export const queryKeys = {
       pageSize: number;
       books: string[];
       timeFilter: string;
+      sport: string;
       market: string;
       search: string;
       tzOffsetMinutes: number;
@@ -502,6 +503,7 @@ export function useInfiniteBoardPlayerPropsView(params: {
   pageSize: number;
   books: string[];
   timeFilter: string;
+  sport: string;
   market: string;
   search: string;
   tzOffsetMinutes: number;
@@ -511,6 +513,7 @@ export function useInfiniteBoardPlayerPropsView(params: {
     pageSize: params.pageSize,
     books: [...params.books].sort(),
     timeFilter: params.timeFilter,
+    sport: params.sport,
     market: params.market,
     search: params.search,
     tzOffsetMinutes: params.tzOffsetMinutes,

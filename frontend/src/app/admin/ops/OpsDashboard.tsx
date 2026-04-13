@@ -249,10 +249,16 @@ function deriveSettlementState(data: OperatorStatusResponse | undefined): Health
   const skipTotals = summary?.skipped_totals ?? settle?.skipped_totals;
   const skipCount = countSkippedTotals(skipTotals);
   const actionableSkips = countActionableSkips(skipTotals);
+  const manualPending = summary?.manual_settlement_pending ?? settle?.manual_settlement_pending ?? null;
+  const manualPendingTotal = Number(manualPending?.total || 0);
+  const manualPendingOldestAge = ageMinutes(manualPending?.oldest_commence_time);
 
   if (!settle) return "unknown";
   const settleAge = ageMinutes(settle.finished_at || settle.captured_at);
   if (settleAge !== null && settleAge > 1440) return "degraded";
+  if (manualPendingTotal > 0 && manualPendingOldestAge !== null && manualPendingOldestAge > 1440) {
+    return "warning";
+  }
   // A no_match-only run is common when no pending bets map to completed events yet.
   if (actionableSkips > 0) return "warning";
   if (skipCount > 0 && Number(skipTotals?.no_match || 0) !== skipCount) return "warning";
@@ -363,6 +369,8 @@ function getRecentAutoSettleRuns(data: OperatorStatusResponse | undefined): Auto
         parlays_settled: data.ops.last_auto_settle_summary?.parlays_settled ?? data.ops.last_auto_settle.parlays_settled,
         pickem_research_settled:
           data.ops.last_auto_settle_summary?.pickem_research_settled ?? data.ops.last_auto_settle.pickem_research_settled,
+        manual_settlement_pending:
+          data.ops.last_auto_settle_summary?.manual_settlement_pending ?? data.ops.last_auto_settle.manual_settlement_pending,
       }
     : null;
   const runs = fallback ? [fallback, ...recent] : recent;
@@ -427,6 +435,35 @@ function formatSkippedSignal(skippedTotals?: Record<string, number> | null): str
   const actionable = countActionableSkips(skippedTotals);
   if (actionable === 0) return `${total} total / passive`;
   return `${total} total / ${actionable} actionable`;
+}
+
+function formatManualSettlementPending(
+  pending?: AutoSettleSummary["manual_settlement_pending"] | AutoSettleRunStatus["manual_settlement_pending"] | null,
+): string {
+  if (!pending) return "None recorded";
+  const total = Number(pending.total || 0);
+  if (total === 0) return "No manual backlog";
+  const parts: string[] = [];
+  if (Number(pending.prop_bets || 0) > 0) parts.push(`props ${pending.prop_bets}`);
+  if (Number(pending.parlays || 0) > 0) parts.push(`parlays ${pending.parlays}`);
+  if (Number(pending.pickem_research || 0) > 0) parts.push(`research ${pending.pickem_research}`);
+  return `${total} pending${parts.length ? ` / ${parts.join(" / ")}` : ""}`;
+}
+
+function formatManualSettlementBySport(
+  pending?: AutoSettleSummary["manual_settlement_pending"] | AutoSettleRunStatus["manual_settlement_pending"] | null,
+): string[] {
+  const bySport = pending?.by_sport;
+  if (!bySport) return [];
+  return Object.entries(bySport)
+    .map(([sport, counts]) => {
+      const parts: string[] = [];
+      if (Number(counts?.prop_bets || 0) > 0) parts.push(`props ${counts?.prop_bets}`);
+      if (Number(counts?.parlays || 0) > 0) parts.push(`parlays ${counts?.parlays}`);
+      if (Number(counts?.pickem_research || 0) > 0) parts.push(`research ${counts?.pickem_research}`);
+      return `${formatSportLabel(sport)}: ${parts.join(" / ") || scalarOrUnknown(counts?.total)}`;
+    })
+    .sort((left, right) => left.localeCompare(right));
 }
 
 function formatSourceLabel(source?: string | null): string {
@@ -753,6 +790,9 @@ export function OpsDashboard() {
   const latestSkippedTotals = settleSummary?.skipped_totals ?? recentAutoSettleRuns[0]?.skipped_totals ?? null;
   const skippedEntries = Object.entries(latestSkippedTotals || {});
   const latestAutoSettleRun = recentAutoSettleRuns[0] ?? autoSettle ?? null;
+  const latestManualSettlementPending =
+    settleSummary?.manual_settlement_pending ?? latestAutoSettleRun?.manual_settlement_pending ?? null;
+  const latestManualSettlementBySport = formatManualSettlementBySport(latestManualSettlementPending);
   const analytics = analyticsQuery.data;
   const analyticsUsers = analyticsUserQuery.data;
 
@@ -922,6 +962,11 @@ export function OpsDashboard() {
                 value={formatAutoSettleBreakdown(settleSummary, latestAutoSettleRun)}
               />
               <Row label="Latest skip signal" value={formatSkippedSignal(latestSkippedTotals)} />
+              <Row label="Manual pending" value={formatManualSettlementPending(latestManualSettlementPending)} />
+              <Row
+                label="Manual oldest"
+                value={formatTime(latestManualSettlementPending?.oldest_commence_time)}
+              />
               <Row label="Summary captured" value={formatTime(settleSummary?.captured_at)} />
               {recentAutoSettleRuns.length > 0 && (
                 <div className="pt-1">
@@ -962,6 +1007,18 @@ export function OpsDashboard() {
               ) : (
                 <p className="text-xs text-muted-foreground">No skip totals recorded yet.</p>
               )}
+              {latestManualSettlementBySport.length > 0 ? (
+                <div className="pt-1">
+                  <p className="text-xs text-muted-foreground mb-1">Manual backlog by sport</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {latestManualSettlementBySport.map((label) => (
+                      <span key={label} className="rounded bg-muted px-2 py-1 text-[11px] font-mono">
+                        {label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               {noSettlementRunsYet && (
                 <p className="text-xs text-muted-foreground">
                   No auto-settlement runs are recorded yet. In local mode this is normal before the first run.

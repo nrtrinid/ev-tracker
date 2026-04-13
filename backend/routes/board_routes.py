@@ -62,6 +62,49 @@ def _noop_log_event(*_args, **_kwargs) -> None:
     return None
 
 
+async def _refresh_player_props_result(*, source: str) -> dict:
+    from services.player_props import (
+        get_cached_or_scan_player_props,
+        merge_player_prop_scan_results,
+    )
+    from services.player_prop_markets import get_supported_player_prop_sports
+    from services.scan_markets import scanned_at_from_fetched_timestamp
+
+    results_by_sport: list[tuple[str, dict]] = []
+    oldest_fetched: float | None = None
+    cache_hit = True
+    for sport_key in get_supported_player_prop_sports():
+        result = await get_cached_or_scan_player_props(sport_key, source=source)
+        results_by_sport.append((sport_key, result))
+        cache_hit = cache_hit and bool(result.get("cache_hit"))
+        fetched_at = result.get("fetched_at")
+        if isinstance(fetched_at, (int, float)):
+            oldest_fetched = fetched_at if oldest_fetched is None else min(oldest_fetched, fetched_at)
+
+    if not results_by_sport:
+        return {
+            "surface": "player_props",
+            "sport": "all",
+            "sides": [],
+            "events_fetched": 0,
+            "events_with_both_books": 0,
+            "api_requests_remaining": None,
+            "scanned_at": None,
+            "diagnostics": None,
+            "prizepicks_cards": None,
+            "cache_hit": False,
+        }
+
+    merged = merge_player_prop_scan_results(
+        *results_by_sport,
+        scan_mode="manual_refresh_multi_sport",
+        scan_scope="all_supported_sports",
+    )
+    merged["scanned_at"] = scanned_at_from_fetched_timestamp(oldest_fetched)
+    merged["cache_hit"] = cache_hit
+    return merged
+
+
 def _resolve_main_runtime_hooks():
     """Best-effort access to main runtime helpers without hard crashing routes."""
     try:
@@ -287,10 +330,12 @@ def get_board_latest(user: dict = Depends(get_current_user)):
             "selected_event_ids",
             "props_scan_scope",
             "props_scan_event_ids",
+            "props_scan_event_ids_by_sport",
             "events_fetched",
             "api_requests_remaining",
             "featured_lines_meta",
             "nba_props_events_meta",
+            "player_props_events_meta",
             "captured_at",
         }
         out: dict[str, object] = {}
@@ -474,6 +519,7 @@ def _build_player_prop_board_page_response(
     user_id: str,
     books: list[str],
     time_filter: str,
+    sport: str | None,
     market: str | None,
     search: str | None,
     page: int,
@@ -494,6 +540,7 @@ def _build_player_prop_board_page_response(
                 item,
                 books=books,
                 time_filter=time_filter,
+                sport=sport,
                 market=market,
                 search=search,
                 tz_offset_minutes=tz_offset_minutes,
@@ -516,6 +563,7 @@ def _build_player_prop_board_page_response(
         "scanned_at": meta.get("scanned_at"),
         "available_books": meta.get("available_books") or [],
         "available_markets": meta.get("available_markets") or [],
+        "available_sports": meta.get("available_sports") or [],
     }
 
 
@@ -525,6 +573,7 @@ def get_board_latest_player_props_opportunities(
     page_size: int = Query(default=10, ge=1, le=200),
     books: str | None = Query(default=None),
     time_filter: str = Query(default="today"),
+    sport: str | None = Query(default=None),
     market: str | None = Query(default=None),
     search: str | None = Query(default=None),
     tz_offset_minutes: int | None = Query(default=None),
@@ -535,6 +584,7 @@ def get_board_latest_player_props_opportunities(
         user_id=str(user.get("id") or ""),
         books=_parse_books_param(books),
         time_filter=time_filter,
+        sport=sport,
         market=market,
         search=search,
         page=page,
@@ -549,6 +599,7 @@ def get_board_latest_player_props_browse(
     page_size: int = Query(default=10, ge=1, le=200),
     books: str | None = Query(default=None),
     time_filter: str = Query(default="today"),
+    sport: str | None = Query(default=None),
     market: str | None = Query(default=None),
     search: str | None = Query(default=None),
     tz_offset_minutes: int | None = Query(default=None),
@@ -559,6 +610,7 @@ def get_board_latest_player_props_browse(
         user_id=str(user.get("id") or ""),
         books=_parse_books_param(books),
         time_filter=time_filter,
+        sport=sport,
         market=market,
         search=search,
         page=page,
@@ -573,6 +625,7 @@ def get_board_latest_player_props_pickem(
     page_size: int = Query(default=10, ge=1, le=200),
     books: str | None = Query(default=None),
     time_filter: str = Query(default="today"),
+    sport: str | None = Query(default=None),
     market: str | None = Query(default=None),
     search: str | None = Query(default=None),
     tz_offset_minutes: int | None = Query(default=None),
@@ -589,6 +642,7 @@ def get_board_latest_player_props_pickem(
             item,
             books=_parse_books_param(books),
             time_filter=time_filter,
+            sport=sport,
             market=market,
             search=search,
             tz_offset_minutes=tz_offset_minutes,
@@ -607,6 +661,7 @@ def get_board_latest_player_props_pickem(
         "scanned_at": meta.get("scanned_at"),
         "available_books": meta.get("available_books") or [],
         "available_markets": meta.get("available_markets") or [],
+        "available_sports": meta.get("available_sports") or [],
     }
 
 
@@ -755,8 +810,7 @@ async def refresh_board_scope(
 
     try:
         if scope == "player_props":
-            from services.player_props import get_cached_or_scan_player_props
-            result = await get_cached_or_scan_player_props("basketball_nba", source="manual_refresh")
+            result = await _refresh_player_props_result(source="manual_refresh")
         else:
             from services.odds_api import get_cached_or_scan, SUPPORTED_SPORTS
             merged_sides: list = []
@@ -788,7 +842,7 @@ async def refresh_board_scope(
     try:
         scan_payload = FullScanResponse(
             surface=scope,  # type: ignore[arg-type]
-            sport=result.get("sport") or ("basketball_nba" if scope == "player_props" else "all"),
+            sport=result.get("sport") or "all",
             sides=result.get("sides") or [],
             events_fetched=int(result.get("events_fetched") or 0),
             events_with_both_books=int(result.get("events_with_both_books") or 0),

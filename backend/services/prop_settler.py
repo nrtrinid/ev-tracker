@@ -1,8 +1,10 @@
 """
-Auto-settlement for player props (NBA) and parlays whose legs are ML + props.
+Auto-settlement for player props and parlays whose legs are ML + props.
 
-Uses The Odds API completed events for game matching and ESPN game summary
-for per-player boxscore stats.
+Uses The Odds API completed events for game matching plus sport-specific
+boxscore providers:
+- NBA: ESPN scoreboard + game summary
+- MLB: MLB StatsAPI schedule + boxscore
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from difflib import SequenceMatcher
 from typing import Any
 
 _ESPN_RESOLVE_LOG_CAP = 80
+_BOXSCORE_RESOLVE_LOG_CAP = 120
 
 from services.espn_scoreboard import (
     _canonical_team_name,
@@ -23,15 +26,37 @@ from services.espn_scoreboard import (
     fetch_nba_game_summary,
     fetch_nba_scoreboard_for_dates,
 )
+from services.http_client import request_with_retries
+
+MLB_STATSAPI_SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule"
+MLB_STATSAPI_BOXSCORE_URL_TEMPLATE = "https://statsapi.mlb.com/api/v1/game/{game_pk}/boxscore"
 
 PROP_MARKET_TO_ESPN_STAT = {
     "player_points": "PTS",
     "player_rebounds": "REB",
     "player_assists": "AST",
+    "player_points_rebounds_assists": "PTS_REB_AST",
     "player_threes": "3PM",
+}
+PROP_MARKET_TO_MLB_STAT = {
+    "pitcher_strikeouts": "P_SO",
+    "pitcher_strikeouts_alternate": "P_SO",
+    "batter_total_bases": "B_TB",
+    "batter_total_bases_alternate": "B_TB",
+    "batter_hits": "B_H",
+    "batter_hits_alternate": "B_H",
+    "batter_hits_runs_rbis": "B_H_R_RBI",
+    "batter_strikeouts": "B_SO",
+    "batter_strikeouts_alternate": "B_SO",
 }
 
 NBA_SPORT_KEY = "basketball_nba"
+MLB_SPORT_KEY = "baseball_mlb"
+SUPPORTED_PROP_BOX_SCORE_SPORTS = {NBA_SPORT_KEY, MLB_SPORT_KEY}
+AUTO_SETTLE_PROP_MARKETS_BY_SPORT: dict[str, set[str]] = {
+    NBA_SPORT_KEY: set(PROP_MARKET_TO_ESPN_STAT.keys()),
+    MLB_SPORT_KEY: set(PROP_MARKET_TO_MLB_STAT.keys()),
+}
 
 # Reject ESPN matches whose listed start is too far from Odds API commence (postponements, wrong game).
 _MAX_KICKOFF_DRIFT = timedelta(hours=72)
@@ -52,17 +77,57 @@ class EspnResolveResult:
     from_cache: bool = False
 
 
+@dataclass
+class BoxscoreResolveResult:
+    """Outcome of mapping an Odds API completed event to a provider boxscore id."""
+
+    provider: str
+    provider_event_id: str | None
+    odds_event_id: str | None = None
+    matchup: str = ""
+    score_matched: bool = False
+    fallback_used: bool = False
+    confidence_tier: str = "unresolved"
+    date_delta_hours: float | None = None
+    home_away_tiebreak_used: bool = False
+    from_cache: bool = False
+
+
+def get_auto_settle_supported_prop_markets(sport: str | None = None) -> set[str]:
+    normalized_sport = str(sport or "").strip().lower()
+    if not normalized_sport:
+        return {
+            market
+            for markets in AUTO_SETTLE_PROP_MARKETS_BY_SPORT.values()
+            for market in markets
+        }
+    return set(AUTO_SETTLE_PROP_MARKETS_BY_SPORT.get(normalized_sport) or set())
+
+
+def is_auto_settle_supported_prop_market(sport: str | None, market_key: str | None) -> bool:
+    normalized_sport = str(sport or "").strip().lower()
+    normalized_market = str(market_key or "").strip()
+    return bool(normalized_sport and normalized_market and normalized_market in get_auto_settle_supported_prop_markets(normalized_sport))
+
+
 def create_prop_settle_telemetry() -> dict[str, Any]:
     return {
+        "boxscore_resolve_log": [],
         "espn_resolve_log": [],
         "espn_resolve_score_verified": 0,
         "espn_resolve_matchup_plus_time": 0,
         "espn_resolve_fallback_time_only": 0,
         "props_espn_resolved": 0,
+        "mlb_resolve_log": [],
+        "mlb_resolve_score_verified": 0,
+        "mlb_resolve_matchup_plus_time": 0,
+        "mlb_resolve_fallback_time_only": 0,
+        "props_mlb_resolved": 0,
         "props_player_match_exact": 0,
         "props_player_match_fuzzy": 0,
         "props_player_not_found": 0,
         "props_stat_missing": 0,
+        "props_boxscore_fetch_failed": 0,
     }
 
 
@@ -83,6 +148,17 @@ def _telemetry_append_resolve_log(
         log.append(row)
 
 
+def _telemetry_append_boxscore_log(
+    telemetry: dict[str, Any] | None,
+    row: dict[str, Any],
+) -> None:
+    if telemetry is None:
+        return
+    log = telemetry.setdefault("boxscore_resolve_log", [])
+    if len(log) < _BOXSCORE_RESOLVE_LOG_CAP:
+        log.append(row)
+
+
 def _record_espn_resolve_telemetry(
     telemetry: dict[str, Any] | None,
     result: EspnResolveResult,
@@ -100,6 +176,23 @@ def _record_espn_resolve_telemetry(
     }.get(result.confidence_tier)
     if tier_key:
         _telemetry_bump(telemetry, tier_key)
+    _telemetry_append_boxscore_log(
+        telemetry,
+        {
+            "provider": "espn",
+            "context": context,
+            "ref_id": ref_id,
+            "odds_event_id": result.odds_event_id,
+            "provider_event_id": result.espn_event_id,
+            "matchup": result.matchup,
+            "score_matched": result.score_matched,
+            "fallback_used": result.fallback_used,
+            "confidence_tier": result.confidence_tier,
+            "date_delta_hours": result.date_delta_hours,
+            "home_away_tiebreak_used": result.home_away_tiebreak_used,
+            "from_cache": result.from_cache,
+        },
+    )
     _telemetry_append_resolve_log(
         telemetry,
         {
@@ -116,6 +209,43 @@ def _record_espn_resolve_telemetry(
             "from_cache": result.from_cache,
         },
     )
+
+
+def _record_mlb_resolve_telemetry(
+    telemetry: dict[str, Any] | None,
+    result: BoxscoreResolveResult,
+    *,
+    context: str,
+    ref_id: str | None,
+) -> None:
+    if telemetry is None or not result.provider_event_id:
+        return
+    _telemetry_bump(telemetry, "props_mlb_resolved")
+    tier_key = {
+        "score_verified": "mlb_resolve_score_verified",
+        "matchup_plus_time": "mlb_resolve_matchup_plus_time",
+        "fallback_time_only": "mlb_resolve_fallback_time_only",
+    }.get(result.confidence_tier)
+    if tier_key:
+        _telemetry_bump(telemetry, tier_key)
+    row = {
+        "provider": "mlb_statsapi",
+        "context": context,
+        "ref_id": ref_id,
+        "odds_event_id": result.odds_event_id,
+        "provider_event_id": result.provider_event_id,
+        "matchup": result.matchup,
+        "score_matched": result.score_matched,
+        "fallback_used": result.fallback_used,
+        "confidence_tier": result.confidence_tier,
+        "date_delta_hours": result.date_delta_hours,
+        "home_away_tiebreak_used": result.home_away_tiebreak_used,
+        "from_cache": result.from_cache,
+    }
+    _telemetry_append_boxscore_log(telemetry, row)
+    log = telemetry.setdefault("mlb_resolve_log", [])
+    if len(log) < _BOXSCORE_RESOLVE_LOG_CAP:
+        log.append(row)
 
 
 def _log_espn_resolve_line(
@@ -204,7 +334,7 @@ def _match_player_stat_key(
     stat_map: dict[str, dict[str, float]],
 ) -> tuple[dict[str, float] | None, str]:
     """
-    Map bet participant string to ESPN boxscore row.
+    Map bet participant string to a normalized boxscore player row.
 
     Returns (player_stats, match_kind) where match_kind is exact|fuzzy|none.
     """
@@ -375,6 +505,342 @@ def _parse_espn_event_datetime(event: dict[str, Any]) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def build_mlb_schedule_date_window(now: datetime | None = None) -> list[str]:
+    anchor = now or datetime.now(timezone.utc)
+    anchor_date = anchor.date()
+    return [
+        (anchor_date - timedelta(days=1)).isoformat(),
+        anchor_date.isoformat(),
+        (anchor_date + timedelta(days=1)).isoformat(),
+    ]
+
+
+def build_auto_settle_mlb_schedule_dates(
+    commence_anchor: datetime | None,
+    *,
+    now: datetime | None = None,
+    days_around_commence: int = 4,
+) -> list[str]:
+    anchor = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def _push(value: str) -> None:
+        if value not in seen:
+            seen.add(value)
+            ordered.append(value)
+
+    for value in build_mlb_schedule_date_window(anchor):
+        _push(value)
+
+    if commence_anchor is not None:
+        commence_date = commence_anchor.astimezone(timezone.utc).date()
+        for delta in range(-days_around_commence, days_around_commence + 1):
+            _push((commence_date + timedelta(days=delta)).isoformat())
+
+    return ordered
+
+
+async def fetch_mlb_schedule_for_date(date_value: str) -> dict[str, Any]:
+    resp = await request_with_retries(
+        "GET",
+        MLB_STATSAPI_SCHEDULE_URL,
+        params={"sportId": 1, "date": date_value},
+        timeout=15.0,
+        retries=2,
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    return payload if isinstance(payload, dict) else {}
+
+
+async def fetch_mlb_schedule_for_dates(date_strings: list[str]) -> dict[str, Any]:
+    merged_games: list[dict[str, Any]] = []
+    seen_game_pks: set[str] = set()
+
+    for date_value in date_strings:
+        payload = await fetch_mlb_schedule_for_date(date_value)
+        dates = payload.get("dates") or []
+        if not isinstance(dates, list):
+            continue
+        for date_block in dates:
+            if not isinstance(date_block, dict):
+                continue
+            games = date_block.get("games") or []
+            if not isinstance(games, list):
+                continue
+            for game in games:
+                if not isinstance(game, dict):
+                    continue
+                game_pk = str(game.get("gamePk") or "").strip()
+                if game_pk and game_pk in seen_game_pks:
+                    continue
+                if game_pk:
+                    seen_game_pks.add(game_pk)
+                merged_games.append(game)
+
+    merged_games.sort(key=lambda game: str(game.get("gameDate") or ""))
+    return {"games": merged_games}
+
+
+async def fetch_mlb_game_boxscore(game_pk: str) -> dict[str, Any]:
+    normalized_game_pk = str(game_pk or "").strip()
+    if not normalized_game_pk:
+        return {}
+    resp = await request_with_retries(
+        "GET",
+        MLB_STATSAPI_BOXSCORE_URL_TEMPLATE.format(game_pk=normalized_game_pk),
+        timeout=15.0,
+        retries=2,
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    return payload if isinstance(payload, dict) else {}
+
+
+def _mlb_event_completed(game: dict[str, Any]) -> bool:
+    status = game.get("status") or {}
+    if not isinstance(status, dict):
+        return False
+    abstract = str(status.get("abstractGameState") or "").strip().lower()
+    detailed = str(status.get("detailedState") or "").strip().lower()
+    coded = str(status.get("codedGameState") or status.get("statusCode") or "").strip().upper()
+    return abstract == "final" or detailed == "final" or coded == "F"
+
+
+def _mlb_extract_matchup(game: dict[str, Any]) -> dict[str, str] | None:
+    teams = game.get("teams") or {}
+    if not isinstance(teams, dict):
+        return None
+    away = teams.get("away") or {}
+    home = teams.get("home") or {}
+    away_team = away.get("team") or {}
+    home_team = home.get("team") or {}
+    away_name = str(away_team.get("name") or "").strip()
+    home_name = str(home_team.get("name") or "").strip()
+    if not away_name or not home_name:
+        return None
+    return {
+        "event_id": str(game.get("gamePk") or "").strip(),
+        "home_team": home_name,
+        "home_team_id": str(home_team.get("id") or "").strip(),
+        "away_team": away_name,
+        "away_team_id": str(away_team.get("id") or "").strip(),
+        "home_team_key": _canonical_team_name(home_name, sport=MLB_SPORT_KEY),
+        "away_team_key": _canonical_team_name(away_name, sport=MLB_SPORT_KEY),
+    }
+
+
+def _mlb_final_scores_by_team_key(game: dict[str, Any]) -> dict[str, float]:
+    out: dict[str, float] = {}
+    matchup = _mlb_extract_matchup(game)
+    if not matchup:
+        return out
+    teams = game.get("teams") or {}
+    if not isinstance(teams, dict):
+        return out
+    for side, team_name in (("home", matchup["home_team"]), ("away", matchup["away_team"])):
+        row = teams.get(side) or {}
+        if not isinstance(row, dict):
+            continue
+        raw_score = row.get("score")
+        if raw_score is None:
+            continue
+        try:
+            val = float(str(raw_score).strip())
+        except (TypeError, ValueError):
+            continue
+        key = _canonical_team_name(team_name, sport=MLB_SPORT_KEY)
+        if key:
+            out[key] = val
+    return out
+
+
+def _mlb_home_away_matches_odds(
+    mlb_game: dict[str, Any],
+    odds_home: str,
+    odds_away: str,
+) -> bool:
+    matchup = _mlb_extract_matchup(mlb_game)
+    if not matchup:
+        return False
+    oh = _canonical_team_name(odds_home, sport=MLB_SPORT_KEY)
+    oa = _canonical_team_name(odds_away, sport=MLB_SPORT_KEY)
+    mh = str(matchup.get("home_team_key") or "")
+    ma = str(matchup.get("away_team_key") or "")
+    return bool(oh and oa and mh and ma and oh == mh and oa == ma)
+
+
+def _scores_align_odds_mlb(
+    odds_event: dict[str, Any],
+    mlb_game: dict[str, Any],
+    *,
+    tolerance: float = 0.51,
+) -> bool:
+    odds_scores = _odds_final_scores_by_team_key(odds_event)
+    mlb_scores = _mlb_final_scores_by_team_key(mlb_game)
+    if len(odds_scores) < 2 or len(mlb_scores) < 2:
+        return True
+    for key, value in odds_scores.items():
+        if key not in mlb_scores:
+            return False
+        if abs(float(mlb_scores[key]) - float(value)) > tolerance:
+            return False
+    return True
+
+
+def _parse_mlb_game_datetime(game: dict[str, Any]) -> datetime | None:
+    raw = str(game.get("gameDate") or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+async def resolve_mlb_game_pk(
+    home_team: str,
+    away_team: str,
+    commence_time: str | None,
+    *,
+    odds_completed_event: dict[str, Any] | None,
+    cache: dict[tuple[str, str, str], BoxscoreResolveResult],
+    now: datetime | None = None,
+    schedule_games: list[dict[str, Any]] | None = None,
+    telemetry: dict[str, Any] | None = None,
+    context: str = "prop",
+    ref_id: str | None = None,
+) -> BoxscoreResolveResult:
+    home_key = _canonical_team_name(home_team, sport=MLB_SPORT_KEY)
+    away_key = _canonical_team_name(away_team, sport=MLB_SPORT_KEY)
+    odds_event_id = (
+        str(odds_completed_event.get("id") or "").strip() or None
+        if isinstance(odds_completed_event, dict)
+        else None
+    )
+    matchup_label = f"{away_team} @ {home_team}".strip()
+
+    def _fail(reason: str) -> BoxscoreResolveResult:
+        return BoxscoreResolveResult(
+            provider="mlb_statsapi",
+            provider_event_id=None,
+            odds_event_id=odds_event_id,
+            matchup=matchup_label,
+            confidence_tier=reason,
+        )
+
+    if not home_key or not away_key:
+        return _fail("missing_team_keys")
+
+    cache_key = _espn_resolve_cache_key(home_key, away_key, commence_time)
+    if cache_key in cache:
+        cached = cache[cache_key]
+        if not cached.provider_event_id:
+            return cached
+        result = replace(cached, from_cache=True)
+        _record_mlb_resolve_telemetry(telemetry, result, context=context, ref_id=ref_id)
+        return result
+
+    bet_dt = _parse_utc_iso(commence_time)
+    if schedule_games is None:
+        merged = await fetch_mlb_schedule_for_dates(build_auto_settle_mlb_schedule_dates(bet_dt, now=now))
+        raw_games = merged.get("games") or []
+        schedule_games = [game for game in raw_games if isinstance(game, dict)]
+
+    pair = tuple(sorted([home_key, away_key]))
+    candidates: list[dict[str, Any]] = []
+    for game in schedule_games:
+        if not isinstance(game, dict) or not _mlb_event_completed(game):
+            continue
+        matchup = _mlb_extract_matchup(game)
+        if not matchup:
+            continue
+        mh = str(matchup.get("home_team_key") or "")
+        ma = str(matchup.get("away_team_key") or "")
+        if tuple(sorted([mh, ma])) != pair:
+            continue
+        candidates.append(game)
+
+    if not candidates:
+        failed = _fail("no_mlb_candidate")
+        cache[cache_key] = failed
+        return failed
+
+    odds_full = (
+        odds_completed_event is not None
+        and len(_odds_final_scores_by_team_key(odds_completed_event)) >= 2
+    )
+    fallback_used = False
+    if odds_completed_event is not None and odds_full:
+        aligned = [game for game in candidates if _scores_align_odds_mlb(odds_completed_event, game)]
+        if aligned:
+            candidates = aligned
+        else:
+            fallback_used = True
+
+    home_away_tiebreak_used = False
+    if len(candidates) > 1 and isinstance(odds_completed_event, dict):
+        odds_home = str(odds_completed_event.get("home_team") or "").strip()
+        odds_away = str(odds_completed_event.get("away_team") or "").strip()
+        if odds_home and odds_away:
+            preferred = [game for game in candidates if _mlb_home_away_matches_odds(game, odds_home, odds_away)]
+            if preferred:
+                candidates = preferred
+                home_away_tiebreak_used = True
+
+    def _kickoff_delta(game: dict[str, Any]) -> float:
+        mlb_dt = _parse_mlb_game_datetime(game)
+        if bet_dt is None or mlb_dt is None:
+            return 0.0
+        return abs((mlb_dt - bet_dt).total_seconds())
+
+    candidates.sort(key=_kickoff_delta)
+    chosen = candidates[0]
+    chosen_dt = _parse_mlb_game_datetime(chosen)
+    if bet_dt is not None and chosen_dt is not None and abs(chosen_dt - bet_dt) > _MAX_KICKOFF_DRIFT:
+        failed = _fail("kickoff_drift_exceeded")
+        cache[cache_key] = failed
+        return failed
+
+    game_pk = str(chosen.get("gamePk") or "").strip() or None
+    if not game_pk:
+        failed = _fail("missing_mlb_game_pk")
+        cache[cache_key] = failed
+        return failed
+
+    confidence_tier = "matchup_plus_time"
+    if odds_full:
+        confidence_tier = "fallback_time_only" if fallback_used else "score_verified"
+
+    date_delta_hours: float | None = None
+    if bet_dt is not None and chosen_dt is not None:
+        date_delta_hours = round(abs((chosen_dt - bet_dt).total_seconds()) / 3600.0, 3)
+
+    result = BoxscoreResolveResult(
+        provider="mlb_statsapi",
+        provider_event_id=game_pk,
+        odds_event_id=odds_event_id,
+        matchup=matchup_label,
+        score_matched=bool(
+            odds_completed_event is not None
+            and len(_odds_final_scores_by_team_key(odds_completed_event)) >= 2
+            and _scores_align_odds_mlb(odds_completed_event, chosen)
+        ),
+        fallback_used=fallback_used,
+        confidence_tier=confidence_tier,
+        date_delta_hours=date_delta_hours,
+        home_away_tiebreak_used=home_away_tiebreak_used,
+        from_cache=False,
+    )
+    cache[cache_key] = result
+    _record_mlb_resolve_telemetry(telemetry, result, context=context, ref_id=ref_id)
+    return result
+
+
 def _stat_label_to_key(label: str) -> str | None:
     """Map ESPN boxscore column label to PTS/REB/AST/3PM."""
     u = str(label).strip().upper()
@@ -415,7 +881,7 @@ def _parse_stat_cell(raw: str | None) -> float | None:
         return None
 
 
-def build_player_stat_map(summary: dict[str, Any]) -> dict[str, dict[str, float]]:
+def _build_nba_player_stat_map(summary: dict[str, Any]) -> dict[str, dict[str, float]]:
     """Normalize ESPN summary boxscore into {player_key: {PTS: n, REB: n, ...}}."""
     out: dict[str, dict[str, float]] = {}
     box = summary.get("boxscore") or {}
@@ -472,16 +938,133 @@ def build_player_stat_map(summary: dict[str, Any]) -> dict[str, dict[str, float]
     return out
 
 
+def _build_mlb_player_stat_map(summary: dict[str, Any]) -> dict[str, dict[str, float]]:
+    """Normalize MLB boxscore into {player_key: {B_H: n, B_TB: n, P_SO: n, ...}}."""
+    out: dict[str, dict[str, float]] = {}
+    teams = summary.get("teams") or {}
+    if not isinstance(teams, dict):
+        return out
+
+    for side in ("away", "home"):
+        team_block = teams.get(side) or {}
+        if not isinstance(team_block, dict):
+            continue
+        players = team_block.get("players") or {}
+        iterable = players.values() if isinstance(players, dict) else players
+        if not isinstance(iterable, (list, tuple, set)) and not hasattr(iterable, "__iter__"):
+            continue
+
+        for player_row in iterable:
+            if not isinstance(player_row, dict):
+                continue
+            person = player_row.get("person") or {}
+            if not isinstance(person, dict):
+                continue
+            display = str(person.get("fullName") or person.get("boxscoreName") or "").strip()
+            if not display:
+                continue
+            norm = _normalize_player_name(display)
+            if not norm:
+                continue
+
+            stats_block = player_row.get("stats") or {}
+            if not isinstance(stats_block, dict):
+                continue
+            batting = stats_block.get("batting") or {}
+            pitching = stats_block.get("pitching") or {}
+
+            row: dict[str, float] = {}
+            if isinstance(batting, dict):
+                hits = _parse_stat_cell(batting.get("hits"))
+                total_bases = _parse_stat_cell(batting.get("totalBases"))
+                runs = _parse_stat_cell(batting.get("runs"))
+                rbi = _parse_stat_cell(batting.get("rbi"))
+                strikeouts = _parse_stat_cell(batting.get("strikeOuts"))
+                if hits is not None:
+                    row["B_H"] = hits
+                if total_bases is not None:
+                    row["B_TB"] = total_bases
+                if runs is not None:
+                    row["B_R"] = runs
+                if rbi is not None:
+                    row["B_RBI"] = rbi
+                if strikeouts is not None:
+                    row["B_SO"] = strikeouts
+            if isinstance(pitching, dict):
+                pitcher_strikeouts = _parse_stat_cell(pitching.get("strikeOuts"))
+                if pitcher_strikeouts is not None:
+                    row["P_SO"] = pitcher_strikeouts
+
+            if not row:
+                continue
+
+            if norm not in out:
+                out[norm] = {}
+            out[norm].update(row)
+
+    return out
+
+
+def build_player_stat_map(
+    summary: dict[str, Any],
+    *,
+    sport: str = NBA_SPORT_KEY,
+) -> dict[str, dict[str, float]]:
+    normalized_sport = str(sport or "").strip().lower()
+    if normalized_sport == MLB_SPORT_KEY:
+        return _build_mlb_player_stat_map(summary)
+    return _build_nba_player_stat_map(summary)
+
+
+def _market_stat_value_from_player_stats(
+    sport: str,
+    market_key: str,
+    player_stats: dict[str, float],
+) -> float | None:
+    normalized_sport = str(sport or "").strip().lower()
+    normalized_market = str(market_key or "").strip()
+
+    if normalized_sport == NBA_SPORT_KEY:
+        if normalized_market == "player_points_rebounds_assists":
+            points = player_stats.get("PTS")
+            rebounds = player_stats.get("REB")
+            assists = player_stats.get("AST")
+            if points is None or rebounds is None or assists is None:
+                return None
+            return float(points + rebounds + assists)
+        stat_col = PROP_MARKET_TO_ESPN_STAT.get(normalized_market)
+        if not stat_col:
+            return None
+        actual = player_stats.get(stat_col)
+        return float(actual) if actual is not None else None
+
+    if normalized_sport == MLB_SPORT_KEY:
+        if normalized_market == "batter_hits_runs_rbis":
+            hits = player_stats.get("B_H")
+            runs = player_stats.get("B_R")
+            rbi = player_stats.get("B_RBI")
+            if hits is None or runs is None or rbi is None:
+                return None
+            return float(hits + runs + rbi)
+        stat_col = PROP_MARKET_TO_MLB_STAT.get(normalized_market)
+        if not stat_col:
+            return None
+        actual = player_stats.get(stat_col)
+        return float(actual) if actual is not None else None
+
+    return None
+
+
 def _espn_resolve_cache_key(
     hk: str,
     ak: str,
     commence_time: str | None,
 ) -> tuple[str, str, str]:
-    """Include kickoff calendar day so Lakers@Celtics on different dates do not collide."""
+    """Key by matchup plus kickoff timestamp so same-day repeat matchups don't collide."""
     bet_dt = _parse_utc_iso(commence_time)
-    day = bet_dt.strftime("%Y-%m-%d") if bet_dt else "_"
+    commence_token = bet_dt.strftime("%Y-%m-%dT%H:%M:%SZ") if bet_dt else "_"
     a, b = sorted([hk, ak])
-    return (a, b, day)
+    return (a, b, commence_token)
 
 
 async def resolve_espn_event_id(
@@ -652,20 +1235,162 @@ async def resolve_espn_event_id(
     return result
 
 
+def _boxscore_result_from_espn(result: EspnResolveResult) -> BoxscoreResolveResult:
+    return BoxscoreResolveResult(
+        provider="espn",
+        provider_event_id=result.espn_event_id,
+        odds_event_id=result.odds_event_id,
+        matchup=result.matchup,
+        score_matched=result.score_matched,
+        fallback_used=result.fallback_used,
+        confidence_tier=result.confidence_tier,
+        date_delta_hours=result.date_delta_hours,
+        home_away_tiebreak_used=result.home_away_tiebreak_used,
+        from_cache=result.from_cache,
+    )
+
+
+async def resolve_boxscore_event_id(
+    sport: str,
+    home_team: str,
+    away_team: str,
+    commence_time: str | None,
+    *,
+    odds_completed_event: dict[str, Any] | None,
+    cache_by_sport: dict[str, dict[tuple[str, str, str], Any]],
+    now: datetime | None = None,
+    provider_events_by_sport: dict[str, list[dict[str, Any]]] | None = None,
+    telemetry: dict[str, Any] | None = None,
+    context: str = "prop",
+    ref_id: str | None = None,
+) -> BoxscoreResolveResult:
+    normalized_sport = str(sport or "").strip().lower()
+    provider_events = (provider_events_by_sport or {}).get(normalized_sport)
+
+    if normalized_sport == NBA_SPORT_KEY:
+        nba_cache = cache_by_sport.setdefault(NBA_SPORT_KEY, {})
+        result = await resolve_espn_event_id(
+            home_team,
+            away_team,
+            commence_time,
+            odds_completed_event=odds_completed_event,
+            cache=nba_cache,
+            now=now,
+            scoreboard_events=provider_events,
+            telemetry=telemetry,
+            context=context,
+            ref_id=ref_id,
+        )
+        return _boxscore_result_from_espn(result)
+
+    if normalized_sport == MLB_SPORT_KEY:
+        mlb_cache = cache_by_sport.setdefault(MLB_SPORT_KEY, {})
+        return await resolve_mlb_game_pk(
+            home_team,
+            away_team,
+            commence_time,
+            odds_completed_event=odds_completed_event,
+            cache=mlb_cache,
+            now=now,
+            schedule_games=provider_events,
+            telemetry=telemetry,
+            context=context,
+            ref_id=ref_id,
+        )
+
+    return BoxscoreResolveResult(
+        provider="unsupported",
+        provider_event_id=None,
+        odds_event_id=str(odds_completed_event.get("id") or "").strip() or None
+        if isinstance(odds_completed_event, dict)
+        else None,
+        matchup=f"{away_team} @ {home_team}".strip(),
+        confidence_tier="unsupported_sport",
+    )
+
+
+async def fetch_boxscore_summary(sport: str, provider_event_id: str) -> dict[str, Any]:
+    normalized_sport = str(sport or "").strip().lower()
+    if normalized_sport == NBA_SPORT_KEY:
+        return await fetch_nba_game_summary(provider_event_id)
+    if normalized_sport == MLB_SPORT_KEY:
+        return await fetch_mlb_game_boxscore(provider_event_id)
+    return {}
+
+
+def _build_boxscore_date_union_for_commence_values(
+    sport: str,
+    commence_values: list[Any],
+    *,
+    now: datetime | None,
+) -> list[str]:
+    normalized_sport = str(sport or "").strip().lower()
+    commence_times = [_parse_utc_iso(str(value) if value else None) for value in commence_values]
+    if normalized_sport == NBA_SPORT_KEY:
+        dates: set[str] = set(build_scoreboard_date_window(now))
+        for commence_dt in commence_times:
+            dates.update(build_auto_settle_scoreboard_dates(commence_dt, now=now))
+        return sorted(dates)
+    if normalized_sport == MLB_SPORT_KEY:
+        dates: set[str] = set(build_mlb_schedule_date_window(now))
+        for commence_dt in commence_times:
+            dates.update(build_auto_settle_mlb_schedule_dates(commence_dt, now=now))
+        return sorted(dates)
+    return []
+
+
+async def fetch_boxscore_provider_events_for_rows(
+    rows: list[dict[str, Any]],
+    *,
+    sport_field: str,
+    commence_time_field: str = "commence_time",
+    now: datetime | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    commence_by_sport: dict[str, list[Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        sport = str(row.get(sport_field) or "").strip().lower()
+        if sport not in SUPPORTED_PROP_BOX_SCORE_SPORTS:
+            continue
+        commence_by_sport.setdefault(sport, []).append(row.get(commence_time_field))
+
+    provider_events_by_sport: dict[str, list[dict[str, Any]]] = {}
+    for sport, commence_values in commence_by_sport.items():
+        date_union = _build_boxscore_date_union_for_commence_values(sport, commence_values, now=now)
+        if not date_union:
+            provider_events_by_sport[sport] = []
+            continue
+        if sport == NBA_SPORT_KEY:
+            merged = await fetch_nba_scoreboard_for_dates(date_union)
+            raw_events = merged.get("events") or []
+            provider_events_by_sport[sport] = [event for event in raw_events if isinstance(event, dict)]
+            continue
+        if sport == MLB_SPORT_KEY:
+            merged = await fetch_mlb_schedule_for_dates(date_union)
+            raw_games = merged.get("games") or []
+            provider_events_by_sport[sport] = [game for game in raw_games if isinstance(game, dict)]
+            continue
+        provider_events_by_sport[sport] = []
+
+    return provider_events_by_sport
+
+
 def grade_prop(
     player_name: str | None,
     market_key: str,
     line_value: float | None,
     selection_side: str | None,
     stat_map: dict[str, dict[str, float]],
+    *,
+    sport: str = NBA_SPORT_KEY,
 ) -> tuple[str | None, dict[str, Any]]:
     """Return (win|loss|push|None, detail) for telemetry (player_match, stat_present)."""
     detail: dict[str, Any] = {
         "player_match": "n_a",
         "stat_present": False,
     }
-    stat_col = PROP_MARKET_TO_ESPN_STAT.get(str(market_key).strip())
-    if not stat_col:
+    if not is_auto_settle_supported_prop_market(sport, market_key):
         return None, detail
     norm = _normalize_player_name(player_name)
     if not norm:
@@ -687,7 +1412,7 @@ def grade_prop(
         return None, detail
     detail["player_match"] = match_kind
 
-    actual = player_stats.get(stat_col)
+    actual = _market_stat_value_from_player_stats(sport, market_key, player_stats)
     if actual is None:
         return None, detail
 
@@ -770,22 +1495,22 @@ def grade_parlay_ml_leg(
 async def grade_parlay_prop_leg(
     leg: dict[str, Any],
     completed_events_by_sport: dict[str, list[dict]],
-    espn_summary_cache: dict[str, dict[str, Any]],
-    espn_resolve_cache: dict[tuple[str, str, str], EspnResolveResult],
+    boxscore_summary_cache: dict[tuple[str, str], dict[str, Any]],
+    boxscore_resolve_cache_by_sport: dict[str, dict[tuple[str, str, str], Any]],
     *,
     now: datetime | None = None,
-    scoreboard_events: list[dict[str, Any]] | None = None,
+    provider_events_by_sport: dict[str, list[dict[str, Any]]] | None = None,
     telemetry: dict[str, Any] | None = None,
     ref_id: str | None = None,
 ) -> str | None:
     from services.odds_api import _select_completed_event_for_bet
 
-    sport = str(leg.get("sport") or "").strip()
-    if sport != NBA_SPORT_KEY:
+    sport = str(leg.get("sport") or "").strip().lower()
+    if sport not in SUPPORTED_PROP_BOX_SCORE_SPORTS:
         return None
 
     mk = str(leg.get("marketKey") or leg.get("market_key") or "").strip()
-    if mk not in PROP_MARKET_TO_ESPN_STAT:
+    if not is_auto_settle_supported_prop_market(sport, mk):
         return None
 
     line_raw = leg.get("lineValue") if leg.get("lineValue") is not None else leg.get("line_value")
@@ -817,31 +1542,37 @@ async def grade_parlay_prop_leg(
     if not home or not away:
         return None
 
-    res = await resolve_espn_event_id(
+    res = await resolve_boxscore_event_id(
+        sport,
         home,
         away,
         synthetic.get("commence_time"),
         odds_completed_event=event,
-        cache=espn_resolve_cache,
+        cache_by_sport=boxscore_resolve_cache_by_sport,
         now=now,
-        scoreboard_events=scoreboard_events,
+        provider_events_by_sport=provider_events_by_sport,
         telemetry=telemetry,
         context="parlay_leg",
         ref_id=ref_id,
     )
-    espn_id = res.espn_event_id
-    if not espn_id:
+    provider_event_id = res.provider_event_id
+    if not provider_event_id:
         return None
 
-    if espn_id not in espn_summary_cache:
+    summary_cache_key = (sport, provider_event_id)
+    if summary_cache_key not in boxscore_summary_cache:
         try:
-            espn_summary_cache[espn_id] = await fetch_nba_game_summary(espn_id)
+            boxscore_summary_cache[summary_cache_key] = await fetch_boxscore_summary(
+                sport,
+                provider_event_id,
+            )
         except Exception:
-            espn_summary_cache[espn_id] = {}
+            _telemetry_bump(telemetry, "props_boxscore_fetch_failed")
+            boxscore_summary_cache[summary_cache_key] = {}
 
-    summary = espn_summary_cache.get(espn_id) or {}
-    stat_map = build_player_stat_map(summary)
-    grade, detail = grade_prop(player, mk, line_raw, side, stat_map)
+    summary = boxscore_summary_cache.get(summary_cache_key) or {}
+    stat_map = build_player_stat_map(summary, sport=sport)
+    grade, detail = grade_prop(player, mk, line_raw, side, stat_map, sport=sport)
     _record_prop_grade_telemetry(telemetry, grade, detail)
     return grade
 
@@ -849,11 +1580,11 @@ async def grade_parlay_prop_leg(
 async def grade_parlay_leg(
     leg: dict[str, Any],
     completed_events_by_sport: dict[str, list[dict]],
-    espn_summary_cache: dict[str, dict[str, Any]],
-    espn_resolve_cache: dict[tuple[str, str, str], EspnResolveResult],
+    boxscore_summary_cache: dict[tuple[str, str], dict[str, Any]],
+    boxscore_resolve_cache_by_sport: dict[str, dict[tuple[str, str, str], Any]],
     *,
     now: datetime | None = None,
-    scoreboard_events: list[dict[str, Any]] | None = None,
+    provider_events_by_sport: dict[str, list[dict[str, Any]]] | None = None,
     telemetry: dict[str, Any] | None = None,
     prop_ref_id: str | None = None,
 ) -> str | None:
@@ -862,10 +1593,10 @@ async def grade_parlay_leg(
         return await grade_parlay_prop_leg(
             leg,
             completed_events_by_sport,
-            espn_summary_cache,
-            espn_resolve_cache,
+            boxscore_summary_cache,
+            boxscore_resolve_cache_by_sport,
             now=now,
-            scoreboard_events=scoreboard_events,
+            provider_events_by_sport=provider_events_by_sport,
             telemetry=telemetry,
             ref_id=prop_ref_id,
         )
@@ -916,8 +1647,15 @@ def is_standalone_prop_bet(bet: dict[str, Any]) -> bool:
     surface = str(bet.get("surface") or "").strip().lower()
     if surface != "player_props":
         return False
+    sport = str(bet.get("clv_sport_key") or "").strip().lower()
     mk = str(bet.get("source_market_key") or "").strip()
-    return mk in PROP_MARKET_TO_ESPN_STAT
+    return (
+        is_auto_settle_supported_prop_market(sport, mk)
+        and bool(bet.get("participant_name"))
+        and bool(bet.get("selection_side"))
+        and bet.get("line_value") is not None
+        and _parse_utc_iso(str(bet.get("commence_time") or "").strip() or None) is not None
+    )
 
 
 async def settle_standalone_props(
@@ -935,25 +1673,24 @@ async def settle_standalone_props(
     skipped: dict[str, int] = {
         "unsupported_sport": 0,
         "no_match": 0,
-        "espn_resolve_failed": 0,
-        "espn_fetch_failed": 0,
+        "boxscore_resolve_failed": 0,
+        "boxscore_fetch_failed": 0,
         "ungraded_prop": 0,
         "db_update_failed": 0,
     }
     settled = 0
-    espn_summary_cache: dict[str, dict[str, Any]] = {}
-    espn_resolve_cache: dict[tuple[str, str, str], EspnResolveResult] = {}
-
-    scoreboard_events: list[dict[str, Any]] | None = None
-    if any(str(b.get("clv_sport_key") or "").strip() == NBA_SPORT_KEY for b in prop_bets):
-        date_union = _nba_scoreboard_date_union_prop_bets(prop_bets, now=now)
-        merged = await fetch_nba_scoreboard_for_dates(date_union)
-        raw = merged.get("events") or []
-        scoreboard_events = [e for e in raw if isinstance(e, dict)]
+    boxscore_summary_cache: dict[tuple[str, str], dict[str, Any]] = {}
+    boxscore_resolve_cache_by_sport: dict[str, dict[tuple[str, str, str], Any]] = {}
+    provider_events_by_sport = await fetch_boxscore_provider_events_for_rows(
+        prop_bets,
+        sport_field="clv_sport_key",
+        commence_time_field="commence_time",
+        now=now,
+    )
 
     for bet in prop_bets:
-        sport = str(bet.get("clv_sport_key") or "").strip()
-        if sport != NBA_SPORT_KEY:
+        sport = str(bet.get("clv_sport_key") or "").strip().lower()
+        if not is_standalone_prop_bet(bet):
             skipped["unsupported_sport"] += 1
             continue
 
@@ -969,36 +1706,48 @@ async def settle_standalone_props(
 
         home = str(event.get("home_team", ""))
         away = str(event.get("away_team", ""))
-        res = await resolve_espn_event_id(
+        res = await resolve_boxscore_event_id(
+            sport,
             home,
             away,
             bet.get("commence_time"),
             odds_completed_event=event,
-            cache=espn_resolve_cache,
+            cache_by_sport=boxscore_resolve_cache_by_sport,
             now=now,
-            scoreboard_events=scoreboard_events,
+            provider_events_by_sport=provider_events_by_sport,
             telemetry=telemetry,
             context="standalone_prop",
             ref_id=str(bet.get("id")) if bet.get("id") is not None else None,
         )
-        espn_id = res.espn_event_id
-        if not espn_id:
-            skipped["espn_resolve_failed"] += 1
+        provider_event_id = res.provider_event_id
+        if not provider_event_id:
+            skipped["boxscore_resolve_failed"] += 1
             print(
-                f"[Auto-Settler:props] bet {bet.get('id')} ESPN id not resolved "
+                f"[Auto-Settler:props] bet {bet.get('id')} boxscore id not resolved "
                 f"({res.confidence_tier})"
             )
             continue
 
-        if espn_id not in espn_summary_cache:
+        summary_cache_key = (sport, provider_event_id)
+        if summary_cache_key not in boxscore_summary_cache:
             try:
-                espn_summary_cache[espn_id] = await fetch_nba_game_summary(espn_id)
+                boxscore_summary_cache[summary_cache_key] = await fetch_boxscore_summary(
+                    sport,
+                    provider_event_id,
+                )
             except Exception as e:
-                skipped["espn_fetch_failed"] += 1
-                print(f"[Auto-Settler:props] ESPN fetch failed for {espn_id}: {e}")
+                _telemetry_bump(telemetry, "props_boxscore_fetch_failed")
+                skipped["boxscore_fetch_failed"] += 1
+                print(
+                    f"[Auto-Settler:props] boxscore fetch failed for sport={sport} "
+                    f"provider_event_id={provider_event_id}: {e}"
+                )
                 continue
 
-        stat_map = build_player_stat_map(espn_summary_cache[espn_id])
+        stat_map = build_player_stat_map(
+            boxscore_summary_cache[summary_cache_key],
+            sport=sport,
+        )
         mk = str(bet.get("source_market_key") or "").strip()
         grade, g_detail = grade_prop(
             bet.get("participant_name"),
@@ -1006,6 +1755,7 @@ async def settle_standalone_props(
             bet.get("line_value"),
             bet.get("selection_side"),
             stat_map,
+            sport=sport,
         )
         _record_prop_grade_telemetry(telemetry, grade, g_detail)
         if grade is None:
@@ -1050,16 +1800,31 @@ async def settle_parlays(
         "db_update_failed": 0,
     }
     settled = 0
-    espn_summary_cache: dict[str, dict[str, Any]] = {}
-    espn_resolve_cache: dict[tuple[str, str, str], EspnResolveResult] = {}
+    boxscore_summary_cache: dict[tuple[str, str], dict[str, Any]] = {}
+    boxscore_resolve_cache_by_sport: dict[str, dict[tuple[str, str, str], Any]] = {}
+    provider_prefetch_rows: list[dict[str, Any]] = []
+    for bet in parlay_bets:
+        meta = bet.get("selection_meta")
+        if not isinstance(meta, dict):
+            continue
+        for leg in meta.get("legs") or []:
+            if not isinstance(leg, dict):
+                continue
+            if str(leg.get("surface") or "").strip().lower() != "player_props":
+                continue
+            provider_prefetch_rows.append(
+                {
+                    "sport": leg.get("sport"),
+                    "commence_time": leg.get("commenceTime") or leg.get("commence_time"),
+                }
+            )
 
-    if parlay_bets:
-        parlay_date_union = _nba_scoreboard_date_union_parlays(parlay_bets, now=now)
-        parlay_merged = await fetch_nba_scoreboard_for_dates(parlay_date_union)
-        parlay_raw = parlay_merged.get("events") or []
-        parlay_scoreboard_events = [e for e in parlay_raw if isinstance(e, dict)]
-    else:
-        parlay_scoreboard_events = []
+    provider_events_by_sport = await fetch_boxscore_provider_events_for_rows(
+        provider_prefetch_rows,
+        sport_field="sport",
+        commence_time_field="commence_time",
+        now=now,
+    )
 
     for bet in parlay_bets:
         meta = bet.get("selection_meta")
@@ -1088,10 +1853,10 @@ async def settle_parlays(
             g = await grade_parlay_leg(
                 leg,
                 completed_events_by_sport,
-                espn_summary_cache,
-                espn_resolve_cache,
+                boxscore_summary_cache,
+                boxscore_resolve_cache_by_sport,
                 now=now,
-                scoreboard_events=parlay_scoreboard_events,
+                provider_events_by_sport=provider_events_by_sport,
                 telemetry=telemetry,
                 prop_ref_id=prop_ref,
             )

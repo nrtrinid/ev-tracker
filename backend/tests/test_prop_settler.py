@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from services.espn_scoreboard import build_auto_settle_scoreboard_dates
 from services.prop_settler import (
+    MLB_SPORT_KEY,
     _espn_home_away_matches_odds,
     _espn_resolve_cache_key,
     _scores_align_odds_espn,
@@ -75,6 +76,12 @@ def test_espn_resolve_cache_key_splits_by_commence_day():
     k1 = _espn_resolve_cache_key("Lakers", "Celtics", "2026-03-18T02:00:00Z")
     k2 = _espn_resolve_cache_key("Lakers", "Celtics", "2026-04-02T02:00:00Z")
     assert k1 != k2
+
+
+def test_espn_resolve_cache_key_splits_same_day_doubleheaders():
+    early = _espn_resolve_cache_key("Dodgers", "Padres", "2026-04-13T18:10:00Z")
+    late = _espn_resolve_cache_key("Dodgers", "Padres", "2026-04-13T23:40:00Z")
+    assert early != late
 
 
 def test_espn_home_away_matches_odds():
@@ -212,3 +219,92 @@ def test_build_auto_settle_scoreboard_dates_includes_commence_window():
     assert "20260317" in dates
     assert "20260318" in dates
     assert "20260319" in dates
+
+
+def test_build_player_stat_map_parses_mlb_boxscore_stats():
+    summary = {
+        "teams": {
+            "away": {
+                "players": {
+                    "ID1": {
+                        "person": {"fullName": "Mookie Betts"},
+                        "stats": {
+                            "batting": {
+                                "hits": 2,
+                                "totalBases": 4,
+                                "runs": 1,
+                                "rbi": 2,
+                                "strikeOuts": 1,
+                            }
+                        },
+                    },
+                    "ID2": {
+                        "person": {"fullName": "Yoshinobu Yamamoto"},
+                        "stats": {
+                            "pitching": {
+                                "strikeOuts": 8,
+                            }
+                        },
+                    },
+                }
+            },
+            "home": {"players": {}},
+        }
+    }
+
+    stat_map = build_player_stat_map(summary, sport=MLB_SPORT_KEY)
+
+    assert stat_map["mookiebetts"]["B_H"] == 2.0
+    assert stat_map["mookiebetts"]["B_TB"] == 4.0
+    assert stat_map["mookiebetts"]["B_R"] == 1.0
+    assert stat_map["mookiebetts"]["B_RBI"] == 2.0
+    assert stat_map["mookiebetts"]["B_SO"] == 1.0
+    assert stat_map["yoshinobuyamamoto"]["P_SO"] == 8.0
+
+
+def test_grade_prop_supports_mlb_pitcher_strikeouts():
+    stat_map = {"tarikskubal": {"P_SO": 9.0}}
+    grade, detail = grade_prop(
+        "Tarik Skubal",
+        "pitcher_strikeouts",
+        7.5,
+        "over",
+        stat_map,
+        sport=MLB_SPORT_KEY,
+    )
+
+    assert grade == "win"
+    assert detail["player_match"] == "exact"
+    assert detail["stat_present"] is True
+
+
+def test_grade_prop_supports_mlb_alternate_market_keys():
+    stat_map = {"tarikskubal": {"P_SO": 9.0}}
+    grade, detail = grade_prop(
+        "Tarik Skubal",
+        "pitcher_strikeouts_alternate",
+        7.5,
+        "over",
+        stat_map,
+        sport=MLB_SPORT_KEY,
+    )
+
+    assert grade == "win"
+    assert detail["player_match"] == "exact"
+    assert detail["stat_present"] is True
+
+
+def test_grade_prop_supports_mlb_hits_runs_rbis_combo():
+    stat_map = {"mookiebetts": {"B_H": 2.0, "B_R": 1.0, "B_RBI": 1.0}}
+    grade, detail = grade_prop(
+        "Mookie Betts",
+        "batter_hits_runs_rbis",
+        3.5,
+        "over",
+        stat_map,
+        sport=MLB_SPORT_KEY,
+    )
+
+    assert grade == "win"
+    assert detail["player_match"] == "exact"
+    assert detail["stat_present"] is True

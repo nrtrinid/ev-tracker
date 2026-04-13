@@ -618,6 +618,8 @@ def _map_auto_settle_run(row: dict[str, Any]) -> dict[str, Any]:
     }
     if isinstance(meta.get("sports"), list):
         mapped["sports"] = meta.get("sports")
+    if isinstance(meta.get("manual_settlement_pending"), dict):
+        mapped["manual_settlement_pending"] = meta.get("manual_settlement_pending")
     for key in ("ml_settled", "props_settled", "parlays_settled", "pickem_research_settled"):
         if meta.get(key) is not None:
             mapped[key] = meta.get(key)
@@ -701,6 +703,8 @@ def _map_last_auto_settle_summary(row: dict[str, Any]) -> dict[str, Any]:
         "skipped_totals": row.get("skipped_totals"),
         "sports": meta.get("sports"),
     }
+    if isinstance(meta.get("manual_settlement_pending"), dict):
+        mapped["manual_settlement_pending"] = meta.get("manual_settlement_pending")
     for key in ("ml_settled", "props_settled", "parlays_settled", "pickem_research_settled"):
         if meta.get(key) is not None:
             mapped[key] = meta.get(key)

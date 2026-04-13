@@ -414,12 +414,20 @@ class PlayerPropScanDiagnostics(BaseModel):
     fallback_event_count: int = 0
     events_fetched: int
     events_skipped_pregame: int
+    events_with_provider_markets: int = 0
+    events_with_supported_book_markets: int = 0
+    events_provider_only: int = 0
     events_with_results: int
     candidate_sides_count: int = 0
     quality_gate_filtered_count: int = 0
     quality_gate_min_reference_bookmakers: int = 0
+    pickem_quality_gate_min_reference_bookmakers: int = 0
     sides_count: int
     markets_requested: list[str]
+    provider_market_event_counts: dict[str, int] = Field(default_factory=dict)
+    supported_book_market_event_counts: dict[str, int] = Field(default_factory=dict)
+    sports_scanned: list[str] = Field(default_factory=list)
+    by_sport: dict[str, Any] = Field(default_factory=dict)
     prizepicks_status: str | None = None
     prizepicks_message: str | None = None
     prizepicks_board_items_count: int = 0
@@ -481,6 +489,7 @@ class PlayerPropBoardPageResponse(BaseModel):
     scanned_at: str | None = None
     available_books: list[str] = Field(default_factory=list)
     available_markets: list[str] = Field(default_factory=list)
+    available_sports: list[str] = Field(default_factory=list)
 
 
 class PlayerPropBoardPickEmPageResponse(PlayerPropBoardPageResponse):
@@ -756,6 +765,9 @@ class PickEmResearchSummaryResponse(BaseModel):
     decisive_count: int
     push_count: int
     pending_result_count: int
+    auto_settle_pending_count: int = 0
+    manual_result_count: int = 0
+    manual_only_sports: list[str] = Field(default_factory=list)
     avg_display_probability_pct: float | None = None
     expected_hit_rate_pct: float | None = None
     actual_hit_rate_pct: float | None = None

@@ -339,6 +339,9 @@ def test_get_pickem_research_summary_builds_bucketed_validation_metrics():
     assert summary.settled_count == 1
     assert summary.decisive_count == 1
     assert summary.pending_result_count == 1
+    assert summary.auto_settle_pending_count == 1
+    assert summary.manual_result_count == 0
+    assert summary.manual_only_sports == []
     assert summary.expected_hit_rate_pct == 67.0
     assert summary.actual_hit_rate_pct == 100.0
     assert [item.key for item in summary.by_probability_bucket] == ["60-65%", "65-70%"]
@@ -346,6 +349,118 @@ def test_get_pickem_research_summary_builds_bucketed_validation_metrics():
     assert summary.by_books_matched[0].key == "2 books"
     assert summary.by_ev_basis[0].key in {"best_market_price", "unpriced"}
     assert summary.recent_observations[0].comparison_key == "evt-2|booker|player_points|27.5"
+
+
+def test_get_pickem_research_summary_counts_supported_mlb_rows_as_auto_settle_pending():
+    db = _DB(
+        rows=[
+            {
+                "observation_key": "board_pickem_consensus|2026-04-01|evt-mlb|over",
+                "comparison_key": "evt-mlb|betts|batter_hits|1.5",
+                "sport": "baseball_mlb",
+                "event": "Padres @ Dodgers",
+                "commence_time": "2026-04-02T03:00:00Z",
+                "market": "batter_hits",
+                "market_key": "batter_hits",
+                "event_id": "evt-mlb",
+                "player_name": "Mookie Betts",
+                "team": "Los Angeles Dodgers",
+                "opponent": "San Diego Padres",
+                "selection_side": "over",
+                "line_value": 1.5,
+                "calibration_bucket": "60-65%",
+                "first_source": "cron_board_drop",
+                "last_source": "cron_board_drop",
+                "surfaced_count": 1,
+                "first_seen_at": "2026-04-01T15:45:00Z",
+                "last_seen_at": "2026-04-01T15:45:00Z",
+                "first_display_probability": 0.62,
+                "last_display_probability": 0.62,
+                "first_fair_odds_american": -163.0,
+                "last_fair_odds_american": -163.0,
+                "first_books_matched_count": 2,
+                "last_books_matched_count": 2,
+                "first_confidence_label": "solid",
+                "last_confidence_label": "solid",
+                "ev_basis": "best_market_price",
+                "first_selected_sportsbook": "DraftKings",
+                "last_selected_sportsbook": "DraftKings",
+                "first_selected_market_odds": -110.0,
+                "last_selected_market_odds": -110.0,
+                "first_projected_edge_pct": 2.4,
+                "last_projected_edge_pct": 2.4,
+                "close_true_prob": 0.61,
+                "close_quality": "paired",
+                "close_captured_at": "2026-04-02T01:20:00Z",
+                "close_edge_pct": -0.3,
+                "actual_result": None,
+                "settled_at": None,
+            },
+        ]
+    )
+
+    summary = get_pickem_research_summary(db)
+
+    assert summary.pending_result_count == 1
+    assert summary.auto_settle_pending_count == 1
+    assert summary.manual_result_count == 0
+    assert summary.manual_only_sports == []
+
+
+def test_get_pickem_research_summary_still_flags_unsupported_mlb_markets_as_manual_only():
+    db = _DB(
+        rows=[
+            {
+                "observation_key": "board_pickem_consensus|2026-04-01|evt-mlb|over",
+                "comparison_key": "evt-mlb|betts|batter_walks|0.5",
+                "sport": "baseball_mlb",
+                "event": "Padres @ Dodgers",
+                "commence_time": "2026-04-02T03:00:00Z",
+                "market": "batter_walks",
+                "market_key": "batter_walks",
+                "event_id": "evt-mlb",
+                "player_name": "Mookie Betts",
+                "team": "Los Angeles Dodgers",
+                "opponent": "San Diego Padres",
+                "selection_side": "over",
+                "line_value": 0.5,
+                "calibration_bucket": "60-65%",
+                "first_source": "cron_board_drop",
+                "last_source": "cron_board_drop",
+                "surfaced_count": 1,
+                "first_seen_at": "2026-04-01T15:45:00Z",
+                "last_seen_at": "2026-04-01T15:45:00Z",
+                "first_display_probability": 0.62,
+                "last_display_probability": 0.62,
+                "first_fair_odds_american": -163.0,
+                "last_fair_odds_american": -163.0,
+                "first_books_matched_count": 2,
+                "last_books_matched_count": 2,
+                "first_confidence_label": "solid",
+                "last_confidence_label": "solid",
+                "ev_basis": "best_market_price",
+                "first_selected_sportsbook": "DraftKings",
+                "last_selected_sportsbook": "DraftKings",
+                "first_selected_market_odds": -110.0,
+                "last_selected_market_odds": -110.0,
+                "first_projected_edge_pct": 2.4,
+                "last_projected_edge_pct": 2.4,
+                "close_true_prob": 0.61,
+                "close_quality": "paired",
+                "close_captured_at": "2026-04-02T01:20:00Z",
+                "close_edge_pct": -0.3,
+                "actual_result": None,
+                "settled_at": None,
+            },
+        ]
+    )
+
+    summary = get_pickem_research_summary(db)
+
+    assert summary.pending_result_count == 1
+    assert summary.auto_settle_pending_count == 0
+    assert summary.manual_result_count == 1
+    assert summary.manual_only_sports == ["baseball_mlb"]
 
 
 def test_settle_pickem_research_observations_grades_nba_rows(monkeypatch):
@@ -370,20 +485,22 @@ def test_settle_pickem_research_observations_grades_nba_rows(monkeypatch):
         "services.odds_api._select_completed_event_for_bet",
         lambda _bet, completed_events: (completed_events[0], "matched"),
     )
+    async def _fake_fetch_boxscore_provider_events_for_rows(*_args, **_kwargs):
+        return {"basketball_nba": []}
     monkeypatch.setattr(
-        "services.prop_settler._nba_scoreboard_date_union_prop_bets",
-        lambda _bets, now=None: {"2026-03-31", "2026-04-01"},
+        "services.prop_settler.fetch_boxscore_provider_events_for_rows",
+        _fake_fetch_boxscore_provider_events_for_rows,
     )
-    async def _fake_fetch_nba_scoreboard_for_dates(_dates):
-        return {"events": []}
-    monkeypatch.setattr("services.prop_settler.fetch_nba_scoreboard_for_dates", _fake_fetch_nba_scoreboard_for_dates)
-    async def _fake_resolve_espn_event_id(*_args, **_kwargs):
-        return types.SimpleNamespace(espn_event_id="espn-1")
-    monkeypatch.setattr("services.prop_settler.resolve_espn_event_id", _fake_resolve_espn_event_id)
-    async def _fake_fetch_nba_game_summary(_espn_event_id):
+    async def _fake_resolve_boxscore_event_id(*_args, **_kwargs):
+        return types.SimpleNamespace(provider_event_id="espn-1")
+    monkeypatch.setattr("services.prop_settler.resolve_boxscore_event_id", _fake_resolve_boxscore_event_id)
+    async def _fake_fetch_boxscore_summary(_sport, _provider_event_id):
         return {"boxscore": True}
-    monkeypatch.setattr("services.prop_settler.fetch_nba_game_summary", _fake_fetch_nba_game_summary)
-    monkeypatch.setattr("services.prop_settler.build_player_stat_map", lambda _summary: {"Nikola Jokic": {"PTS": 31}})
+    monkeypatch.setattr("services.prop_settler.fetch_boxscore_summary", _fake_fetch_boxscore_summary)
+    monkeypatch.setattr(
+        "services.prop_settler.build_player_stat_map",
+        lambda _summary, sport="basketball_nba": {"Nikola Jokic": {"PTS": 31}},
+    )
     monkeypatch.setattr("services.prop_settler.grade_prop", lambda *_args, **_kwargs: ("win", {"player_match": "exact"}))
 
     settled, skipped = asyncio.run(
@@ -397,6 +514,98 @@ def test_settle_pickem_research_observations_grades_nba_rows(monkeypatch):
 
     assert settled == 1
     assert skipped["db_update_failed"] == 0
+    row = db.tables["pickem_research_observations"][0]
+    assert row["actual_result"] == "win"
+    assert row["settled_at"] == "2026-04-01T12:00:00Z"
+
+
+def test_settle_pickem_research_observations_marks_unsupported_mlb_rows_manual_only():
+    db = _DB(
+        rows=[
+            {
+                "id": "pickem-mlb-1",
+                "sport": "baseball_mlb",
+                "event_id": "evt-mlb-1",
+                "commence_time": "2026-03-31T01:00:00Z",
+                "team": "Los Angeles Dodgers",
+                "player_name": "Mookie Betts",
+                "market_key": "batter_walks",
+                "line_value": 0.5,
+                "selection_side": "over",
+                "actual_result": None,
+            }
+        ]
+    )
+
+    settled, skipped = asyncio.run(
+        settle_pickem_research_observations(
+            db,
+            {"baseball_mlb": [{"id": "evt-mlb-1", "home_team": "Los Angeles Dodgers", "away_team": "San Diego Padres"}]},
+            "2026-04-01T12:00:00Z",
+            source="auto_settle",
+        )
+    )
+
+    assert settled == 0
+    assert skipped["manual_settlement_required"] == 1
+    assert skipped["unsupported_sport"] == 0
+    row = db.tables["pickem_research_observations"][0]
+    assert row["actual_result"] is None
+    assert row.get("settled_at") is None
+
+
+def test_settle_pickem_research_observations_grades_supported_mlb_rows(monkeypatch):
+    db = _DB(
+        rows=[
+            {
+                "id": "pickem-mlb-1",
+                "sport": "baseball_mlb",
+                "event_id": "evt-mlb-1",
+                "commence_time": "2026-03-31T01:00:00Z",
+                "team": "Los Angeles Dodgers",
+                "player_name": "Mookie Betts",
+                "market_key": "batter_hits",
+                "line_value": 1.5,
+                "selection_side": "over",
+                "actual_result": None,
+            }
+        ]
+    )
+
+    monkeypatch.setattr(
+        "services.odds_api._select_completed_event_for_bet",
+        lambda _bet, completed_events: (completed_events[0], "matched"),
+    )
+    async def _fake_fetch_boxscore_provider_events_for_rows(*_args, **_kwargs):
+        return {"baseball_mlb": []}
+    monkeypatch.setattr(
+        "services.prop_settler.fetch_boxscore_provider_events_for_rows",
+        _fake_fetch_boxscore_provider_events_for_rows,
+    )
+    async def _fake_resolve_boxscore_event_id(*_args, **_kwargs):
+        return types.SimpleNamespace(provider_event_id="mlb-1")
+    monkeypatch.setattr("services.prop_settler.resolve_boxscore_event_id", _fake_resolve_boxscore_event_id)
+    async def _fake_fetch_boxscore_summary(_sport, _provider_event_id):
+        return {"teams": True}
+    monkeypatch.setattr("services.prop_settler.fetch_boxscore_summary", _fake_fetch_boxscore_summary)
+    monkeypatch.setattr(
+        "services.prop_settler.build_player_stat_map",
+        lambda _summary, sport="baseball_mlb": {"Mookie Betts": {"B_H": 2}},
+    )
+    monkeypatch.setattr("services.prop_settler.grade_prop", lambda *_args, **_kwargs: ("win", {"player_match": "exact"}))
+
+    settled, skipped = asyncio.run(
+        settle_pickem_research_observations(
+            db,
+            {"baseball_mlb": [{"id": "evt-mlb-1", "home_team": "Los Angeles Dodgers", "away_team": "San Diego Padres"}]},
+            "2026-04-01T12:00:00Z",
+            source="auto_settle",
+        )
+    )
+
+    assert settled == 1
+    assert skipped["db_update_failed"] == 0
+    assert skipped["manual_settlement_required"] == 0
     row = db.tables["pickem_research_observations"][0]
     assert row["actual_result"] == "win"
     assert row["settled_at"] == "2026-04-01T12:00:00Z"

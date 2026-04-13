@@ -74,6 +74,44 @@ test.describe("tracker settlement state", () => {
     expect(state.showManualControlsByDefault).toBe(true);
   });
 
+  test("treats supported MLB props as auto-settle eligible", async () => {
+    const state = getTrackerSettlementState(
+      buildBet({
+        surface: "player_props",
+        market: "Hits",
+        sport: "MLB",
+        clv_sport_key: "baseball_mlb",
+        source_market_key: "batter_hits",
+        participant_name: "Mookie Betts",
+        selection_side: "over",
+        line_value: 1.5,
+      }),
+      new Date("2026-04-11T12:00:00Z"),
+    );
+
+    expect(state.kind).toBe("awaiting_auto_settle");
+    expect(state.showManualControlsByDefault).toBe(false);
+  });
+
+  test("keeps unsupported MLB prop markets manual-only", async () => {
+    const state = getTrackerSettlementState(
+      buildBet({
+        surface: "player_props",
+        market: "Walks",
+        sport: "MLB",
+        clv_sport_key: "baseball_mlb",
+        source_market_key: "batter_walks",
+        participant_name: "Mookie Betts",
+        selection_side: "over",
+        line_value: 0.5,
+      }),
+      new Date("2026-04-11T12:00:00Z"),
+    );
+
+    expect(state.kind).toBe("manual_only");
+    expect(state.showManualControlsByDefault).toBe(true);
+  });
+
   test("keeps upcoming moneyline bets in the auto-settle state", async () => {
     const state = getTrackerSettlementState(
       buildBet({
@@ -140,6 +178,9 @@ test.describe("tracker settlement state", () => {
               event: "Nuggets @ Suns",
               sport: "basketball_nba",
               commenceTime: "2026-04-10T18:00:00Z",
+              participantName: "Nikola Jokic",
+              selectionSide: "over",
+              lineValue: 24.5,
               correlationTags: [],
             },
           ],

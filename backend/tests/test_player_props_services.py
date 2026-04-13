@@ -21,6 +21,7 @@ from services.player_props import (
     get_cached_or_scan_player_props,
     get_player_prop_markets,
     scan_player_props,
+    scan_player_props_for_event_ids,
 )
 from services.prizepicks import _normalize_prizepicks_projection
 
@@ -39,6 +40,120 @@ def test_get_player_prop_markets_defaults_to_all_when_env_missing(monkeypatch):
 def test_get_player_prop_markets_filters_to_supported_env_values(monkeypatch):
     monkeypatch.setenv("PLAYER_PROP_MARKETS", "player_points,player_assists,unknown_market")
     assert get_player_prop_markets() == ["player_points", "player_assists"]
+
+
+def test_get_player_prop_markets_uses_mlb_defaults_for_baseball(monkeypatch):
+    monkeypatch.delenv("PLAYER_PROP_MARKETS", raising=False)
+    assert get_player_prop_markets("baseball_mlb") == [
+        "pitcher_strikeouts",
+        "batter_total_bases",
+        "batter_hits",
+    ]
+
+
+def test_get_player_prop_markets_filters_env_values_per_sport(monkeypatch):
+    monkeypatch.setenv(
+        "PLAYER_PROP_MARKETS",
+        "player_points,pitcher_strikeouts,batter_hits,unknown_market",
+    )
+    assert get_player_prop_markets("baseball_mlb") == [
+        "pitcher_strikeouts",
+        "batter_hits",
+    ]
+
+
+def test_get_player_prop_markets_can_append_shadow_mlb_markets_via_sport_toggle(monkeypatch):
+    monkeypatch.delenv("PLAYER_PROP_MARKETS", raising=False)
+    monkeypatch.setenv("PLAYER_PROP_INCLUDE_SHADOW_MARKETS", "baseball_mlb")
+
+    assert get_player_prop_markets("baseball_mlb") == [
+        "pitcher_strikeouts",
+        "batter_total_bases",
+        "batter_hits",
+        "batter_hits_runs_rbis",
+        "batter_strikeouts",
+    ]
+
+
+def test_get_player_prop_markets_can_append_specific_shadow_market_via_env(monkeypatch):
+    monkeypatch.delenv("PLAYER_PROP_MARKETS", raising=False)
+    monkeypatch.setenv("PLAYER_PROP_INCLUDE_SHADOW_MARKETS", "batter_strikeouts")
+
+    assert get_player_prop_markets("baseball_mlb") == [
+        "pitcher_strikeouts",
+        "batter_total_bases",
+        "batter_hits",
+        "batter_strikeouts",
+    ]
+
+
+def test_get_player_prop_markets_can_append_alternate_mlb_markets_via_sport_toggle(monkeypatch):
+    monkeypatch.delenv("PLAYER_PROP_MARKETS", raising=False)
+    monkeypatch.setenv("PLAYER_PROP_INCLUDE_ALTERNATE_MARKETS", "baseball_mlb")
+
+    assert get_player_prop_markets("baseball_mlb") == [
+        "pitcher_strikeouts",
+        "batter_total_bases",
+        "batter_hits",
+        "pitcher_strikeouts_alternate",
+        "batter_total_bases_alternate",
+        "batter_hits_alternate",
+        "batter_strikeouts_alternate",
+    ]
+
+
+def test_get_player_prop_markets_explicit_market_override_wins_over_shadow_toggle(monkeypatch):
+    monkeypatch.setenv("PLAYER_PROP_INCLUDE_SHADOW_MARKETS", "all")
+    monkeypatch.setenv("PLAYER_PROP_MARKETS", "batter_hits")
+
+    assert get_player_prop_markets("baseball_mlb") == ["batter_hits"]
+
+
+@pytest.mark.asyncio
+async def test_scan_player_props_tracks_provider_vs_supported_book_coverage(monkeypatch):
+    async def _fake_fetch_prop_event(*, sport: str, event_id: str, markets: list[str], source: str):
+        assert sport == "baseball_mlb"
+        assert event_id == "evt-1"
+        assert markets == ["batter_hits"]
+        request = httpx.Request("GET", f"https://example.test/{event_id}")
+        response = httpx.Response(200, request=request, headers={"x-requests-remaining": "98"})
+        return {
+            "id": event_id,
+            "home_team": "Los Angeles Dodgers",
+            "away_team": "San Diego Padres",
+            "commence_time": "2099-03-21T03:00:00Z",
+            "bookmakers": [
+                {
+                    "key": "fanatics",
+                    "markets": [
+                        {
+                            "key": "batter_hits",
+                            "outcomes": [
+                                {"name": "Over", "description": "Mookie Betts", "point": 1.5, "price": -110},
+                                {"name": "Under", "description": "Mookie Betts", "point": 1.5, "price": -110},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }, response
+
+    monkeypatch.setattr("services.player_props._fetch_prop_market_for_event", _fake_fetch_prop_event)
+
+    result = await scan_player_props_for_event_ids(
+        sport="baseball_mlb",
+        event_ids=["evt-1"],
+        markets=["batter_hits"],
+        source="manual_scan",
+    )
+
+    diagnostics = result["diagnostics"]
+    assert diagnostics["events_with_provider_markets"] == 1
+    assert diagnostics["events_with_supported_book_markets"] == 0
+    assert diagnostics["events_provider_only"] == 1
+    assert diagnostics["provider_market_event_counts"] == {"batter_hits": 1}
+    assert diagnostics["supported_book_market_event_counts"] == {"batter_hits": 0}
+    assert diagnostics["candidate_sides_count"] == 0
 
 
 def test_normalize_prop_outcomes_keeps_complete_over_under_pairs():

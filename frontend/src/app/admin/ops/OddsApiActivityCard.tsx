@@ -380,6 +380,11 @@ function getPlayerPropsSummary(result?: BoardDropResultSummary | null) {
     eventsWithBothBooks: result?.player_props?.events_with_both_books ?? result?.props_events_with_both_books ?? null,
     apiRequestsRemaining: result?.player_props?.api_requests_remaining ?? result?.props_api_requests_remaining ?? null,
     eventsSkippedPregame: result?.player_props?.events_skipped_pregame ?? result?.props_events_skipped_pregame ?? null,
+    eventsWithProviderMarkets:
+      result?.player_props?.events_with_provider_markets ?? result?.props_events_with_provider_markets ?? null,
+    eventsWithSupportedBookMarkets:
+      result?.player_props?.events_with_supported_book_markets ?? result?.props_events_with_supported_book_markets ?? null,
+    eventsProviderOnly: result?.player_props?.events_provider_only ?? result?.props_events_provider_only ?? null,
     eventsWithResults: result?.player_props?.events_with_results ?? result?.props_events_with_results ?? null,
     candidateSides: result?.player_props?.candidate_sides ?? result?.props_candidate_sides ?? null,
     qualityGateFiltered: result?.player_props?.quality_gate_filtered ?? result?.props_quality_gate_filtered ?? null,
@@ -394,8 +399,21 @@ function getPlayerPropsSummary(result?: BoardDropResultSummary | null) {
     pickemCardsCount: result?.player_props?.pickem_cards_count ?? result?.props_pickem_cards_count ?? null,
     surfacedSides: result?.player_props?.surfaced_sides ?? result?.props_sides ?? null,
     marketsRequested: result?.player_props?.markets_requested ?? [],
+    providerMarketEventCounts:
+      result?.player_props?.provider_market_event_counts ?? result?.props_provider_market_event_counts ?? null,
+    supportedBookMarketEventCounts:
+      result?.player_props?.supported_book_market_event_counts ?? result?.props_supported_book_market_event_counts ?? null,
     boardItems: result?.player_props?.board_items ?? result?.player_props_board_artifacts ?? null,
   };
+}
+
+function formatMarketCoverageSummary(counts?: Record<string, number> | null): string {
+  if (!counts) return "Unknown";
+  const entries = Object.entries(counts)
+    .filter(([, count]) => typeof count === "number" && count > 0)
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+  if (!entries.length) return "None";
+  return entries.map(([market, count]) => `${market}: ${count}`).join(" | ");
 }
 
 function getGameLinesSummary(result?: BoardDropResultSummary | null) {
@@ -624,6 +642,18 @@ export function OddsApiActivityCard({ data }: Props) {
       });
     }
 
+    if (
+      Number(latestProps.eventsWithProviderMarkets || 0) > 0 &&
+      Number(latestProps.eventsWithSupportedBookMarkets || 0) < Number(latestProps.eventsWithProviderMarkets || 0)
+    ) {
+      warnings.push({
+        key: "provider-supported-gap",
+        tone: "warning",
+        title: "Provider coverage is wider than the current supported prop books",
+        body: `${scalarOrUnknown(latestProps.eventsWithProviderMarkets)} prop event${Number(latestProps.eventsWithProviderMarkets || 0) === 1 ? "" : "s"} had provider-posted markets, but only ${scalarOrUnknown(latestProps.eventsWithSupportedBookMarkets)} reached the current supported-book set.`,
+      });
+    }
+
     if (latestBoardRun.errorCount > 0) {
       warnings.push({
         key: "board-errors",
@@ -831,6 +861,16 @@ export function OddsApiActivityCard({ data }: Props) {
                       value={scalarOrUnknown(latestProps.eventsSkippedPregame)}
                       tone={Number(latestProps.eventsSkippedPregame || 0) > 0 ? "warning" : "default"}
                     />
+                    <MetricTile label="Provider posted" value={scalarOrUnknown(latestProps.eventsWithProviderMarkets)} />
+                    <MetricTile
+                      label="Supported books"
+                      value={scalarOrUnknown(latestProps.eventsWithSupportedBookMarkets)}
+                    />
+                    <MetricTile
+                      label="Provider only"
+                      value={scalarOrUnknown(latestProps.eventsProviderOnly)}
+                      tone={Number(latestProps.eventsProviderOnly || 0) > 0 ? "warning" : "default"}
+                    />
                     <MetricTile label="With results" value={scalarOrUnknown(latestProps.eventsWithResults)} />
                     <MetricTile label="Candidates" value={scalarOrUnknown(latestProps.candidateSides)} />
                     <MetricTile
@@ -863,6 +903,16 @@ export function OddsApiActivityCard({ data }: Props) {
                     <Row
                       label="Markets requested"
                       value={latestProps.marketsRequested.length > 0 ? latestProps.marketsRequested.join(", ") : "Unknown"}
+                      dim
+                    />
+                    <Row
+                      label="Provider coverage"
+                      value={formatMarketCoverageSummary(latestProps.providerMarketEventCounts)}
+                      dim
+                    />
+                    <Row
+                      label="Supported coverage"
+                      value={formatMarketCoverageSummary(latestProps.supportedBookMarketEventCounts)}
                       dim
                     />
                   </div>

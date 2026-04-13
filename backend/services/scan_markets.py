@@ -7,8 +7,17 @@ import httpx
 from fastapi import HTTPException
 
 
-def manual_scan_sports_for_env(*, environment: str, supported_sports: list[str]) -> list[str]:
-    return ["basketball_nba"] if environment.lower() == "development" else supported_sports
+def manual_scan_sports_for_env(
+    *,
+    environment: str,
+    supported_sports: list[str],
+    surface: str = "straight_bets",
+) -> list[str]:
+    if environment.lower() != "development":
+        return supported_sports
+    if surface == "player_props":
+        return supported_sports
+    return ["basketball_nba"]
 
 
 def scanned_at_from_fetched_timestamp(fetched_at: float | None) -> str | None:
@@ -175,6 +184,7 @@ async def aggregate_manual_scan_all_sports(
     oldest_fetched: float | None = None
     diagnostics: dict[str, Any] | None = None
     prizepicks_cards: list[dict[str, Any]] = []
+    results_by_sport: list[tuple[str, dict[str, Any]]] = []
 
     for sport in sports_to_scan:
         try:
@@ -184,6 +194,7 @@ async def aggregate_manual_scan_all_sports(
                 continue
             raise
 
+        results_by_sport.append((sport, result))
         all_sides.extend(result["sides"])
         if not result.get("cache_hit"):
             fresh_sides.extend(result["sides"])
@@ -207,6 +218,20 @@ async def aggregate_manual_scan_all_sports(
         cards = result.get("prizepicks_cards")
         if isinstance(cards, list):
             prizepicks_cards.extend(card for card in cards if isinstance(card, dict))
+
+    if results_by_sport and all(str(result.get("surface") or "").strip().lower() == "player_props" for _sport, result in results_by_sport):
+        from services.player_props import merge_player_prop_scan_results
+
+        merged = merge_player_prop_scan_results(
+            *results_by_sport,
+            scan_mode="manual_scan_multi_sport",
+            scan_scope="all_supported_sports",
+        )
+        merged_diagnostics = merged.get("diagnostics")
+        diagnostics = merged_diagnostics if isinstance(merged_diagnostics, dict) else diagnostics
+        merged_cards = merged.get("prizepicks_cards")
+        if isinstance(merged_cards, list):
+            prizepicks_cards = [card for card in merged_cards if isinstance(card, dict)]
 
     return {
         "all_sides": all_sides,
@@ -246,7 +271,11 @@ async def run_all_sports_manual_scan(
     get_cached_or_scan: Callable[[str], Awaitable[dict[str, Any]]],
     annotate_sides: Callable[[list[dict[str, Any]]], list[dict[str, Any]]],
 ) -> dict[str, Any]:
-    sports_to_scan = manual_scan_sports_for_env(environment=environment, supported_sports=supported_sports)
+    sports_to_scan = manual_scan_sports_for_env(
+        environment=environment,
+        supported_sports=supported_sports,
+        surface=surface,
+    )
     aggregate = await aggregate_manual_scan_all_sports(
         sports_to_scan=sports_to_scan,
         get_cached_or_scan=get_cached_or_scan,

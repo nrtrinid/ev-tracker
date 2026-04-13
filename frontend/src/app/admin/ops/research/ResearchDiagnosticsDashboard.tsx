@@ -45,6 +45,14 @@ function formatScore(value: number | null | undefined): string {
   return value.toFixed(4);
 }
 
+function formatSportLabel(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return "Unknown";
+  const parts = normalized.split("_").filter(Boolean);
+  if (parts.length > 1) return parts[parts.length - 1].toUpperCase();
+  return normalized.replace(/_/g, " ").toUpperCase();
+}
+
 function numericDelta(candidate: number | null | undefined, baseline: number | null | undefined): number | null {
   if (typeof candidate !== "number" || Number.isNaN(candidate)) return null;
   if (typeof baseline !== "number" || Number.isNaN(baseline)) return null;
@@ -423,12 +431,20 @@ export function ResearchDiagnosticsDashboard() {
                     <StatCell label="Captured" value={formatCount(pickEm.captured_count)} />
                     <StatCell label="Settled" value={formatCount(pickEm.settled_count)} />
                     <StatCell label="Decisive" value={formatCount(pickEm.decisive_count)} />
+                    <StatCell label="Auto pending" value={formatCount(pickEm.auto_settle_pending_count)} />
+                    <StatCell label="Manual only" value={formatCount(pickEm.manual_result_count)} />
                     <StatCell label="Close ready" value={formatCount(pickEm.close_ready_count)} />
                     <StatCell label="Expected hit" value={formatPercent(pickEm.expected_hit_rate_pct)} />
                     <StatCell label="Actual hit" value={formatPercent(pickEm.actual_hit_rate_pct)} />
                     <StatCell label="Hit delta" value={formatPercent(pickEm.hit_rate_delta_pct_points, 2)} />
                     <StatCell label="Avg Brier" value={formatScore(pickEm.avg_brier_score)} />
                   </div>
+                  {pickEm.manual_only_sports.length > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      Manual-only sports in this sample: {pickEm.manual_only_sports.map(formatSportLabel).join(", ")}.
+                      These rows stay in validation tracking, but results are expected to be graded manually during beta.
+                    </p>
+                  )}
                   <p className="text-xs text-muted-foreground">
                     By probability bucket: Expected = displayed-probability hit rate, Actual = settled hit rate, Delta = Actual minus Expected.
                   </p>

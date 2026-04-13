@@ -27,6 +27,31 @@ def _new_snapshot_id() -> str:
     return f"snap_{uuid4().hex[:12]}"
 
 
+def _payload_sports_included(payload: dict[str, Any] | None, *, fallback: str) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    sport_value = str(payload.get("sport") or "").strip().lower()
+    if sport_value and sport_value != "all":
+        return [sport_value]
+    diagnostics = payload.get("diagnostics")
+    if isinstance(diagnostics, dict):
+        scanned_sports = [
+            str(sport).strip().lower()
+            for sport in (diagnostics.get("sports_scanned") or [])
+            if str(sport).strip()
+        ]
+        if scanned_sports:
+            return sorted(set(scanned_sports))
+    sports = {
+        str(side.get("sport") or "").strip().lower()
+        for side in (payload.get("sides") or [])
+        if isinstance(side, dict) and str(side.get("sport") or "").strip()
+    }
+    if sports:
+        return sorted(sports)
+    return [fallback]
+
+
 def persist_board_snapshot(
     *,
     db,
@@ -54,15 +79,17 @@ def persist_board_snapshot(
 
     if straight_bets_payload:
         surfaces_included.append("straight_bets")
-        sports_included.append(straight_bets_payload.get("sport") or "all")
+        for sport in _payload_sports_included(straight_bets_payload, fallback="all"):
+            if sport not in sports_included:
+                sports_included.append(sport)
         total_sides += len(straight_bets_payload.get("sides") or [])
         total_events += int(straight_bets_payload.get("events_fetched") or 0)
 
     if player_props_payload:
         surfaces_included.append("player_props")
-        sport = player_props_payload.get("sport") or "basketball_nba"
-        if sport not in sports_included:
-            sports_included.append(sport)
+        for sport in _payload_sports_included(player_props_payload, fallback="basketball_nba"):
+            if sport not in sports_included:
+                sports_included.append(sport)
         total_sides += len(player_props_payload.get("sides") or [])
         total_events += int(player_props_payload.get("events_fetched") or 0)
 

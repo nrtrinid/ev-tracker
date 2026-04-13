@@ -349,6 +349,7 @@ function buildBoardPlayerPropsQuery(params: {
   pageSize: number;
   books?: string[];
   timeFilter?: string;
+  sport?: string | null;
   market?: string | null;
   search?: string | null;
   tzOffsetMinutes?: number;
@@ -361,6 +362,9 @@ function buildBoardPlayerPropsQuery(params: {
   }
   if (params.timeFilter) {
     query.set("time_filter", params.timeFilter);
+  }
+  if (params.sport && params.sport !== "all") {
+    query.set("sport", params.sport);
   }
   if (params.market && params.market !== "all") {
     query.set("market", params.market);
@@ -379,6 +383,7 @@ export async function getBoardPlayerPropOpportunities(params: {
   pageSize: number;
   books?: string[];
   timeFilter?: string;
+  sport?: string | null;
   market?: string | null;
   search?: string | null;
   tzOffsetMinutes?: number;
@@ -399,6 +404,7 @@ export async function getBoardPlayerPropBrowse(params: {
   pageSize: number;
   books?: string[];
   timeFilter?: string;
+  sport?: string | null;
   market?: string | null;
   search?: string | null;
   tzOffsetMinutes?: number;
@@ -419,6 +425,7 @@ export async function getBoardPlayerPropPickem(params: {
   pageSize: number;
   books?: string[];
   timeFilter?: string;
+  sport?: string | null;
   market?: string | null;
   search?: string | null;
   tzOffsetMinutes?: number;

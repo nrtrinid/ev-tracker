@@ -49,6 +49,7 @@ def test_get_board_latest_player_props_opportunities_filters_pages_and_annotates
                 "scanned_at": "2026-04-02T00:00:00Z",
                 "available_books": ["DraftKings", "FanDuel"],
                 "available_markets": ["player_points"],
+                "available_sports": ["basketball_nba"],
             },
             [sample],
             1,
@@ -68,6 +69,7 @@ def test_get_board_latest_player_props_opportunities_filters_pages_and_annotates
         page_size=1,
         books="DraftKings",
         time_filter="all_games",
+        sport="basketball_nba",
         market="player_points",
         search="Booker",
         tz_offset_minutes=420,
@@ -80,6 +82,7 @@ def test_get_board_latest_player_props_opportunities_filters_pages_and_annotates
     assert out["has_more"] is False
     assert out["items"][0]["sportsbook"] == "DraftKings"
     assert out["items"][0]["scanner_duplicate_state"] == "better_now"
+    assert out["available_sports"] == ["basketball_nba"]
 
 
 def test_get_board_latest_player_prop_detail_raises_404_when_missing(monkeypatch):

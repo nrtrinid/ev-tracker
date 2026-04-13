@@ -19,8 +19,6 @@ OBSERVATION_QUERY_CHUNK_SIZE = 200
 
 PROBABILITY_BUCKET_ORDER = ["50-55%", "55-60%", "60-65%", "65-70%", "70%+", "Unknown"]
 BOOKS_MATCHED_BUCKET_ORDER = ["1 book", "2 books", "3 books", "4+ books", "Unknown"]
-
-
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -58,6 +56,20 @@ def _coerce_int(value: Any) -> int | None:
 
 def _normalize_text(value: Any) -> str:
     return str(value or "").strip().lower()
+
+
+def _pickem_auto_settle_supported(sport: Any, market_key: Any) -> bool:
+    from services.prop_settler import is_auto_settle_supported_prop_market
+
+    return is_auto_settle_supported_prop_market(
+        _normalize_text(sport),
+        str(market_key or "").strip(),
+    )
+
+
+def _pickem_manual_result_required(sport: Any, market_key: Any) -> bool:
+    normalized = _normalize_text(sport)
+    return bool(normalized) and not _pickem_auto_settle_supported(normalized, market_key)
 
 
 def _parse_actual_result(value: Any) -> str | None:
@@ -171,6 +183,9 @@ def empty_pickem_research_summary() -> PickEmResearchSummaryResponse:
         decisive_count=0,
         push_count=0,
         pending_result_count=0,
+        auto_settle_pending_count=0,
+        manual_result_count=0,
+        manual_only_sports=[],
         avg_display_probability_pct=None,
         expected_hit_rate_pct=None,
         actual_hit_rate_pct=None,
@@ -483,23 +498,22 @@ async def settle_pickem_research_observations(
 ) -> tuple[int, dict[str, int]]:
     from services.odds_api import _select_completed_event_for_bet
     from services.prop_settler import (
-        NBA_SPORT_KEY,
-        _nba_scoreboard_date_union_prop_bets,
         build_player_stat_map,
-        fetch_nba_game_summary,
-        fetch_nba_scoreboard_for_dates,
+        fetch_boxscore_provider_events_for_rows,
+        fetch_boxscore_summary,
         grade_prop,
-        resolve_espn_event_id,
+        resolve_boxscore_event_id,
     )
 
     skipped: dict[str, int] = {
+        "manual_settlement_required": 0,
         "unsupported_sport": 0,
         "missing_clv_team": 0,
         "missing_commence_time": 0,
         "no_match": 0,
         "ambiguous_match": 0,
-        "espn_resolve_failed": 0,
-        "espn_fetch_failed": 0,
+        "boxscore_resolve_failed": 0,
+        "boxscore_fetch_failed": 0,
         "ungraded_pickem": 0,
         "db_update_failed": 0,
     }
@@ -525,26 +539,23 @@ async def settle_pickem_research_observations(
     if not pending_rows:
         return (0, skipped)
 
-    espn_summary_cache: dict[str, dict[str, Any]] = {}
-    espn_resolve_cache: dict[tuple[str, str, str], Any] = {}
-    scoreboard_events: list[dict[str, Any]] | None = None
-
-    nba_rows = [
-        {"clv_sport_key": row.get("sport"), "commence_time": row.get("commence_time")}
-        for row in pending_rows
-        if str(row.get("sport") or "").strip() == NBA_SPORT_KEY
-    ]
-    if nba_rows:
-        date_union = _nba_scoreboard_date_union_prop_bets(nba_rows, now=current)
-        merged = await fetch_nba_scoreboard_for_dates(date_union)
-        raw_events = merged.get("events") or []
-        scoreboard_events = [event for event in raw_events if isinstance(event, dict)]
+    boxscore_summary_cache: dict[tuple[str, str], dict[str, Any]] = {}
+    boxscore_resolve_cache_by_sport: dict[str, dict[tuple[str, str, str], Any]] = {}
+    provider_events_by_sport = await fetch_boxscore_provider_events_for_rows(
+        pending_rows,
+        sport_field="sport",
+        commence_time_field="commence_time",
+        now=current,
+    )
 
     settled = 0
     for row in pending_rows:
-        sport = str(row.get("sport") or "").strip()
-        if sport != NBA_SPORT_KEY:
+        sport = str(row.get("sport") or "").strip().lower()
+        if not sport:
             skipped["unsupported_sport"] += 1
+            continue
+        if not _pickem_auto_settle_supported(sport, row.get("market_key")):
+            skipped["manual_settlement_required"] += 1
             continue
 
         events = completed_events_by_sport.get(sport) or []
@@ -561,37 +572,46 @@ async def settle_pickem_research_observations(
 
         home = str(event.get("home_team", ""))
         away = str(event.get("away_team", ""))
-        res = await resolve_espn_event_id(
+        res = await resolve_boxscore_event_id(
+            sport,
             home,
             away,
             row.get("commence_time"),
             odds_completed_event=event,
-            cache=espn_resolve_cache,
+            cache_by_sport=boxscore_resolve_cache_by_sport,
             now=current,
-            scoreboard_events=scoreboard_events,
+            provider_events_by_sport=provider_events_by_sport,
             telemetry=telemetry,
             context="pickem_research",
             ref_id=str(row.get("id")) if row.get("id") is not None else None,
         )
-        espn_id = res.espn_event_id
-        if not espn_id:
-            skipped["espn_resolve_failed"] += 1
+        provider_event_id = res.provider_event_id
+        if not provider_event_id:
+            skipped["boxscore_resolve_failed"] += 1
             continue
 
-        if espn_id not in espn_summary_cache:
+        summary_cache_key = (sport, provider_event_id)
+        if summary_cache_key not in boxscore_summary_cache:
             try:
-                espn_summary_cache[espn_id] = await fetch_nba_game_summary(espn_id)
+                boxscore_summary_cache[summary_cache_key] = await fetch_boxscore_summary(
+                    sport,
+                    provider_event_id,
+                )
             except Exception:
-                skipped["espn_fetch_failed"] += 1
+                skipped["boxscore_fetch_failed"] += 1
                 continue
 
-        stat_map = build_player_stat_map(espn_summary_cache[espn_id])
+        stat_map = build_player_stat_map(
+            boxscore_summary_cache[summary_cache_key],
+            sport=sport,
+        )
         grade, _detail = grade_prop(
             row.get("player_name"),
             row.get("market_key"),
             row.get("line_value"),
             row.get("selection_side"),
             stat_map,
+            sport=sport,
         )
         if grade is None:
             skipped["ungraded_pickem"] += 1
@@ -718,7 +738,25 @@ def get_pickem_research_summary(db) -> PickEmResearchSummaryResponse:
     settled_rows = [row for row in rows if row.get("_actual_result") in {"win", "loss", "push"}]
     decisive_rows = [row for row in rows if row.get("_actual_result") in {"win", "loss"}]
     close_rows = [row for row in rows if row.get("_close_ready")]
-    pending_result_count = sum(1 for row in rows if row.get("_actual_result") is None)
+    pending_rows = [row for row in rows if row.get("_actual_result") is None]
+    manual_result_rows = [
+        row
+        for row in pending_rows
+        if _pickem_manual_result_required(row.get("sport"), row.get("market_key"))
+    ]
+    auto_settle_pending_rows = [
+        row
+        for row in pending_rows
+        if not _pickem_manual_result_required(row.get("sport"), row.get("market_key"))
+    ]
+    pending_result_count = len(pending_rows)
+    manual_only_sports = sorted(
+        {
+            _normalize_text(row.get("sport"))
+            for row in manual_result_rows
+            if _normalize_text(row.get("sport"))
+        }
+    )
     push_count = sum(1 for row in settled_rows if row.get("_actual_result") == "push")
     win_count = sum(1 for row in decisive_rows if row.get("_actual_result") == "win")
 
@@ -797,6 +835,9 @@ def get_pickem_research_summary(db) -> PickEmResearchSummaryResponse:
         decisive_count=len(decisive_rows),
         push_count=push_count,
         pending_result_count=pending_result_count,
+        auto_settle_pending_count=len(auto_settle_pending_rows),
+        manual_result_count=len(manual_result_rows),
+        manual_only_sports=manual_only_sports,
         avg_display_probability_pct=expected_hit_rate_pct,
         expected_hit_rate_pct=expected_hit_rate_pct,
         actual_hit_rate_pct=actual_hit_rate_pct,

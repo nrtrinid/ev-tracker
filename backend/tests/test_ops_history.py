@@ -239,6 +239,21 @@ def test_load_ops_status_snapshot_prefers_durable_rows_and_rebuilds_activity():
                         "sports": [{"sport_key": "basketball_nba", "bets_considered": 9}],
                         "ml_settled": 3,
                         "props_settled": 2,
+                        "manual_settlement_pending": {
+                            "prop_bets": 2,
+                            "parlays": 0,
+                            "pickem_research": 1,
+                            "total": 3,
+                            "by_sport": {
+                                "baseball_mlb": {
+                                    "prop_bets": 2,
+                                    "parlays": 0,
+                                    "pickem_research": 1,
+                                    "total": 3,
+                                }
+                            },
+                            "oldest_commence_time": _iso(minutes_ago=180),
+                        },
                     },
                 },
                 {
@@ -351,8 +366,10 @@ def test_load_ops_status_snapshot_prefers_durable_rows_and_rebuilds_activity():
     assert snapshot["last_ops_trigger_scan"]["result"]["props_sides"] == 8
     assert snapshot["last_auto_settle"]["settled"] == 5
     assert snapshot["last_auto_settle"]["props_settled"] == 2
+    assert snapshot["last_auto_settle"]["manual_settlement_pending"]["total"] == 3
     assert snapshot["last_auto_settle_summary"]["skipped_totals"] == {"missing_score": 2}
     assert snapshot["last_auto_settle_summary"]["ml_settled"] == 3
+    assert snapshot["last_auto_settle_summary"]["manual_settlement_pending"]["by_sport"]["baseball_mlb"]["prop_bets"] == 2
     assert [run["run_id"] for run in snapshot["recent_auto_settle_runs"][:2]] == ["settle-1", "settle-0"]
     assert snapshot["recent_auto_settle_runs"][1]["source"] == "cron"
     assert snapshot["last_readiness_failure"]["db_error"] == "database timeout"

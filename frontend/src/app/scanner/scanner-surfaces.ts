@@ -31,8 +31,8 @@ export const STRAIGHT_BETS_SURFACE: ScannerSurfaceConfig = {
 export const PLAYER_PROPS_SURFACE: ScannerSurfaceConfig = {
   id: "player_props",
   label: "Player Props",
-  tagline: "Curated national-TV props with consensus fair odds and log-ready selections",
-  teaser: "Points, rebounds, assists, and threes from the manual sniper scan.",
+  tagline: "Daily NBA and MLB props with consensus fair odds and log-ready selections",
+  teaser: "Basketball and baseball props from the live sportsbook scan.",
   path: "/scanner/player_props",
   searchPlaceholder: "Search player or market",
   resultLabel: "Player Props",

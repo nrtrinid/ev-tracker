@@ -399,6 +399,7 @@ export interface PlayerPropBoardPageResponse<TItem> {
   scanned_at?: string | null;
   available_books: string[];
   available_markets: string[];
+  available_sports: string[];
 }
 
 export interface BoardPromosResponse {
@@ -431,12 +432,20 @@ export interface PlayerPropScanDiagnostics {
   fallback_event_count?: number;
   events_fetched: number;
   events_skipped_pregame: number;
+  events_with_provider_markets?: number;
+  events_with_supported_book_markets?: number;
+  events_provider_only?: number;
   events_with_results: number;
   candidate_sides_count: number;
   quality_gate_filtered_count: number;
   quality_gate_min_reference_bookmakers: number;
+  pickem_quality_gate_min_reference_bookmakers?: number;
   sides_count: number;
   markets_requested: string[];
+  provider_market_event_counts?: Record<string, number>;
+  supported_book_market_event_counts?: Record<string, number>;
+  sports_scanned?: string[];
+  by_sport?: Record<string, unknown>;
   prizepicks_status?: string | null;
   prizepicks_message?: string | null;
   prizepicks_board_items_count?: number;
@@ -606,6 +615,9 @@ export interface BoardDropPlayerPropsSummary {
   events_with_both_books?: number;
   api_requests_remaining?: string | number | null;
   events_skipped_pregame?: number;
+  events_with_provider_markets?: number;
+  events_with_supported_book_markets?: number;
+  events_provider_only?: number;
   events_with_results?: number;
   candidate_sides?: number;
   quality_gate_filtered?: number;
@@ -614,6 +626,8 @@ export interface BoardDropPlayerPropsSummary {
   pickem_cards_count?: number;
   markets_requested?: string[];
   surfaced_sides?: number;
+  provider_market_event_counts?: Record<string, number> | null;
+  supported_book_market_event_counts?: Record<string, number> | null;
   board_items?: BoardDropPlayerPropsBoardItemsSummary | null;
 }
 
@@ -641,14 +655,36 @@ export interface BoardDropResultSummary {
   props_candidate_sides?: number;
   props_quality_gate_filtered?: number;
   props_events_skipped_pregame?: number;
+  props_events_with_provider_markets?: number;
+  props_events_with_supported_book_markets?: number;
+  props_events_provider_only?: number;
   props_events_with_results?: number;
   props_quality_gate_min_reference_bookmakers?: number | null;
   props_pickem_quality_gate_min_reference_bookmakers?: number | null;
   props_pickem_cards_count?: number;
+  props_provider_market_event_counts?: Record<string, number> | null;
+  props_supported_book_market_event_counts?: Record<string, number> | null;
   player_props_board_artifacts?: BoardDropPlayerPropsBoardItemsSummary | null;
   game_lines?: BoardDropGameLinesSummary | null;
   player_props?: BoardDropPlayerPropsSummary | null;
   duration_ms?: number;
+}
+
+export interface ManualSettlementPendingSummary {
+  prop_bets?: number;
+  parlays?: number;
+  pickem_research?: number;
+  total?: number;
+  by_sport?: Record<
+    string,
+    {
+      prop_bets?: number;
+      parlays?: number;
+      pickem_research?: number;
+      total?: number;
+    }
+  > | null;
+  oldest_commence_time?: string | null;
 }
 
 export interface BoardDropRunStatus {
@@ -695,6 +731,7 @@ export interface AutoSettleRunStatus {
   props_settled?: number;
   parlays_settled?: number;
   pickem_research_settled?: number;
+  manual_settlement_pending?: ManualSettlementPendingSummary | null;
 }
 
 export interface AutoSettleSummary {
@@ -706,6 +743,7 @@ export interface AutoSettleSummary {
   props_settled?: number;
   parlays_settled?: number;
   pickem_research_settled?: number;
+  manual_settlement_pending?: ManualSettlementPendingSummary | null;
 }
 
 export interface OperatorStatusResponse {
@@ -1144,6 +1182,9 @@ export interface PickEmResearchSummary {
   decisive_count: number;
   push_count: number;
   pending_result_count: number;
+  auto_settle_pending_count: number;
+  manual_result_count: number;
+  manual_only_sports: string[];
   avg_display_probability_pct: number | null;
   expected_hit_rate_pct: number | null;
   actual_hit_rate_pct: number | null;

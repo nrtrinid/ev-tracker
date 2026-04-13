@@ -713,7 +713,9 @@ def _get_environment() -> str:
 
 def _scanner_supported_sports(surface: str) -> list[str]:
     if surface == "player_props":
-        return ["basketball_nba"]
+        from services.player_prop_markets import get_supported_player_prop_sports
+
+        return get_supported_player_prop_sports()
     from services.odds_api import SUPPORTED_SPORTS
 
     return SUPPORTED_SPORTS
@@ -1184,6 +1186,8 @@ async def _run_auto_settler_job():
             summary_meta = {}
             if isinstance(summary.get("sports"), list):
                 summary_meta["sports"] = summary.get("sports")
+            if isinstance(summary.get("manual_settlement_pending"), dict):
+                summary_meta["manual_settlement_pending"] = summary.get("manual_settlement_pending")
             for key in ("ml_settled", "props_settled", "parlays_settled", "pickem_research_settled"):
                 if summary.get(key) is not None:
                     summary_meta[key] = summary.get(key)
@@ -3097,6 +3101,8 @@ async def ops_trigger_auto_settle(
         summary_meta = {}
         if isinstance(summary.get("sports"), list):
             summary_meta["sports"] = summary.get("sports")
+        if isinstance(summary.get("manual_settlement_pending"), dict):
+            summary_meta["manual_settlement_pending"] = summary.get("manual_settlement_pending")
         for key in ("ml_settled", "props_settled", "parlays_settled", "pickem_research_settled"):
             if summary.get(key) is not None:
                 summary_meta[key] = summary.get(key)

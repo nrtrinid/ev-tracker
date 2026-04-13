@@ -32,10 +32,13 @@ class _FakeDB:
         return self.query
 
 
-def test_player_props_surface_supports_only_nba(monkeypatch):
+def test_player_props_surface_supports_nba_and_mlb(monkeypatch):
     main = import_main_for_tests(monkeypatch)
 
-    assert main._scanner_supported_sports("player_props") == ["basketball_nba"]
+    assert main._scanner_supported_sports("player_props") == [
+        "basketball_nba",
+        "baseball_mlb",
+    ]
 
 
 def test_compute_k_user_filters_bonus_bets_in_python(monkeypatch):

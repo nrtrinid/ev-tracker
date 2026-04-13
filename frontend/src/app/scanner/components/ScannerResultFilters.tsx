@@ -21,6 +21,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { formatPlayerPropMarketLabel, formatPlayerPropSportLabel } from "@/lib/player-prop-markets";
 import { cn } from "@/lib/utils";
 import type {
   ScannerResultFilters,
@@ -57,6 +58,7 @@ interface ScannerResultFiltersProps {
   hidePropSideControl?: boolean;
   sharedPropsOnly?: boolean;
   searchPlaceholder?: string;
+  availablePropSports?: string[];
   availablePropMarkets?: string[];
   onSearchChange: (value: string) => void;
   onTimePresetChange: (value: ScannerTimePreset) => void;
@@ -64,6 +66,7 @@ interface ScannerResultFiltersProps {
   onHideLongshotsChange: (checked: boolean) => void;
   onHideAlreadyLoggedChange: (checked: boolean) => void;
   onRiskPresetChange: (value: ScannerRiskPreset) => void;
+  onPropSportChange: (value: string) => void;
   onPropMarketChange: (value: string) => void;
   onPropSideChange: (value: "all" | "over" | "under") => void;
   onPresetSelect: (value: number) => void;
@@ -79,10 +82,6 @@ const FILTER_IDLE_FULL = "border-border bg-background text-foreground";
 // Boost selected style — uses primary/gold accent
 const BOOST_SELECTED = "border-primary/40 bg-primary/15 text-primary";
 
-function formatPropMarketLabel(value: string) {
-  return value.replaceAll("_", " ");
-}
-
 export function ScannerResultFilters({
   filters,
   surface,
@@ -96,6 +95,7 @@ export function ScannerResultFilters({
   hidePropSideControl = false,
   sharedPropsOnly = false,
   searchPlaceholder = "Search team",
+  availablePropSports = [],
   availablePropMarkets = [],
   onSearchChange,
   onTimePresetChange,
@@ -103,6 +103,7 @@ export function ScannerResultFilters({
   onHideLongshotsChange,
   onHideAlreadyLoggedChange,
   onRiskPresetChange,
+  onPropSportChange,
   onPropMarketChange,
   onPropSideChange,
   onPresetSelect,
@@ -179,12 +180,23 @@ export function ScannerResultFilters({
       {surface === "player_props" && !hidePropSideControl && (
         <>
           <DropdownMenuSeparator />
+          <DropdownMenuLabel>Sport</DropdownMenuLabel>
+          <DropdownMenuRadioGroup value={filters.propSport} onValueChange={onPropSportChange}>
+            <DropdownMenuRadioItem value="all">All sports</DropdownMenuRadioItem>
+            {availablePropSports.map((sport) => (
+              <DropdownMenuRadioItem key={sport} value={sport}>
+                {formatPlayerPropSportLabel(sport)}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+
+          <DropdownMenuSeparator />
           <DropdownMenuLabel>Prop Market</DropdownMenuLabel>
           <DropdownMenuRadioGroup value={filters.propMarket} onValueChange={onPropMarketChange}>
             <DropdownMenuRadioItem value="all">All markets</DropdownMenuRadioItem>
             {availablePropMarkets.map((market) => (
-              <DropdownMenuRadioItem key={market} value={market}>
-                {formatPropMarketLabel(market)}
+                <DropdownMenuRadioItem key={market} value={market}>
+                {formatPlayerPropMarketLabel(market)}
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>
@@ -344,6 +356,37 @@ export function ScannerResultFilters({
 
               {surface === "player_props" && (
                 <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">Sport</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onPropSportChange("all")}
+                      className={cn(
+                        "rounded-md border px-2 py-1.5 text-xs font-medium transition-colors",
+                        filters.propSport === "all" ? FILTER_SELECTED : FILTER_IDLE_FULL
+                      )}
+                    >
+                      All sports
+                    </button>
+                    {availablePropSports.map((sport) => (
+                      <button
+                        key={sport}
+                        type="button"
+                        onClick={() => onPropSportChange(sport)}
+                        className={cn(
+                          "rounded-md border px-2 py-1.5 text-xs font-medium transition-colors",
+                          filters.propSport === sport ? FILTER_SELECTED : FILTER_IDLE_FULL
+                        )}
+                      >
+                        {formatPlayerPropSportLabel(sport)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {surface === "player_props" && (
+                <div className="space-y-2">
                   <p className="text-xs font-medium text-muted-foreground">Prop market</p>
                   <div className="grid grid-cols-2 gap-2">
                     <button
@@ -366,7 +409,7 @@ export function ScannerResultFilters({
                           filters.propMarket === market ? FILTER_SELECTED : FILTER_IDLE_FULL
                         )}
                       >
-                        {formatPropMarketLabel(market)}
+                        {formatPlayerPropMarketLabel(market)}
                       </button>
                     ))}
                   </div>

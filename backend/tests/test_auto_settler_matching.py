@@ -173,3 +173,56 @@ def test_select_completed_event_for_bet_falls_back_when_event_id_missing():
     assert reason == "matched"
     assert event is not None
     assert event["id"] == "evt_other"
+
+
+def test_summarize_manual_settlement_pending_groups_mlb_backlog():
+    mod = _reload_odds_api()
+
+    summary = mod._summarize_manual_settlement_pending(
+        standalone_bets=[
+            {
+                "surface": "player_props",
+                "clv_sport_key": "baseball_mlb",
+                "commence_time": "2026-04-10T01:00:00Z",
+                "source_market_key": "batter_walks",
+                "participant_name": "Mookie Betts",
+                "selection_side": "over",
+                "line_value": 0.5,
+            }
+        ],
+        parlay_bets=[
+            {
+                "selection_meta": {
+                    "legs": [
+                        {
+                            "surface": "player_props",
+                            "sport": "baseball_mlb",
+                            "marketKey": "batter_walks",
+                            "selectionSide": "over",
+                            "lineValue": 0.5,
+                            "participantName": "Mookie Betts",
+                            "commenceTime": "2026-04-10T03:00:00Z",
+                        }
+                    ]
+                }
+            }
+        ],
+        pickem_pending_rows=[
+            {
+                "sport": "baseball_mlb",
+                "commence_time": "2026-04-10T02:00:00Z",
+                "market_key": "batter_walks",
+                "player_name": "Mookie Betts",
+                "selection_side": "over",
+                "line_value": 0.5,
+            }
+        ],
+        now=mod._parse_utc_iso("2026-04-10T06:00:00Z"),
+    )
+
+    assert summary["prop_bets"] == 1
+    assert summary["parlays"] == 1
+    assert summary["pickem_research"] == 1
+    assert summary["total"] == 3
+    assert summary["oldest_commence_time"] == "2026-04-10T01:00:00Z"
+    assert summary["by_sport"]["baseball_mlb"]["total"] == 3

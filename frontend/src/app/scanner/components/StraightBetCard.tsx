@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
 import { ONBOARDING_HIGHLIGHT_TARGETS } from "@/lib/onboarding-guidance";
+import { formatPlayerPropMarketBadge } from "@/lib/player-prop-markets";
 import type { MarketSide } from "@/lib/types";
 import { calculateStealthStake, cn, formatCurrency, formatOdds } from "@/lib/utils";
 import { buildScannerActionModel, canAddScannerLensToParlayCart } from "../scanner-ui-model";
@@ -98,20 +99,6 @@ function formatMarketBadge(marketKey: string): string {
   return "ML";
 }
 
-function formatPropMarketLabel(marketKey: string | undefined | null): string {
-  const key = (marketKey ?? "").trim();
-  const map: Record<string, string> = {
-    player_points: "PTS",
-    player_rebounds: "REB",
-    player_assists: "AST",
-    player_threes: "3PM",
-    player_points_rebounds_assists: "PRA",
-  };
-  if (map[key]) return map[key];
-  if (!key) return "PROP";
-  return key.replace(/^player_/, "").replaceAll("_", " ").toUpperCase();
-}
-
 export function StraightBetCard({
   side,
   activeLens,
@@ -141,7 +128,7 @@ export function StraightBetCard({
     ? (side.display_name || side.player_name || side.team || "Player prop")
     : buildStraightBetCardTitle(side);
   const marketLabel = isPlayerProp
-    ? formatPropMarketLabel(side.market_key)
+    ? formatPlayerPropMarketBadge(side.market_key)
     : formatMarketBadge(straightMarketKey);
   const canAddToCart = canAddScannerLensToParlayCart(activeLens);
   const selectionKey = side.selection_key ?? `${side.event_id ?? side.commence_time}:${side.team}`;

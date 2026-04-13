@@ -69,20 +69,22 @@ def _prop_side(
     book_odds: float = 110,
     true_prob: float = 0.55,
     ev_percentage: float = 6.5,
+    sport: str = "basketball_nba",
+    market_key: str = "player_points",
 ) -> dict:
     return {
         "surface": "player_props",
         "event_id": event_id,
-        "market_key": "player_points",
-        "selection_key": f"{event_id}|player_points|devinbooker|{side}|{line_value}",
+        "market_key": market_key,
+        "selection_key": f"{event_id}|{market_key}|devinbooker|{side}|{line_value}",
         "sportsbook": sportsbook,
         "sportsbook_deeplink_url": f"https://example.com/{sportsbook.lower()}",
         "sportsbook_deeplink_level": "selection",
-        "sport": "basketball_nba",
+        "sport": sport,
         "event": event,
         "event_short": event_short,
         "commence_time": "2026-04-02T02:00:00Z",
-        "market": "player_points",
+        "market": market_key,
         "player_name": "Devin Booker",
         "participant_id": "p-1",
         "team": "Phoenix Suns",
@@ -184,6 +186,7 @@ def test_persist_and_load_player_prop_board_artifacts():
     )
     assert meta is not None
     assert meta["chunk_count"] == 2
+    assert meta["available_sports"] == ["basketball_nba"]
     assert len(items) == 3
     assert items[0]["ev_percentage"] >= items[-1]["ev_percentage"]
     assert all(float(item["ev_percentage"]) > 1 for item in items)
@@ -266,18 +269,29 @@ def test_persist_player_prop_board_artifacts_prefers_prebuilt_pickem_cards():
 def test_filter_and_paginate_player_prop_board_items():
     items = [
         build_player_prop_board_item(_prop_side(sportsbook="DraftKings", event="Lakers @ Suns", event_short="LAL @ PHX")),
-        build_player_prop_board_item(_prop_side(sportsbook="FanDuel", event="Warriors @ Kings", event_short="GSW @ SAC", event_id="evt-2")),
+        build_player_prop_board_item(
+            _prop_side(
+                sportsbook="FanDuel",
+                event="Warriors @ Kings",
+                event_short="GSW @ SAC",
+                event_id="evt-2",
+                sport="baseball_mlb",
+                market_key="batter_hits",
+            )
+        ),
     ]
 
     filtered = filter_player_prop_board_items(
         items,
         books=["FanDuel"],
         time_filter="all_games",
-        market="player_points",
+        sport="baseball_mlb",
+        market="batter_hits",
         search="Kings",
     )
     assert len(filtered) == 1
     assert filtered[0]["sportsbook"] == "FanDuel"
+    assert filtered[0]["sport"] == "baseball_mlb"
 
     page, has_more = paginate_board_items(items, page=1, page_size=1)
     assert len(page) == 1
@@ -328,6 +342,7 @@ def test_filter_player_prop_board_pickem_items_by_books_and_search():
     cards = [
         {
             "comparison_key": "evt-1|player_points|devinbooker|24.5",
+            "sport": "basketball_nba",
             "event": "Lakers @ Suns",
             "commence_time": "2026-04-02T02:00:00Z",
             "player_name": "Devin Booker",
@@ -345,10 +360,51 @@ def test_filter_player_prop_board_pickem_items_by_books_and_search():
         cards,
         books=["DraftKings"],
         time_filter="all_games",
+        sport="basketball_nba",
         market="player_points",
         search="Booker",
     )
     assert len(filtered) == 1
+
+
+def test_persist_player_prop_board_artifacts_tracks_multiple_available_sports():
+    db = _DB()
+    payload = {
+        "surface": "player_props",
+        "sport": "all",
+        "sides": [
+            _prop_side(sport="basketball_nba", market_key="player_points"),
+            _prop_side(
+                event_id="evt-mlb-1",
+                event="Dodgers @ Padres",
+                event_short="LAD @ SDP",
+                sport="baseball_mlb",
+                market_key="batter_hits",
+            ),
+        ],
+        "events_fetched": 2,
+        "events_with_both_books": 2,
+        "api_requests_remaining": "88",
+        "scanned_at": "2026-04-02T00:00:00Z",
+    }
+
+    persist_player_prop_board_artifacts(
+        db=db,
+        payload=payload,
+        retry_supabase=lambda fn: fn(),
+        log_event=lambda *_args, **_kwargs: None,
+        chunk_size=10,
+        legacy_max_items=2,
+    )
+
+    meta, _items = load_player_prop_board_artifact(
+        db=db,
+        retry_supabase=lambda fn: fn(),
+        view="browse",
+    )
+
+    assert meta is not None
+    assert meta["available_sports"] == ["baseball_mlb", "basketball_nba"]
 
 
 def test_matches_board_time_filter_supports_closed_today_with_offset():

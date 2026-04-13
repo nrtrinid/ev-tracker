@@ -1,4 +1,5 @@
 import type { Bet } from "@/lib/types";
+import { isSupportedPlayerPropMarketForSport } from "@/lib/player-prop-markets";
 
 export type TrackerSettlementStateKind =
   | "awaiting_auto_settle"
@@ -60,6 +61,118 @@ function getParlayLatestLegStart(bet: Bet): Date | null {
   return latest;
 }
 
+function hasValidSelectionTime(value: string | null | undefined): boolean {
+  return parseIsoDate(value) !== null;
+}
+
+function canAutoSettlePlayerPropSelection(input: {
+  sportKey: string | null | undefined;
+  marketKey: string | null | undefined;
+  participantName: string | null | undefined;
+  selectionSide: string | null | undefined;
+  lineValue: number | null | undefined;
+  commenceTime: string | null | undefined;
+}): boolean {
+  return (
+    isSupportedPlayerPropMarketForSport(input.sportKey, input.marketKey) &&
+    Boolean(input.participantName) &&
+    Boolean(input.selectionSide) &&
+    input.lineValue != null &&
+    hasValidSelectionTime(input.commenceTime)
+  );
+}
+
+function canAutoSettleParlay(bet: Bet): boolean {
+  const latestLegStart = getParlayLatestLegStart(bet);
+  if (!latestLegStart) {
+    return false;
+  }
+
+  const meta = bet.selection_meta;
+  if (!meta || typeof meta !== "object" || !("legs" in meta) || !Array.isArray(meta.legs) || meta.legs.length === 0) {
+    return false;
+  }
+
+  for (const leg of meta.legs) {
+    if (!leg || typeof leg !== "object") {
+      return false;
+    }
+
+    const surface =
+      "surface" in leg && typeof leg.surface === "string"
+        ? normalizeToken(leg.surface)
+        : "";
+    const commenceTime =
+      "commenceTime" in leg && typeof leg.commenceTime === "string"
+        ? leg.commenceTime
+        : "commence_time" in leg && typeof leg.commence_time === "string"
+          ? leg.commence_time
+          : null;
+
+    if (surface === "straight_bets") {
+      const marketKey =
+        "marketKey" in leg && typeof leg.marketKey === "string"
+          ? normalizeToken(leg.marketKey)
+          : "market_key" in leg && typeof leg.market_key === "string"
+            ? normalizeToken(leg.market_key)
+            : "";
+      if (marketKey !== "h2h" || !hasValidSelectionTime(commenceTime)) {
+        return false;
+      }
+      continue;
+    }
+
+    if (surface === "player_props") {
+      const sportKey =
+        "sport" in leg && typeof leg.sport === "string" ? leg.sport : null;
+      const marketKey =
+        "marketKey" in leg && typeof leg.marketKey === "string"
+          ? leg.marketKey
+          : "market_key" in leg && typeof leg.market_key === "string"
+            ? leg.market_key
+            : null;
+      const participantName =
+        "participantName" in leg && typeof leg.participantName === "string"
+          ? leg.participantName
+          : "participant_name" in leg && typeof leg.participant_name === "string"
+            ? leg.participant_name
+            : "display" in leg && typeof leg.display === "string"
+              ? leg.display
+              : null;
+      const selectionSide =
+        "selectionSide" in leg && typeof leg.selectionSide === "string"
+          ? leg.selectionSide
+          : "selection_side" in leg && typeof leg.selection_side === "string"
+            ? leg.selection_side
+            : null;
+      const lineValue =
+        "lineValue" in leg && typeof leg.lineValue === "number"
+          ? leg.lineValue
+          : "line_value" in leg && typeof leg.line_value === "number"
+            ? leg.line_value
+            : null;
+
+      if (
+        !canAutoSettlePlayerPropSelection({
+          sportKey,
+          marketKey,
+          participantName,
+          selectionSide,
+          lineValue,
+          commenceTime,
+        })
+      ) {
+        return false;
+      }
+      continue;
+    }
+
+    return false;
+  }
+
+  return true;
+}
+
 function getAutoSettleReferenceTime(bet: Bet): Date | null {
   if (normalizeToken(bet.surface) === "parlay") {
     return getParlayLatestLegStart(bet) ?? parseIsoDate(bet.commence_time);
@@ -70,27 +183,26 @@ function getAutoSettleReferenceTime(bet: Bet): Date | null {
 function canAutoSettle(bet: Bet): boolean {
   const surface = normalizeToken(bet.surface);
   const market = normalizeToken(bet.market).replace(/\s+/g, "");
-  const sportKey = normalizeToken(bet.clv_sport_key);
 
   if (surface === "parlay" || market === "parlay") {
-    return getParlayLatestLegStart(bet) !== null;
+    return canAutoSettleParlay(bet);
   }
 
   if (surface === "player_props") {
-    return (
-      sportKey === "basketball_nba" &&
-      Boolean(bet.source_market_key) &&
-      Boolean(bet.participant_name) &&
-      Boolean(bet.selection_side) &&
-      bet.line_value != null &&
-      getAutoSettleReferenceTime(bet) !== null
-    );
+    return canAutoSettlePlayerPropSelection({
+      sportKey: bet.clv_sport_key,
+      marketKey: bet.source_market_key,
+      participantName: bet.participant_name,
+      selectionSide: bet.selection_side,
+      lineValue: bet.line_value,
+      commenceTime: bet.commence_time,
+    });
   }
 
   return (
     market === "ml" &&
     Boolean(bet.clv_team) &&
-    Boolean(sportKey) &&
+    Boolean(normalizeToken(bet.clv_sport_key)) &&
     getAutoSettleReferenceTime(bet) !== null
   );
 }

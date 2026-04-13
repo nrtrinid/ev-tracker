@@ -650,6 +650,8 @@ async def cron_run_auto_settle_impl(
         summary_meta = {}
         if isinstance(summary.get("sports"), list):
             summary_meta["sports"] = summary.get("sports")
+        if isinstance(summary.get("manual_settlement_pending"), dict):
+            summary_meta["manual_settlement_pending"] = summary.get("manual_settlement_pending")
         for key in ("ml_settled", "props_settled", "parlays_settled", "pickem_research_settled"):
             if summary.get(key) is not None:
                 summary_meta[key] = summary.get(key)

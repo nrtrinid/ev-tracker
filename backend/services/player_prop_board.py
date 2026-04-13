@@ -159,6 +159,7 @@ def matches_player_prop_board_item(
     *,
     books: list[str] | None = None,
     time_filter: str = "today",
+    sport: str | None = None,
     market: str | None = None,
     search: str | None = None,
     tz_offset_minutes: int | None = None,
@@ -166,11 +167,15 @@ def matches_player_prop_board_item(
 ) -> bool:
     selected_books = {book.strip() for book in (books or []) if book.strip()}
     normalized_search = str(search or "").strip().lower()
+    normalized_sport = str(sport or "").strip().lower()
     normalized_market = str(market or "").strip().lower()
     current_now = now_utc or datetime.now(UTC)
 
     if selected_books and str(item.get("sportsbook") or "") not in selected_books:
         return False
+    if normalized_sport and normalized_sport != "all":
+        if str(item.get("sport") or "").strip().lower() != normalized_sport:
+            return False
     if normalized_market and normalized_market != "all":
         if str(item.get("market_key") or "").strip().lower() != normalized_market:
             return False
@@ -205,6 +210,7 @@ def matches_player_prop_board_pickem_item(
     *,
     books: list[str] | None = None,
     time_filter: str = "today",
+    sport: str | None = None,
     market: str | None = None,
     search: str | None = None,
     tz_offset_minutes: int | None = None,
@@ -212,9 +218,13 @@ def matches_player_prop_board_pickem_item(
 ) -> bool:
     selected_books = {book.strip() for book in (books or []) if book.strip()}
     normalized_search = str(search or "").strip().lower()
+    normalized_sport = str(sport or "").strip().lower()
     normalized_market = str(market or "").strip().lower()
     current_now = now_utc or datetime.now(UTC)
 
+    if normalized_sport and normalized_sport != "all":
+        if str(item.get("sport") or "").strip().lower() != normalized_sport:
+            return False
     if normalized_market and normalized_market != "all":
         if str(item.get("market_key") or "").strip().lower() != normalized_market:
             return False
@@ -431,6 +441,7 @@ def persist_player_prop_board_artifacts(
     detail_rows: list[dict[str, Any]] = []
     available_books_set: set[str] = set()
     available_markets_set: set[str] = set()
+    available_sports_set: set[str] = set()
     scanned_at = payload.get("scanned_at")
     detail_total = 0
 
@@ -445,10 +456,13 @@ def persist_player_prop_board_artifacts(
 
         sportsbook = str(item.get("sportsbook") or "").strip()
         market_key = str(item.get("market_key") or "").strip()
+        sport_key = str(item.get("sport") or "").strip().lower()
         if sportsbook:
             available_books_set.add(sportsbook)
         if market_key:
             available_markets_set.add(market_key)
+        if sport_key:
+            available_sports_set.add(sport_key)
 
         detail = build_player_prop_board_detail(side)
         if detail is not None:
@@ -488,6 +502,7 @@ def persist_player_prop_board_artifacts(
         pickem = build_player_prop_board_pickem_cards(browse_items)
     available_books = sorted(available_books_set)
     available_markets = sorted(available_markets_set)
+    available_sports = sorted(available_sports_set)
 
     def _persist_view(view: str, items: list[dict[str, Any]]) -> None:
         safe_chunk_size = max(1, chunk_size)
@@ -500,6 +515,7 @@ def persist_player_prop_board_artifacts(
             "scanned_at": scanned_at,
             "available_books": available_books,
             "available_markets": available_markets,
+            "available_sports": available_sports,
         }
         _persist_cache_row(
             db=db,
@@ -745,12 +761,14 @@ def filter_player_prop_board_items(
     *,
     books: list[str] | None = None,
     time_filter: str = "today",
+    sport: str | None = None,
     market: str | None = None,
     search: str | None = None,
     tz_offset_minutes: int | None = None,
 ) -> list[dict[str, Any]]:
     selected_books = {book.strip() for book in (books or []) if book.strip()}
     normalized_search = str(search or "").strip().lower()
+    normalized_sport = str(sport or "").strip().lower()
     normalized_market = str(market or "").strip().lower()
     now_utc = datetime.now(UTC)
 
@@ -758,6 +776,9 @@ def filter_player_prop_board_items(
     for item in items:
         if selected_books and str(item.get("sportsbook") or "") not in selected_books:
             continue
+        if normalized_sport and normalized_sport != "all":
+            if str(item.get("sport") or "").strip().lower() != normalized_sport:
+                continue
         if normalized_market and normalized_market != "all":
             if str(item.get("market_key") or "").strip().lower() != normalized_market:
                 continue
@@ -793,17 +814,22 @@ def filter_player_prop_board_pickem_items(
     *,
     books: list[str] | None = None,
     time_filter: str = "today",
+    sport: str | None = None,
     market: str | None = None,
     search: str | None = None,
     tz_offset_minutes: int | None = None,
 ) -> list[dict[str, Any]]:
     selected_books = {book.strip() for book in (books or []) if book.strip()}
     normalized_search = str(search or "").strip().lower()
+    normalized_sport = str(sport or "").strip().lower()
     normalized_market = str(market or "").strip().lower()
     now_utc = datetime.now(UTC)
 
     out: list[dict[str, Any]] = []
     for item in items:
+        if normalized_sport and normalized_sport != "all":
+            if str(item.get("sport") or "").strip().lower() != normalized_sport:
+                continue
         if normalized_market and normalized_market != "all":
             if str(item.get("market_key") or "").strip().lower() != normalized_market:
                 continue

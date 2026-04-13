@@ -12,6 +12,11 @@ import httpx
 
 from calculations import american_to_decimal, decimal_to_american, kelly_fraction
 from services.player_prop_weights import get_player_prop_weight_overrides
+from services.player_prop_markets import (
+    PLAYER_PROP_ALL_MARKETS,
+    get_player_prop_markets,
+    get_supported_player_prop_sports,
+)
 from services.espn_scoreboard import (
     build_matchup_player_lookup,
     extract_national_tv_matchups,
@@ -31,13 +36,7 @@ from services.team_aliases import canonical_short_name, canonical_team_token, bu
 
 
 PLAYER_PROPS_SURFACE = "player_props"
-PLAYER_PROP_MARKETS = [
-    "player_points",
-    "player_rebounds",
-    "player_assists",
-    "player_points_rebounds_assists",
-    "player_threes",
-]
+PLAYER_PROP_MARKETS = list(PLAYER_PROP_ALL_MARKETS)
 PLAYER_PROP_BOOKS = {
     "bovada": "Bovada",
     "betonlineag": "BetOnline.ag",
@@ -100,17 +99,6 @@ def get_player_prop_shadow_model_key(active_model_key: str | None = None) -> str
     return None
 
 
-def get_player_prop_markets() -> list[str]:
-    raw = os.getenv("PLAYER_PROP_MARKETS", "").strip()
-    if not raw:
-        return PLAYER_PROP_MARKETS
-
-    requested = [item.strip() for item in raw.split(",") if item.strip()]
-    allowed = {market: market for market in PLAYER_PROP_MARKETS}
-    selected = [allowed[item] for item in requested if item in allowed]
-    return selected or PLAYER_PROP_MARKETS
-
-
 def get_player_prop_min_reference_bookmakers() -> int:
     raw = os.getenv(PLAYER_PROP_MIN_REFERENCE_BOOKMAKERS_ENV, "").strip()
     if not raw:
@@ -153,6 +141,14 @@ def get_player_prop_clv_min_reference_bookmakers() -> int:
     return max(1, min(parsed, max_reference_books))
 
 
+def _resolve_scan_player_prop_markets(sport: str | None = None) -> list[str]:
+    """Support older no-arg monkeypatches while allowing sport-specific defaults."""
+    try:
+        return get_player_prop_markets(sport)
+    except TypeError:
+        return get_player_prop_markets()
+
+
 def _prop_cache_slot(sport: str) -> str:
     return f"{PLAYER_PROPS_SURFACE}:{PLAYER_PROP_CACHE_VERSION}:{sport}"
 
@@ -183,6 +179,15 @@ def _prop_market_display_suffix(market_key: str) -> str:
         "player_assists": "AST",
         "player_points_rebounds_assists": "PTS/REB/AST",
         "player_threes": "3PM",
+        "pitcher_strikeouts": "P K",
+        "pitcher_strikeouts_alternate": "P K ALT",
+        "batter_total_bases": "TB",
+        "batter_total_bases_alternate": "TB ALT",
+        "batter_hits": "H",
+        "batter_hits_alternate": "H ALT",
+        "batter_hits_runs_rbis": "H+R+RBI",
+        "batter_strikeouts": "B K",
+        "batter_strikeouts_alternate": "B K ALT",
     }
     if key in known:
         return known[key]
@@ -263,14 +268,12 @@ async def _fetch_prop_market_for_event(*, sport: str, event_id: str, markets: li
     if not ODDS_API_KEY:
         raise ValueError("ODDS_API_KEY not set in environment")
 
-    all_books = ",".join(PLAYER_PROP_BOOKS.keys())
     url = f"{ODDS_API_BASE}/sports/{sport}/events/{event_id}/odds"
     params = {
         "apiKey": ODDS_API_KEY,
         "regions": "us",
         "markets": ",".join(markets),
         "oddsFormat": "american",
-        "bookmakers": all_books,
         "includeLinks": "true",
         "includeSids": "true",
     }
@@ -378,6 +381,63 @@ def _build_prop_market_book_pairs(
             }
 
     return selection_pairs_by_market_book, deeplink_context_by_market_book
+
+
+def _empty_prop_market_event_counts(target_markets: list[str]) -> dict[str, int]:
+    return {
+        str(market).strip(): 0
+        for market in target_markets
+        if str(market).strip()
+    }
+
+
+def _collect_prop_market_presence(
+    *,
+    bookmakers: list[dict],
+    target_markets: list[str],
+) -> dict[str, Any]:
+    target_market_set = {
+        str(market).strip()
+        for market in target_markets
+        if str(market).strip()
+    }
+    provider_market_books: dict[str, set[str]] = {}
+    supported_market_books: dict[str, set[str]] = {}
+
+    for bookmaker in bookmakers:
+        if not isinstance(bookmaker, dict):
+            continue
+        book_key = str(bookmaker.get("key") or "").strip().lower()
+        supported_book = book_key in PLAYER_PROP_BOOKS
+        for market in bookmaker.get("markets") or []:
+            if not isinstance(market, dict):
+                continue
+            market_key = str(market.get("key") or "").strip()
+            if market_key not in target_market_set:
+                continue
+            normalized_outcomes = _normalize_prop_outcomes(market.get("outcomes") or [])
+            if not normalized_outcomes:
+                continue
+            provider_market_books.setdefault(market_key, set()).add(book_key or "unknown")
+            if supported_book:
+                supported_market_books.setdefault(market_key, set()).add(book_key)
+
+    provider_markets = sorted(provider_market_books.keys())
+    supported_markets = sorted(supported_market_books.keys())
+    return {
+        "provider_markets": provider_markets,
+        "supported_book_markets": supported_markets,
+        "has_provider_markets": bool(provider_markets),
+        "has_supported_book_markets": bool(supported_markets),
+        "provider_bookmaker_counts_by_market": {
+            market: len(books)
+            for market, books in provider_market_books.items()
+        },
+        "supported_bookmaker_counts_by_market": {
+            market: len(books)
+            for market, books in supported_market_books.items()
+        },
+    }
 
 
 def _devig_pair_probabilities(over_outcome: dict, under_outcome: dict) -> dict[str, float] | None:
@@ -1067,6 +1127,23 @@ def _select_fallback_odds_events(
     return (fetchable + unknown_start)[:max_events]
 
 
+def _eligible_prop_event_ids_from_odds_events(
+    odds_events: list[dict],
+    *,
+    pregame_cutoff: datetime,
+) -> list[str]:
+    event_ids: list[str] = []
+    for event in odds_events:
+        event_id = str(event.get("id") or "").strip()
+        if not event_id:
+            continue
+        commence_dt = _parse_commence_time(event.get("commence_time"))
+        if commence_dt is not None and commence_dt <= pregame_cutoff:
+            continue
+        event_ids.append(event_id)
+    return event_ids
+
+
 def _build_prop_side_candidates(
     *,
     sport: str,
@@ -1512,7 +1589,56 @@ def _build_prizepicks_comparison_cards(
 
 
 async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
-    target_markets = get_player_prop_markets()
+    normalized_sport = str(sport or "").strip().lower()
+    if normalized_sport not in get_supported_player_prop_sports():
+        raise ValueError(
+            f"Unsupported player-prop sport '{sport}'. "
+            f"Choose from: {', '.join(get_supported_player_prop_sports())}"
+        )
+
+    target_markets = _resolve_scan_player_prop_markets(normalized_sport)
+    if normalized_sport != "basketball_nba":
+        pregame_cutoff = datetime.now(timezone.utc) + timedelta(minutes=1)
+        events_payload, events_resp = await fetch_events(normalized_sport, source=f"{source}_props_events")
+        odds_events = events_payload if isinstance(events_payload, list) else []
+        event_ids = _eligible_prop_event_ids_from_odds_events(
+            odds_events,
+            pregame_cutoff=pregame_cutoff,
+        )
+        result = await scan_player_props_for_event_ids(
+            sport=normalized_sport,
+            event_ids=event_ids,
+            markets=target_markets,
+            source=source,
+        )
+        diagnostics = result.get("diagnostics") if isinstance(result.get("diagnostics"), dict) else {}
+        fallback_reason = None
+        if not odds_events:
+            fallback_reason = "No Odds API events were available for this sport."
+        elif not event_ids:
+            fallback_reason = "No upcoming Odds API events were eligible for player-prop requests."
+        result["diagnostics"] = {
+            **diagnostics,
+            "scan_mode": "full_slate",
+            "scan_scope": "odds_events",
+            "scoreboard_event_count": 0,
+            "odds_event_count": len(odds_events),
+            "curated_games": [],
+            "matched_event_count": len(event_ids),
+            "unmatched_game_count": 0,
+            "fallback_reason": fallback_reason,
+            "fallback_event_count": 0,
+            "events_selected_count": len(event_ids),
+            "markets_requested": target_markets,
+            "sports_scanned": [normalized_sport],
+        }
+        result["api_requests_remaining"] = (
+            result.get("api_requests_remaining")
+            or events_resp.headers.get("x-requests-remaining")
+            or events_resp.headers.get("x-request-remaining")
+        )
+        return result
+
     min_reference_bookmakers = get_player_prop_min_reference_bookmakers()
     pickem_min_reference_bookmakers = get_player_prop_pickem_min_reference_bookmakers()
     weight_overrides = get_player_prop_weight_overrides()
@@ -1525,7 +1651,7 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
     pregame_cutoff = datetime.now(timezone.utc) + timedelta(minutes=1)
     logger.info(
         "player_props.scan.scoreboard sport=%s source=%s scoreboard_events=%s curated_candidates=%s curated_games=%s selection_reasons=%s",
-        sport,
+        normalized_sport,
         source,
         scoreboard_count,
         len(curated_candidates),
@@ -1535,7 +1661,7 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
     if not curated_candidates:
         logger.info(
             "player_props.scan.no_curated_games sport=%s source=%s reason=no_scoreboard_matchups",
-            sport,
+            normalized_sport,
             source,
         )
         return {
@@ -1575,7 +1701,7 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
             },
         }
 
-    events_payload, events_resp = await fetch_events(sport, source=f"{source}_props_events")
+    events_payload, events_resp = await fetch_events(normalized_sport, source=f"{source}_props_events")
     events = events_payload if isinstance(events_payload, list) else []
     match_details = _build_curated_event_match_details(curated_candidates, events)
     match_details = _prioritize_curated_match_details(
@@ -1606,7 +1732,7 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
         fallback_event_count = len(events_to_scan)
         logger.info(
             "player_props.scan.curated_fallback sport=%s source=%s odds_events=%s fallback_events=%s",
-            sport,
+            normalized_sport,
             source,
             len(events),
             fallback_event_count,
@@ -1618,7 +1744,7 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
     }
     logger.info(
         "player_props.scan.matched_events sport=%s source=%s odds_events=%s matched_events=%s",
-        sport,
+        normalized_sport,
         source,
         len(events),
         len(matched_events),
@@ -1633,6 +1759,11 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
 
     all_sides: list[dict] = []
     events_with_any_book = 0
+    events_with_provider_markets = 0
+    events_with_supported_book_markets = 0
+    events_provider_only = 0
+    provider_market_event_counts = _empty_prop_market_event_counts(target_markets)
+    supported_book_market_event_counts = _empty_prop_market_event_counts(target_markets)
     remaining: str | None = events_resp.headers.get("x-requests-remaining") or events_resp.headers.get("x-request-remaining")
     events_fetched = 0
     skipped_pregame = 0
@@ -1652,7 +1783,7 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
         try:
             events_fetched += 1
             event_payload, resp = await _fetch_prop_market_for_event(
-                sport=sport,
+                sport=normalized_sport,
                 event_id=event_id,
                 markets=target_markets,
                 source=source,
@@ -1672,8 +1803,22 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
             )
         except Exception:
             player_context_lookup = {}
+        market_presence = _collect_prop_market_presence(
+            bookmakers=event_payload.get("bookmakers") or [],
+            target_markets=target_markets,
+        )
+        if market_presence["has_provider_markets"]:
+            events_with_provider_markets += 1
+        if market_presence["has_supported_book_markets"]:
+            events_with_supported_book_markets += 1
+        if market_presence["has_provider_markets"] and not market_presence["has_supported_book_markets"]:
+            events_provider_only += 1
+        for market_key in market_presence["provider_markets"]:
+            provider_market_event_counts[market_key] = provider_market_event_counts.get(market_key, 0) + 1
+        for market_key in market_presence["supported_book_markets"]:
+            supported_book_market_event_counts[market_key] = supported_book_market_event_counts.get(market_key, 0) + 1
         event_candidates = _build_prop_side_candidates(
-            sport=sport,
+            sport=normalized_sport,
             event_payload=event_payload,
             target_markets=target_markets,
             player_context_lookup=player_context_lookup,
@@ -1692,11 +1837,13 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
         remaining = resp.headers.get("x-requests-remaining") or resp.headers.get("x-request-remaining") or remaining
 
     logger.info(
-        "player_props.scan.completed sport=%s source=%s matched_events=%s events_fetched=%s events_with_results=%s candidate_sides=%s quality_gate_filtered=%s min_reference_books=%s sides=%s skipped_pregame=%s api_requests_remaining=%s",
-        sport,
+        "player_props.scan.completed sport=%s source=%s matched_events=%s events_fetched=%s provider_markets=%s supported_markets=%s events_with_results=%s candidate_sides=%s quality_gate_filtered=%s min_reference_books=%s sides=%s skipped_pregame=%s api_requests_remaining=%s",
+        normalized_sport,
         source,
         len(matched_events),
         events_fetched,
+        events_with_provider_markets,
+        events_with_supported_book_markets,
         events_with_any_book,
         candidate_sides_count,
         quality_gate_filtered_count,
@@ -1734,6 +1881,9 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
         "fallback_event_count": fallback_event_count,
         "events_fetched": events_fetched,
         "events_skipped_pregame": skipped_pregame,
+        "events_with_provider_markets": events_with_provider_markets,
+        "events_with_supported_book_markets": events_with_supported_book_markets,
+        "events_provider_only": events_provider_only,
         "events_with_results": events_with_any_book,
         "candidate_sides_count": candidate_sides_count,
         "quality_gate_filtered_count": quality_gate_filtered_count,
@@ -1742,6 +1892,8 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
         "sides_count": len(all_sides),
         "pickem_cards_count": len(pickem_cards),
         "markets_requested": target_markets,
+        "provider_market_event_counts": provider_market_event_counts,
+        "supported_book_market_event_counts": supported_book_market_event_counts,
         "prizepicks_status": prizepicks_status,
         "prizepicks_message": prizepicks_message,
         "prizepicks_board_items_count": prizepicks_board_items_count,
@@ -1774,6 +1926,12 @@ async def scan_player_props_for_event_ids(
     Used by the daily-board publisher (totals-driven selection), so it bypasses
     the ESPN-scoreboard curated matching logic entirely.
     """
+    normalized_sport = str(sport or "").strip().lower()
+    if normalized_sport not in get_supported_player_prop_sports():
+        raise ValueError(
+            f"Unsupported player-prop sport '{sport}'. "
+            f"Choose from: {', '.join(get_supported_player_prop_sports())}"
+        )
     if not event_ids:
         return {
             "surface": PLAYER_PROPS_SURFACE,
@@ -1795,6 +1953,9 @@ async def scan_player_props_for_event_ids(
                 "fallback_event_count": 0,
                 "events_fetched": 0,
                 "events_skipped_pregame": 0,
+                "events_with_provider_markets": 0,
+                "events_with_supported_book_markets": 0,
+                "events_provider_only": 0,
                 "events_with_results": 0,
                 "candidate_sides_count": 0,
                 "quality_gate_filtered_count": 0,
@@ -1803,6 +1964,8 @@ async def scan_player_props_for_event_ids(
                 "sides_count": 0,
                 "pickem_cards_count": 0,
                 "markets_requested": markets,
+                "provider_market_event_counts": _empty_prop_market_event_counts(markets),
+                "supported_book_market_event_counts": _empty_prop_market_event_counts(markets),
                 "prizepicks_status": "disabled",
                 "prizepicks_message": None,
                 "prizepicks_board_items_count": 0,
@@ -1812,7 +1975,7 @@ async def scan_player_props_for_event_ids(
             },
         }
 
-    target_markets = markets or get_player_prop_markets()
+    target_markets = markets or _resolve_scan_player_prop_markets(normalized_sport)
     min_reference_bookmakers = get_player_prop_min_reference_bookmakers()
     pickem_min_reference_bookmakers = get_player_prop_pickem_min_reference_bookmakers()
     weight_overrides = get_player_prop_weight_overrides()
@@ -1820,6 +1983,11 @@ async def scan_player_props_for_event_ids(
 
     all_sides: list[dict] = []
     events_with_any_book = 0
+    events_with_provider_markets = 0
+    events_with_supported_book_markets = 0
+    events_provider_only = 0
+    provider_market_event_counts = _empty_prop_market_event_counts(target_markets)
+    supported_book_market_event_counts = _empty_prop_market_event_counts(target_markets)
     events_fetched = 0
     skipped_pregame = 0
     candidate_sides_count = 0
@@ -1834,7 +2002,7 @@ async def scan_player_props_for_event_ids(
         try:
             events_fetched += 1
             event_payload, resp = await _fetch_prop_market_for_event(
-                sport=sport,
+                sport=normalized_sport,
                 event_id=event_id,
                 markets=target_markets,
                 source=source,
@@ -1852,8 +2020,23 @@ async def scan_player_props_for_event_ids(
                 skipped_pregame += 1
                 continue
 
+        market_presence = _collect_prop_market_presence(
+            bookmakers=event_payload.get("bookmakers") or [],
+            target_markets=target_markets,
+        )
+        if market_presence["has_provider_markets"]:
+            events_with_provider_markets += 1
+        if market_presence["has_supported_book_markets"]:
+            events_with_supported_book_markets += 1
+        if market_presence["has_provider_markets"] and not market_presence["has_supported_book_markets"]:
+            events_provider_only += 1
+        for market_key in market_presence["provider_markets"]:
+            provider_market_event_counts[market_key] = provider_market_event_counts.get(market_key, 0) + 1
+        for market_key in market_presence["supported_book_markets"]:
+            supported_book_market_event_counts[market_key] = supported_book_market_event_counts.get(market_key, 0) + 1
+
         event_candidates = _build_prop_side_candidates(
-            sport=sport,
+            sport=normalized_sport,
             event_payload=event_payload,
             target_markets=target_markets,
             player_context_lookup=None,
@@ -1886,6 +2069,9 @@ async def scan_player_props_for_event_ids(
         "fallback_event_count": 0,
         "events_fetched": events_fetched,
         "events_skipped_pregame": skipped_pregame,
+        "events_with_provider_markets": events_with_provider_markets,
+        "events_with_supported_book_markets": events_with_supported_book_markets,
+        "events_provider_only": events_provider_only,
         "events_with_results": events_with_any_book,
         "candidate_sides_count": candidate_sides_count,
         "quality_gate_filtered_count": quality_gate_filtered_count,
@@ -1894,6 +2080,8 @@ async def scan_player_props_for_event_ids(
         "sides_count": len(all_sides),
         "pickem_cards_count": len(pickem_cards),
         "markets_requested": target_markets,
+        "provider_market_event_counts": provider_market_event_counts,
+        "supported_book_market_event_counts": supported_book_market_event_counts,
         "prizepicks_status": "disabled",
         "prizepicks_message": None,
         "prizepicks_board_items_count": 0,
@@ -1914,12 +2102,174 @@ async def scan_player_props_for_event_ids(
     }
 
 
+def _merge_api_requests_remaining(values: list[str | None]) -> str | None:
+    remaining_values = [value for value in values if value is not None]
+    if not remaining_values:
+        return None
+
+    numeric_values: list[int] = []
+    for value in remaining_values:
+        try:
+            numeric_values.append(int(str(value)))
+        except (TypeError, ValueError):
+            return str(value)
+
+    return str(min(numeric_values)) if numeric_values else None
+
+
+def merge_player_prop_scan_results(
+    *results_by_sport: tuple[str, dict],
+    scan_mode: str = "multi_sport",
+    scan_scope: str = "all_supported_sports",
+) -> dict:
+    all_sides: list[dict] = []
+    all_pickem_cards: list[dict] = []
+    all_prizepicks_cards: list[dict] = []
+    diagnostics_by_sport: dict[str, dict] = {}
+    sports_scanned: list[str] = []
+    markets_requested: set[str] = set()
+    events_fetched = 0
+    events_with_both_books = 0
+    events_skipped_pregame = 0
+    events_with_results = 0
+    events_with_provider_markets = 0
+    events_with_supported_book_markets = 0
+    events_provider_only = 0
+    candidate_sides_count = 0
+    quality_gate_filtered_count = 0
+    scoreboard_event_count = 0
+    odds_event_count = 0
+    matched_event_count = 0
+    unmatched_game_count = 0
+    fallback_event_count = 0
+    quality_gate_min_reference_bookmakers = 0
+    pickem_quality_gate_min_reference_bookmakers = 0
+    fallback_reason_parts: list[str] = []
+    curated_games: list[dict] = []
+    remaining_values: list[str | None] = []
+    provider_market_event_counts: dict[str, int] = {}
+    supported_book_market_event_counts: dict[str, int] = {}
+
+    for sport_key, result in results_by_sport:
+        sport = str(sport_key or "").strip().lower()
+        if not sport or not isinstance(result, dict):
+            continue
+        sports_scanned.append(sport)
+        all_sides.extend([side for side in (result.get("sides") or []) if isinstance(side, dict)])
+        all_pickem_cards.extend([card for card in (result.get("pickem_cards") or []) if isinstance(card, dict)])
+        all_prizepicks_cards.extend([card for card in (result.get("prizepicks_cards") or []) if isinstance(card, dict)])
+        events_fetched += int(result.get("events_fetched") or 0)
+        events_with_both_books += int(result.get("events_with_both_books") or 0)
+        remaining_values.append(result.get("api_requests_remaining"))
+
+        diagnostics = result.get("diagnostics") if isinstance(result.get("diagnostics"), dict) else {}
+        diagnostics_by_sport[sport] = diagnostics
+        markets_requested.update(
+            str(market).strip()
+            for market in (diagnostics.get("markets_requested") or [])
+            if str(market).strip()
+        )
+        scoreboard_event_count += int(diagnostics.get("scoreboard_event_count") or 0)
+        odds_event_count += int(diagnostics.get("odds_event_count") or 0)
+        matched_event_count += int(diagnostics.get("matched_event_count") or 0)
+        unmatched_game_count += int(diagnostics.get("unmatched_game_count") or 0)
+        fallback_event_count += int(diagnostics.get("fallback_event_count") or 0)
+        events_skipped_pregame += int(diagnostics.get("events_skipped_pregame") or 0)
+        events_with_provider_markets += int(diagnostics.get("events_with_provider_markets") or 0)
+        events_with_supported_book_markets += int(diagnostics.get("events_with_supported_book_markets") or 0)
+        events_provider_only += int(diagnostics.get("events_provider_only") or 0)
+        events_with_results += int(diagnostics.get("events_with_results") or 0)
+        candidate_sides_count += int(diagnostics.get("candidate_sides_count") or 0)
+        quality_gate_filtered_count += int(diagnostics.get("quality_gate_filtered_count") or 0)
+        quality_gate_min_reference_bookmakers = max(
+            quality_gate_min_reference_bookmakers,
+            int(diagnostics.get("quality_gate_min_reference_bookmakers") or 0),
+        )
+        pickem_quality_gate_min_reference_bookmakers = max(
+            pickem_quality_gate_min_reference_bookmakers,
+            int(diagnostics.get("pickem_quality_gate_min_reference_bookmakers") or 0),
+        )
+        curated_games.extend(
+            [game for game in (diagnostics.get("curated_games") or []) if isinstance(game, dict)]
+        )
+        for market, count in (diagnostics.get("provider_market_event_counts") or {}).items():
+            normalized_market = str(market).strip()
+            if not normalized_market:
+                continue
+            provider_market_event_counts[normalized_market] = (
+                provider_market_event_counts.get(normalized_market, 0) + int(count or 0)
+            )
+        for market, count in (diagnostics.get("supported_book_market_event_counts") or {}).items():
+            normalized_market = str(market).strip()
+            if not normalized_market:
+                continue
+            supported_book_market_event_counts[normalized_market] = (
+                supported_book_market_event_counts.get(normalized_market, 0) + int(count or 0)
+            )
+        reason = str(diagnostics.get("fallback_reason") or "").strip()
+        if reason:
+            fallback_reason_parts.append(f"{sport}: {reason}")
+
+    merged_sport = sports_scanned[0] if len(sports_scanned) == 1 else "all"
+    diagnostics = {
+        "scan_mode": scan_mode,
+        "scan_scope": scan_scope,
+        "scoreboard_event_count": scoreboard_event_count,
+        "odds_event_count": odds_event_count,
+        "curated_games": curated_games,
+        "matched_event_count": matched_event_count,
+        "unmatched_game_count": unmatched_game_count,
+        "fallback_reason": " | ".join(fallback_reason_parts) or None,
+        "fallback_event_count": fallback_event_count,
+        "events_fetched": events_fetched,
+        "events_skipped_pregame": events_skipped_pregame,
+        "events_with_provider_markets": events_with_provider_markets,
+        "events_with_supported_book_markets": events_with_supported_book_markets,
+        "events_provider_only": events_provider_only,
+        "events_with_results": events_with_results,
+        "candidate_sides_count": candidate_sides_count,
+        "quality_gate_filtered_count": quality_gate_filtered_count,
+        "quality_gate_min_reference_bookmakers": quality_gate_min_reference_bookmakers,
+        "pickem_quality_gate_min_reference_bookmakers": pickem_quality_gate_min_reference_bookmakers,
+        "sides_count": len(all_sides),
+        "pickem_cards_count": len(all_pickem_cards),
+        "markets_requested": sorted(markets_requested),
+        "provider_market_event_counts": dict(sorted(provider_market_event_counts.items())),
+        "supported_book_market_event_counts": dict(sorted(supported_book_market_event_counts.items())),
+        "prizepicks_status": "disabled",
+        "prizepicks_message": None,
+        "prizepicks_board_items_count": len(all_prizepicks_cards),
+        "prizepicks_exact_line_matches_count": 0,
+        "prizepicks_unmatched_count": 0,
+        "prizepicks_filtered_count": 0,
+        "sports_scanned": sports_scanned,
+        "by_sport": diagnostics_by_sport,
+    }
+    return {
+        "surface": PLAYER_PROPS_SURFACE,
+        "sport": merged_sport,
+        "sides": all_sides,
+        "pickem_cards": all_pickem_cards,
+        "prizepicks_cards": all_prizepicks_cards,
+        "events_fetched": events_fetched,
+        "events_with_both_books": events_with_both_books,
+        "api_requests_remaining": _merge_api_requests_remaining(remaining_values),
+        "diagnostics": diagnostics,
+    }
+
+
 async def get_cached_or_scan_player_props(sport: str, source: str = "unknown") -> dict:
-    slot = _prop_cache_slot(sport)
+    normalized_sport = str(sport or "").strip().lower()
+    if normalized_sport not in get_supported_player_prop_sports():
+        raise ValueError(
+            f"Unsupported player-prop sport '{sport}'. "
+            f"Choose from: {', '.join(get_supported_player_prop_sports())}"
+        )
+    slot = _prop_cache_slot(normalized_sport)
     bypass_cache = _should_bypass_prop_cache(source)
-    if sport not in _props_locks:
-        _props_locks[sport] = asyncio.Lock()
-    async with _props_locks[sport]:
+    if normalized_sport not in _props_locks:
+        _props_locks[normalized_sport] = asyncio.Lock()
+    async with _props_locks[normalized_sport]:
         now = time.time()
         if not bypass_cache:
             shared_entry = get_scan_cache(slot)
@@ -1934,7 +2284,7 @@ async def get_cached_or_scan_player_props(sport: str, source: str = "unknown") -
                 if (now - entry["fetched_at"]) < CACHE_TTL_SECONDS:
                     return {**entry, "cache_hit": True}
 
-        result = await scan_player_props(sport, source=source)
+        result = await scan_player_props(normalized_sport, source=source)
         result["fetched_at"] = now
         _props_cache[slot] = result
         set_scan_cache(slot, result, CACHE_TTL_SECONDS)

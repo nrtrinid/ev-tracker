@@ -2394,12 +2394,195 @@ def _select_completed_event_for_bet(bet: dict, completed_events: list[dict]) -> 
     return candidates[0], "matched"
 
 
+def _normalize_surface_token(value: str | None) -> str:
+    return str(value or "").strip().lower()
+
+
+def _normalize_market_key_token(value: str | None) -> str:
+    return str(value or "").strip()
+
+
+def _is_auto_settle_supported_prop_selection(
+    *,
+    sport_key: str | None,
+    market_key: str | None,
+    participant_name: Any,
+    selection_side: Any,
+    line_value: Any,
+    commence_time: Any,
+) -> bool:
+    from services.prop_settler import is_auto_settle_supported_prop_market
+
+    normalized_sport = str(sport_key or "").strip().lower()
+    normalized_market = _normalize_market_key_token(market_key)
+    return (
+        is_auto_settle_supported_prop_market(normalized_sport, normalized_market)
+        and bool(participant_name)
+        and bool(selection_side)
+        and line_value is not None
+        and _parse_utc_iso(str(commence_time) if commence_time else None) is not None
+    )
+
+
+def _standalone_prop_requires_manual_settlement(bet: dict[str, Any]) -> bool:
+    if _normalize_surface_token(bet.get("surface")) != "player_props":
+        return False
+    return not _is_auto_settle_supported_prop_selection(
+        sport_key=bet.get("clv_sport_key"),
+        market_key=bet.get("source_market_key"),
+        participant_name=bet.get("participant_name"),
+        selection_side=bet.get("selection_side"),
+        line_value=bet.get("line_value"),
+        commence_time=bet.get("commence_time"),
+    )
+
+
+def _manual_only_prop_sports_for_parlay(
+    bet: dict[str, Any],
+    *,
+    now: datetime,
+) -> tuple[list[str], str | None]:
+    meta = bet.get("selection_meta")
+    if not isinstance(meta, dict):
+        return ([], None)
+    legs = meta.get("legs") or []
+    if not isinstance(legs, list) or not legs:
+        return ([], None)
+
+    sports: set[str] = set()
+    latest_commence: datetime | None = None
+    latest_commence_raw: str | None = None
+    for leg in legs:
+        if not isinstance(leg, dict):
+            continue
+        commence_raw = leg.get("commenceTime") or leg.get("commence_time")
+        commence_dt = _parse_utc_iso(str(commence_raw) if commence_raw else None)
+        if commence_dt is not None and (latest_commence is None or commence_dt > latest_commence):
+            latest_commence = commence_dt
+            latest_commence_raw = str(commence_raw)
+        if _normalize_surface_token(leg.get("surface")) != "player_props":
+            continue
+        if _is_auto_settle_supported_prop_selection(
+            sport_key=leg.get("sport"),
+            market_key=leg.get("marketKey") or leg.get("market_key"),
+            participant_name=leg.get("participantName") or leg.get("participant_name") or leg.get("display"),
+            selection_side=leg.get("selectionSide") or leg.get("selection_side"),
+            line_value=leg.get("lineValue") if leg.get("lineValue") is not None else leg.get("line_value"),
+            commence_time=commence_raw,
+        ):
+            continue
+        sport_key = str(leg.get("sport") or "").strip().lower() or "unknown"
+        sports.add(sport_key)
+
+    if latest_commence is not None and latest_commence > now:
+        return ([], latest_commence_raw)
+    return (sorted(sports), latest_commence_raw)
+
+
+def _record_manual_settlement_pending(
+    summary: dict[str, Any],
+    *,
+    sports: list[str],
+    bucket: str,
+    commence_time: str | None,
+) -> None:
+    normalized_sports = [sport for sport in sports if sport]
+    if not normalized_sports:
+        normalized_sports = ["unknown"]
+
+    summary[bucket] = int(summary.get(bucket) or 0) + 1
+    summary["total"] = int(summary.get("total") or 0) + 1
+
+    commence_dt = _parse_utc_iso(commence_time)
+    oldest_raw = summary.get("oldest_commence_time")
+    oldest_dt = _parse_utc_iso(oldest_raw) if isinstance(oldest_raw, str) else None
+    if commence_dt is not None and (oldest_dt is None or commence_dt < oldest_dt):
+        summary["oldest_commence_time"] = (
+            commence_dt.isoformat().replace("+00:00", "Z")
+        )
+
+    by_sport = summary.setdefault("by_sport", {})
+    for sport_key in normalized_sports:
+        row = by_sport.setdefault(
+            sport_key,
+            {
+                "prop_bets": 0,
+                "parlays": 0,
+                "pickem_research": 0,
+                "total": 0,
+            },
+        )
+        row[bucket] = int(row.get(bucket) or 0) + 1
+        row["total"] = int(row.get("total") or 0) + 1
+
+
+def _summarize_manual_settlement_pending(
+    *,
+    standalone_bets: list[dict[str, Any]],
+    parlay_bets: list[dict[str, Any]],
+    pickem_pending_rows: list[dict[str, Any]],
+    now: datetime,
+) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "prop_bets": 0,
+        "parlays": 0,
+        "pickem_research": 0,
+        "total": 0,
+        "by_sport": {},
+        "oldest_commence_time": None,
+    }
+
+    for bet in standalone_bets:
+        if not _standalone_prop_requires_manual_settlement(bet):
+            continue
+        _record_manual_settlement_pending(
+            summary,
+            sports=[str(bet.get("clv_sport_key") or "").strip().lower() or "unknown"],
+            bucket="prop_bets",
+            commence_time=str(bet.get("commence_time") or "") or None,
+        )
+
+    for bet in parlay_bets:
+        sports, latest_commence = _manual_only_prop_sports_for_parlay(bet, now=now)
+        if not sports:
+            continue
+        _record_manual_settlement_pending(
+            summary,
+            sports=sports,
+            bucket="parlays",
+            commence_time=latest_commence,
+        )
+
+    for row in pickem_pending_rows:
+        sport_key = str(row.get("sport") or "").strip().lower()
+        if not sport_key:
+            continue
+        if _is_auto_settle_supported_prop_selection(
+            sport_key=sport_key,
+            market_key=row.get("market_key"),
+            participant_name=row.get("player_name"),
+            selection_side=row.get("selection_side"),
+            line_value=row.get("line_value"),
+            commence_time=row.get("commence_time"),
+        ):
+            continue
+        _record_manual_settlement_pending(
+            summary,
+            sports=[sport_key],
+            bucket="pickem_research",
+            commence_time=str(row.get("commence_time") or "") or None,
+        )
+
+    summary["by_sport"] = dict(sorted(summary.get("by_sport", {}).items()))
+    return summary
+
+
 async def run_auto_settler(db, source: str = "auto_settle") -> int:
     """
     Auto-Settler — runs once daily (APScheduler) or via ops trigger.
 
-    Grades pending bets: moneyline (The Odds API /scores), NBA player props
-    (ESPN boxscore), and parlays (per-leg ML + NBA props, combined result).
+    Grades pending bets: moneyline (The Odds API /scores), supported player props
+    via sport-specific boxscores, and parlays (per-leg ML + supported props).
     """
     from datetime import datetime, timezone
 
@@ -2461,7 +2644,7 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
     try:
         pickem_result = (
             db.table("pickem_research_observations")
-            .select("sport,commence_time,actual_result")
+            .select("sport,commence_time,actual_result,market_key,player_name,selection_side,line_value")
             .execute()
         )
         pickem_pending_rows = [
@@ -2478,6 +2661,13 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
 
     if not standalone_bets and not parlay_bets and not pickem_pending_rows:
         return 0
+
+    manual_settlement_pending = _summarize_manual_settlement_pending(
+        standalone_bets=standalone_bets,
+        parlay_bets=parlay_bets,
+        pickem_pending_rows=pickem_pending_rows,
+        now=now,
+    )
 
     sport_keys: set[str] = set()
     for bet in standalone_bets:
@@ -2631,9 +2821,18 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
         settled_at,
         source=source,
         now=now,
+        telemetry=prop_telemetry,
     )
 
-    combined_total = total_settled + props_settled + parlays_settled
+    combined_total = total_settled + props_settled + parlays_settled + pickem_research_settled
+
+    if int(manual_settlement_pending.get("total") or 0) > 0:
+        print(
+            "[Auto-Settler] manual settlement pending "
+            f"total={manual_settlement_pending.get('total')} "
+            f"by_sport={manual_settlement_pending.get('by_sport')} "
+            f"oldest={manual_settlement_pending.get('oldest_commence_time')}"
+        )
 
     global _LAST_AUTO_SETTLER_SUMMARY
     _LAST_AUTO_SETTLER_SUMMARY = {
@@ -2650,6 +2849,7 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
         "pickem_research_skipped": pickem_research_skipped,
         "score_fetch_errors": fetch_errors,
         "prop_settle_telemetry": prop_telemetry,
+        "manual_settlement_pending": manual_settlement_pending,
     }
 
     return combined_total

@@ -1,4 +1,5 @@
 import type { MarketSide } from "@/lib/types";
+import { formatPlayerPropSportLabel } from "@/lib/player-prop-markets";
 
 export type ScannerTimePreset = "all" | "starting_soon" | "today" | "tomorrow";
 export type ScannerRiskPreset = "any" | "safer" | "balanced";
@@ -11,6 +12,7 @@ export interface ScannerResultFilters {
   hideLongshots: boolean;
   hideAlreadyLogged: boolean;
   riskPreset: ScannerRiskPreset;
+  propSport: string;
   propMarket: string;
   propSide: "all" | "over" | "under";
 }
@@ -23,6 +25,7 @@ export function defaultScannerResultFilters(): ScannerResultFilters {
     hideLongshots: true,
     hideAlreadyLogged: false,
     riskPreset: "any",
+    propSport: "all",
     propMarket: "all",
     propSide: "all",
   };
@@ -103,9 +106,10 @@ function matchesRiskPreset(side: MarketSide, preset: ScannerRiskPreset): boolean
 
 function matchesPropFilters(
   side: MarketSide,
-  filters: Pick<ScannerResultFilters, "propMarket" | "propSide">
+  filters: Pick<ScannerResultFilters, "propSport" | "propMarket" | "propSide">
 ): boolean {
   if (side.surface !== "player_props") return true;
+  if (filters.propSport !== "all" && side.sport !== filters.propSport) return false;
   if (filters.propMarket !== "all" && side.market_key !== filters.propMarket) return false;
   if (filters.propSide !== "all" && side.selection_side !== filters.propSide) return false;
   return true;
@@ -168,6 +172,7 @@ export function describeScannerResultFilters(params: {
   if (filters.hideAlreadyLogged) chips.push("Hide Already Logged");
   if (filters.riskPreset === "safer") chips.push("Risk: Safer");
   if (filters.riskPreset === "balanced") chips.push("Risk: Balanced");
+  if (filters.propSport !== "all") chips.push(`Sport: ${formatPlayerPropSportLabel(filters.propSport)}`);
   if (filters.propMarket !== "all") chips.push(`Market: ${filters.propMarket.replaceAll("_", " ")}`);
   if (filters.propSide !== "all") chips.push(`Side: ${filters.propSide}`);
 
@@ -186,6 +191,7 @@ export function hasActiveScannerResultFilters(params: {
     filters.hideLongshots ||
     filters.hideAlreadyLogged ||
     filters.riskPreset !== "any" ||
+    filters.propSport !== "all" ||
     filters.propMarket !== "all" ||
     filters.propSide !== "all"
   );

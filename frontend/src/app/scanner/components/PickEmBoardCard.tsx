@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { formatPlayerPropMarketBadge } from "@/lib/player-prop-markets";
 import type { PickEmBoardCard as PickEmBoardCardType } from "../pickem-board";
 import { buildEventNicknameLabel } from "./event-nickname-label";
 
@@ -19,19 +20,6 @@ function formatGameTime(isoString: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
-}
-
-function formatMarketLabel(value: string) {
-  const key = value.trim();
-  const map: Record<string, string> = {
-    player_points: "PTS",
-    player_rebounds: "REB",
-    player_assists: "AST",
-    player_threes: "3PM",
-    player_points_rebounds_assists: "PRA",
-  };
-  if (map[key]) return map[key];
-  return value.replaceAll("_", " ").replace(/^player\s+/i, "");
 }
 
 function bookAbbrev(name: string | null | undefined): string {
@@ -68,7 +56,7 @@ export function PickEmBoardCard({
   const winningSide = card.consensus_side === "over" ? "Over" : "Under";
   const winningProbability =
     card.consensus_side === "over" ? card.consensus_over_prob : card.consensus_under_prob;
-  const marketLabel = formatMarketLabel(card.market);
+  const marketLabel = formatPlayerPropMarketBadge(card.market);
   const overIsWinner = card.consensus_over_prob >= card.consensus_under_prob;
   const underIsWinner = card.consensus_under_prob > card.consensus_over_prob;
 

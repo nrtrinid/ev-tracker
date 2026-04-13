@@ -31,6 +31,7 @@ import { useOnboardingHighlight } from "@/lib/onboarding-highlight";
 import { ONBOARDING_HIGHLIGHT_TARGETS } from "@/lib/onboarding-guidance";
 import { createClient } from "@/lib/supabase";
 import { expandTeamAliasSearchQuery, matchesTeamAliasSearch } from "@/lib/team-search-aliases";
+import { PLAYER_PROP_MARKET_OPTIONS, formatPlayerPropMarketLabel } from "@/lib/player-prop-markets";
 import { JourneyCoach } from "@/components/JourneyCoach";
 import { LogBetDrawer } from "@/components/LogBetDrawer";
 import { ONBOARDING_STEPS } from "@/lib/onboarding";
@@ -115,13 +116,6 @@ const PLAYER_PROP_BOOKS = ["Bovada", "BetOnline.ag", "DraftKings", "FanDuel", "B
 const STRAIGHT_BET_BOOKS = ["DraftKings", "FanDuel", "BetMGM", "Caesars", "ESPN Bet"];
 const DEFAULT_PLAYER_PROP_BOOKS = ["DraftKings", "FanDuel", "BetMGM", "Caesars", "Bovada", "BetOnline.ag"];
 const DEFAULT_STRAIGHT_BET_BOOKS = ["DraftKings", "FanDuel"];
-const PLAYER_PROP_MARKET_OPTIONS = [
-  "player_points",
-  "player_rebounds",
-  "player_assists",
-  "player_points_rebounds_assists",
-  "player_threes",
-];
 const PLAYER_PROP_PAGE_SIZE = 10;
 const PROMO_PLAYER_PROP_PAGE_SIZE = 200;
 
@@ -329,15 +323,7 @@ function sameStringSet(a: string[], b: string[]): boolean {
 }
 
 function formatMarketTypeLabel(market: string): string {
-  const normalized = market.startsWith("player_") ? market.slice("player_".length) : market;
-  const labels: Record<string, string> = {
-    points: "Points",
-    rebounds: "Rebounds",
-    assists: "Assists",
-    points_rebounds_assists: "PRA",
-    threes: "Threes",
-  };
-  return labels[normalized] ?? normalized.replaceAll("_", " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
+  return formatPlayerPropMarketLabel(market);
 }
 
 function parseFeaturedLines(gameContext: unknown): FeaturedSportBucket[] {
@@ -758,6 +744,7 @@ export default function MarketsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [timeFilter, setTimeFilter] = useState<BoardTimeFilter>("today");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [propSportFilter, setPropSportFilter] = useState<string>("all");
   const [propMarketFilter, setPropMarketFilter] = useState<string>("all");
   const [propSideFilter, setPropSideFilter] = useState<"all" | "over" | "under">("all");
   const [straightBetMarketFilter, setStraightBetMarketFilter] =
@@ -770,11 +757,13 @@ export default function MarketsPage() {
   const [playerPropsQueryFilters, setPlayerPropsQueryFilters] = useState<{
     books: string[];
     timeFilter: BoardTimeFilter;
+    sport: string;
     market: string;
     search: string;
   }>(() => ({
     books: [...DEFAULT_PLAYER_PROP_BOOKS].sort(),
     timeFilter: "today",
+    sport: "all",
     market: "all",
     search: "",
   }));
@@ -784,6 +773,7 @@ export default function MarketsPage() {
   const tzOffsetMinutes = useMemo(() => new Date().getTimezoneOffset(), []);
   const appliedPlayerPropsBooks = playerPropsQueryFilters.books;
   const appliedPlayerPropsTimeFilter = playerPropsQueryFilters.timeFilter;
+  const appliedPlayerPropsSportFilter = playerPropsQueryFilters.sport;
   const appliedPlayerPropsMarketFilter = playerPropsQueryFilters.market;
   const appliedPlayerPropsSearchQuery = playerPropsQueryFilters.search;
 
@@ -796,6 +786,7 @@ export default function MarketsPage() {
     pageSize: PLAYER_PROP_PAGE_SIZE,
     books: appliedPlayerPropsBooks,
     timeFilter: appliedPlayerPropsTimeFilter,
+    sport: appliedPlayerPropsSportFilter,
     market: appliedPlayerPropsMarketFilter,
     search: appliedPlayerPropsSearchQuery,
     tzOffsetMinutes,
@@ -806,6 +797,7 @@ export default function MarketsPage() {
     pageSize: primaryMode === "promos" ? PROMO_PLAYER_PROP_PAGE_SIZE : PLAYER_PROP_PAGE_SIZE,
     books: appliedPlayerPropsBooks,
     timeFilter: appliedPlayerPropsTimeFilter,
+    sport: appliedPlayerPropsSportFilter,
     market: appliedPlayerPropsMarketFilter,
     search: appliedPlayerPropsSearchQuery,
     tzOffsetMinutes,
@@ -816,6 +808,7 @@ export default function MarketsPage() {
     pageSize: PLAYER_PROP_PAGE_SIZE,
     books: appliedPlayerPropsBooks,
     timeFilter: appliedPlayerPropsTimeFilter,
+    sport: appliedPlayerPropsSportFilter,
     market: appliedPlayerPropsMarketFilter,
     search: appliedPlayerPropsSearchQuery,
     tzOffsetMinutes,
@@ -885,6 +878,7 @@ export default function MarketsPage() {
     const nextFilters = {
       books: [...selectedPropBooks].sort(),
       timeFilter,
+      sport: propSportFilter,
       market: propMarketFilter,
       search: normalizedPlayerPropsSearch,
     };
@@ -893,6 +887,7 @@ export default function MarketsPage() {
         if (
           sameStringSet(current.books, nextFilters.books) &&
           current.timeFilter === nextFilters.timeFilter &&
+          current.sport === nextFilters.sport &&
           current.market === nextFilters.market &&
           current.search === nextFilters.search
         ) {
@@ -902,7 +897,7 @@ export default function MarketsPage() {
       });
     }, 250);
     return () => window.clearTimeout(handle);
-  }, [selectedPropBooks, timeFilter, propMarketFilter, deferredPlayerPropsSearchQuery]);
+  }, [deferredPlayerPropsSearchQuery, propMarketFilter, propSportFilter, selectedPropBooks, timeFilter]);
 
   // ── Board freshness: realtime invalidation ───────────────────────────────
   // Subscribe to Supabase realtime for canonical board changes (surface=board)
@@ -985,7 +980,9 @@ export default function MarketsPage() {
       source_total: lastPage.source_total,
       has_more: lastPage.has_more,
       scanned_at: lastPage.scanned_at,
+      available_books: lastPage.available_books,
       available_markets: lastPage.available_markets,
+      available_sports: lastPage.available_sports,
     };
   }, [playerPropsBrowse.data, playerPropsOpportunities.data, primaryMode, viewMode]);
 
@@ -1000,7 +997,9 @@ export default function MarketsPage() {
       source_total: lastPage.source_total,
       has_more: lastPage.has_more,
       scanned_at: lastPage.scanned_at,
+      available_books: lastPage.available_books,
       available_markets: lastPage.available_markets,
+      available_sports: lastPage.available_sports,
     };
   }, [playerPropsPickem.data, viewMode]);
 
@@ -1266,7 +1265,9 @@ export default function MarketsPage() {
 
   const filteredSides = useMemo(() => {
     if (primaryMode === "player_props") {
-      return ((activePlayerPropsListPage?.items as MarketSide[]) ?? []);
+      const items = ((activePlayerPropsListPage?.items as MarketSide[]) ?? []);
+      if (propSportFilter === "all") return items;
+      return items.filter((side) => side.sport === propSportFilter);
     }
     const timeFiltered = rankedSides.filter((s) => matchesBoardTimeFilter(s.commence_time, timeFilter));
     const marketFiltered =
@@ -1289,7 +1290,7 @@ export default function MarketsPage() {
         "opponent_short" in s ? (s as { opponent_short?: string }).opponent_short : "",
       ]);
     });
-  }, [activePlayerPropsListPage?.items, rankedSides, searchQuery, straightBetMarketFilter, timeFilter, primaryMode]);
+  }, [activePlayerPropsListPage?.items, primaryMode, propSportFilter, rankedSides, searchQuery, straightBetMarketFilter, timeFilter]);
   const todayOpenCount = useMemo(
     () => (primaryMode === "player_props" ? 0 : rankedSides.filter((s) => matchesBoardTimeFilter(s.commence_time, "today")).length),
     [primaryMode, rankedSides],
@@ -1308,11 +1309,27 @@ export default function MarketsPage() {
     () =>
       pickEmCards.filter((card) => {
         if (primaryMode !== "player_props") return false;
+        if (propSportFilter !== "all" && card.sport !== propSportFilter) return false;
         if (propSideFilter !== "all" && card.consensus_side !== propSideFilter) return false;
         return true;
       }),
-    [pickEmCards, primaryMode, propSideFilter],
+    [pickEmCards, primaryMode, propSideFilter, propSportFilter],
   );
+  const availablePropSports = useMemo(() => {
+    if (primaryMode === "player_props") {
+      const sports = activePlayerPropsListPage?.available_sports ?? activePlayerPropsPickemPage?.available_sports;
+      if (Array.isArray(sports) && sports.length > 0) {
+        return sports;
+      }
+    }
+    const sports = new Set<string>();
+    for (const side of allSides) {
+      if (side.surface === "player_props" && side.sport) {
+        sports.add(side.sport);
+      }
+    }
+    return Array.from(sports).sort();
+  }, [activePlayerPropsListPage?.available_sports, activePlayerPropsPickemPage?.available_sports, allSides, primaryMode]);
   const availablePropMarkets = useMemo(() => {
     if (primaryMode === "player_props") {
       const markets = activePlayerPropsListPage?.available_markets ?? activePlayerPropsPickemPage?.available_markets;
@@ -1333,6 +1350,7 @@ export default function MarketsPage() {
   const activeFilterChips = useMemo(() => {
     const chips: string[] = [];
     const activeTimeFilter = primaryMode === "player_props" ? appliedPlayerPropsTimeFilter : timeFilter;
+    const activeSportFilter = primaryMode === "player_props" ? appliedPlayerPropsSportFilter : propSportFilter;
     const activeMarketFilter = primaryMode === "player_props" ? appliedPlayerPropsMarketFilter : propMarketFilter;
     const activeSearchValue = primaryMode === "player_props" ? appliedPlayerPropsSearchQuery : searchQuery.trim();
     const activeBooks = primaryMode === "player_props" ? appliedPlayerPropsBooks : selectedBooks;
@@ -1349,8 +1367,11 @@ export default function MarketsPage() {
     if (!sameStringSet(activeBooks, defaultBooks)) {
       chips.push(`Books: ${activeBooks.length}`);
     }
+    if (primaryMode === "player_props" && activeSportFilter !== "all") {
+      chips.push(`Sport: ${SPORT_KEY_TO_DISPLAY[activeSportFilter] ?? activeSportFilter}`);
+    }
     if (primaryMode === "player_props" && activeMarketFilter !== "all") {
-      chips.push(`Market: ${activeMarketFilter.replaceAll("_", " ")}`);
+      chips.push(`Market: ${formatPlayerPropMarketLabel(activeMarketFilter)}`);
     }
     if (primaryMode === "straight_bets" && straightBetMarketFilter !== "all") {
       const label =
@@ -1372,11 +1393,13 @@ export default function MarketsPage() {
     appliedPlayerPropsBooks,
     appliedPlayerPropsMarketFilter,
     appliedPlayerPropsSearchQuery,
+    appliedPlayerPropsSportFilter,
     appliedPlayerPropsTimeFilter,
     isPickEmView,
     primaryMode,
     propMarketFilter,
     propSideFilter,
+    propSportFilter,
     searchQuery,
     selectedBooks,
     straightBetMarketFilter,
@@ -1385,6 +1408,7 @@ export default function MarketsPage() {
 
   const resetFilters = () => {
     setTimeFilter("today");
+    setPropSportFilter("all");
     setPropMarketFilter("all");
     setPropSideFilter("all");
     setStraightBetMarketFilter("all");
@@ -1983,6 +2007,40 @@ export default function MarketsPage() {
                         )}
                       >
                         {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {primaryMode === "player_props" && (
+                <div>
+                  <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Sport</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setPropSportFilter("all")}
+                      className={cn(
+                        "rounded-md border px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95",
+                        propSportFilter === "all"
+                          ? "border-primary/40 bg-primary/10 text-foreground"
+                          : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
+                      )}
+                    >
+                      All
+                    </button>
+                    {availablePropSports.map((sport) => (
+                      <button
+                        key={sport}
+                        type="button"
+                        onClick={() => setPropSportFilter(sport)}
+                        className={cn(
+                          "rounded-md border px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95",
+                          propSportFilter === sport
+                            ? "border-primary/40 bg-primary/10 text-foreground"
+                            : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
+                        )}
+                      >
+                        {SPORT_KEY_TO_DISPLAY[sport] ?? sport}
                       </button>
                     ))}
                   </div>
