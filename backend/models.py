@@ -307,8 +307,13 @@ class StraightBetSide(BaseModel):
     sportsbook_deeplink_level: ScannerDeeplinkLevel | None = None
     sport: str
     event: str
+    event_short: str | None = None
     commence_time: str
     team: str
+    team_short: str | None = None
+    opponent_short: str | None = None
+    selection_side: str | None = None
+    line_value: float | None = None
     pinnacle_odds: float
     book_odds: float
     true_prob: float

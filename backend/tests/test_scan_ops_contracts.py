@@ -158,6 +158,8 @@ def test_scan_markets_contract_shape_with_duplicate_fields(auth_client, auth_hea
             "sides": [
                 {
                     "event_id": "evt-123",
+                    "market_key": "spreads",
+                    "selection_key": "evt-123|spreads|lakers|-1.5",
                     "sportsbook": "DraftKings",
                     "sportsbook_deeplink_url": "https://sportsbook.example/dk/event/evt-123",
                     "sportsbook_deeplink_level": "event",
@@ -165,6 +167,8 @@ def test_scan_markets_contract_shape_with_duplicate_fields(auth_client, auth_hea
                     "event": "Lakers @ Warriors",
                     "commence_time": "2026-03-20T18:00:00Z",
                     "team": "Lakers",
+                    "selection_side": "home",
+                    "line_value": -1.5,
                     "pinnacle_odds": 110,
                     "book_odds": 120,
                     "true_prob": 0.51,

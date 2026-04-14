@@ -10,6 +10,8 @@
       "event": "Celtics @ Knicks",
       "commence_time": "2026-03-21T01:00:00Z",
       "team": "Celtics",
+      "selection_side": "home",
+      "line_value": -1.5,
       "pinnacle_odds": 105,
       "book_odds": 115,
       "true_prob": 0.5,
