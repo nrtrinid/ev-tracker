@@ -5,21 +5,16 @@ import { Card, CardContent } from "@/components/ui/card";
 import type { PrizePicksComparisonCard as PrizePicksComparisonCardType } from "@/lib/types";
 import { formatOdds } from "@/lib/utils";
 import { buildEventNicknameLabel } from "./event-nickname-label";
+import {
+  abbreviateSportsbookLabel,
+  formatScannerGameTime,
+  formatScannerProbabilityPercent,
+} from "./scanner-card-utils";
 
 interface PrizePicksComparisonCardProps {
   card: PrizePicksComparisonCardType;
   bookColors: Record<string, string>;
   sportDisplayMap: Record<string, string>;
-}
-
-function formatGameTime(isoString: string): string {
-  if (!isoString) return "";
-  const date = new Date(isoString);
-  return date.toLocaleDateString("en-US", {
-    weekday: "short",
-    hour: "numeric",
-    minute: "2-digit",
-  });
 }
 
 function formatMarketLabel(value: string): string {
@@ -29,23 +24,6 @@ function formatMarketLabel(value: string): string {
 function formatConfidenceLabel(label: string | null | undefined): string {
   const normalized = (label || "thin").trim().toLowerCase();
   return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : "Thin";
-}
-
-function bookAbbrev(name: string | null | undefined): string {
-  const map: Record<string, string> = {
-    DraftKings: "DK",
-    FanDuel: "FD",
-    BetMGM: "MGM",
-    Caesars: "CZR",
-    Bovada: "BVD",
-    "BetOnline.ag": "BOL",
-  };
-  const label = String(name || "").trim();
-  return map[label] || label || "Book";
-}
-
-function percentLabel(value: number): string {
-  return `${Math.round(value * 100)}%`;
 }
 
 export function PrizePicksComparisonCard({
@@ -84,7 +62,7 @@ export function PrizePicksComparisonCard({
 
             <p className="line-clamp-1 text-xs text-muted-foreground">{buildEventNicknameLabel(card.event)}</p>
             <p className="text-[11px] text-muted-foreground">
-              Sportsbook consensus leans {lean} at {percentLabel(leanProbability)} on this exact line.
+              Sportsbook consensus leans {lean} at {formatScannerProbabilityPercent(leanProbability)} on this exact line.
             </p>
           </div>
 
@@ -100,9 +78,9 @@ export function PrizePicksComparisonCard({
           <div className="rounded-lg border border-border/60 bg-background/80 px-3 py-2">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Consensus Over</p>
             <div className="mt-1 flex items-center justify-between gap-2">
-              <span className="text-sm font-semibold">{percentLabel(card.consensus_over_prob)}</span>
+              <span className="text-sm font-semibold">{formatScannerProbabilityPercent(card.consensus_over_prob)}</span>
               <span className="text-xs text-muted-foreground">
-                {card.best_over_sportsbook ? `${bookAbbrev(card.best_over_sportsbook)} ${formatOdds(card.best_over_odds ?? 0)}` : "No offer"}
+                {card.best_over_sportsbook ? `${abbreviateSportsbookLabel(card.best_over_sportsbook)} ${formatOdds(card.best_over_odds ?? 0)}` : "No offer"}
               </span>
             </div>
           </div>
@@ -110,9 +88,9 @@ export function PrizePicksComparisonCard({
           <div className="rounded-lg border border-border/60 bg-background/80 px-3 py-2">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Consensus Under</p>
             <div className="mt-1 flex items-center justify-between gap-2">
-              <span className="text-sm font-semibold">{percentLabel(card.consensus_under_prob)}</span>
+              <span className="text-sm font-semibold">{formatScannerProbabilityPercent(card.consensus_under_prob)}</span>
               <span className="text-xs text-muted-foreground">
-                {card.best_under_sportsbook ? `${bookAbbrev(card.best_under_sportsbook)} ${formatOdds(card.best_under_odds ?? 0)}` : "No offer"}
+                {card.best_under_sportsbook ? `${abbreviateSportsbookLabel(card.best_under_sportsbook)} ${formatOdds(card.best_under_odds ?? 0)}` : "No offer"}
               </span>
             </div>
           </div>
@@ -126,36 +104,36 @@ export function PrizePicksComparisonCard({
                 key={book}
                 className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white ${bookColors[book] || "bg-foreground"}`}
               >
-                {bookAbbrev(book)}
+                {abbreviateSportsbookLabel(book)}
               </span>
             ))}
-            <span>{formatGameTime(card.commence_time)}</span>
+            <span>{formatScannerGameTime(card.commence_time)}</span>
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row">
             {card.best_over_deeplink_url ? (
               <Button asChild variant="outline" className="h-10 flex-1 text-xs font-medium">
                 <a href={card.best_over_deeplink_url} target="_blank" rel="noopener noreferrer">
-                  Open Over at {bookAbbrev(card.best_over_sportsbook)}
+                  Open Over at {abbreviateSportsbookLabel(card.best_over_sportsbook)}
                   <ExternalLink className="ml-1 h-3.5 w-3.5" />
                 </a>
               </Button>
             ) : (
               <div className="flex h-10 flex-1 items-center justify-center rounded-md border border-border/60 px-3 text-xs text-muted-foreground">
-                Best Over: {card.best_over_sportsbook ? `${bookAbbrev(card.best_over_sportsbook)} ${formatOdds(card.best_over_odds ?? 0)}` : "Unavailable"}
+                Best Over: {card.best_over_sportsbook ? `${abbreviateSportsbookLabel(card.best_over_sportsbook)} ${formatOdds(card.best_over_odds ?? 0)}` : "Unavailable"}
               </div>
             )}
 
             {card.best_under_deeplink_url ? (
               <Button asChild variant="outline" className="h-10 flex-1 text-xs font-medium">
                 <a href={card.best_under_deeplink_url} target="_blank" rel="noopener noreferrer">
-                  Open Under at {bookAbbrev(card.best_under_sportsbook)}
+                  Open Under at {abbreviateSportsbookLabel(card.best_under_sportsbook)}
                   <ExternalLink className="ml-1 h-3.5 w-3.5" />
                 </a>
               </Button>
             ) : (
               <div className="flex h-10 flex-1 items-center justify-center rounded-md border border-border/60 px-3 text-xs text-muted-foreground">
-                Best Under: {card.best_under_sportsbook ? `${bookAbbrev(card.best_under_sportsbook)} ${formatOdds(card.best_under_odds ?? 0)}` : "Unavailable"}
+                Best Under: {card.best_under_sportsbook ? `${abbreviateSportsbookLabel(card.best_under_sportsbook)} ${formatOdds(card.best_under_odds ?? 0)}` : "Unavailable"}
               </div>
             )}
           </div>

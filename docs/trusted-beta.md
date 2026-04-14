@@ -38,51 +38,25 @@ The app can expose the invite link through `NEXT_PUBLIC_DISCORD_INVITE_URL`.
 - Pick'em validation is new and needs sample size before the metrics become decision-grade.
 - Some documentation remains operationally important because the product is moving faster than a fully packaged onboarding flow.
 
-## Beta Env Checklist
+## Release Prerequisites
 
-Before release, confirm:
+Use [DEPLOY.md](../DEPLOY.md#beta-env-checklist) as the canonical source for:
 
-- Backend / VPS
-  - `SUPABASE_URL`
-  - `SUPABASE_SERVICE_ROLE_KEY`
-  - `ODDS_API_KEY`
-  - `CRON_TOKEN`
-  - `BETA_INVITE_CODE`
-  - `OPS_ADMIN_EMAILS`
-  - `DISCORD_WEBHOOK_URL`
-  - `DISCORD_ALERT_WEBHOOK_URL`
-  - `DISCORD_DEBUG_WEBHOOK_URL`
-- Frontend / Vercel
-  - `NEXT_PUBLIC_API_URL`
-  - `BACKEND_BASE_URL`
-  - `NEXT_PUBLIC_SUPABASE_URL`
-  - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-  - `CRON_SECRET`
-  - `CRON_TOKEN`
-  - `BETA_INVITE_CODE`
-  - `OPS_ADMIN_EMAILS`
-  - `NEXT_PUBLIC_DISCORD_INVITE_URL`
-- Database
-  - all numbered migrations through `database/migration_020_beta_invite_code_access.sql`
-  - no pending schema changes that exist only under `backend/sql/`
+- backend/frontend release env values
+- migration parity through the numbered `database/migration_*.sql` chain
 
 ## Launch-Day Checklist
 
 1. Deploy `main` to Vercel and Hetzner.
-2. Confirm `/health` and `/ready`.
-3. Confirm `/api/ops/status` and `/api/ops/clv-debug`.
-4. Trigger:
-   - `POST /api/ops/trigger/test-discord`
-   - `POST /api/ops/trigger/test-discord-alert`
-  - Confirm both return `ok: true` and include a `run_id`
-  - Confirm backend logs show `[Discord] Webhook response: 2xx`
-5. Use a fresh beta account and verify:
+2. Run [DEPLOY.md](../DEPLOY.md#discord-verification-required) and confirm all checks pass.
+3. Confirm the production routes needed for tester support (`/health`, `/ready`, `/api/ops/status`) are healthy.
+4. Use a fresh beta account and verify:
    - sign up / sign in
    - home board loads
    - promos, game lines, and player props are understandable
    - a bet can be logged
    - settings and analytics load
-6. Log at least one straight bet and one player prop if possible.
+5. Log at least one straight bet and one player prop if possible.
 
 ## First 24-48 Hours
 

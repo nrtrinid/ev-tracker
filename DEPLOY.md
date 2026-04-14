@@ -80,13 +80,14 @@ curl -i http://5.78.192.196/ready
 ```bash
 curl -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/status
 curl -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/clv-debug
-curl -X POST -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/trigger/test-discord
-curl -X POST -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/trigger/test-discord-alert
 ```
+
+Use the release verification sequence below for trigger-based Discord checks.
 
 ## Discord Verification (Required)
 
-Run this sequence after every deploy and every Discord secret rotation:
+Run this sequence after every deploy and every Discord secret rotation.
+This is the canonical production verification sequence for health-sensitive release checks.
 
 ```bash
 curl -X POST -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/trigger/test-discord
@@ -105,6 +106,7 @@ Expected results:
 ## Beta Env Checklist
 
 Confirm these env values are present in the right place.
+Use this section as the canonical env checklist for trusted-beta releases.
 
 Backend / VPS:
 

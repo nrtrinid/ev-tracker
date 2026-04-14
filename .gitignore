@@ -52,6 +52,9 @@ ev-tracker/
 # AI Agent Instructions (personal use only)
 .github/copilot-instructions.md
 .kiro/
+AGENTS.md
+HANDOFF.md
+docs/design/agent-ui-rules.md
 
 # Secrets (NEVER commit)
 supabase keys

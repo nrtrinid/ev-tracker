@@ -13,6 +13,11 @@ import {
 } from "@/app/scanner/scanner-lenses";
 import { buildScannerActionModel } from "../scanner-ui-model";
 import { buildEventNicknameLabel } from "./event-nickname-label";
+import {
+  abbreviateSportsbookLabel,
+  formatScannerGameTime,
+  getScannerDuplicateBadge,
+} from "./scanner-card-utils";
 import { getStandardEdgeColorClass } from "./scanner-card-colors";
 
 interface PlayerPropCardProps {
@@ -26,53 +31,6 @@ interface PlayerPropCardProps {
   onStartPlaceFlow: (side: PlayerPropMarketSide) => void;
   bookColors: Record<string, string>;
   sportDisplayMap: Record<string, string>;
-}
-
-function formatGameTime(isoString: string): string {
-  if (!isoString) return "";
-  const date = new Date(isoString);
-  return date.toLocaleDateString("en-US", {
-    weekday: "short",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function bookAbbrev(name: string): string {
-  const map: Record<string, string> = {
-    DraftKings: "DK",
-    FanDuel: "FD",
-    BetMGM: "MGM",
-    Caesars: "CZR",
-    Bovada: "BVD",
-    "BetOnline.ag": "BOL",
-  };
-  return map[name] || name;
-}
-
-function getDuplicateBadge(duplicateState: PlayerPropMarketSide["scanner_duplicate_state"]) {
-  if (duplicateState === "better_now") {
-    return {
-      label: "Better Now",
-      className:
-        "rounded border border-profit/35 bg-profit/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-profit",
-    };
-  }
-  if (duplicateState === "already_logged") {
-    return {
-      label: "Already Placed",
-      className:
-        "rounded border border-loss/35 bg-loss/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-loss",
-    };
-  }
-  if (duplicateState === "logged_elsewhere") {
-    return {
-      label: "Logged Elsewhere",
-      className:
-        "rounded border border-primary/35 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground",
-    };
-  }
-  return null;
 }
 
 export function PlayerPropCard({
@@ -96,7 +54,7 @@ export function PlayerPropCard({
   });
 
   const duplicateState = side.scanner_duplicate_state ?? "new";
-  const duplicateBadge = getDuplicateBadge(duplicateState);
+  const duplicateBadge = getScannerDuplicateBadge(duplicateState, "legacy");
   const referenceBookCount = side.reference_bookmaker_count ?? side.reference_bookmakers?.length ?? 0;
 
   const boostedEV = side._boostedEV ?? calculateLensBoostedEV(side, boostPercent);
@@ -143,7 +101,7 @@ export function PlayerPropCard({
                 bookColors[side.sportsbook] || "bg-foreground"
               )}
             >
-              {bookAbbrev(side.sportsbook)}
+              {abbreviateSportsbookLabel(side.sportsbook, side.sportsbook)}
             </span>
             <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
               {sportDisplayMap[side.sport] || side.sport}
@@ -175,7 +133,7 @@ export function PlayerPropCard({
 
         {/* Row 2: matchup + game time */}
         <p className="mt-0.5 text-xs text-muted-foreground">
-          {buildEventNicknameLabel(side.event)} • {formatGameTime(side.commence_time)}
+          {buildEventNicknameLabel(side.event)} • {formatScannerGameTime(side.commence_time)}
         </p>
 
         {/* Row 3: book odds, fair odds, trust signal */}

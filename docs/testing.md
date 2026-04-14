@@ -36,6 +36,11 @@ These cover:
 - Discord routing and failure diagnostics
 - scanner / ops contract-shape drift
 
+Quick local readiness smoke (optional):
+
+- PowerShell: `Invoke-WebRequest -Uri http://localhost:8000/ready`
+- macOS/Linux: `curl -i http://localhost:8000/ready`
+
 #### Backend integration tests
 
 Prereqs:
@@ -85,7 +90,7 @@ The ops-access flow needs real non-admin credentials. The smoke flow needs a rea
 - performance and load behavior
 - CI-hosted Playwright
 
-### Trusted Beta Checklist
+### Operator Pre-Release Checks
 
 Before sharing `main` with testers:
 
@@ -94,16 +99,6 @@ Before sharing `main` with testers:
 - run backend integration tests against a dedicated test user
 - run frontend `build` and `tsc`
 - run Playwright smoke tests where credentials are available
-- confirm production has all numbered migrations through `database/migration_020_beta_invite_code_access.sql`
-- confirm no pending schema changes are living only under `backend/sql/`
-- trigger:
-  - `POST /api/ops/trigger/test-discord`
-  - `POST /api/ops/trigger/test-discord-alert`
-  - confirm both return `ok: true` (not `503`)
-  - confirm logs show `[Discord] Webhook response: 2xx`
-- manually verify:
-  - sign up / sign in
-  - home board loads
-  - promos, game lines, and player props make sense
-  - a bet can be logged and settled
-  - one straight bet and one player prop get watched through the next CLV close window
+- confirm migration parity and apply order via [database/README.md](../database/README.md)
+- run production health/ops/Discord verification via [DEPLOY.md](../DEPLOY.md#discord-verification-required)
+- run tester-facing launch checks via [docs/trusted-beta.md](./trusted-beta.md#launch-day-checklist)

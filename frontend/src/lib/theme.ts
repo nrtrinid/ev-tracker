@@ -1,8 +1,8 @@
 export type ThemePreference = "dark" | "light";
 
 export const THEME_STORAGE_KEY = "ev-tracker-theme";
-export const DEFAULT_THEME_PREFERENCE: ThemePreference = "dark";
 
+export const DEFAULT_THEME_PREFERENCE: ThemePreference = "light";
 export function normalizeThemePreference(value: string | null | undefined): ThemePreference {
   return value === "light" ? "light" : DEFAULT_THEME_PREFERENCE;
 }

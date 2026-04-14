@@ -25,6 +25,11 @@ import {
 import { useBets, useUpdateBetResult, useDeleteBet, useCreateBet, useBalances } from "@/lib/hooks";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EditBetModal } from "@/components/EditBetModal";
+import {
+  FilterChip,
+  SingleSelectFilterPills,
+} from "@/components/shared/FilterControls";
+import { FolderTabs } from "@/components/shared/FolderTabs";
 import type { Bet, BetResult, TutorialPracticeBet } from "@/lib/types";
 import { PROMO_TYPE_CONFIG } from "@/lib/types";
 import { getTrackerSourceLabel } from "@/lib/tracker-source";
@@ -1166,44 +1171,48 @@ export function BetList({
           </div>
           
           {/* Row 2: Full-width Tabs */}
-          <div className="flex gap-1 -mx-2 mb-2">
-            <button
-              className={cn(
-                "folder-tab flex-1 px-4 py-2.5 flex items-center justify-center gap-2",
-                activeTab === "pending" ? "folder-tab-active" : "folder-tab-inactive"
-              )}
-              onClick={() => updateTrackerView({ tab: "pending" })}
-            >
-              <Clock className="h-4 w-4" />
-              Open Bets
-              {visiblePendingCount > 0 && (
-                <span className={cn(
-                  "text-xs font-mono font-semibold px-1.5 rounded",
-                  activeTab === "pending"
-                    ? "bg-color-pending-subtle text-color-pending-fg"
-                    : "bg-color-pending-subtle/60 text-color-pending-fg/60"
-                )}>
-                  {visiblePendingCount}
-                </span>
-              )}
-            </button>
-            <button
-              className={cn(
-                "folder-tab flex-1 px-4 py-2.5 flex items-center justify-center gap-2",
-                activeTab === "history" ? "folder-tab-active" : "folder-tab-inactive"
-              )}
-              onClick={() => updateTrackerView({ tab: "history" })}
-            >
-              <History className="h-4 w-4" />
-              Past Bets
-              <span className={cn(
-                "text-xs font-mono",
-                activeTab === "history" ? "text-muted-foreground" : "text-muted-foreground/50"
-              )}>
-                ({settledBets.length})
-              </span>
-            </button>
-          </div>
+          <FolderTabs
+            className="-mx-2 mb-2"
+            triggerClassName="px-4 py-2.5"
+            value={activeTab}
+            onValueChange={(tab) => updateTrackerView({ tab })}
+            items={[
+              {
+                value: "pending",
+                content: (
+                  <>
+                    <Clock className="h-4 w-4" />
+                    Open Bets
+                    {visiblePendingCount > 0 && (
+                      <span className={cn(
+                        "text-xs font-mono font-semibold px-1.5 rounded",
+                        activeTab === "pending"
+                          ? "bg-color-pending-subtle text-color-pending-fg"
+                          : "bg-color-pending-subtle/60 text-color-pending-fg/60"
+                      )}>
+                        {visiblePendingCount}
+                      </span>
+                    )}
+                  </>
+                ),
+              },
+              {
+                value: "history",
+                content: (
+                  <>
+                    <History className="h-4 w-4" />
+                    Past Bets
+                    <span className={cn(
+                      "text-xs font-mono",
+                      activeTab === "history" ? "text-muted-foreground" : "text-muted-foreground/50"
+                    )}>
+                      ({settledBets.length})
+                    </span>
+                  </>
+                ),
+              },
+            ]}
+          />
           
           {/* Search Bar */}
           <div className="relative mb-2">
@@ -1231,23 +1240,25 @@ export function BetList({
             <div className="flex items-center gap-2 px-3 py-2 mb-2 rounded-lg bg-muted/50 border border-border">
               <div className="flex flex-wrap items-center gap-2 text-sm flex-1">
                 {selectedBook !== "all" && (
-                  <span className={cn(
-                    "px-2 py-0.5 rounded-full text-xs font-medium text-white",
-                    SPORTSBOOK_BADGE_COLORS[selectedBook] || "bg-foreground"
-                  )}>
+                  <FilterChip
+                    className={cn(
+                      "rounded-full border-transparent px-2 py-0.5 text-xs font-medium text-white",
+                      SPORTSBOOK_BADGE_COLORS[selectedBook] || "bg-foreground",
+                    )}
+                  >
                     {selectedBook}
-                  </span>
+                  </FilterChip>
                 )}
                 {sourceFilter !== "all" && (
-                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-muted-foreground/20 text-muted-foreground">
+                  <FilterChip className="rounded-full border-transparent px-2 py-0.5 text-xs font-medium bg-muted-foreground/20 text-muted-foreground">
                     {getTrackerSourceLabel(sourceFilter)}
-                  </span>
+                  </FilterChip>
                 )}
                 {searchQuery.trim() && (
-                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-primary/15 text-primary flex items-center gap-1">
+                  <FilterChip className="rounded-full border-transparent px-2 py-0.5 text-xs font-medium bg-primary/15 text-primary flex items-center gap-1">
                     <Search className="h-3 w-3" />
                     &quot;{searchQuery.trim()}&quot;
-                  </span>
+                  </FilterChip>
                 )}
                 {selectedBook !== "all" && selectedBalance && (
                   <span className="ml-auto text-xs text-muted-foreground">
@@ -1546,58 +1557,43 @@ export function BetList({
             {/* Sportsbook Selector - Horizontal Scroll */}
             <div>
               <span className="text-xs text-muted-foreground font-medium block mb-2">Sportsbook</span>
-              <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-                <button
-                  onClick={() => updateTrackerView({ sportsbook: "all" })}
-                  className={cn(
-                    "px-3 py-1.5 rounded-full text-sm font-medium transition-colors whitespace-nowrap shrink-0",
-                    selectedBook === "all"
-                      ? "bg-foreground text-background shadow-sm"
-                      : "bg-muted text-muted-foreground hover:bg-secondary"
-                  )}
-                >
-                  All Books
-                </button>
-                {uniqueBooks.map((book) => (
-                  <button
-                    key={book}
-                    onClick={() => updateTrackerView({ sportsbook: book })}
-                    className={cn(
-                      "px-3 py-1.5 rounded-full text-sm font-medium transition-colors whitespace-nowrap shrink-0",
-                      selectedBook === book
-                        ? `${SPORTSBOOK_BADGE_COLORS[book] || "bg-foreground"} text-white shadow-sm`
-                        : "bg-muted text-muted-foreground hover:bg-secondary"
-                    )}
-                  >
-                    {book}
-                  </button>
-                ))}
-              </div>
+              <SingleSelectFilterPills
+                value={selectedBook}
+                onValueChange={(value) => updateTrackerView({ sportsbook: value })}
+                options={[
+                  { value: "all", label: "All Books" },
+                  ...uniqueBooks.map((book) => ({ value: book, label: book })),
+                ]}
+                className="flex flex-nowrap gap-2 overflow-x-auto no-scrollbar pb-1"
+                baseButtonClassName="px-3 py-1.5 rounded-full text-sm font-medium transition-colors whitespace-nowrap shrink-0"
+                activeClassName="bg-foreground text-background shadow-sm"
+                inactiveClassName="bg-muted text-muted-foreground hover:bg-secondary"
+                getButtonClassName={(option, active) => {
+                  if (!active || option.value === "all") return undefined;
+                  return `${SPORTSBOOK_BADGE_COLORS[option.value] || "bg-foreground"} text-white shadow-sm`;
+                }}
+              />
             </div>
             
             {/* Source Selector - Horizontal Scroll */}
             <div>
               <span className="text-xs text-muted-foreground font-medium block mb-2">Source</span>
-              <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-                {([
+              <SingleSelectFilterPills
+                value={sourceFilter}
+                onValueChange={(value) => updateTrackerView({ source: value })}
+                options={([
                   { key: "all", label: "All Bets" },
                   { key: "core", label: "Core Bets" },
                   { key: "promos", label: "Promos" },
-                ] as const).map(({ key, label }) => (
-                  <button
-                    key={key}
-                    onClick={() => updateTrackerView({ source: key })}
-                    className={cn(
-                      "px-3 py-1.5 rounded-full text-sm font-medium transition-colors whitespace-nowrap shrink-0",
-                      sourceFilter === key
-                        ? "bg-foreground text-background shadow-sm"
-                        : "bg-muted text-muted-foreground hover:bg-secondary"
-                    )}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+                ] as const).map(({ key, label }) => ({
+                  value: key,
+                  label,
+                }))}
+                className="flex flex-nowrap gap-2 overflow-x-auto no-scrollbar pb-1"
+                baseButtonClassName="px-3 py-1.5 rounded-full text-sm font-medium transition-colors whitespace-nowrap shrink-0"
+                activeClassName="bg-foreground text-background shadow-sm"
+                inactiveClassName="bg-muted text-muted-foreground hover:bg-secondary"
+              />
             </div>
           </div>
           

@@ -141,6 +141,8 @@ The scanner pipeline is split into two client-side stages:
 1. Rank by active lens and selected books.
 2. Apply result filters such as Search, Time, Edge, and More controls.
 
+Promo lens definitions (Standard EV, Profit Boost, Bonus Bet, Qualifier) live in [promos.md](./promos.md).
+
 When result count is zero, the UI distinguishes:
 
 - `backend_empty`: source data has no lens results

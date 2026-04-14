@@ -124,7 +124,7 @@ Version labels use pre-release suffixes until the app is ready for outside users
 - **Tests**
   - Initial backend tests: `backend/tests/` (e.g. calculations, odds_api-related behavior).
 - **Docs**
-  - `docs/PROJECT_OVERVIEW_FOR_LLM.md` for LLM/onboarding context.
+  - Added initial LLM/onboarding context notes in project documentation.
 
 ### Changed
 

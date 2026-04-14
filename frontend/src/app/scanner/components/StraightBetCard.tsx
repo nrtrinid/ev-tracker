@@ -10,6 +10,11 @@ import { calculateStealthStake, cn, formatCurrency, formatOdds } from "@/lib/uti
 import { buildScannerActionModel, canAddScannerLensToParlayCart } from "../scanner-ui-model";
 import { buildStraightBetCardTitle } from "../straight-bet-labels";
 import { buildEventNicknameLabel } from "./event-nickname-label";
+import {
+  abbreviateSportsbookLabel,
+  formatScannerGameTime,
+  getScannerDuplicateBadge,
+} from "./scanner-card-utils";
 import { getStandardEdgeColorClass } from "./scanner-card-colors";
 
 interface StraightBetCardProps {
@@ -24,27 +29,6 @@ interface StraightBetCardProps {
   onStartPlaceFlow: (side: MarketSide) => void;
   bookColors: Record<string, string>;
   sportDisplayMap: Record<string, string>;
-}
-
-function formatGameTime(isoString: string): string {
-  if (!isoString) return "";
-  const date = new Date(isoString);
-  return date.toLocaleDateString("en-US", {
-    weekday: "short",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function bookAbbrev(name: string): string {
-  const map: Record<string, string> = {
-    DraftKings: "DK",
-    FanDuel: "FD",
-    BetMGM: "MGM",
-    Caesars: "CZR",
-    "ESPN Bet": "ESPN",
-  };
-  return map[name] || name;
 }
 
 function calculateBoostedEV(side: MarketSide, boostPercent: number): number {
@@ -66,31 +50,6 @@ function decimalToAmerican(decimal: number): number {
 
 function calculateRetention(side: MarketSide): number {
   return (side.book_decimal - 1) * side.true_prob;
-}
-
-function getDuplicateBadge(duplicateState: MarketSide["scanner_duplicate_state"]) {
-  if (duplicateState === "better_now") {
-    return {
-      label: "Better Now",
-      className:
-        "rounded border border-color-profit/35 bg-color-profit-subtle px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-color-profit-fg",
-    };
-  }
-  if (duplicateState === "already_logged") {
-    return {
-      label: "Already Placed",
-      className:
-        "rounded border border-color-loss/35 bg-color-loss-subtle px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-color-loss-fg",
-    };
-  }
-  if (duplicateState === "logged_elsewhere") {
-    return {
-      label: "Logged Elsewhere",
-      className:
-        "rounded border border-primary/30 bg-primary/8 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground",
-    };
-  }
-  return null;
 }
 
 function formatMarketBadge(marketKey: string): string {
@@ -121,7 +80,7 @@ export function StraightBetCard({
   });
 
   const duplicateState = side.scanner_duplicate_state ?? "new";
-  const duplicateBadge = getDuplicateBadge(duplicateState);
+  const duplicateBadge = getScannerDuplicateBadge(duplicateState);
   const isPlayerProp = side.surface === "player_props";
   const straightMarketKey = String(side.market_key || "h2h").toLowerCase();
   const cardTitle = isPlayerProp
@@ -185,7 +144,7 @@ export function StraightBetCard({
                   bookColors[side.sportsbook] || "bg-foreground"
                 )}
               >
-                {bookAbbrev(side.sportsbook)}
+                {abbreviateSportsbookLabel(side.sportsbook, side.sportsbook)}
               </span>
               <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                 {sportDisplayMap[side.sport] || side.sport}
@@ -217,7 +176,7 @@ export function StraightBetCard({
 
         {/* Row 2: matchup + game time */}
         <p className="mt-0.5 text-xs text-muted-foreground">
-          {buildEventNicknameLabel(side.event)} • {formatGameTime(side.commence_time)}
+          {buildEventNicknameLabel(side.event)} • {formatScannerGameTime(side.commence_time)}
         </p>
 
         {/* Row 3: book odds + fair odds + duplicate context */}
@@ -251,7 +210,7 @@ export function StraightBetCard({
         {tutorialMode ? (
           <div className="mt-1.5 border-t border-border/60 pt-1.5">
             <p className="mb-2 rounded border border-border bg-muted/50 px-2 py-1.5 text-[11px] text-muted-foreground">
-              Simulated tutorial line. Normally you would place this at {bookAbbrev(side.sportsbook)} first. For now, just open a practice log.
+              Simulated tutorial line. Normally you would place this at {abbreviateSportsbookLabel(side.sportsbook, side.sportsbook)} first. For now, just open a practice log.
             </p>
             <Button
               type="button"

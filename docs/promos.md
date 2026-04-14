@@ -8,6 +8,8 @@ These lens rules power:
 - home page `Promos`
 - any flow that ranks the same board-backed sides through boost, bonus-bet, or qualifier logic
 
+For scanner request/cache/runtime flow details, see [scanner.md](./scanner.md).
+
 ---
 
 ## Overview

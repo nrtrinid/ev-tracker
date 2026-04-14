@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -18,6 +18,7 @@ import {
 import { ChevronRight } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { MetricCard, MetricTile } from "@/components/shared/MetricCard";
 import {
   Sheet,
   SheetContent,
@@ -90,97 +91,6 @@ function formatCoverage(value: number | null): string | null {
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
-
-/**
- * Metric tile inside the verdict card.
- * Consistent padding, mono number, muted label — same rhythm as scanner cards.
- */
-function VerdictMetric({
-  label,
-  value,
-  valueClass,
-}: {
-  label: string;
-  value: string;
-  valueClass?: string;
-}) {
-  return (
-    <div className="rounded border border-border/40 bg-background/30 px-3 py-2.5">
-      <p className="text-[11px] text-muted-foreground">
-        {label}
-      </p>
-      <p className={cn("mt-1.5 font-mono text-xl font-semibold tabular-nums leading-none", valueClass)}>
-        {value}
-      </p>
-    </div>
-  );
-}
-
-/**
- * Top-level summary cards — bankroll / profit / at-risk.
- * Matches the compact density of scanner result cards.
- */
-function SummaryCard({
-  label,
-  value,
-  secondary,
-  valueClass,
-  onClick,
-  affordance,
-  ariaLabel,
-  triggerTestId,
-}: {
-  label: string;
-  value: string;
-  secondary?: string;
-  valueClass?: string;
-  onClick?: () => void;
-  affordance?: ReactNode;
-  ariaLabel?: string;
-  triggerTestId?: string;
-}) {
-  const inner = (
-    <CardContent className="px-3 py-3">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] text-muted-foreground">{label}</p>
-        {affordance}
-      </div>
-      <p className={cn("mt-1.5 font-mono text-lg font-semibold tabular-nums leading-none", valueClass)}>
-        {value}
-      </p>
-      {secondary ? (
-        <p className="mt-1.5 font-mono text-[11px] tabular-nums text-muted-foreground/70">
-          {secondary}
-        </p>
-      ) : null}
-    </CardContent>
-  );
-
-  if (!onClick) {
-    return (
-      <Card data-testid="summary-card" className="border-border/50">
-        {inner}
-      </Card>
-    );
-  }
-
-  return (
-    <button
-      type="button"
-      data-testid={triggerTestId}
-      aria-label={ariaLabel ?? `${label} details`}
-      onClick={onClick}
-      className="w-full rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background active:scale-[0.97] transition-transform duration-100"
-    >
-      <Card
-        data-testid="summary-card"
-        className="border-border/50 transition-colors hover:border-border hover:bg-muted/20 active:bg-muted/30"
-      >
-        {inner}
-      </Card>
-    </button>
-  );
-}
 
 /**
  * Chart filter pills — same visual language as the duplicate-state badges
@@ -590,15 +500,15 @@ function AnalyticsPageContent() {
                 </p>
 
                 <div className="mt-3.5 grid grid-cols-2 gap-2">
-                  <VerdictMetric
+                  <MetricTile
                     label="Profit"
                     value={formatSignedCurrency(model.profit)}
-                    valueClass={model.profit >= 0 ? "text-profit" : "text-loss"}
+                    valueClassName={model.profit >= 0 ? "text-profit" : "text-loss"}
                   />
-                  <VerdictMetric
+                  <MetricTile
                     label="EV Earned"
                     value={formatSignedCurrency(model.evEarned)}
-                    valueClass="text-primary"
+                    valueClassName="text-primary"
                   />
                 </div>
 
@@ -620,13 +530,14 @@ function AnalyticsPageContent() {
               className="grid grid-cols-3 gap-2 animate-slide-up"
               style={{ animationDelay: "60ms", animationFillMode: "both" }}
             >
-              <SummaryCard
+              <MetricCard
                 label="Bankroll"
                 value={model.bankroll === null ? "—" : formatCurrency(model.bankroll)}
                 secondary={formatWeeklyChange(model.sevenDayProfitChange)}
-                valueClass={model.bankroll !== null && model.bankroll < 0 ? "text-loss" : "text-foreground"}
+                valueClassName={model.bankroll !== null && model.bankroll < 0 ? "text-loss" : "text-foreground"}
                 onClick={() => setBankrollSheetOpen(true)}
                 ariaLabel="Open bankroll details"
+                dataTestId="summary-card"
                 triggerTestId="bankroll-summary-trigger"
                 affordance={
                   <span className="flex items-center gap-0.5 rounded bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
@@ -635,17 +546,19 @@ function AnalyticsPageContent() {
                   </span>
                 }
               />
-              <SummaryCard
+              <MetricCard
                 label="Bets Logged"
                 value={String(model.totalBetsLogged)}
                 secondary={`${model.settledBetsCount} settled`}
-                valueClass="text-foreground"
+                valueClassName="text-foreground"
+                dataTestId="summary-card"
               />
-              <SummaryCard
+              <MetricCard
                 label="At Risk"
                 value={formatCurrency(model.atRisk)}
                 secondary={`${formatSignedCurrency(model.pendingEv)} pending EV`}
-                valueClass="text-foreground"
+                valueClassName="text-foreground"
+                dataTestId="summary-card"
               />
             </section>
 

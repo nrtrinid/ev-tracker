@@ -6,7 +6,7 @@
 
 EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. It uses live odds from [The Odds API](https://the-odds-api.com) and Pinnacle as a sharp-line reference to surface positive expected value (+EV) opportunities across DraftKings, FanDuel, BetMGM, Caesars, and ESPN Bet — then gives you the math to size them.
 
-> **Status:** Trusted beta prep. `main` is the shareable branch for invited testers, with active iteration continuing on `dev`.
+> **Status:** Trusted beta (`v2.2.0-beta.1`). `main` is the stable branch for invited testers, with active iteration continuing on `dev`.
 
 ---
 
@@ -160,7 +160,8 @@ OPS_ADMIN_EMAILS=ops@example.com
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 DISCORD_ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...
 DISCORD_DEBUG_WEBHOOK_URL=https://discord.com/api/webhooks/...
-REDIS_URL=redis://localhost:6379/0
+# Optional: shared state backend for multi-instance rate-limit/cache coordination
+# REDIS_URL=redis://localhost:6379/0
 ALERT_DEDUPE_TTL_SECONDS=21600
 ```
 
@@ -186,6 +187,8 @@ Health endpoints:
 - `GET /ready` for readiness (Supabase env + DB connectivity + scheduler state/freshness)
 - `GET /api/ops/status` for operator status (requires `X-Ops-Token`)
 - `GET /api/ops/clv-debug` for CLV audit counts/samples across bets + research tracking (requires `X-Ops-Token`)
+
+For production verification (health, ops, and Discord checks), use [DEPLOY.md](./DEPLOY.md#discord-verification-required).
 
 Readiness scheduler freshness uses a startup grace window equal to each job's expected
 stale window, so a fresh deploy is not marked degraded before the first scheduled run.
@@ -234,17 +237,16 @@ Production / preview Vercel env:
 
 That keeps browser requests same-origin through the Next proxy while server-side bridge routes still forward to Hetzner directly. Once you provision a real HTTPS backend hostname, only `BACKEND_BASE_URL` needs to change.
 
-### Trusted beta checklist
+For the complete environment variable reference (including optional values), see [PROJECT.md](./PROJECT.md#environment-variables).
+
+### Trusted beta readiness
 
 Before inviting testers onto `main`:
 
-- Apply numbered database migrations in order through `database/migration_020_beta_invite_code_access.sql`
-- Treat `backend/sql/` as legacy reference only, not part of the normal bootstrap path
-- Confirm `BETA_INVITE_CODE`, `OPS_ADMIN_EMAILS`, cron secrets, and Discord webhook env vars are present in production
-- Use a short shared invite phrase for `BETA_INVITE_CODE`; formatting is forgiving, so `Daily Drop`, `daily-drop`, and `dailydrop` all match
-- Run both Discord validation routes and confirm alert/debug messages land in the right channels
-- Verify `/health`, `/ready`, and `/api/ops/status` after deploy
-- Smoke the main tester journey: sign up with the invite code, browse the board, log a bet, settle a bet, and confirm balances update
+- Confirm migration parity and apply-order rules in [database/README.md](./database/README.md)
+- Confirm backend/frontend release env values in [DEPLOY.md](./DEPLOY.md#beta-env-checklist)
+- Run the production verification sequence in [DEPLOY.md](./DEPLOY.md#discord-verification-required)
+- Run the tester-facing launch checks in [docs/trusted-beta.md](./docs/trusted-beta.md#launch-day-checklist)
 
 ### Internal operator console
 
@@ -291,10 +293,14 @@ A small but meaningful test suite protects EV math, settlement/profit logic, sch
 | [docs/promos.md](./docs/promos.md) | Math behind each promo lens |
 | [docs/player-props-v2.md](./docs/player-props-v2.md) | Curated props, pick'em board, quality gates, and board integration |
 | [docs/testing.md](./docs/testing.md) | Unit/integration/e2e strategy and hardening coverage |
-| [docs/trusted-beta.md](./docs/trusted-beta.md) | Trusted beta expectations, env checklist, and launch-day operator runbook |
+| [docs/trusted-beta.md](./docs/trusted-beta.md) | Trusted beta expectations, feedback flow, and launch-day checks |
 | [docs/workflow.md](./docs/workflow.md) | Lightweight stable-vs-dev workflow for solo shipping and beta testers |
+| [docs/secrets.md](./docs/secrets.md) | Secret rotation and local secret hygiene checks |
 | [PROJECT.md](./PROJECT.md) | Architecture, conventions, key decisions |
-| [DEPLOY.md](./DEPLOY.md) | VPS deploy, env reload, health check |
+| [DEPLOY.md](./DEPLOY.md) | VPS deploy, production verification sequence, and canonical beta env checklist |
+| [database/README.md](./database/README.md) | Canonical migration chain and schema parity workflow |
+| [AGENTS.md](./AGENTS.md) | Agent-facing repo conventions, guardrails, and fast validation commands |
+| [HANDOFF.md](./HANDOFF.md) | Current focus, recent changes, open risks, and next concrete tasks |
 
 ---
 
@@ -310,21 +316,15 @@ See [docs/workflow.md](./docs/workflow.md) for the lightweight workflow and pre-
 
 ## Design Docs
 
-UI direction and future design-agent guidance live here:
+UI direction lives here:
 
 - [docs/design/design-direction.md](./docs/design/design-direction.md)
-- [docs/design/agent-ui-rules.md](./docs/design/agent-ui-rules.md)
 
 ---
 
 ## Stack
 
-| Layer | Technology |
-|---|---|
-| Frontend | Next.js 14 (App Router), TypeScript, Tailwind CSS, shadcn/ui, React Query |
-| Backend | FastAPI, Python 3.11+, Pydantic, httpx |
-| Database | Supabase (PostgreSQL + Auth + RLS) |
-| Odds data | The Odds API v4 |
+Tech stack details live in [PROJECT.md](./PROJECT.md#tech-stack).
 
 ---
 

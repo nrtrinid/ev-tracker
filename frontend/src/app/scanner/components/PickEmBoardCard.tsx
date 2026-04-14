@@ -3,6 +3,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { formatPlayerPropMarketBadge } from "@/lib/player-prop-markets";
 import type { PickEmBoardCard as PickEmBoardCardType } from "../pickem-board";
 import { buildEventNicknameLabel } from "./event-nickname-label";
+import {
+  abbreviateSportsbookLabel,
+  formatScannerGameTime,
+  formatScannerProbabilityPercent,
+} from "./scanner-card-utils";
 
 interface PickEmBoardCardProps {
   card: PickEmBoardCardType;
@@ -10,33 +15,6 @@ interface PickEmBoardCardProps {
   sportDisplayMap: Record<string, string>;
   isAdded: boolean;
   onAddToSlip: (card: PickEmBoardCardType) => void;
-}
-
-function formatGameTime(isoString: string): string {
-  if (!isoString) return "";
-  const date = new Date(isoString);
-  return date.toLocaleDateString("en-US", {
-    weekday: "short",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function bookAbbrev(name: string | null | undefined): string {
-  const map: Record<string, string> = {
-    DraftKings: "DK",
-    FanDuel: "FD",
-    BetMGM: "MGM",
-    Caesars: "CZR",
-    Bovada: "BVD",
-    "BetOnline.ag": "BOL",
-  };
-  const label = String(name || "").trim();
-  return map[label] || label || "Book";
-}
-
-function percentLabel(value: number): string {
-  return `${Math.round(value * 100)}%`;
 }
 
 function formatLineValue(value: number): string {
@@ -81,11 +59,11 @@ export function PickEmBoardCard({
             <p className="text-sm font-semibold">{card.player_name}</p>
             <p className="line-clamp-1 text-xs text-muted-foreground">
               {buildEventNicknameLabel(card.event)}
-              <span className="ml-2 whitespace-nowrap">&bull; {formatGameTime(card.commence_time)}</span>
+              <span className="ml-2 whitespace-nowrap">&bull; {formatScannerGameTime(card.commence_time)}</span>
             </p>
             <p className="text-[11px] text-muted-foreground">
               Based on {card.exact_line_bookmaker_count} book{card.exact_line_bookmaker_count === 1 ? "" : "s"}, the
-              {" "}market gives the {winningSide} a {percentLabel(winningProbability)} chance.
+              {" "}market gives the {winningSide} a {formatScannerProbabilityPercent(winningProbability)} chance.
             </p>
           </div>
 
@@ -112,7 +90,7 @@ export function PickEmBoardCard({
               Over
             </span>
             <span className={`text-sm font-semibold ${overIsWinner ? "text-profit" : "text-muted-foreground"}`}>
-              {percentLabel(card.consensus_over_prob)}
+              {formatScannerProbabilityPercent(card.consensus_over_prob)}
             </span>
           </div>
 
@@ -127,7 +105,7 @@ export function PickEmBoardCard({
               Under
             </span>
             <span className={`text-sm font-semibold ${underIsWinner ? "text-profit" : "text-muted-foreground"}`}>
-              {percentLabel(card.consensus_under_prob)}
+              {formatScannerProbabilityPercent(card.consensus_under_prob)}
             </span>
           </div>
         </div>
@@ -139,7 +117,7 @@ export function PickEmBoardCard({
                 key={book}
                 className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white ${bookColors[book] || "bg-foreground"}`}
               >
-                {bookAbbrev(book)}
+                {abbreviateSportsbookLabel(book)}
               </span>
             ))}
           </div>

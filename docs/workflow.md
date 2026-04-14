@@ -59,6 +59,12 @@ If the change materially affects tester behavior:
 - update the relevant docs
 - update `CHANGELOG.md`
 
+Canonical references before merging to `main`:
+
+- [docs/testing.md](./testing.md) for local and CI test commands
+- [DEPLOY.md](../DEPLOY.md) for production deploy and verification sequence
+- [docs/trusted-beta.md](./trusted-beta.md) for tester-facing launch checks
+
 ## Deployment Advice
 
 If possible, keep two environments:

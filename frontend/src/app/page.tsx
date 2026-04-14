@@ -34,6 +34,12 @@ import { expandTeamAliasSearchQuery, matchesTeamAliasSearch } from "@/lib/team-s
 import { PLAYER_PROP_MARKET_OPTIONS, formatPlayerPropMarketLabel } from "@/lib/player-prop-markets";
 import { JourneyCoach } from "@/components/JourneyCoach";
 import { LogBetDrawer } from "@/components/LogBetDrawer";
+import {
+  FilterChipList,
+  MultiSelectFilterPills,
+  SingleSelectFilterPills,
+} from "@/components/shared/FilterControls";
+import { FolderTabs } from "@/components/shared/FolderTabs";
 import { ONBOARDING_STEPS } from "@/lib/onboarding";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -1810,24 +1816,17 @@ export default function MarketsPage() {
       </div>
 
       {/* ── Row 1: Primary mode ───────────────────────────────────── */}
-      <div className="flex gap-1 -mx-0 animate-slide-up" style={{ animationDelay: "40ms", animationFillMode: "both" }}>
-        {([
-          { id: "player_props", label: "Player Props" },
-          { id: "straight_bets", label: "Game Lines" },
-          { id: "promos", label: "Promos" },
-        ] as const).map((item) => (
-          <button
-            key={item.id}
-            onClick={() => handlePrimaryModeChange(item.id)}
-            className={cn(
-              "folder-tab flex-1 px-3 py-2 text-sm font-semibold transition-all duration-200",
-              primaryMode === item.id ? "folder-tab-active" : "folder-tab-inactive",
-            )}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
+      <FolderTabs
+        className="animate-slide-up"
+        triggerClassName="px-3 py-2 text-sm font-semibold"
+        value={primaryMode}
+        onValueChange={handlePrimaryModeChange}
+        items={[
+          { value: "player_props", content: "Player Props" },
+          { value: "straight_bets", content: "Game Lines" },
+          { value: "promos", content: "Promos" },
+        ]}
+      />
 
       {/* ── Row 2: Contextual submode ─────────────────────────────── */}
       <div 
@@ -1927,35 +1926,32 @@ export default function MarketsPage() {
             <div className="rounded-md border border-border bg-card p-3 space-y-3 animate-slide-up" style={{ animationDelay: "0ms", animationFillMode: "both" }}>
               <div>
                 <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Books</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {(primaryMode === "straight_bets" ? STRAIGHT_BET_BOOKS : PLAYER_PROP_BOOKS).map((book) => {
-                    const selected = selectedBooks.includes(book);
-                    return (
-                      <button
-                        key={book}
-                        type="button"
-                        onClick={() =>
-                          setSelectedBooks((prev) =>
-                            prev.includes(book) ? prev.filter((b) => b !== book) : [...prev, book],
-                          )
-                        }
-                        className={cn(
-                          "rounded-md px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95",
-                          selected
-                            ? `${BOOK_COLORS[book] || "bg-foreground"} text-white`
-                            : "bg-muted text-muted-foreground hover:text-foreground",
-                        )}
-                      >
-                        {book}
-                      </button>
-                    );
-                  })}
-                </div>
+                <MultiSelectFilterPills
+                  selectedValues={selectedBooks}
+                  options={(primaryMode === "straight_bets" ? STRAIGHT_BET_BOOKS : PLAYER_PROP_BOOKS).map((book) => ({
+                    value: book,
+                    label: book,
+                  }))}
+                  onToggleValue={(book) =>
+                    setSelectedBooks((prev) =>
+                      prev.includes(book) ? prev.filter((b) => b !== book) : [...prev, book],
+                    )
+                  }
+                  className="flex flex-wrap gap-1.5"
+                  baseButtonClassName="rounded-md px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95"
+                  activeClassName="text-white"
+                  inactiveClassName="bg-muted text-muted-foreground hover:text-foreground"
+                  getButtonClassName={(option, active) =>
+                    active ? BOOK_COLORS[option.value] || "bg-foreground" : undefined
+                  }
+                />
               </div>
               <div>
                 <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Time</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {(
+                <SingleSelectFilterPills<BoardTimeFilter>
+                  value={timeFilter}
+                  onValueChange={setTimeFilter}
+                  options={(
                     viewMode === "browse"
                       ? [
                           { id: "today", label: "Today" },
@@ -1968,138 +1964,74 @@ export default function MarketsPage() {
                           { id: "today_closed", label: "Closed Today" },
                           { id: "upcoming", label: "Upcoming" },
                         ]
-                  ).map((option) => (
-                    <button
-                      key={option.id}
-                      type="button"
-                      onClick={() => setTimeFilter(option.id as BoardTimeFilter)}
-                      className={cn(
-                        "rounded-md border px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95",
-                        timeFilter === option.id
-                          ? "border-primary/40 bg-primary/10 text-foreground"
-                          : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
-                      )}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
+                  ).map((option) => ({
+                    value: option.id as BoardTimeFilter,
+                    label: option.label,
+                  }))}
+                />
               </div>
               {primaryMode === "straight_bets" && (
                 <div>
                   <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Market Type</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {([
+                  <SingleSelectFilterPills<StraightBetMarketFilter>
+                    value={straightBetMarketFilter}
+                    onValueChange={setStraightBetMarketFilter}
+                    options={([
                       { id: "all", label: "All" },
                       { id: "h2h", label: "Moneyline" },
                       { id: "spreads", label: "Spreads" },
                       { id: "totals", label: "Totals" },
-                    ] as const).map((option) => (
-                      <button
-                        key={option.id}
-                        type="button"
-                        onClick={() => setStraightBetMarketFilter(option.id)}
-                        className={cn(
-                          "rounded-md border px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95",
-                          straightBetMarketFilter === option.id
-                            ? "border-primary/40 bg-primary/10 text-foreground"
-                            : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
-                        )}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
+                    ] as const).map((option) => ({
+                      value: option.id,
+                      label: option.label,
+                    }))}
+                  />
                 </div>
               )}
               {primaryMode === "player_props" && (
                 <div>
                   <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Sport</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setPropSportFilter("all")}
-                      className={cn(
-                        "rounded-md border px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95",
-                        propSportFilter === "all"
-                          ? "border-primary/40 bg-primary/10 text-foreground"
-                          : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
-                      )}
-                    >
-                      All
-                    </button>
-                    {availablePropSports.map((sport) => (
-                      <button
-                        key={sport}
-                        type="button"
-                        onClick={() => setPropSportFilter(sport)}
-                        className={cn(
-                          "rounded-md border px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95",
-                          propSportFilter === sport
-                            ? "border-primary/40 bg-primary/10 text-foreground"
-                            : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
-                        )}
-                      >
-                        {SPORT_KEY_TO_DISPLAY[sport] ?? sport}
-                      </button>
-                    ))}
-                  </div>
+                  <SingleSelectFilterPills
+                    value={propSportFilter}
+                    onValueChange={setPropSportFilter}
+                    options={[
+                      { value: "all", label: "All" },
+                      ...availablePropSports.map((sport) => ({
+                        value: sport,
+                        label: SPORT_KEY_TO_DISPLAY[sport] ?? sport,
+                      })),
+                    ]}
+                  />
                 </div>
               )}
               {primaryMode === "player_props" && (
                 <div>
                   <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Market Type</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setPropMarketFilter("all")}
-                      className={cn(
-                        "rounded-md border px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95",
-                        propMarketFilter === "all"
-                          ? "border-primary/40 bg-primary/10 text-foreground"
-                          : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
-                      )}
-                    >
-                      All
-                    </button>
-                    {availablePropMarkets.map((market) => (
-                      <button
-                        key={market}
-                        type="button"
-                        onClick={() => setPropMarketFilter(market)}
-                        className={cn(
-                          "rounded-md border px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95",
-                          propMarketFilter === market
-                            ? "border-primary/40 bg-primary/10 text-foreground"
-                            : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
-                        )}
-                      >
-                        {formatMarketTypeLabel(market)}
-                      </button>
-                    ))}
-                  </div>
+                  <SingleSelectFilterPills
+                    value={propMarketFilter}
+                    onValueChange={setPropMarketFilter}
+                    options={[
+                      { value: "all", label: "All" },
+                      ...availablePropMarkets.map((market) => ({
+                        value: market,
+                        label: formatMarketTypeLabel(market),
+                      })),
+                    ]}
+                  />
                 </div>
               )}
               {isPickEmView && (
                 <div>
                   <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Pick&apos;em Side</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(["all", "over", "under"] as const).map((side) => (
-                      <button
-                        key={side}
-                        type="button"
-                        onClick={() => setPropSideFilter(side)}
-                        className={cn(
-                          "rounded-md border px-2.5 py-1 text-xs font-medium capitalize transition-all duration-200 active:scale-95",
-                          propSideFilter === side
-                            ? "border-primary/40 bg-primary/10 text-foreground"
-                            : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
-                        )}
-                      >
-                        {side}
-                      </button>
-                    ))}
-                  </div>
+                  <SingleSelectFilterPills<"all" | "over" | "under">
+                    value={propSideFilter}
+                    onValueChange={setPropSideFilter}
+                    options={(["all", "over", "under"] as const).map((side) => ({
+                      value: side,
+                      label: side,
+                    }))}
+                    getButtonClassName={() => "capitalize"}
+                  />
                 </div>
               )}
               <div className="pt-1">
@@ -2129,15 +2061,15 @@ export default function MarketsPage() {
                 Boost {boostPercent}%
               </button>
             )}
-            {activeFilterChips.map((chip, index) => (
-              <span
-                key={chip}
-                style={{ animationDelay: `${index * 30}ms`, animationFillMode: "both" }}
-                className="rounded border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground animate-fade-in"
-              >
-                {chip}
-              </span>
-            ))}
+            <FilterChipList
+              chips={activeFilterChips.map((chip, index) => ({
+                key: chip,
+                label: chip,
+                className: "animate-fade-in",
+                style: { animationDelay: `${index * 30}ms`, animationFillMode: "both" },
+              }))}
+              className="flex flex-wrap items-center gap-1.5"
+            />
           </div>
           <button
             type="button"

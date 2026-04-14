@@ -21,6 +21,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { FilterChipList } from "@/components/shared/FilterControls";
 import { formatPlayerPropMarketLabel, formatPlayerPropSportLabel } from "@/lib/player-prop-markets";
 import { cn } from "@/lib/utils";
 import type {
@@ -549,19 +550,11 @@ export function ScannerResultFilters({
         <div className="flex items-center justify-between gap-2 pt-0.5">
           <div className="flex flex-1 flex-wrap items-center gap-1.5">
             <span className="text-[10px] font-medium text-muted-foreground">Filters:</span>
-            {activeFilterChips.slice(0, 3).map((chip) => (
-              <span
-                key={chip}
-                className="rounded-full border border-color-profit/25 bg-color-profit-subtle px-2 py-0.5 text-[10px] text-color-profit-fg"
-              >
-                {chip}
-              </span>
-            ))}
-            {activeFilterChips.length > 3 && (
-              <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
-                +{activeFilterChips.length - 3} more
-              </span>
-            )}
+            <FilterChipList
+              chips={activeFilterChips.map((chip) => ({ key: chip, label: chip }))}
+              maxVisible={3}
+              chipClassName="rounded-full border-color-profit/25 bg-color-profit-subtle text-[10px] text-color-profit-fg"
+            />
           </div>
 
           {hasActiveFilters && (
