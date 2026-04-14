@@ -22,8 +22,8 @@ export default function ScannerLayout({ children }: { children: React.ReactNode 
                 className={cn(
                   "rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
                   isActive
-                    ? "border-primary/40 bg-primary/10 text-primary"
-                    : "border-border text-muted-foreground hover:text-foreground"
+                    ? "border-primary/70 bg-primary/18 text-foreground font-semibold"
+                    : "border-border text-muted-foreground hover:text-foreground hover:border-border/80"
                 )}
               >
                 {surface.label}

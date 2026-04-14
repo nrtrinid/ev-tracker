@@ -28,10 +28,10 @@ function MetricCardInner({
   return (
     <CardContent className={cn("px-3 py-3", contentClassName)}>
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] text-muted-foreground">{label}</p>
+        <p className="text-[11px] font-medium text-muted-foreground">{label}</p>
         {affordance}
       </div>
-      <p className={cn("mt-1.5 font-mono text-lg font-semibold tabular-nums leading-none", valueClassName)}>
+      <p className={cn("mt-1.5 font-mono text-lg font-bold tabular-nums leading-none", valueClassName)}>
         {value}
       </p>
       {secondary ? (
@@ -69,7 +69,7 @@ export function MetricCard({
 
   if (!onClick) {
     return (
-      <Card data-testid={dataTestId} className={cn("border-border/50", className)}>
+      <Card data-testid={dataTestId} className={cn("border-border/70", className)}>
         {inner}
       </Card>
     );
@@ -83,7 +83,7 @@ export function MetricCard({
       onClick={onClick}
       className="w-full rounded-lg text-left transition-transform duration-100 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background"
     >
-      <Card data-testid={dataTestId} className={cn("border-border/50 transition-colors hover:border-border hover:bg-muted/20 active:bg-muted/30", className)}>
+      <Card data-testid={dataTestId} className={cn("border-border/70 transition-colors hover:border-border hover:bg-muted/20 active:bg-muted/30", className)}>
         {inner}
       </Card>
     </button>
@@ -99,9 +99,9 @@ interface MetricTileProps {
 
 export function MetricTile({ label, value, valueClassName, className }: MetricTileProps) {
   return (
-    <div className={cn("rounded border border-border/40 bg-background/30 px-3 py-2.5", className)}>
-      <p className="text-[11px] text-muted-foreground">{label}</p>
-      <p className={cn("mt-1.5 font-mono text-xl font-semibold tabular-nums leading-none", valueClassName)}>
+    <div className={cn("rounded border border-border/70 bg-background px-3 py-2.5", className)}>
+      <p className="text-[11px] font-medium text-muted-foreground">{label}</p>
+      <p className={cn("mt-1.5 font-mono text-2xl font-bold tabular-nums leading-none", valueClassName)}>
         {value}
       </p>
     </div>

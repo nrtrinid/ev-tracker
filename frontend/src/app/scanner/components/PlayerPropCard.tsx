@@ -114,7 +114,7 @@ export function PlayerPropCard({
             )}
           </div>
           <div className="shrink-0 text-right" data-testid="ev-display">
-            <p className={cn("font-mono text-base font-bold leading-none", metricColorClass)}>
+            <p className={cn("font-mono text-lg font-bold leading-none", metricColorClass)}>
               {metric.value}
             </p>
             <p className="mt-0.5 text-[10px] tracking-wide text-muted-foreground">{metric.label}</p>
@@ -123,7 +123,7 @@ export function PlayerPropCard({
 
         {/* Row 1: player name + suggested stake */}
         <div className="flex items-start justify-between gap-2">
-          <p className="line-clamp-1 text-sm font-semibold leading-snug">{side.display_name}</p>
+          <p className="line-clamp-1 text-sm font-bold leading-snug text-foreground">{side.display_name}</p>
           {activeLens === "standard" && (
             <p className="shrink-0 whitespace-nowrap text-[10px] text-muted-foreground">
               Suggested: <span className="font-mono text-foreground">{formatCurrency(stealthKellyStake)}</span>
@@ -155,10 +155,10 @@ export function PlayerPropCard({
 
         {/* Row 4: action row — Place + toggle grouped left, Review > pinned right */}
         {actionModel.primary.kind === "open" && actionModel.primary.href ? (
-          <div className="mt-1.5 flex items-center gap-1.5 border-t border-border/60 pt-1.5">
+          <div className="mt-1.5 flex items-center gap-1.5 border-t border-border/80 pt-1.5">
             <Button
               asChild
-              className="h-8 flex-[0.9] text-xs font-medium active:scale-[0.98] transition-transform"
+              className="h-8 flex-[0.9] text-xs font-semibold active:scale-[0.98] transition-transform"
               onClick={(e) => e.stopPropagation()}
             >
               <a
@@ -200,10 +200,10 @@ export function PlayerPropCard({
             </button>
           </div>
         ) : (
-          <div className="mt-1.5 flex items-center gap-1.5 border-t border-border/60 pt-1.5">
+          <div className="mt-1.5 flex items-center gap-1.5 border-t border-border/80 pt-1.5">
             <Button
               type="button"
-              className="h-8 flex-[0.9] text-xs font-medium active:scale-[0.98] transition-transform"
+              className="h-8 flex-[0.9] text-xs font-semibold active:scale-[0.98] transition-transform"
               onClick={(e) => {
                 e.stopPropagation();
                 onLogBet(side);

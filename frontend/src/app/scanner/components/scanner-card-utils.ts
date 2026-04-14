@@ -54,8 +54,8 @@ export function getScannerDuplicateBadge(
       label: "Already Placed",
       className:
         tone === "legacy"
-          ? "rounded border border-loss/35 bg-loss/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-loss"
-          : "rounded border border-color-loss/35 bg-color-loss-subtle px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-color-loss-fg",
+          ? "rounded border border-primary/40 bg-primary/12 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary"
+          : "rounded border border-color-pending/40 bg-color-pending-subtle px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-color-pending-fg",
     };
   }
 

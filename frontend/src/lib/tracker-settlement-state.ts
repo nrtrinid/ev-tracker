@@ -2,6 +2,7 @@ import type { Bet } from "@/lib/types";
 import { isSupportedPlayerPropMarketForSport } from "@/lib/player-prop-markets";
 
 export type TrackerSettlementStateKind =
+  | "open_ticket"
   | "awaiting_auto_settle"
   | "needs_grading"
   | "manual_only";
@@ -12,9 +13,11 @@ export interface TrackerSettlementState {
   title: string;
   description: string;
   showManualControlsByDefault: boolean;
+  showStatusBadge: boolean;
 }
 
 const AUTO_SETTLE_GRACE_HOURS = 18;
+const OPEN_TICKET_BUFFER_HOURS = 4;
 
 function normalizeToken(value: string | null | undefined): string {
   return String(value || "").trim().toLowerCase();
@@ -216,11 +219,11 @@ export function getTrackerSettlementState(
   if (!canAutoSettle(bet)) {
     return {
       kind: "manual_only",
-      badgeLabel: "Manual only",
-      title: "Manual grading",
-      description:
-        "This ticket will stay open until you grade it yourself. Use manual settlement when the result is final.",
+      badgeLabel: "Manual grading needed",
+      title: "Manual grading needed",
+      description: "This ticket could not be settled automatically.",
       showManualControlsByDefault: true,
+      showStatusBadge: true,
     };
   }
 
@@ -228,45 +231,45 @@ export function getTrackerSettlementState(
   if (!referenceTime) {
     return {
       kind: "manual_only",
-      badgeLabel: "Manual only",
-      title: "Manual grading",
-      description:
-        "This ticket is missing settle metadata, so it should be closed manually when the game is final.",
+      badgeLabel: "Manual grading needed",
+      title: "Manual grading needed",
+      description: "This ticket could not be settled automatically.",
       showManualControlsByDefault: true,
+      showStatusBadge: true,
     };
   }
 
   const elapsedMs = now.getTime() - referenceTime.getTime();
   const elapsedHours = elapsedMs / (1000 * 60 * 60);
 
-  if (elapsedMs < 0) {
+  if (elapsedMs < OPEN_TICKET_BUFFER_HOURS * 60 * 60 * 1000) {
     return {
-      kind: "awaiting_auto_settle",
-      badgeLabel: "Auto-settle",
+      kind: "open_ticket",
+      badgeLabel: "",
       title: "Open ticket",
-      description:
-        "This ticket is still waiting on game time. Eligible bets usually settle automatically after results post.",
+      description: "Waiting for result.",
       showManualControlsByDefault: false,
+      showStatusBadge: false,
     };
   }
 
   if (elapsedHours >= AUTO_SETTLE_GRACE_HOURS) {
     return {
       kind: "needs_grading",
-      badgeLabel: "Needs grading",
-      title: "Needs manual review",
-      description:
-        "This ticket is still open well after game time. The auto-settler may have missed it, so manual grading is ready.",
+      badgeLabel: "Manual grading needed",
+      title: "Manual grading needed",
+      description: "This ticket could not be settled automatically.",
       showManualControlsByDefault: true,
+      showStatusBadge: true,
     };
   }
 
   return {
     kind: "awaiting_auto_settle",
-    badgeLabel: "Auto-settle",
+    badgeLabel: "Awaiting auto-settle",
     title: "Awaiting auto-settle",
-    description:
-      "Eligible tickets usually settle automatically after the game finishes. Manual grading is still available if you need it.",
+    description: "Results are in. This ticket should settle shortly.",
     showManualControlsByDefault: false,
+    showStatusBadge: true,
   };
 }

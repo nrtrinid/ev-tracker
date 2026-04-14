@@ -157,6 +157,65 @@ function formatGameStartCompact(isoString: string): string {
   });
 }
 
+function parseValidDate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatTimeOnly(date: Date): string {
+  return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function resolveBetGameTime(bet: Bet, parlayLegs: ReturnType<typeof parseParlayLegsFromBet>): Date | null {
+  const commence = parseValidDate(bet.commence_time);
+  if (commence) return commence;
+
+  if (parlayLegs && parlayLegs.length > 0) {
+    let latestLegStart: Date | null = null;
+    for (const leg of parlayLegs) {
+      const legStart = parseValidDate(leg.commenceTime);
+      if (!legStart) continue;
+      if (!latestLegStart || legStart > latestLegStart) {
+        latestLegStart = legStart;
+      }
+    }
+    if (latestLegStart) return latestLegStart;
+  }
+
+  return parseValidDate(bet.event_date);
+}
+
+function formatOpenBetEventTimeCompact(isoString: string): string {
+  const date = parseValidDate(isoString);
+  if (!date) return "";
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfTarget = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const dayDiff = Math.floor((startOfTarget.getTime() - startOfToday.getTime()) / (1000 * 60 * 60 * 24));
+
+  if (dayDiff === 0) {
+    return `Today · ${formatTimeOnly(date)}`;
+  }
+
+  if (dayDiff > 0 && dayDiff < 7) {
+    const weekday = date.toLocaleDateString("en-US", { weekday: "short" });
+    return `${weekday} · ${formatTimeOnly(date)}`;
+  }
+
+  const monthDay = date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return `${monthDay} · ${formatTimeOnly(date)}`;
+}
+
+function formatGameTimeDetail(isoString: string): string {
+  const date = parseValidDate(isoString);
+  if (!date) return "";
+  const weekday = date.toLocaleDateString("en-US", { weekday: "short" });
+  const monthDay = date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return `${weekday}, ${monthDay} · ${formatTimeOnly(date)}`;
+}
+
 function formatParlayLegSportLabel(sport: string): string {
   const normalized = sport.trim();
   if (!normalized) {
@@ -203,12 +262,17 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
     bet.latest_pinnacle_updated_at &&
     bet.latest_pinnacle_updated_at !== bet.clv_updated_at
   );
+  const resolvedGameTime = resolveBetGameTime(bet, parlayLegs);
+  const openBetEventTime =
+    mode === "pending" && resolvedGameTime
+      ? formatOpenBetEventTimeCompact(resolvedGameTime.toISOString())
+      : "";
   
 
 
 
   return (
-    <div className="border rounded-lg overflow-hidden flex card-hover bg-card transition-all duration-200 hover:shadow-soft">
+    <div className="border border-border/80 rounded-lg overflow-hidden flex card-hover bg-card transition-all duration-200 hover:shadow-soft">
       {/* Colored left border for sportsbook branding */}
       <div className={cn("w-1 shrink-0 transition-all duration-200", borderColor)} />
       
@@ -217,7 +281,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
             {/* Primary: Event name */}
-            <p className="font-semibold text-sm leading-tight">{displayTitle}</p>
+            <p className="font-bold text-sm leading-tight text-foreground">{displayTitle}</p>
             {/* Secondary: Sportsbook [Badge] Sport Market */}
             <div className="flex items-center gap-1.5 mt-1 flex-wrap">
               <span className={cn("w-2 h-2 rounded-full shrink-0", borderColor)} />
@@ -232,7 +296,10 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
                   {promoLabel}
                 </span>
               )}
-              <span className="text-xs text-muted-foreground">{bet.sport} • {bet.market}</span>
+              <span className="text-xs text-muted-foreground">
+                {bet.sport} • {bet.market}
+                {openBetEventTime ? ` • ${openBetEventTime}` : ""}
+              </span>
               {/* CLV badge — raw market CLV for all bets with a Pinnacle snapshot */}
               {bet.clv_ev_percent !== null && (
                 <span className={cn(
@@ -246,7 +313,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
               )}
               {bet.pinnacle_odds_at_entry !== null && bet.clv_ev_percent === null && (
                 <span className="px-1.5 py-0.5 rounded text-[10px] font-medium leading-none bg-muted text-muted-foreground">
-                  CLV ⏳
+                  CLV pending
                 </span>
               )}
             </div>
@@ -269,7 +336,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
               
               if (boostedOdds) {
                 return (
-                  <div className="font-mono font-semibold flex flex-row items-baseline">
+                  <div className="font-mono font-bold flex flex-row items-baseline">
                     <span className="line-through text-muted-foreground/60 mr-1.5">
                       {formatOdds(bet.odds_american)}
                     </span>
@@ -277,13 +344,13 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
                   </div>
                 );
               }
-              return <p className="font-mono font-semibold">{formatOdds(bet.odds_american)}</p>;
+              return <p className="font-mono font-bold">{formatOdds(bet.odds_american)}</p>;
             })()}
           </div>
           {/* EV - Col 2 on mobile, Col 3 on desktop */}
           <div className="order-2 md:order-3">
             <p className="text-muted-foreground text-xs">EV</p>
-            <p className={cn("font-mono font-semibold", bet.ev_total >= 0 ? "text-color-profit-fg" : "text-color-loss-fg")}
+            <p className={cn("font-mono font-bold", bet.ev_total >= 0 ? "text-color-profit-fg" : "text-color-loss-fg")}
                style={{ whiteSpace: "nowrap" }}>
               {bet.ev_total >= 0 ? "+" : ""}{formatCurrency(bet.ev_total)}{" "}
               <span className="font-normal text-xs opacity-70">
@@ -294,13 +361,13 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
           {/* Stake - Col 1 on mobile row 2, Col 2 on desktop */}
           <div className="order-3 md:order-2">
             <p className="text-muted-foreground text-xs">Stake</p>
-            <p className="font-mono font-medium">{formatCurrency(bet.stake)}</p>
+            <p className="font-mono font-bold text-foreground">{formatCurrency(bet.stake)}</p>
           </div>
           {/* To Win/Profit - Col 2 on mobile row 2, Col 4 on desktop */}
           <div className="order-4 md:order-4">
             <p className="text-muted-foreground text-xs">{mode === "settled" ? "Profit" : "Return if Win"}</p>
             <p className={cn(
-              "font-mono font-semibold",
+              "font-mono font-bold",
               mode === "settled"
                 ? bet.real_profit !== null && bet.real_profit >= 0 ? "text-color-profit-fg" : "text-color-loss-fg"
                 : "text-foreground"
@@ -321,7 +388,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
         <Button
           size="sm"
           variant="ghost"
-          className="w-full text-xs text-muted-foreground hover:bg-muted/40 active:scale-[0.98] transition-all duration-150"
+          className="w-full text-xs text-muted-foreground border border-border/50 hover:border-border hover:bg-muted/40 active:scale-[0.98] transition-all duration-150"
           onClick={() => setExpanded(!expanded)}
         >
           {expanded ? "Hide details" : "View details"}
@@ -446,7 +513,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
                               </span>
                             ) : (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium leading-none bg-muted text-muted-foreground">
-                                CLV ⏳
+                                CLV pending
                               </span>
                             )}
                           </div>
@@ -474,23 +541,29 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
               bet.pinnacle_odds_at_entry != null || parlayLegs ? "border-t border-border" : ""
             )}>
               <div>
-                <p className="text-muted-foreground/60 text-xs mb-0.5">Req. Win %</p>
-                <p className="font-mono text-xs text-muted-foreground">{(impliedProb * 100).toFixed(1)}%</p>
+                <p className="text-muted-foreground text-xs mb-0.5">Req. Win %</p>
+                <p className="font-mono text-xs text-foreground/70">{(impliedProb * 100).toFixed(1)}%</p>
               </div>
               <div>
-                <p className="text-muted-foreground/60 text-xs mb-0.5">
-                  {bet.commence_time ? "Game Start" : "Event Date"}
+                <p className="text-muted-foreground text-xs mb-0.5">
+                  {mode === "pending" ? "Game time" : bet.commence_time ? "Game Start" : "Event Date"}
                 </p>
-                <p className="font-mono text-xs text-muted-foreground">
-                  {bet.commence_time ? formatGameStartCompact(bet.commence_time) : formatShortDate(bet.event_date)}
+                <p className="font-mono text-xs text-foreground/70">
+                  {mode === "pending"
+                    ? resolvedGameTime
+                      ? formatGameTimeDetail(resolvedGameTime.toISOString())
+                      : formatShortDate(bet.event_date)
+                    : bet.commence_time
+                      ? formatGameStartCompact(bet.commence_time)
+                      : formatShortDate(bet.event_date)}
                 </p>
               </div>
               {/* Timestamp spans full width on mobile so it never truncates */}
               <div className="col-span-2 md:col-span-1">
-                <p className="text-muted-foreground/60 text-xs mb-0.5">
+                <p className="text-muted-foreground text-xs mb-0.5">
                   {bet.settled_at ? "Settled" : "Logged"}
                 </p>
-                <p className="font-mono text-xs text-muted-foreground">
+                <p className="font-mono text-xs text-foreground/70">
                   {bet.settled_at ? formatFullDateTime(bet.settled_at) : formatFullDateTime(bet.created_at)}
                 </p>
               </div>
@@ -669,41 +742,45 @@ function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps
   };
 
   const statusBadgeClass =
-    settlementState.kind === "manual_only"
-      ? "bg-color-neutral-subtle text-color-neutral-fg"
-      : settlementState.kind === "needs_grading"
-        ? "bg-color-pending-subtle text-color-pending-fg"
-        : "bg-color-pending-subtle text-color-pending-fg";
+    settlementState.kind === "manual_only" || settlementState.kind === "needs_grading"
+      ? "bg-color-loss-subtle text-color-loss-fg"
+      : "bg-color-pending-subtle text-color-pending-fg";
 
   const footer = (
     <div className="pt-2 border-t border-border mt-1 space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span
-              className={cn(
-                "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em]",
-                statusBadgeClass,
-              )}
-            >
-              {settlementState.badgeLabel}
-            </span>
-          </div>
-          <p className="mt-2 text-sm font-medium text-foreground">{settlementState.title}</p>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            {settlementState.description}
-          </p>
+          {settlementState.showStatusBadge && (
+            <div className="flex items-center gap-2">
+              <span
+                className={cn(
+                  "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em]",
+                  statusBadgeClass,
+                )}
+              >
+                {settlementState.badgeLabel}
+              </span>
+            </div>
+          )}
+          {settlementState.showStatusBadge ? (
+            <>
+              <p className="mt-2 text-sm text-muted-foreground">{settlementState.title}</p>
+              <p className="mt-0.5 text-xs leading-5 text-muted-foreground/70">
+                {settlementState.description}
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">{settlementState.description}</p>
+          )}
         </div>
         {!settlementState.showManualControlsByDefault && (
-          <Button
+          <button
             type="button"
-            variant="outline"
-            size="sm"
-            className="h-9 shrink-0"
+            className="shrink-0 text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2 decoration-muted-foreground/40 hover:decoration-foreground/40"
             onClick={() => setManualControlsOpen((open) => !open)}
           >
-            {manualControlsOpen ? "Hide manual actions" : "Settle manually"}
-          </Button>
+            {manualControlsOpen ? "Hide" : "Settle manually"}
+          </button>
         )}
       </div>
       {manualControlsOpen && (
@@ -1163,11 +1240,11 @@ export function BetList({
 
   return (
     <>
-      <Card className="overflow-visible">
+      <Card className="overflow-visible bg-background border-border/60">
         <CardHeader className="pb-3">
           {/* Row 1: Title */}
           <div className="-mx-2 -mt-2 mb-3">
-            <h2 className="text-lg font-semibold px-2">Tracker</h2>
+            <h2 className="text-lg font-bold px-2">Tracker</h2>
           </div>
           
           {/* Row 2: Full-width Tabs */}
@@ -1394,17 +1471,17 @@ export function BetList({
           {/* Summary stats for pending tab */}
           {activeTab === "pending" && pendingBets.length > 0 && (
             <div className="grid grid-cols-3 gap-3 pt-3">
-              <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-center">
+              <div className="rounded-lg bg-card border border-border/70 px-3 py-2 text-center">
                 <p className="text-xs text-muted-foreground">Cash in Play</p>
-                <p className="font-mono font-semibold text-foreground">
+                <p className="font-mono font-bold text-foreground">
                   {formatCurrency(pendingCashBets.reduce((s, b) => s + b.stake, 0))}
                 </p>
               </div>
-              <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-center">
+              <div className="rounded-lg bg-card border border-border/70 px-3 py-2 text-center">
                 <p className="text-xs text-muted-foreground">Expected Edge</p>
                 <p
                   className={cn(
-                    "font-mono font-semibold",
+                    "font-mono font-bold",
                     pendingEvTotal >= 0 ? "text-color-profit-fg" : "text-color-loss-fg",
                   )}
                 >
@@ -1412,9 +1489,9 @@ export function BetList({
                   {formatCurrency(pendingEvTotal)}
                 </p>
               </div>
-              <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-center">
+              <div className="rounded-lg bg-card border border-border/70 px-3 py-2 text-center">
                 <p className="text-xs text-muted-foreground">Return if Win</p>
-                <p className="font-mono font-semibold text-foreground">
+                <p className="font-mono font-bold text-foreground">
                   {formatCurrency(pendingPotentialReturn)}
                 </p>
               </div>
@@ -1424,17 +1501,17 @@ export function BetList({
           {/* Summary stats for history tab */}
           {activeTab === "history" && settledBets.length > 0 && (
             <div className="grid grid-cols-3 gap-3 pt-3">
-              <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-center">
+              <div className="rounded-lg bg-card border border-border/70 px-3 py-2 text-center">
                 <p className="text-xs text-muted-foreground">Staked</p>
-                <p className="font-mono font-semibold text-foreground">
+                <p className="font-mono font-bold text-foreground">
                   {formatCurrency(settledStakedTotal)}
                 </p>
               </div>
-              <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-center">
+              <div className="rounded-lg bg-card border border-border/70 px-3 py-2 text-center">
                 <p className="text-xs text-muted-foreground">EV</p>
                 <p
                   className={cn(
-                    "font-mono font-semibold",
+                    "font-mono font-bold",
                     settledEvTotal >= 0 ? "text-color-profit-fg" : "text-color-loss-fg",
                   )}
                 >
@@ -1442,11 +1519,11 @@ export function BetList({
                   {formatCurrency(settledEvTotal)}
                 </p>
               </div>
-              <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-center">
+              <div className="rounded-lg bg-card border border-border/70 px-3 py-2 text-center">
                 <p className="text-xs text-muted-foreground">Profit</p>
                 <p
                   className={cn(
-                    "font-mono font-semibold",
+                    "font-mono font-bold",
                     settledProfitTotal >= 0 ? "text-color-profit-fg" : "text-color-loss-fg",
                   )}
                 >
@@ -1462,6 +1539,9 @@ export function BetList({
         <CardContent className="space-y-3">
           {activeTab === "pending" && (
             <>
+              <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                Eligible bets settle automatically during scheduled runs. Manual grading is available if needed.
+              </div>
               {tutorialPracticeBet && (
                 <div className="animate-slide-up" style={{ animationFillMode: "both" }}>
                   <TutorialPracticeCard bet={tutorialPracticeBet} />

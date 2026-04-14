@@ -47,16 +47,15 @@ const CHART_THEME = {
   profitStroke: "hsl(var(--profit))",
 };
 
-// Verdict card: left-border accent only — no bg tints, no gradients.
-// Softer border weight — a thin accent line, not a hard stripe.
+// Verdict card: left-border accent — slightly thicker for more presence.
 const VERDICT_STYLES: Record<
   VerdictState,
   { leftBorder: string; label: string; accent: string }
 > = {
-  hot:            { leftBorder: "border-l-2 border-l-primary",  label: "text-primary", accent: "text-primary" },
-  on_track:       { leftBorder: "border-l-2 border-l-profit",   label: "text-profit",  accent: "text-profit"  },
-  cold_but_okay:  { leftBorder: "border-l-2 border-l-border",   label: "text-foreground", accent: "text-muted-foreground" },
-  worth_reviewing:{ leftBorder: "border-l-2 border-l-loss",     label: "text-loss",    accent: "text-loss"    },
+  hot:            { leftBorder: "border-l-[3px] border-l-primary",  label: "text-primary", accent: "text-primary" },
+  on_track:       { leftBorder: "border-l-[3px] border-l-profit",   label: "text-profit",  accent: "text-profit"  },
+  cold_but_okay:  { leftBorder: "border-l-[3px] border-l-border",   label: "text-foreground", accent: "text-muted-foreground" },
+  worth_reviewing:{ leftBorder: "border-l-[3px] border-l-loss",     label: "text-loss",    accent: "text-loss"    },
 };
 
 const CHART_FILTERS: Array<{ value: StatsChartFilter; label: string }> = [
@@ -116,7 +115,7 @@ function ChartFilterPill({
         "rounded px-2.5 py-1 text-xs font-medium transition-colors",
         disabled && "cursor-not-allowed opacity-60",
         active
-          ? "bg-primary/15 text-primary"
+          ? "bg-primary/20 text-foreground font-semibold ring-1 ring-primary/30"
           : "text-muted-foreground hover:text-foreground",
       )}
     >
@@ -239,15 +238,15 @@ function SourceBreakdownRow({
 
       {/* Profit / EV tiles */}
       <div className="mt-2.5 grid grid-cols-2 gap-2">
-        <div className="rounded bg-muted/20 px-2.5 py-2">
-          <p className="text-[11px] text-muted-foreground">Profit</p>
-          <p className={cn("mt-1 font-mono text-sm font-semibold tabular-nums", profit >= 0 ? "text-profit" : "text-loss")}>
+        <div className="rounded border border-border/70 bg-background px-2.5 py-2">
+          <p className="text-[11px] font-medium text-muted-foreground">Profit</p>
+          <p className={cn("mt-1 font-mono text-sm font-bold tabular-nums", profit >= 0 ? "text-profit" : "text-loss")}>
             {formatSignedCurrency(profit)}
           </p>
         </div>
-        <div className="rounded bg-muted/20 px-2.5 py-2">
-          <p className="text-[11px] text-muted-foreground">EV</p>
-          <p className="mt-1 font-mono text-sm font-semibold tabular-nums text-primary">
+        <div className="rounded border border-border/70 bg-background px-2.5 py-2">
+          <p className="text-[11px] font-medium text-muted-foreground">EV</p>
+          <p className="mt-1 font-mono text-sm font-bold tabular-nums text-primary">
             {formatSignedCurrency(ev)}
           </p>
         </div>
@@ -261,7 +260,7 @@ function SourceBreakdownRow({
         href={href}
         data-testid="source-row"
         aria-label={`View ${label} bets`}
-        className="group block rounded border border-border/40 bg-background/30 px-3 py-3 transition-colors hover:border-border/70 hover:bg-muted/15 active:scale-[0.98] active:bg-muted/25"
+        className="group block rounded border border-border/60 bg-background/50 px-3 py-3 transition-colors hover:border-border hover:bg-muted/20 active:scale-[0.98] active:bg-muted/25"
       >
         {inner}
       </Link>
@@ -269,7 +268,7 @@ function SourceBreakdownRow({
   }
 
   return (
-    <div data-testid="source-row" className="rounded border border-border/40 bg-background/30 px-3 py-3">
+    <div data-testid="source-row" className="rounded border border-border/60 bg-background/50 px-3 py-3">
       {inner}
     </div>
   );
@@ -487,11 +486,11 @@ function AnalyticsPageContent() {
             ─────────────────────────────────────────────────────────── */}
             <Card
               data-testid="verdict-card"
-              className={cn("border-l-4 border-border/70 animate-slide-up", vs.leftBorder)}
+              className={cn("border-border/80 animate-slide-up", vs.leftBorder)}
               style={{ animationFillMode: "both" }}
             >
               <CardContent className="px-4 py-4">
-                <p className={cn("text-base font-semibold tracking-wide animate-ink-reveal", vs.label)}
+                <p className={cn("text-lg font-bold tracking-wide animate-ink-reveal", vs.label)}
                    style={{ animationDelay: "80ms", animationFillMode: "both" }}>
                   {model.verdict.label}
                 </p>
@@ -513,7 +512,7 @@ function AnalyticsPageContent() {
                 </div>
 
                 {/* Swing row — inline label + value, no extra card nesting */}
-                <div className="mt-2.5 flex items-center justify-between border-t border-border/40 pt-2.5">
+                <div className="mt-2.5 flex items-center justify-between border-t border-border/60 pt-2.5">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                     Expected swing at {model.settledBetsCount} bets
                   </p>
@@ -564,7 +563,7 @@ function AnalyticsPageContent() {
 
             {/* ── Chart ─────────────────────────────────────────────── */}
             <Card
-              className="border-border/70 animate-slide-up"
+              className="border-border animate-slide-up"
               style={{ animationDelay: "120ms", animationFillMode: "both" }}
             >
               <CardContent className="px-4 py-4">
@@ -693,11 +692,11 @@ function AnalyticsPageContent() {
             {/* ── Source breakdown ──────────────────────────────────── */}
             <Card
               data-testid="source-breakdown"
-              className="border-border/70 animate-slide-up"
+              className="border-border animate-slide-up"
               style={{ animationDelay: "180ms", animationFillMode: "both" }}
             >
               <CardContent className="px-4 py-4">
-                <p className="text-xs font-medium text-muted-foreground">
+                <p className="text-xs font-bold uppercase tracking-[0.12em] text-muted-foreground">
                   Where it came from
                 </p>
                 <div className="mt-3 space-y-2">
@@ -727,7 +726,7 @@ function AnalyticsPageContent() {
             {model.showProcessStatsRow ? (
               <details
                 data-testid="process-stats"
-                className="group rounded-md border border-border/70 bg-card animate-slide-up"
+                className="group rounded-md border border-border bg-card animate-slide-up"
                 style={{ animationDelay: "220ms", animationFillMode: "both" }}
               >
                 <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-4 select-none rounded-md transition-colors hover:bg-muted/20 active:bg-muted/30 active:scale-[0.99]">

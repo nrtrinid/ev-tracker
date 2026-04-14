@@ -94,7 +94,7 @@ export function SingleSelectFilterPills<T extends string>({
   onValueChange,
   className,
   baseButtonClassName = "rounded-md border px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95",
-  activeClassName = "border-primary/40 bg-primary/10 text-foreground",
+  activeClassName = "border-primary/60 bg-primary/15 text-foreground font-semibold",
   inactiveClassName = "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
   getButtonClassName,
 }: SingleSelectFilterPillsProps<T>) {
@@ -139,7 +139,7 @@ export function MultiSelectFilterPills<T extends string>({
   onToggleValue,
   className,
   baseButtonClassName = "rounded-md border px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95",
-  activeClassName = "border-primary/40 bg-primary/10 text-foreground",
+  activeClassName = "border-primary/60 bg-primary/15 text-foreground font-semibold",
   inactiveClassName = "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
   getButtonClassName,
 }: MultiSelectFilterPillsProps<T>) {

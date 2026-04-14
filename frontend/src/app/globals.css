@@ -9,13 +9,13 @@
   :root {
     /* ── Page surfaces ── */
     --background:          40 33% 97%;   /* #FAF8F5 warm off-white */
-    --foreground:          36 30% 13%;   /* #2C2416 dark charcoal-brown */
+    --foreground:          36 35% 10%;   /* #231C10 deeper charcoal — stronger text contrast */
 
     /* ── Card surfaces ── */
-    --surface-card:        35 26% 91%;   /* #F0EBE3 cream (replaces --card) */
-    --surface-card-fg:     36 30% 13%;
-    --surface-elevated:    35 30% 95%;   /* #F7F3EE lighter cream for modals/popovers */
-    --surface-elevated-fg: 36 30% 13%;
+    --surface-card:        35 24% 88%;   /* #EBE4DA slightly darker cream — more separation from bg */
+    --surface-card-fg:     36 35% 10%;
+    --surface-elevated:    35 28% 93%;   /* #F4EFE8 lighter cream for modals/popovers */
+    --surface-elevated-fg: 36 35% 10%;
     --surface-overlay:     36 30% 13%;   /* dark charcoal for Sheet/Dialog backdrop tint */
 
     /* ── Legacy aliases (keep for shadcn compatibility) ── */
@@ -25,41 +25,41 @@
     --popover-foreground:  var(--surface-elevated-fg);
 
     /* ── Brand / interactive ── */
-    --primary:             43 49% 56%;   /* #C4A35A warm amber */
-    --primary-foreground:  36 30% 13%;
+    --primary:             43 52% 50%;   /* #B8922A deeper amber — more confident CTA */
+    --primary-foreground:  40 33% 97%;
     --secondary:           35 20% 88%;
-    --secondary-foreground: 36 30% 13%;
-    --muted:               35 20% 88%;
-    --muted-foreground:    30 16% 37%;   /* #6B5E4F warm gray */
-    --accent:              43 49% 56%;
-    --accent-foreground:   36 30% 13%;
+    --secondary-foreground: 36 35% 10%;
+    --muted:               35 18% 85%;
+    --muted-foreground:    30 16% 40%;   /* #6B5A4A warm gray — secondary text, clearly subordinate but readable */
+    --accent:              43 52% 50%;
+    --accent-foreground:   40 33% 97%;
     --destructive:         18 56% 47%;   /* #B85C38 dusty terracotta */
     --destructive-foreground: 40 33% 97%;
 
     /* ── Borders / inputs ── */
-    --border:              34 22% 82%;   /* #DDD5C7 light tan */
-    --input:               34 22% 82%;
-    --ring:                43 49% 56%;   /* amber focus ring */
+    --border:              34 20% 74%;   /* #CEC4B4 darker tan — visible separation */
+    --input:               34 20% 74%;
+    --ring:                43 52% 50%;   /* amber focus ring */
 
     /* ── Semantic state colors ── */
-    --color-profit:        134 26% 39%;  /* #4A7C59 muted forest green */
-    --color-profit-fg:     134 26% 20%;  /* #2E5D39 deep green for text on light bg */
-    --color-profit-subtle: 134 26% 95%;  /* very light green tint for badge bg */
-    --color-loss:          18 56% 47%;   /* #B85C38 dusty terracotta */
-    --color-loss-fg:       18 56% 27%;   /* #8B3D20 deep rust for text on light bg */
+    --color-profit:        134 38% 42%;  /* #3D8A5A medium forest green — reads as green on cream */
+    --color-profit-fg:     134 42% 32%;  /* #2A6E44 deep green for text — clearly green, not charcoal */
+    --color-profit-subtle: 134 30% 92%;  /* very light green tint for badge bg */
+    --color-loss:          18 58% 46%;   /* #A84E2A deeper terracotta */
+    --color-loss-fg:       18 60% 36%;   /* #8A3A1C deep rust for text — clearly red-brown, not charcoal */
     --color-loss-subtle:   18 56% 95%;   /* very light rust tint for badge bg */
-    --color-pending:       43 49% 56%;   /* #C4A35A warm amber */
-    --color-pending-fg:    43 49% 30%;   /* #5C4D2E deep amber for text on light bg */
+    --color-pending:       43 52% 50%;   /* warm amber */
+    --color-pending-fg:    43 55% 36%;   /* #6B4E18 deep amber for text on light bg */
     --color-pending-subtle: 43 49% 95%; /* very light amber tint for badge bg */
-    --color-neutral:       30 16% 37%;   /* #6B5E4F warm gray */
-    --color-neutral-fg:    36 30% 13%;
-    --color-neutral-subtle: 35 20% 92%;
+    --color-neutral:       30 16% 40%;   /* matches muted-foreground */
+    --color-neutral-fg:    36 35% 10%;
+    --color-neutral-subtle: 35 18% 90%;
 
     /* ── EV tier colors (scanner result cards) ── */
-    --color-ev-low:        30 16% 37%;   /* muted-foreground — below 2.0% */
-    --color-ev-mid:        134 26% 39%;  /* profit green — 2.0–4.0% */
-    --color-ev-high:       210 40% 40%;  /* steel blue — 4.0–5.5% (#3B6C8E) */
-    --color-ev-elite:      290 43% 40%;  /* muted purple — 5.5%+ (#9A3F86) */
+    --color-ev-low:        30 16% 40%;   /* muted-foreground — below 2.0% */
+    --color-ev-mid:        134 38% 38%;  /* green — 2.0–4.0%, clearly reads as green */
+    --color-ev-high:       210 45% 38%;  /* steel blue — 4.0–5.5% */
+    --color-ev-elite:      290 48% 38%;  /* muted purple — 5.5%+ */
 
     /* ── Bonus bet accent ── */
     --color-bonus:         181 87% 35%;  /* teal #0EA5A4 */
@@ -85,16 +85,16 @@
     /* Dark field guide — warm charcoal base, not cool slate */
 
     /* ── Page surfaces ── */
-    --background:          30 10% 10%;   /* #1C1812 very dark warm charcoal */
-    --foreground:          38 22% 90%;   /* #EDE8DF warm off-white — primary text */
+    --background:          30 10% 9%;    /* #181410 slightly deeper — more contrast vs cards */
+    --foreground:          38 24% 92%;   /* #F0EBE2 brighter warm off-white — stronger primary text */
 
     /* ── Card surfaces ── */
     /* Cards must be clearly distinct from the page background */
-    --surface-card:        30 9% 15%;    /* #272219 warm dark brown — card bg */
-    --surface-card-fg:     38 22% 90%;
-    --surface-elevated:    30 9% 19%;    /* #302920 slightly lighter — modals/popovers */
-    --surface-elevated-fg: 38 22% 90%;
-    --surface-overlay:     30 10% 6%;    /* near-black for backdrop tint */
+    --surface-card:        30 9% 16%;    /* #2A2118 warmer dark brown — more pop vs background */
+    --surface-card-fg:     38 24% 92%;
+    --surface-elevated:    30 9% 21%;    /* #352A1F slightly lighter — modals/popovers */
+    --surface-elevated-fg: 38 24% 92%;
+    --surface-overlay:     30 10% 5%;    /* near-black for backdrop tint */
 
     /* ── Legacy aliases ── */
     --card: var(--surface-card);
@@ -103,42 +103,42 @@
     --popover-foreground: var(--surface-elevated-fg);
 
     /* ── Brand / interactive ── */
-    --primary:             43 55% 58%;   /* #C9A84C warm gold — slightly brighter than light */
-    --primary-foreground:  30 10% 10%;
+    --primary:             43 58% 60%;   /* #CCA840 brighter warm gold — more confident CTA */
+    --primary-foreground:  30 10% 9%;
     --secondary:           30 8% 20%;
-    --secondary-foreground: 38 22% 90%;
+    --secondary-foreground: 38 24% 92%;
     --muted:               30 8% 20%;
-    --muted-foreground:    34 12% 55%;   /* #8C7D6A warm mid-tone — secondary text */
-    --accent:              43 55% 58%;
-    --accent-foreground:   30 10% 10%;
+    --muted-foreground:    34 14% 58%;   /* #9A8A78 slightly brighter — better secondary contrast */
+    --accent:              43 58% 60%;
+    --accent-foreground:   30 10% 9%;
     --destructive:         18 52% 50%;
-    --destructive-foreground: 38 22% 90%;
+    --destructive-foreground: 38 24% 92%;
 
     /* ── Borders / inputs ── */
     /* Borders are critical in dark mode — they create layer separation */
-    --border:              30 8% 22%;    /* #3A3028 warm dark border — visible but quiet */
-    --input:               30 8% 22%;
-    --ring:                43 55% 58%;
+    --border:              30 9% 26%;    /* #433828 stronger warm dark border — clearer separation */
+    --input:               30 9% 26%;
+    --ring:                43 58% 60%;
 
     /* ── Semantic state colors ── */
-    --color-profit:        134 35% 48%;  /* #4E8A5F muted forest green */
-    --color-profit-fg:     134 40% 68%;  /* #7DC494 lighter green for text */
-    --color-profit-subtle: 134 30% 13%;  /* very dark green tint for badge bg */
-    --color-loss:          18 52% 52%;   /* #C4623C dusty terracotta */
-    --color-loss-fg:       18 55% 70%;   /* #E09070 lighter rust for text */
+    --color-profit:        134 42% 54%;  /* #4A9E68 brighter forest green — reads clearly as green */
+    --color-profit-fg:     134 44% 72%;  /* #7DD49A lighter green for text */
+    --color-profit-subtle: 134 30% 14%;  /* very dark green tint for badge bg */
+    --color-loss:          18 58% 56%;   /* #CC6840 brighter terracotta */
+    --color-loss-fg:       18 60% 74%;   /* #EE9878 lighter rust for text */
     --color-loss-subtle:   18 45% 14%;   /* very dark rust tint for badge bg */
-    --color-pending:       43 55% 58%;   /* warm gold */
-    --color-pending-fg:    43 60% 74%;   /* lighter gold for text */
+    --color-pending:       43 58% 60%;   /* warm gold */
+    --color-pending-fg:    43 62% 76%;   /* lighter gold for text */
     --color-pending-subtle: 43 40% 14%;  /* very dark amber tint for badge bg */
-    --color-neutral:       34 12% 55%;   /* matches muted-foreground */
-    --color-neutral-fg:    34 12% 70%;
+    --color-neutral:       34 14% 58%;   /* matches muted-foreground */
+    --color-neutral-fg:    34 14% 72%;
     --color-neutral-subtle: 30 8% 18%;
 
     /* ── EV tier colors ── */
-    --color-ev-low:        34 12% 55%;   /* muted warm gray */
-    --color-ev-mid:        134 35% 48%;  /* profit green */
-    --color-ev-high:       210 45% 55%;  /* steel blue */
-    --color-ev-elite:      290 40% 55%;  /* muted purple */
+    --color-ev-low:        34 14% 58%;   /* muted warm gray */
+    --color-ev-mid:        134 42% 54%;  /* profit green — matches --color-profit */
+    --color-ev-high:       210 50% 60%;  /* steel blue */
+    --color-ev-elite:      290 44% 60%;  /* muted purple */
 
     /* ── Bonus bet accent ── */
     --color-bonus:         181 70% 48%;
@@ -230,20 +230,20 @@
   }
 
   /* Level 3 — quiet metadata: timestamps, helper text, secondary labels */
-  /* Light: ~45% lightness. Dark: ~38% lightness. Readable but clearly subordinate. */
+  /* Light: ~40% lightness. Dark: ~35% lightness. Readable but clearly subordinate. */
   .text-lo {
-    color: hsl(var(--foreground) / 0.45);
+    color: hsl(var(--foreground) / 0.42);
   }
   .dark .text-lo {
-    color: hsl(34 10% 40%);
+    color: hsl(34 10% 38%);
   }
 
   /* Level 4 — ghost / decorative: dividers, placeholder text, disabled states */
   .text-ghost {
-    color: hsl(var(--foreground) / 0.28);
+    color: hsl(var(--foreground) / 0.25);
   }
   .dark .text-ghost {
-    color: hsl(34 8% 30%);
+    color: hsl(34 8% 28%);
   }
 
   /* Friendly monospace for numbers - tabular for ledger alignment */
@@ -339,17 +339,22 @@
     background: hsl(var(--card));
     border: 1px solid hsl(var(--border));
     border-bottom-color: hsl(var(--card));
-    box-shadow: 0 -1px 3px rgba(44, 36, 22, 0.03);
+    box-shadow: 0 -2px 4px rgba(44, 36, 22, 0.06);
     z-index: 10;
+    color: hsl(var(--foreground));
+    font-weight: 700;
+    letter-spacing: -0.01em;
   }
   .folder-tab-inactive {
-    background: hsl(var(--muted) / 0.6);
+    background: hsl(var(--muted) / 0.45);
     border: 1px solid transparent;
-    opacity: 0.6;
+    opacity: 0.50;
+    color: hsl(var(--muted-foreground));
+    font-weight: 400;
   }
   .folder-tab-inactive:hover {
-    opacity: 0.85;
-    background: hsl(var(--muted));
+    opacity: 0.75;
+    background: hsl(var(--muted) / 0.70);
   }
   
   /* Ruled notebook lines for notes */

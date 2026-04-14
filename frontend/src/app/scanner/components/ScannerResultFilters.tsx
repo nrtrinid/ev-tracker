@@ -76,12 +76,12 @@ interface ScannerResultFiltersProps {
 }
 
 // Selected filter button style — semantic, works in light + dark
-const FILTER_SELECTED = "border-color-profit/40 bg-color-profit-subtle text-color-profit-fg";
+const FILTER_SELECTED = "border-color-profit/50 bg-color-profit-subtle text-color-profit-fg font-semibold";
 const FILTER_IDLE = "border-border bg-background text-muted-foreground hover:text-foreground";
 const FILTER_IDLE_FULL = "border-border bg-background text-foreground";
 
 // Boost selected style — uses primary/gold accent
-const BOOST_SELECTED = "border-primary/40 bg-primary/15 text-primary";
+const BOOST_SELECTED = "border-primary/60 bg-primary/18 text-foreground font-semibold";
 
 export function ScannerResultFilters({
   filters,
