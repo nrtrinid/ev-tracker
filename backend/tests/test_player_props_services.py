@@ -628,7 +628,10 @@ def test_normalize_prizepicks_projection_maps_supported_nba_market():
 
 @pytest.mark.asyncio
 async def test_fetch_prizepicks_board_uses_recent_cache_when_retry_exhausts(monkeypatch):
+    import services.http_client as http_client_module
     import services.prizepicks as prizepicks_module
+
+    await http_client_module.close_async_client()
 
     prizepicks_module._prizepicks_board_cache["fetched_at"] = 0.0
     prizepicks_module._prizepicks_board_cache["board"] = []
@@ -732,9 +735,11 @@ async def test_fetch_prizepicks_board_uses_recent_cache_when_retry_exhausts(monk
             raise httpx.ConnectError("temporary failure")
 
     monkeypatch.setattr(prizepicks_module.httpx, "AsyncClient", _FailingClient)
+    await http_client_module.close_async_client()
     second_board = await prizepicks_module.fetch_prizepicks_nba_board()
 
     assert second_board == first_board
+    await http_client_module.close_async_client()
 
 
 def test_build_prizepicks_comparison_cards_requires_exact_line_match():
