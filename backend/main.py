@@ -134,7 +134,7 @@ def _new_run_id(prefix: str) -> str:
 def _log_event(event: str, level: str = "info", **fields):
     payload = {
         "event": event,
-        "timestamp": datetime.now(UTC).isoformat() + "Z",
+        "timestamp": _utc_now_iso(),
         **fields,
     }
     message = json.dumps(payload, default=str)
@@ -1116,7 +1116,7 @@ async def _run_jit_clv_snatcher_job():
                             "title": "JIT CLV update",
                             "description": f"Captured closing lines for **{updated}** bet(s).",
                             "fields": [
-                                {"name": "Time (UTC)", "value": datetime.now(UTC).isoformat() + "Z", "inline": True},
+                                {"name": "Time (UTC)", "value": _utc_now_iso(), "inline": True},
                             ],
                         }
                     ]
@@ -1145,14 +1145,14 @@ async def _run_auto_settler_job():
     from services.odds_api import run_auto_settler, get_last_auto_settler_summary
 
     run_id = _new_run_id("auto_settler")
-    started = datetime.now(UTC).isoformat() + "Z"
+    started = _utc_now_iso()
     started_at = time.monotonic()
     _record_scheduler_heartbeat("auto_settler", run_id, "started")
     _log_event("scheduler.auto_settler.started", run_id=run_id)
     db = get_db()
     try:
         settled = await run_auto_settler(db, source="auto_settle_scheduler")
-        finished = datetime.now(UTC).isoformat() + "Z"
+        finished = _utc_now_iso()
         _log_event(
             "scheduler.auto_settler.completed",
             run_id=run_id,
@@ -2085,7 +2085,7 @@ def readiness_check():
 
     response = {
         "status": "ready" if ready else "not_ready",
-        "timestamp": datetime.now(UTC).isoformat() + "Z",
+        "timestamp": _utc_now_iso(),
         "checks": checks,
         "runtime": runtime,
         "scheduler_freshness": scheduler_freshness,
@@ -2892,7 +2892,7 @@ async def ops_trigger_scan(
 
     from services.odds_api import get_cached_or_scan, SUPPORTED_SPORTS
 
-    started = datetime.now(UTC).isoformat() + "Z"
+    started = _utc_now_iso()
     scanned = []
     errors: list[dict] = []
     total_sides = 0
@@ -2957,7 +2957,7 @@ async def ops_trigger_scan(
                 error=str(e),
             )
 
-    finished = datetime.now(UTC).isoformat() + "Z"
+    finished = _utc_now_iso()
     duration_ms = round((time.monotonic() - started_clock) * 1000, 2)
     _log_event(
         "ops.trigger.scan.completed",
@@ -3058,7 +3058,7 @@ async def ops_trigger_auto_settle(
     from services.odds_api import get_last_auto_settler_summary
 
     db = get_db()
-    started = datetime.now(UTC).isoformat() + "Z"
+    started = _utc_now_iso()
     try:
         from services.odds_api import run_auto_settler
 
@@ -3076,7 +3076,7 @@ async def ops_trigger_auto_settle(
         )
         raise HTTPException(status_code=502, detail=f"Auto-settler error: {e}")
     finally:
-        finished = datetime.now(UTC).isoformat() + "Z"
+        finished = _utc_now_iso()
 
     duration_ms = round((time.monotonic() - started_clock) * 1000, 2)
 
@@ -3213,7 +3213,7 @@ async def ops_trigger_test_discord(
                 "title": "Webhook test",
                 "description": "If you can read this, DISCORD_WEBHOOK_URL is working.",
                 "fields": [
-                    {"name": "Server time (UTC)", "value": datetime.now(UTC).isoformat() + "Z", "inline": False},
+                    {"name": "Server time (UTC)", "value": _utc_now_iso(), "inline": False},
                 ],
             }
         ]
@@ -3257,7 +3257,7 @@ async def ops_trigger_test_discord_alert(
                 "title": "Alert Webhook Test",
                 "description": "If you can read this, DISCORD_ALERT_WEBHOOK_URL is working.",
                 "fields": [
-                    {"name": "Server time (UTC)", "value": datetime.now(UTC).isoformat() + "Z", "inline": False},
+                    {"name": "Server time (UTC)", "value": _utc_now_iso(), "inline": False},
                 ],
             }
         ]
