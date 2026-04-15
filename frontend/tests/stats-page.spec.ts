@@ -92,6 +92,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     kelly_multiplier: overrides.kelly_multiplier ?? 0.25,
     bankroll_override: overrides.bankroll_override ?? 150,
     use_computed_bankroll: overrides.use_computed_bankroll ?? true,
+    theme_preference: overrides.theme_preference ?? "light",
     k_factor_mode: overrides.k_factor_mode ?? "baseline",
     k_factor_min_stake: overrides.k_factor_min_stake ?? 100,
     k_factor_smoothing: overrides.k_factor_smoothing ?? 0.5,

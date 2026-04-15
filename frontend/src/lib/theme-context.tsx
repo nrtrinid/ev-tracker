@@ -1,6 +1,9 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+
+import { useAuth } from "@/lib/auth-context";
+import { useSettings, useUpdateSettings } from "@/lib/hooks";
 
 import {
   applyThemePreference,
@@ -19,6 +22,9 @@ type ThemeContextValue = {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+  const { data: settings } = useSettings({ enabled: !loading && !!user });
+  const updateSettings = useUpdateSettings();
   const [theme, setThemeState] = useState<ThemePreference>(DEFAULT_THEME_PREFERENCE);
 
   useEffect(() => {
@@ -42,6 +48,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, [theme]);
 
   useEffect(() => {
+    if (!user || !settings) return;
+    const remoteTheme = normalizeThemePreference(settings.theme_preference);
+    setThemeState((current) => (current === remoteTheme ? current : remoteTheme));
+  }, [settings, user]);
+
+  useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
       if (event.key !== THEME_STORAGE_KEY) return;
       setThemeState(normalizeThemePreference(event.newValue));
@@ -51,13 +63,27 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("storage", handleStorage);
   }, []);
 
+  const setTheme = useCallback((nextTheme: ThemePreference) => {
+    const normalizedTheme = normalizeThemePreference(nextTheme);
+    setThemeState((current) => (current === normalizedTheme ? current : normalizedTheme));
+
+    if (!user || loading) return;
+    if (settings?.theme_preference === normalizedTheme) return;
+
+    updateSettings.mutate({ theme_preference: normalizedTheme });
+  }, [loading, settings?.theme_preference, updateSettings, user]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme(theme === "dark" ? "light" : "dark");
+  }, [setTheme, theme]);
+
   const value = useMemo(
     () => ({
       theme,
-      setTheme: setThemeState,
-      toggleTheme: () => setThemeState((current) => (current === "dark" ? "light" : "dark")),
+      setTheme,
+      toggleTheme,
     }),
-    [theme],
+    [setTheme, theme, toggleTheme],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

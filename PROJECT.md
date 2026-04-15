@@ -103,7 +103,7 @@ ev-betting-tracker/
 │   └── src/
 │       ├── app/             # App Router pages (scanner, settings, analytics, login, admin/ops)
 │       │   └── api/         # Protected bridge/proxy routes (ops + cron + backend proxy)
-│       ├── components/      # UI (Dashboard, BetList, LogBetDrawer, EditBetModal, TopNav, SmartOddsInput, ui/)
+│       ├── components/      # UI (BetList, LogBetDrawer, EditBetModal, TopNav, JourneyCoach, ui/)
 │       ├── lib/             # api.ts, auth-context, hooks, kelly-context, supabase, types, utils
 │       └── middleware.ts    # Auth redirects
 ├── database/
@@ -128,6 +128,8 @@ ev-betting-tracker/
 | GET | `/summary` | Dashboard stats |
 | GET | `/settings` | User settings |
 | PATCH | `/settings` | Update settings |
+| GET | `/onboarding/state` | Canonical onboarding state |
+| POST | `/onboarding/events` | Onboarding transition event (`complete_step`, `dismiss_step`, `reset`) |
 | GET | `/calculate-ev` | EV preview (no save) |
 | POST | `/transactions` | Create transaction |
 | GET | `/transactions` | List transactions |
@@ -135,9 +137,25 @@ ev-betting-tracker/
 | GET | `/balances` | Per-sportsbook balances |
 | GET | `/api/scan-bets` | +EV scan (single sport) |
 | GET | `/api/scan-markets` | Full market scan (all sports, cached) |
+| GET | `/api/scan-latest` | Latest cached scan snapshot by surface |
+| GET | `/board/latest` | Home board snapshot |
+| GET | `/board/latest/surface` | Surface-specific board snapshot |
+| GET | `/board/latest/player-props/opportunities` | Paginated player-props opportunities view |
+| GET | `/board/latest/player-props/browse` | Paginated player-props browse view |
+| GET | `/board/latest/player-props/pickem` | Paginated player-props pick'em view |
+| GET | `/board/latest/player-props/detail` | Player prop detail payload used by action enrichers |
+| GET | `/board/latest/promos` | Promo-ranked board payload |
+| POST | `/board/refresh` | Ops-refresh board snapshot (allowlisted) |
+| GET | `/parlay-slips` | List parlay slips |
+| POST | `/parlay-slips` | Create parlay slip |
+| PATCH | `/parlay-slips/{slip_id}` | Update parlay slip |
+| DELETE | `/parlay-slips/{slip_id}` | Delete parlay slip |
+| POST | `/parlay-slips/{slip_id}/log` | Log parlay slip into bets |
+| POST | `/beta/access/grant` | Grant trusted-beta access by invite code |
 | POST | `/api/ops/trigger/scan` | Operator-triggered cache warm + alert scheduling |
 | POST | `/api/ops/trigger/auto-settle` | Operator-triggered auto-settle run |
 | POST | `/api/ops/trigger/test-discord` | Test Discord message |
+| POST | `/api/ops/trigger/test-discord-alert` | Test Discord alert path |
 | GET | `/api/ops/status` | Protected operator status payload |
 
 ---
@@ -157,6 +175,7 @@ ev-betting-tracker/
 | **Frontend API** | `frontend/src/lib/api.ts` — `fetchAPI`, all API wrappers |
 | **React Query hooks** | `frontend/src/lib/hooks.ts` — `useBets`, `useCreateBet`, `useSummary`, etc. |
 | **Kelly settings** | `frontend/src/lib/kelly-context.tsx` — bankroll, multiplier, backend-backed sync, local cache |
+| **Theme settings** | `frontend/src/lib/theme-context.tsx` + `frontend/src/lib/theme.ts` — local bootstrap + server-backed theme persistence |
 | **Scanner UI** | `frontend/src/app/scanner/[surface]/page.tsx` + `frontend/src/app/scanner/ScannerSurfacePage.tsx` — surface routing, lens ranking, props modes, null-state handling, Log Bet flow |
 | **Scanner result filters** | `frontend/src/app/scanner/components/ScannerResultFilters.tsx` + `frontend/src/lib/scanner-filters.ts` |
 | **Parlay builder** | `frontend/src/app/parlay/page.tsx` + `frontend/src/lib/parlay-utils.ts` — local cart review, fair-pricing preview, Kelly auto-sizing, tracker handoff |
@@ -228,6 +247,11 @@ ev-betting-tracker/
 - **Promo types**: `standard`, `bonus_bet`, `no_sweat`, `promo_qualifier`, `boost_30`, `boost_50`, `boost_100`, `boost_custom`.
 - **Vig**: From opposing odds when available; otherwise `DEFAULT_VIG = 0.045`.
 - **K-factor**: User setting (default 0.78) for no-sweat EV conversion.
+
+### Settings And Personalization
+
+- **Theme preference**: persisted in `settings.theme_preference` and synced in `theme-context` so signed-in users keep light/dark preference across devices.
+- **Onboarding state**: transitions are managed through `/onboarding/events`; direct blob updates are intentionally rejected in the settings patch route.
 
 ### Scanner UX
 

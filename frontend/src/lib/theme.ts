@@ -1,10 +1,12 @@
-export type ThemePreference = "dark" | "light";
+import type { ThemePreference } from "@/lib/types";
+
+export type { ThemePreference } from "@/lib/types";
 
 export const THEME_STORAGE_KEY = "ev-tracker-theme";
 
 export const DEFAULT_THEME_PREFERENCE: ThemePreference = "light";
 export function normalizeThemePreference(value: string | null | undefined): ThemePreference {
-  return value === "light" ? "light" : DEFAULT_THEME_PREFERENCE;
+  return value === "dark" || value === "light" ? value : DEFAULT_THEME_PREFERENCE;
 }
 
 export function applyThemePreference(theme: ThemePreference): void {
@@ -19,15 +21,15 @@ export function buildThemeInitScript(): string {
   return `(() => {
     try {
       const saved = window.localStorage.getItem(${JSON.stringify(THEME_STORAGE_KEY)});
-      const theme = saved === "light" ? "light" : "dark";
+      const theme = saved === "dark" || saved === "light" ? saved : ${JSON.stringify(DEFAULT_THEME_PREFERENCE)};
       const root = document.documentElement;
       const isDark = theme === "dark";
       root.classList.toggle("dark", isDark);
       root.style.colorScheme = isDark ? "dark" : "light";
     } catch {
       const root = document.documentElement;
-      root.classList.add("dark");
-      root.style.colorScheme = "dark";
+      root.classList.toggle("dark", ${JSON.stringify(DEFAULT_THEME_PREFERENCE)} === "dark");
+      root.style.colorScheme = ${JSON.stringify(DEFAULT_THEME_PREFERENCE)};
     }
   })();`;
 }

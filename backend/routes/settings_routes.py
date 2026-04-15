@@ -36,6 +36,8 @@ def build_settings_update_payload(settings_update) -> dict[str, Any]:
         data["bankroll_override"] = settings_update.bankroll_override
     if settings_update.use_computed_bankroll is not None:
         data["use_computed_bankroll"] = settings_update.use_computed_bankroll
+    if getattr(settings_update, "theme_preference", None) is not None:
+        data["theme_preference"] = settings_update.theme_preference
     if settings_update.k_factor_mode is not None:
         data["k_factor_mode"] = settings_update.k_factor_mode
     if settings_update.k_factor_min_stake is not None:

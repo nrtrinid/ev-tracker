@@ -64,7 +64,7 @@ macOS/Linux:
 From `frontend/`:
 
 - `npm run build`
-- `npx tsc --noEmit`
+- `npm run typecheck`
 
 #### Frontend Playwright checks
 
@@ -97,7 +97,7 @@ Before sharing `main` with testers:
 - run backend unit and hardening tests
 - run Discord backend tests
 - run backend integration tests against a dedicated test user
-- run frontend `build` and `tsc`
+- run frontend `build` and `typecheck`
 - run Playwright smoke tests where credentials are available
 - confirm migration parity and apply order via [database/README.md](../database/README.md)
 - run production health/ops/Discord verification via [DEPLOY.md](../DEPLOY.md#discord-verification-required)

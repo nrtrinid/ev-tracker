@@ -52,7 +52,7 @@ When you set `BETA_INVITE_CODE`, prefer a short spoken phrase like `Daily Drop`.
 
 Before a trusted-beta release, confirm production has:
 
-- all numbered migrations through `database/migration_020_beta_invite_code_access.sql`
+- all numbered migrations through `database/migration_021_theme_preference.sql`
 - no outstanding schema changes that exist only under `backend/sql/`
 
 Numbered migrations in `database/` are the canonical schema history. This repo still uses your current Supabase apply workflow, so apply any pending numbered files in order before calling the release ready.

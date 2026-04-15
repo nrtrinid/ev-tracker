@@ -17,6 +17,7 @@ export type PromoType =
 export type BetResult = "pending" | "win" | "loss" | "push" | "void";
 export type ScannerSurface = "straight_bets" | "player_props";
 export type BetSurface = ScannerSurface | "parlay";
+export type ThemePreference = "dark" | "light";
 
 export interface Bet {
   id: string;
@@ -131,6 +132,7 @@ export interface Settings {
   kelly_multiplier: number;
   bankroll_override: number;
   use_computed_bankroll: boolean;
+  theme_preference: ThemePreference;
   // Personalized k-factor auto mode
   k_factor_mode: string;             // 'baseline' | 'auto'
   k_factor_min_stake: number;

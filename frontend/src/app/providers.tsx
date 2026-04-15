@@ -27,16 +27,16 @@ export function Providers({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <ThemeProvider>
-      <QueryClientProvider client={queryClient}>
-        <AuthProvider>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <ThemeProvider>
           <KellyProvider>
             <OnboardingHighlightProvider>
               <BettingPlatformProvider>{children}</BettingPlatformProvider>
             </OnboardingHighlightProvider>
           </KellyProvider>
-        </AuthProvider>
-      </QueryClientProvider>
-    </ThemeProvider>
+        </ThemeProvider>
+      </AuthProvider>
+    </QueryClientProvider>
   );
 }

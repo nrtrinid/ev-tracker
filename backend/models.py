@@ -44,6 +44,7 @@ OnboardingStepId = Literal[
     "parlay_one_leg_prompt",
 ]
 OnboardingEventType = Literal["complete_step", "dismiss_step", "reset"]
+ThemePreference = Literal["dark", "light"]
 
 
 class BetCreate(BaseModel):
@@ -168,6 +169,7 @@ class SettingsUpdate(BaseModel):
     kelly_multiplier: float | None = Field(default=None, gt=0)
     bankroll_override: float | None = Field(default=None, ge=0)
     use_computed_bankroll: bool | None = None
+    theme_preference: ThemePreference | None = None
     k_factor_mode: str | None = None
     k_factor_min_stake: float | None = None
     k_factor_smoothing: float | None = None
@@ -185,6 +187,7 @@ class SettingsResponse(BaseModel):
     kelly_multiplier: float
     bankroll_override: float
     use_computed_bankroll: bool
+    theme_preference: ThemePreference
     k_factor_mode: str
     k_factor_min_stake: float
     k_factor_smoothing: float

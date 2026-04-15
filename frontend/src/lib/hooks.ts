@@ -338,10 +338,13 @@ export function useLogParlaySlip() {
 
 // ============ Settings Hooks ============
 
-export function useSettings() {
+export function useSettings(options?: { enabled?: boolean }) {
+  const enabled = options?.enabled ?? true;
+
   return useQuery({
     queryKey: queryKeys.settings,
     queryFn: api.getSettings,
+    enabled,
   });
 }
 

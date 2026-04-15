@@ -79,6 +79,7 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 - Configure Kelly multiplier (10%, 25%, 50%, full)
 - Set bankroll: use computed (sum of logged balances) or override manually
 - Persisted per user and mirrored locally for fast reloads
+- Theme preference is stored per account and synced across devices
 
 ### Internal Ops Console
 - Route: `/admin/ops` (allowlisted operators only)
@@ -97,12 +98,12 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 ┌─────────────────────────────────────────────────────┐
 │                     Browser                         │
 │ Next.js 14 (App Router)  ·  React Query  ·  Tailwind│
-│   /scanner  /dashboard  /bets  /settings            │
+│   /  /scanner  /analytics  /bets  /settings          │
 └───────────────────┬─────────────────────────────────┘
                     │  HTTPS / JSON
 ┌───────────────────▼─────────────────────────────────┐
 │                 FastAPI (Python)                    │
-│   /api/scan-markets   /api/bets   /api/balances     │
+│   /api/scan-markets   /bets   /settings   /balances │
 │   Auth via Supabase JWT  ·  Rate limiting  ·  Cache │
 └───────────┬──────────────────────┬──────────────────┘
             │                      │
@@ -117,15 +118,16 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 - `backend/services/odds_api.py` — fetch, de-vig, edge calculation, cache
 - `backend/calculations.py` — EV math, Kelly criterion, odds conversion
 - `backend/routes/scan_routes.py` — scan endpoint routing
+- `backend/routes/settings_routes.py` — settings and onboarding state endpoints
 - `backend/dependencies.py` — shared auth/rate-limit/ops-token dependencies
 - `backend/main.py` — FastAPI app bootstrap + scanner handler implementations
 - `frontend/src/app/scanner/[surface]/page.tsx` — scanner surface routing
 - `frontend/src/app/scanner/components/ScannerResultFilters.tsx` — scanner filter bar UI
 - `frontend/src/lib/scanner-filters.ts` — scanner result-filter helpers
 - `frontend/src/lib/kelly-context.tsx` — global Kelly/bankroll state
-
-- `frontend/src/app/scanner/ScannerSurfacePage.tsx` - scanner orchestration, filtering, and props subviews
-- `frontend/src/app/parlay/page.tsx` - local parlay builder and tracker handoff
+- `frontend/src/lib/theme-context.tsx` — local + server-synced theme preference state
+- `frontend/src/app/scanner/ScannerSurfacePage.tsx` — scanner orchestration, filtering, and props subviews
+- `frontend/src/app/parlay/page.tsx` — local parlay builder and tracker handoff
 
 See [PROJECT.md](./PROJECT.md) for full architecture, conventions, and key decisions.
 

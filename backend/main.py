@@ -1815,6 +1815,7 @@ def get_user_settings(db, user_id: str) -> dict:
         "kelly_multiplier": 0.25,
         "bankroll_override": 1000.0,
         "use_computed_bankroll": True,
+        "theme_preference": "light",
         "k_factor_mode": "baseline",
         "k_factor_min_stake": 300.0,
         "k_factor_smoothing": 700.0,
@@ -2686,6 +2687,8 @@ def update_settings(
         data["bankroll_override"] = settings.bankroll_override
     if settings.use_computed_bankroll is not None:
         data["use_computed_bankroll"] = settings.use_computed_bankroll
+    if settings.theme_preference is not None:
+        data["theme_preference"] = settings.theme_preference
     if settings.k_factor_mode is not None:
         data["k_factor_mode"] = settings.k_factor_mode
     if settings.k_factor_min_stake is not None:

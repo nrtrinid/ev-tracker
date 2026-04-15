@@ -13,6 +13,9 @@ Version labels use pre-release suffixes until the app is ready for outside users
 
 - **MLB player props main-feed expansion**
   - Added `batter_home_runs` to the shared MLB player-prop market registry, frontend labels, and auto-settle path.
+- **Theme preference persistence**
+  - Added persisted user theme setting (`settings.theme_preference`) so light/dark preference now survives refreshes and syncs across signed-in devices.
+  - Added migration `database/migration_021_theme_preference.sql` with a constrained `light|dark` value set.
 
 ### Changed
 
@@ -20,6 +23,14 @@ Version labels use pre-release suffixes until the app is ready for outside users
   - Promoted the six standard MLB sportsbook markets in the shared player-props feed: pitcher strikeouts, total bases, hits, hits + runs + RBIs, home runs, and batter strikeouts.
   - Kept the existing 3-book sportsbook gate and 2-book pick'em gate unchanged while expanding the market set.
   - Fixed player-props board snapshot fallback metadata so empty or mixed props payloads no longer default to `basketball_nba`.
+- **Onboarding + settings UX reliability**
+  - Fixed onboarding reset sync so backend reset state now authoritatively clears stale local onboarding flags.
+  - Updated settings onboarding summary to split Daily Drops tutorial progress from Home/Scanner review prompts.
+  - Removed the "Current theme" subtitle under the settings light/dark controls.
+
+### Docs
+
+- Updated README, PROJECT.md, DEPLOY.md, and docs/testing.md to match the current route surface, migration chain, and test command conventions.
 
 ## [2.2.0-beta.1] - 2026-04-01
 

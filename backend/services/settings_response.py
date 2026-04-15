@@ -1,6 +1,10 @@
 from typing import Any, Callable
 
 
+def _normalize_theme_preference(value: Any) -> str:
+    return "dark" if value == "dark" else "light"
+
+
 def build_settings_response(
     *,
     db,
@@ -22,6 +26,7 @@ def build_settings_response(
         use_computed_bankroll=bool(
             True if settings.get("use_computed_bankroll") is None else settings.get("use_computed_bankroll")
         ),
+        theme_preference=_normalize_theme_preference(settings.get("theme_preference")),
         k_factor_mode=settings.get("k_factor_mode") or "baseline",
         k_factor_min_stake=float(settings.get("k_factor_min_stake") or 300.0),
         k_factor_smoothing=float(settings.get("k_factor_smoothing") or 700.0),

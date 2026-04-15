@@ -18,7 +18,7 @@ import {
   useUpdateSettings,
 } from "@/lib/hooks";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
-import { ONBOARDING_CORE_FLOW, ONBOARDING_OPTIONAL_FLOW } from "@/lib/onboarding";
+import { ONBOARDING_OPTIONAL_FLOW, ONBOARDING_STEPS } from "@/lib/onboarding";
 import { SPORTSBOOKS } from "@/lib/types";
 import type { Transaction, TransactionType } from "@/lib/types";
 import { useKellySettings } from "@/lib/kelly-context";
@@ -45,7 +45,10 @@ export default function SettingsPage() {
   const completedOnboardingSteps = settings?.onboarding_state?.completed ?? [];
   const dismissedOnboardingSteps = settings?.onboarding_state?.dismissed ?? [];
   const resolvedOnboardingSteps = new Set([...completedOnboardingSteps, ...dismissedOnboardingSteps]);
-  const completedCoreSteps = ONBOARDING_CORE_FLOW.filter((step) => resolvedOnboardingSteps.has(step)).length;
+  const tutorialFlowSteps = [ONBOARDING_STEPS.TUTORIAL_SCANNER_STRAIGHT_BETS];
+  const reviewPromptFlowSteps = [ONBOARDING_STEPS.HOME_SCANNER_REVIEW, ONBOARDING_STEPS.SCANNER_REVIEW_PROMPT];
+  const completedTutorialSteps = tutorialFlowSteps.filter((step) => resolvedOnboardingSteps.has(step)).length;
+  const completedReviewPromptSteps = reviewPromptFlowSteps.filter((step) => resolvedOnboardingSteps.has(step)).length;
   const completedOptionalSteps = ONBOARDING_OPTIONAL_FLOW.filter((step) => resolvedOnboardingSteps.has(step)).length;
 
   // Transaction form state
@@ -137,9 +140,6 @@ export default function SettingsPage() {
                 Dark
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Current theme: <span className="font-mono font-semibold text-foreground">{theme}</span>
-            </p>
           </CardContent>
         </Card>
         {settingsLoading ? (
@@ -566,7 +566,9 @@ export default function SettingsPage() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">
-                  Core workflow: <span className="font-medium text-foreground">{completedCoreSteps}</span> / {ONBOARDING_CORE_FLOW.length}
+                  Daily Drops tutorial: <span className="font-medium text-foreground">{completedTutorialSteps}</span> / {tutorialFlowSteps.length}
+                  <br />
+                  Review prompts (Home + Scanner): <span className="font-medium text-foreground">{completedReviewPromptSteps}</span> / {reviewPromptFlowSteps.length}
                   <br />
                   Optional parlay branch: <span className="font-medium text-foreground">{completedOptionalSteps}</span> / {ONBOARDING_OPTIONAL_FLOW.length}
                   <br />

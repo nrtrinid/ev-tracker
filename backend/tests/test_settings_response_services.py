@@ -9,6 +9,7 @@ def test_build_settings_response_applies_defaults_and_k_derivatives():
         "kelly_multiplier": None,
         "bankroll_override": None,
         "use_computed_bankroll": None,
+        "theme_preference": None,
         "k_factor_mode": None,
         "k_factor_min_stake": None,
         "k_factor_smoothing": None,
@@ -40,6 +41,7 @@ def test_build_settings_response_applies_defaults_and_k_derivatives():
     assert out["kelly_multiplier"] == 0.25
     assert out["bankroll_override"] == 1000.0
     assert out["use_computed_bankroll"] is True
+    assert out["theme_preference"] == "light"
     assert out["k_factor_mode"] == "baseline"
     assert out["k_factor_min_stake"] == 300.0
     assert out["k_factor_smoothing"] == 700.0

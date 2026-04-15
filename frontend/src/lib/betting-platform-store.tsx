@@ -77,10 +77,6 @@ function arraysEqual(left: OnboardingStepId[], right: OnboardingStepId[]) {
   return left.every((value, index) => value === right[index]);
 }
 
-function mergeUniqueSteps(...groups: OnboardingStepId[][]) {
-  return sanitizeOnboardingSteps(groups.flat());
-}
-
 export function resolveHydratedOnboardingState(
   current: Pick<BettingPlatformState, "onboardingCompleted" | "onboardingDismissed">,
   payload: { completed?: OnboardingStepId[]; dismissed?: OnboardingStepId[] } | null | undefined,
@@ -89,18 +85,18 @@ export function resolveHydratedOnboardingState(
   const payloadCompleted = sanitizeOnboardingSteps(payload?.completed ?? current.onboardingCompleted);
   const payloadDismissed = sanitizeOnboardingSteps(payload?.dismissed ?? current.onboardingDismissed);
 
-  const nextCompleted = source === "remote"
-    ? mergeUniqueSteps(current.onboardingCompleted, payloadCompleted)
-    : payloadCompleted;
+  // Remote state is authoritative so backend resets can clear stale local progress.
+  const nextDismissed = payloadDismissed.filter((step) => !payloadCompleted.includes(step));
 
-  const mergedDismissed = source === "remote"
-    ? mergeUniqueSteps(current.onboardingDismissed, payloadDismissed)
-    : payloadDismissed;
-
-  const nextDismissed = mergedDismissed.filter((step) => !nextCompleted.includes(step));
+  if (source === "remote") {
+    return {
+      completed: payloadCompleted,
+      dismissed: nextDismissed,
+    };
+  }
 
   return {
-    completed: nextCompleted,
+    completed: payloadCompleted,
     dismissed: nextDismissed,
   };
 }
