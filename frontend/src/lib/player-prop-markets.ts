@@ -5,14 +5,11 @@ export const PLAYER_PROP_MARKET_OPTIONS = [
   "player_points_rebounds_assists",
   "player_threes",
   "pitcher_strikeouts",
-  "pitcher_strikeouts_alternate",
   "batter_total_bases",
-  "batter_total_bases_alternate",
   "batter_hits",
-  "batter_hits_alternate",
   "batter_hits_runs_rbis",
+  "batter_home_runs",
   "batter_strikeouts",
-  "batter_strikeouts_alternate",
 ] as const;
 
 export const PLAYER_PROP_SPORT_OPTIONS = [
@@ -33,6 +30,7 @@ const PLAYER_PROP_MARKET_SPORTS: Record<string, string[]> = {
   batter_hits: ["baseball_mlb"],
   batter_hits_alternate: ["baseball_mlb"],
   batter_hits_runs_rbis: ["baseball_mlb"],
+  batter_home_runs: ["baseball_mlb"],
   batter_strikeouts: ["baseball_mlb"],
   batter_strikeouts_alternate: ["baseball_mlb"],
 };
@@ -43,15 +41,16 @@ const PLAYER_PROP_MARKET_BADGES: Record<string, string> = {
   player_assists: "AST",
   player_points_rebounds_assists: "PRA",
   player_threes: "3PM",
-  pitcher_strikeouts: "P K",
-  pitcher_strikeouts_alternate: "P K ALT",
+  pitcher_strikeouts: "Pitcher Ks",
+  pitcher_strikeouts_alternate: "Pitcher Ks Alt",
   batter_total_bases: "TB",
   batter_total_bases_alternate: "TB ALT",
-  batter_hits: "H",
-  batter_hits_alternate: "H ALT",
+  batter_hits: "Hits",
+  batter_hits_alternate: "Hits Alt",
   batter_hits_runs_rbis: "H+R+RBI",
-  batter_strikeouts: "B K",
-  batter_strikeouts_alternate: "B K ALT",
+  batter_home_runs: "HR",
+  batter_strikeouts: "Batter Ks",
+  batter_strikeouts_alternate: "Batter Ks Alt",
 };
 
 const PLAYER_PROP_MARKET_LABELS: Record<string, string> = {
@@ -67,6 +66,7 @@ const PLAYER_PROP_MARKET_LABELS: Record<string, string> = {
   batter_hits: "Hits",
   batter_hits_alternate: "Hits Alt",
   batter_hits_runs_rbis: "Hits + Runs + RBIs",
+  batter_home_runs: "Home Runs",
   batter_strikeouts: "Batter Strikeouts",
   batter_strikeouts_alternate: "Batter Strikeouts Alt",
 };

@@ -1,7 +1,7 @@
 import type { MarketSide } from "@/lib/types";
 import { formatPlayerPropSportLabel } from "@/lib/player-prop-markets";
 
-export type ScannerTimePreset = "all" | "starting_soon" | "today" | "tomorrow";
+export type ScannerTimePreset = "all" | "all_games" | "starting_soon" | "today" | "tomorrow";
 export type ScannerRiskPreset = "any" | "safer" | "balanced";
 export const DEFAULT_STANDARD_EDGE_MIN = 1;
 
@@ -78,6 +78,8 @@ function matchesTimePreset(
 ): boolean {
   const start = new Date(commenceTime);
   if (Number.isNaN(start.getTime())) return false;
+
+  if (preset === "all_games") return true;
 
   if (!isPregameCommenceTime(commenceTime, now)) return false;
 
@@ -159,6 +161,7 @@ export function describeScannerResultFilters(params: {
   if (filters.timePreset === "starting_soon") chips.push("Time: Starting Soon");
   if (filters.timePreset === "today") chips.push("Time: Today");
   if (filters.timePreset === "tomorrow") chips.push("Time: Tomorrow");
+  if (filters.timePreset === "all_games") chips.push("Time: All Games");
 
   if (activeLens === "standard") {
     if (filters.edgeMinStandard === 0) {

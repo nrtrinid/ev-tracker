@@ -87,7 +87,7 @@ def persist_board_snapshot(
 
     if player_props_payload:
         surfaces_included.append("player_props")
-        for sport in _payload_sports_included(player_props_payload, fallback="basketball_nba"):
+        for sport in _payload_sports_included(player_props_payload, fallback="all"):
             if sport not in sports_included:
                 sports_included.append(sport)
         total_sides += len(player_props_payload.get("sides") or [])

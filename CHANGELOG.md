@@ -7,6 +7,20 @@ Version labels use pre-release suffixes until the app is ready for outside users
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **MLB player props main-feed expansion**
+  - Added `batter_home_runs` to the shared MLB player-prop market registry, frontend labels, and auto-settle path.
+
+### Changed
+
+- **MLB player props**
+  - Promoted the six standard MLB sportsbook markets in the shared player-props feed: pitcher strikeouts, total bases, hits, hits + runs + RBIs, home runs, and batter strikeouts.
+  - Kept the existing 3-book sportsbook gate and 2-book pick'em gate unchanged while expanding the market set.
+  - Fixed player-props board snapshot fallback metadata so empty or mixed props payloads no longer default to `basketball_nba`.
+
 ## [2.2.0-beta.1] - 2026-04-01
 
 ### Added

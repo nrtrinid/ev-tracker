@@ -11,6 +11,7 @@ from services.prop_settler import (
     _stat_label_to_key,
     build_player_stat_map,
     grade_prop,
+    is_auto_settle_supported_prop_market,
 )
 
 
@@ -232,6 +233,7 @@ def test_build_player_stat_map_parses_mlb_boxscore_stats():
                             "batting": {
                                 "hits": 2,
                                 "totalBases": 4,
+                                "homeRuns": 1,
                                 "runs": 1,
                                 "rbi": 2,
                                 "strikeOuts": 1,
@@ -256,6 +258,7 @@ def test_build_player_stat_map_parses_mlb_boxscore_stats():
 
     assert stat_map["mookiebetts"]["B_H"] == 2.0
     assert stat_map["mookiebetts"]["B_TB"] == 4.0
+    assert stat_map["mookiebetts"]["B_HR"] == 1.0
     assert stat_map["mookiebetts"]["B_R"] == 1.0
     assert stat_map["mookiebetts"]["B_RBI"] == 2.0
     assert stat_map["mookiebetts"]["B_SO"] == 1.0
@@ -308,3 +311,39 @@ def test_grade_prop_supports_mlb_hits_runs_rbis_combo():
     assert grade == "win"
     assert detail["player_match"] == "exact"
     assert detail["stat_present"] is True
+
+
+def test_grade_prop_supports_mlb_home_runs():
+    stat_map = {"shoheiohtani": {"B_HR": 2.0}}
+    grade, detail = grade_prop(
+        "Shohei Ohtani",
+        "batter_home_runs",
+        1.5,
+        "over",
+        stat_map,
+        sport=MLB_SPORT_KEY,
+    )
+
+    assert grade == "win"
+    assert detail["player_match"] == "exact"
+    assert detail["stat_present"] is True
+
+
+def test_grade_prop_returns_manual_signal_when_mlb_home_runs_stat_missing():
+    stat_map = {"shoheiohtani": {"B_H": 2.0}}
+    grade, detail = grade_prop(
+        "Shohei Ohtani",
+        "batter_home_runs",
+        0.5,
+        "over",
+        stat_map,
+        sport=MLB_SPORT_KEY,
+    )
+
+    assert grade is None
+    assert detail["player_match"] == "exact"
+    assert detail["stat_present"] is False
+
+
+def test_auto_settle_support_includes_mlb_home_runs():
+    assert is_auto_settle_supported_prop_market(MLB_SPORT_KEY, "batter_home_runs") is True

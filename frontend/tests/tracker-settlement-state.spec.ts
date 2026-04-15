@@ -93,6 +93,25 @@ test.describe("tracker settlement state", () => {
     expect(state.showManualControlsByDefault).toBe(false);
   });
 
+  test("treats MLB home run props as auto-settle eligible", async () => {
+    const state = getTrackerSettlementState(
+      buildBet({
+        surface: "player_props",
+        market: "Home Runs",
+        sport: "MLB",
+        clv_sport_key: "baseball_mlb",
+        source_market_key: "batter_home_runs",
+        participant_name: "Shohei Ohtani",
+        selection_side: "over",
+        line_value: 0.5,
+      }),
+      new Date("2026-04-11T12:00:00Z"),
+    );
+
+    expect(state.kind).toBe("awaiting_auto_settle");
+    expect(state.showManualControlsByDefault).toBe(false);
+  });
+
   test("keeps unsupported MLB prop markets manual-only", async () => {
     const state = getTrackerSettlementState(
       buildBet({
@@ -112,7 +131,7 @@ test.describe("tracker settlement state", () => {
     expect(state.showManualControlsByDefault).toBe(true);
   });
 
-  test("keeps upcoming moneyline bets in the auto-settle state", async () => {
+  test("keeps upcoming moneyline bets in the open-ticket state", async () => {
     const state = getTrackerSettlementState(
       buildBet({
         commence_time: "2026-04-11T02:00:00Z",
@@ -120,7 +139,7 @@ test.describe("tracker settlement state", () => {
       new Date("2026-04-11T00:00:00Z"),
     );
 
-    expect(state.kind).toBe("awaiting_auto_settle");
+    expect(state.kind).toBe("open_ticket");
     expect(state.title).toBe("Open ticket");
     expect(state.showManualControlsByDefault).toBe(false);
   });

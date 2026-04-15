@@ -179,15 +179,16 @@ def _prop_market_display_suffix(market_key: str) -> str:
         "player_assists": "AST",
         "player_points_rebounds_assists": "PTS/REB/AST",
         "player_threes": "3PM",
-        "pitcher_strikeouts": "P K",
-        "pitcher_strikeouts_alternate": "P K ALT",
+        "pitcher_strikeouts": "Pitcher Ks",
+        "pitcher_strikeouts_alternate": "Pitcher Ks Alt",
         "batter_total_bases": "TB",
         "batter_total_bases_alternate": "TB ALT",
-        "batter_hits": "H",
-        "batter_hits_alternate": "H ALT",
+        "batter_hits": "Hits",
+        "batter_hits_alternate": "Hits Alt",
         "batter_hits_runs_rbis": "H+R+RBI",
-        "batter_strikeouts": "B K",
-        "batter_strikeouts_alternate": "B K ALT",
+        "batter_home_runs": "HR",
+        "batter_strikeouts": "Batter Ks",
+        "batter_strikeouts_alternate": "Batter Ks Alt",
     }
     if key in known:
         return known[key]

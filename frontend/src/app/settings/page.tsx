@@ -121,20 +121,20 @@ export default function SettingsPage() {
               <Button
                 type="button"
                 size="sm"
-                variant={theme === "dark" ? "default" : "outline"}
-                onClick={() => setTheme("dark")}
-              >
-                <Moon className="mr-1.5 h-4 w-4" />
-                Dark
-              </Button>
-              <Button
-                type="button"
-                size="sm"
                 variant={theme === "light" ? "default" : "outline"}
                 onClick={() => setTheme("light")}
               >
                 <Sun className="mr-1.5 h-4 w-4" />
                 Light
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={theme === "dark" ? "default" : "outline"}
+                onClick={() => setTheme("dark")}
+              >
+                <Moon className="mr-1.5 h-4 w-4" />
+                Dark
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">

@@ -93,6 +93,34 @@ test.describe("scanner filters", () => {
     expect(isPregameCommenceTime("2026-03-20T11:59:59Z", now)).toBeFalsy();
   });
 
+  test("supports All Games including already-started events", async () => {
+    const sides = [
+      { ...BASE_SIDE, team: "Soon", commence_time: "2026-03-20T13:30:00Z" },
+      { ...BASE_SIDE, team: "Past", commence_time: "2026-03-20T10:00:00Z" },
+    ];
+
+    const now = new Date("2026-03-20T12:00:00Z");
+
+    const allGames = applyScannerResultFilters({
+      sides,
+      activeLens: "standard",
+      longshotMaxAmerican: 500,
+      filters: {
+        searchQuery: "",
+        timePreset: "all_games",
+        edgeMinStandard: 0,
+        hideLongshots: false,
+        hideAlreadyLogged: false,
+        riskPreset: "any",
+        propMarket: "all",
+        propSide: "all",
+      },
+      now,
+    });
+
+    expect(allGames.map((s) => s.team)).toEqual(["Soon", "Past"]);
+  });
+
   test("applies standard edge filter only in standard lens", async () => {
     const sides = [
       BASE_SIDE,
@@ -216,6 +244,7 @@ test.describe("scanner filters", () => {
       hideLongshots: true,
       hideAlreadyLogged: true,
       riskPreset: "safer" as const,
+      propSport: "all",
       propMarket: "all",
       propSide: "all" as const,
     };
@@ -250,6 +279,7 @@ test.describe("scanner filters", () => {
           hideLongshots: false,
           hideAlreadyLogged: false,
           riskPreset: "any",
+          propSport: "all",
           propMarket: "all",
           propSide: "all",
         },
@@ -267,6 +297,7 @@ test.describe("scanner filters", () => {
         hideLongshots: false,
         hideAlreadyLogged: false,
         riskPreset: "any",
+        propSport: "all",
         propMarket: "all",
         propSide: "all",
       },
@@ -274,6 +305,26 @@ test.describe("scanner filters", () => {
     });
 
     expect(labels).toContain("Time: Tomorrow");
+  });
+
+  test("reports all games filter chip label", async () => {
+    const labels = describeScannerResultFilters({
+      activeLens: "standard",
+      filters: {
+        searchQuery: "",
+        timePreset: "all_games",
+        edgeMinStandard: 0,
+        hideLongshots: false,
+        hideAlreadyLogged: false,
+        riskPreset: "any",
+        propSport: "all",
+        propMarket: "all",
+        propSide: "all",
+      },
+      longshotMaxAmerican: 500,
+    });
+
+    expect(labels).toContain("Time: All Games");
   });
 
   test("supports 1.5% edge threshold in standard lens", async () => {
@@ -293,6 +344,7 @@ test.describe("scanner filters", () => {
         hideLongshots: false,
         hideAlreadyLogged: false,
         riskPreset: "any",
+        propSport: "all",
         propMarket: "all",
         propSide: "all",
       },
@@ -312,6 +364,7 @@ test.describe("scanner filters", () => {
         hideLongshots: false,
         hideAlreadyLogged: false,
         riskPreset: "any",
+        propSport: "all",
         propMarket: "all",
         propSide: "all",
       },
@@ -331,6 +384,7 @@ test.describe("scanner filters", () => {
         hideLongshots: true,
         hideAlreadyLogged: false,
         riskPreset: "any",
+        propSport: "all",
         propMarket: "all",
         propSide: "all",
       },
@@ -358,6 +412,7 @@ test.describe("scanner filters", () => {
         hideLongshots: false,
         hideAlreadyLogged: false,
         riskPreset: "any",
+        propSport: "all",
         propMarket: "player_points",
         propSide: "over",
       },
@@ -378,6 +433,7 @@ test.describe("scanner filters", () => {
         hideLongshots: false,
         hideAlreadyLogged: false,
         riskPreset: "any",
+        propSport: "all",
         propMarket: "player_points",
         propSide: "under",
       },

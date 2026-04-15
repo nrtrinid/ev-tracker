@@ -43,9 +43,18 @@ Player props now participate in multiple runtime paths:
 
 What is still true:
 
-- the manual props scanner is curated, not a full prop crawl
+- NBA props use curated game discovery, while MLB props scan the supported pregame slate directly
 - surfaced prop cards require stronger consensus than CLV close capture
 - board and research paths should be treated as operationally important, not just UI extras
+
+Current standard MLB sportsbook markets:
+
+- `pitcher_strikeouts`
+- `batter_total_bases`
+- `batter_hits`
+- `batter_hits_runs_rbis`
+- `batter_home_runs`
+- `batter_strikeouts`
 
 ## Operator Checklist
 

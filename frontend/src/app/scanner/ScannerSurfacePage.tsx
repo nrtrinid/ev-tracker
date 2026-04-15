@@ -111,6 +111,8 @@ function matchesScannerComparisonTimePreset(
   const start = new Date(commenceTime);
   if (Number.isNaN(start.getTime())) return false;
 
+  if (preset === "all_games") return true;
+
   if (!isPregameCommenceTime(commenceTime, now)) return false;
 
   const deltaMs = start.getTime() - now.getTime();

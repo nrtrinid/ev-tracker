@@ -48,6 +48,9 @@ def test_get_player_prop_markets_uses_mlb_defaults_for_baseball(monkeypatch):
         "pitcher_strikeouts",
         "batter_total_bases",
         "batter_hits",
+        "batter_hits_runs_rbis",
+        "batter_strikeouts",
+        "batter_home_runs",
     ]
 
 
@@ -62,7 +65,7 @@ def test_get_player_prop_markets_filters_env_values_per_sport(monkeypatch):
     ]
 
 
-def test_get_player_prop_markets_can_append_shadow_mlb_markets_via_sport_toggle(monkeypatch):
+def test_get_player_prop_markets_shadow_toggle_does_not_change_mlb_defaults(monkeypatch):
     monkeypatch.delenv("PLAYER_PROP_MARKETS", raising=False)
     monkeypatch.setenv("PLAYER_PROP_INCLUDE_SHADOW_MARKETS", "baseball_mlb")
 
@@ -72,10 +75,11 @@ def test_get_player_prop_markets_can_append_shadow_mlb_markets_via_sport_toggle(
         "batter_hits",
         "batter_hits_runs_rbis",
         "batter_strikeouts",
+        "batter_home_runs",
     ]
 
 
-def test_get_player_prop_markets_can_append_specific_shadow_market_via_env(monkeypatch):
+def test_get_player_prop_markets_specific_shadow_toggle_does_not_change_mlb_defaults(monkeypatch):
     monkeypatch.delenv("PLAYER_PROP_MARKETS", raising=False)
     monkeypatch.setenv("PLAYER_PROP_INCLUDE_SHADOW_MARKETS", "batter_strikeouts")
 
@@ -83,7 +87,9 @@ def test_get_player_prop_markets_can_append_specific_shadow_market_via_env(monke
         "pitcher_strikeouts",
         "batter_total_bases",
         "batter_hits",
+        "batter_hits_runs_rbis",
         "batter_strikeouts",
+        "batter_home_runs",
     ]
 
 
@@ -95,6 +101,9 @@ def test_get_player_prop_markets_can_append_alternate_mlb_markets_via_sport_togg
         "pitcher_strikeouts",
         "batter_total_bases",
         "batter_hits",
+        "batter_hits_runs_rbis",
+        "batter_strikeouts",
+        "batter_home_runs",
         "pitcher_strikeouts_alternate",
         "batter_total_bases_alternate",
         "batter_hits_alternate",

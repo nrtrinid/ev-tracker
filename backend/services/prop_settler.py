@@ -46,6 +46,7 @@ PROP_MARKET_TO_MLB_STAT = {
     "batter_hits": "B_H",
     "batter_hits_alternate": "B_H",
     "batter_hits_runs_rbis": "B_H_R_RBI",
+    "batter_home_runs": "B_HR",
     "batter_strikeouts": "B_SO",
     "batter_strikeouts_alternate": "B_SO",
 }
@@ -979,6 +980,7 @@ def _build_mlb_player_stat_map(summary: dict[str, Any]) -> dict[str, dict[str, f
                 total_bases = _parse_stat_cell(batting.get("totalBases"))
                 runs = _parse_stat_cell(batting.get("runs"))
                 rbi = _parse_stat_cell(batting.get("rbi"))
+                home_runs = _parse_stat_cell(batting.get("homeRuns"))
                 strikeouts = _parse_stat_cell(batting.get("strikeOuts"))
                 if hits is not None:
                     row["B_H"] = hits
@@ -988,6 +990,8 @@ def _build_mlb_player_stat_map(summary: dict[str, Any]) -> dict[str, dict[str, f
                     row["B_R"] = runs
                 if rbi is not None:
                     row["B_RBI"] = rbi
+                if home_runs is not None:
+                    row["B_HR"] = home_runs
                 if strikeouts is not None:
                     row["B_SO"] = strikeouts
             if isinstance(pitching, dict):

@@ -33,6 +33,7 @@ import { shouldShowProfitBoostContextControls, type ScannerLens } from "../scann
 
 const TIME_OPTIONS: Array<{ value: ScannerTimePreset; label: string }> = [
   { value: "all", label: "All" },
+  { value: "all_games", label: "All Games" },
   { value: "starting_soon", label: "Starting Soon" },
   { value: "today", label: "Today" },
   { value: "tomorrow", label: "Tomorrow" },

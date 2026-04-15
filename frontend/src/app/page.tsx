@@ -31,7 +31,11 @@ import { useOnboardingHighlight } from "@/lib/onboarding-highlight";
 import { ONBOARDING_HIGHLIGHT_TARGETS } from "@/lib/onboarding-guidance";
 import { createClient } from "@/lib/supabase";
 import { expandTeamAliasSearchQuery, matchesTeamAliasSearch } from "@/lib/team-search-aliases";
-import { PLAYER_PROP_MARKET_OPTIONS, formatPlayerPropMarketLabel } from "@/lib/player-prop-markets";
+import {
+  PLAYER_PROP_MARKET_OPTIONS,
+  formatPlayerPropMarketLabel,
+  isSupportedPlayerPropMarketForSport,
+} from "@/lib/player-prop-markets";
 import { JourneyCoach } from "@/components/JourneyCoach";
 import { LogBetDrawer } from "@/components/LogBetDrawer";
 import {
@@ -1352,6 +1356,13 @@ export default function MarketsPage() {
     }
     return Array.from(markets).sort();
   }, [activePlayerPropsListPage?.available_markets, activePlayerPropsPickemPage?.available_markets, allSides, primaryMode]);
+  const availablePropMarketsForSport = useMemo(() => {
+    if (propSportFilter === "all") return availablePropMarkets;
+    const scoped = availablePropMarkets.filter((market) =>
+      isSupportedPlayerPropMarketForSport(propSportFilter, market),
+    );
+    return scoped;
+  }, [availablePropMarkets, propSportFilter]);
   const isPickEmView = primaryMode === "player_props" && viewMode === "pickem";
   const activeFilterChips = useMemo(() => {
     const chips: string[] = [];
@@ -1431,6 +1442,14 @@ export default function MarketsPage() {
       setPropSideFilter("all");
     }
   }, [isPickEmView, propSideFilter]);
+
+  useEffect(() => {
+    if (primaryMode !== "player_props") return;
+    if (propMarketFilter === "all") return;
+    if (availablePropMarketsForSport.includes(propMarketFilter)) return;
+    setPropMarketFilter("all");
+  }, [availablePropMarketsForSport, primaryMode, propMarketFilter]);
+
   // rawSourceCount: keep aligned with ranked/source set so empty-state copy does not
   // misclassify "no opportunities" as "not pregame".
   const rawSourceCount = isPickEmView
@@ -1500,9 +1519,6 @@ export default function MarketsPage() {
     setViewMode(mode);
     setVisibleCount(10);
     setSearchQuery("");
-    if (mode === "opportunities" && timeFilter === "all_games") {
-      setTimeFilter("today");
-    }
     // Pick'em is only meaningful for player props — auto-switch surface
     if (mode === "pickem" && primaryMode === "straight_bets") {
       setPrimaryMode("player_props");
@@ -1951,20 +1967,12 @@ export default function MarketsPage() {
                 <SingleSelectFilterPills<BoardTimeFilter>
                   value={timeFilter}
                   onValueChange={setTimeFilter}
-                  options={(
-                    viewMode === "browse"
-                      ? [
-                          { id: "today", label: "Today" },
-                          { id: "today_closed", label: "Closed Today" },
-                          { id: "upcoming", label: "Upcoming" },
-                          { id: "all_games", label: "All Games" },
-                        ]
-                      : [
-                          { id: "today", label: "Today" },
-                          { id: "today_closed", label: "Closed Today" },
-                          { id: "upcoming", label: "Upcoming" },
-                        ]
-                  ).map((option) => ({
+                  options={[
+                    { id: "today", label: "Today" },
+                    { id: "today_closed", label: "Closed Today" },
+                    { id: "upcoming", label: "Upcoming" },
+                    { id: "all_games", label: "All Games" },
+                  ].map((option) => ({
                     value: option.id as BoardTimeFilter,
                     label: option.label,
                   }))}
@@ -2012,7 +2020,7 @@ export default function MarketsPage() {
                     onValueChange={setPropMarketFilter}
                     options={[
                       { value: "all", label: "All" },
-                      ...availablePropMarkets.map((market) => ({
+                      ...availablePropMarketsForSport.map((market) => ({
                         value: market,
                         label: formatMarketTypeLabel(market),
                       })),
