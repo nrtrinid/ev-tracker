@@ -2050,10 +2050,14 @@ def readiness_check():
     db_ok, db_error = _check_db_ready()
     scheduler_fresh_ok, scheduler_freshness = _check_scheduler_freshness(runtime["scheduler_expected"])
 
+    scheduler_state_ok = (not runtime["scheduler_expected"]) or runtime["scheduler_running"]
+    if not scheduler_state_ok and (os.getenv("APP_ROLE") or "").strip().lower() == "api":
+        scheduler_state_ok = True
+
     checks = {
         "supabase_env": runtime["supabase_url_configured"] and runtime["supabase_service_role_configured"],
         "db_connectivity": db_ok,
-        "scheduler_state": (not runtime["scheduler_expected"]) or runtime["scheduler_running"],
+        "scheduler_state": scheduler_state_ok,
         "scheduler_freshness": scheduler_fresh_ok,
     }
     ready = all(checks.values())
