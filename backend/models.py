@@ -615,9 +615,11 @@ class ResearchOpportunitySummaryResponse(BaseModel):
     beat_close_pct: float | None = None
     avg_clv_percent: float | None = None
     by_surface: list[ResearchOpportunityBreakdownItem]
+    by_market: list[ResearchOpportunityBreakdownItem]
     by_source: list[ResearchOpportunityBreakdownItem]
     by_sportsbook: list[ResearchOpportunityBreakdownItem]
     by_edge_bucket: list[ResearchOpportunityBreakdownItem]
+    by_drop_time: list[ResearchOpportunityBreakdownItem] = Field(default_factory=list)
     by_odds_bucket: list[ResearchOpportunityBreakdownItem]
     status_buckets: list[ResearchOpportunityStatusBucket] = Field(default_factory=list)
     recent_opportunities: list[ResearchOpportunityRecentRow]

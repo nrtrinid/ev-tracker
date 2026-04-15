@@ -18,9 +18,19 @@ class _Query:
         self._payload = payload
         self._filters = list(filters or [])
         self._fields = ""
+        self._order_by: list[tuple[str, bool]] = []
+        self._range: tuple[int, int] | None = None
 
     def select(self, fields):
         self._fields = str(fields or "")
+        return self
+
+    def order(self, key, desc=False):
+        self._order_by.append((key, bool(desc)))
+        return self
+
+    def range(self, start, end):
+        self._range = (int(start), int(end))
         return self
 
     def in_(self, key, values):
@@ -56,6 +66,13 @@ class _Query:
         matched = [row for row in rows if all(predicate(row) for predicate in self._filters)]
 
         if self._mode == "select":
+            for key, desc in reversed(self._order_by):
+                matched.sort(key=lambda row: row.get(key), reverse=desc)
+            if self._range is None:
+                matched = matched[:1000]
+            else:
+                start, end = self._range
+                matched = matched[start:end + 1]
             return _Resp([dict(row) for row in matched])
 
         if self._mode == "update":
@@ -511,6 +528,8 @@ def test_get_research_opportunities_summary_aggregates_breakdowns_and_recent_row
 
     assert [item.key for item in summary.by_surface] == ["straight_bets", "player_props"]
     assert summary.by_surface[0].captured_count == 2
+    assert [item.key for item in summary.by_market] == ["ML", "player_points"]
+    assert summary.by_market[0].captured_count == 2
     assert [item.key for item in summary.by_source] == [
         "Daily Drop (Scheduled)",
         "Daily Drop (Ops Trigger)",
@@ -518,6 +537,9 @@ def test_get_research_opportunities_summary_aggregates_breakdowns_and_recent_row
     ]
     assert summary.by_source[0].captured_count == 1
     assert [item.key for item in summary.by_edge_bucket] == ["0.5-1%", "2-4%", "4%+"]
+    assert [item.key for item in summary.by_drop_time] == ["First Look", "Daily Drop"]
+    assert summary.by_drop_time[0].captured_count == 3
+    assert summary.by_drop_time[1].captured_count == 0
     assert [item.key for item in summary.by_odds_bucket] == ["<= +150", "+301 to +500", "+501+"]
 
     assert summary.recent_opportunities[0].opportunity_key == "opp-3"
@@ -530,6 +552,45 @@ def test_get_research_opportunities_summary_aggregates_breakdowns_and_recent_row
     assert summary.status_buckets[0].count == 1
     assert summary.status_buckets[1].status == "valid"
     assert summary.status_buckets[1].count == 2
+
+
+def test_get_research_opportunities_summary_pages_past_postgrest_default_limit():
+    rows = []
+    for idx in range(1004):
+        rows.append(
+            {
+                "opportunity_key": f"opp-{idx:04d}",
+                "surface": "player_props" if idx % 2 else "straight_bets",
+                "first_seen_at": "2026-03-23T18:05:00Z",
+                "last_seen_at": "2026-03-23T18:07:00Z",
+                "commence_time": "2026-03-23T20:00:00Z",
+                "sport": "basketball_nba",
+                "event": "Away @ Home",
+                "team": "Home",
+                "sportsbook": "DraftKings",
+                "market": "player_points" if idx % 2 else "ML",
+                "event_id": f"evt-{idx}",
+                "first_source": "manual_scan",
+                "last_source": "manual_scan",
+                "seen_count": 1,
+                "first_ev_percentage": 1.25,
+                "first_book_odds": 140,
+                "best_book_odds": 150,
+                "latest_reference_odds": 120,
+                "reference_odds_at_close": 115,
+                "close_captured_at": "2026-03-23T19:45:00Z",
+                "clv_ev_percent": 1.2,
+                "beat_close": True,
+            }
+        )
+
+    summary = get_research_opportunities_summary(_DB(rows=rows))
+
+    assert summary.captured_count == 1004
+    assert summary.valid_close_count == 1004
+    assert summary.by_market[0].captured_count == 502
+    assert [item.key for item in summary.by_drop_time] == ["First Look", "Daily Drop"]
+    assert summary.by_drop_time[0].captured_count == 1004
 
 
 def test_get_research_opportunities_summary_returns_empty_when_table_missing():

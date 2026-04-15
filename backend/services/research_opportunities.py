@@ -4,6 +4,11 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
+try:
+    from zoneinfo import ZoneInfo
+except Exception:  # pragma: no cover - fallback for runtimes without tzdata
+    ZoneInfo = None  # type: ignore[assignment]
+
 from calculations import american_to_decimal
 from models import (
     ResearchOpportunityBreakdownItem,
@@ -14,6 +19,7 @@ from models import (
 )
 from services.match_keys import scanner_match_key_from_side
 from services.clv_tracking import has_valid_close_snapshot
+from services.supabase_paging import fetch_all_rows
 
 UNKNOWN_BUCKET = "Unknown"
 UNKNOWN_SOURCE_LABEL = "Unknown Source"
@@ -31,6 +37,17 @@ SOURCE_LABEL_ORDER = [
     UNKNOWN_SOURCE_LABEL,
 ]
 SURFACE_ORDER = ["straight_bets", "player_props"]
+DROP_TIME_FIRST_LOOK = "First Look"
+DROP_TIME_DAILY_DROP = "Daily Drop"
+DROP_TIME_BUCKET_ORDER = [DROP_TIME_FIRST_LOOK, DROP_TIME_DAILY_DROP]
+
+if ZoneInfo is not None:
+    try:
+        PHOENIX_TZ = ZoneInfo("America/Phoenix")
+    except Exception:  # pragma: no cover - fallback when zone lookup fails
+        PHOENIX_TZ = timezone.utc
+else:  # pragma: no cover - fallback when zoneinfo is unavailable
+    PHOENIX_TZ = timezone.utc
 
 
 def _utc_now() -> datetime:
@@ -588,9 +605,11 @@ def empty_research_opportunities_summary() -> ResearchOpportunitySummaryResponse
         beat_close_pct=None,
         avg_clv_percent=None,
         by_surface=[],
+        by_market=[],
         by_source=[],
         by_sportsbook=[],
         by_edge_bucket=[],
+        by_drop_time=[],
         by_odds_bucket=[],
         status_buckets=[],
         recent_opportunities=[],
@@ -708,6 +727,53 @@ def _aggregate_breakdown(
         )
     )
     return items
+
+
+def _empty_breakdown_item(key: str) -> ResearchOpportunityBreakdownItem:
+    return ResearchOpportunityBreakdownItem(
+        key=key,
+        captured_count=0,
+        pending_close_count=0,
+        clv_ready_count=0,
+        valid_close_count=0,
+        invalid_close_count=0,
+        aggregate_status="not_captured",
+        suppressed_by_sample_size=False,
+        beat_close_pct=None,
+        avg_clv_percent=None,
+    )
+
+
+def _drop_time_bucket_for_row(row: dict[str, Any]) -> str:
+    source_value = _normalize_source(str(row.get("first_source") or row.get("last_source") or ""))
+    source_key = source_value.lower()
+
+    if "early_look" in source_key or "first_look" in source_key:
+        return DROP_TIME_FIRST_LOOK
+
+    # TODO: Prefer persisted board/drop metadata (drop_label/drop_type/board_window)
+    # once scan_opportunities captures it directly. Today we fall back to
+    # first_seen_at in Phoenix local time to split the two scheduled windows.
+    first_seen = _coerce_datetime(row.get("first_seen_at"))
+    if first_seen is not None:
+        try:
+            local_seen = first_seen.astimezone(PHOENIX_TZ)
+            if local_seen.hour < 13:
+                return DROP_TIME_FIRST_LOOK
+        except Exception:
+            pass
+
+    return DROP_TIME_DAILY_DROP
+
+
+def _aggregate_drop_time_breakdown(rows: list[dict[str, Any]]) -> list[ResearchOpportunityBreakdownItem]:
+    grouped = _aggregate_breakdown(
+        rows,
+        key_fn=_drop_time_bucket_for_row,
+        preferred_order=DROP_TIME_BUCKET_ORDER,
+    )
+    grouped_by_key = {item.key: item for item in grouped}
+    return [grouped_by_key.get(key, _empty_breakdown_item(key)) for key in DROP_TIME_BUCKET_ORDER]
 
 
 def get_research_opportunities_summary(
@@ -829,17 +895,23 @@ def get_research_opportunities_summary(
             "latest_reference_odds,reference_odds_at_close,close_captured_at,clv_ev_percent,beat_close"
         )
         try:
-            res = (
-                db.table("scan_opportunities")
-                .select(f"{summary_fields},first_model_key,last_model_key")
-                .execute()
+            rows = fetch_all_rows(
+                query_factory=lambda offset, page_size: (
+                    db.table("scan_opportunities")
+                    .select(f"{summary_fields},first_model_key,last_model_key")
+                    .order("opportunity_key", desc=False)
+                    .range(offset, offset + page_size - 1)
+                )
             )
         except Exception as exc:
             if is_missing_scan_opportunities_column_error(exc, "first_model_key", "last_model_key"):
-                res = (
-                    db.table("scan_opportunities")
-                    .select(summary_fields)
-                    .execute()
+                rows = fetch_all_rows(
+                    query_factory=lambda offset, page_size: (
+                        db.table("scan_opportunities")
+                        .select(summary_fields)
+                        .order("opportunity_key", desc=False)
+                        .range(offset, offset + page_size - 1)
+                    )
                 )
             else:
                 raise
@@ -847,7 +919,6 @@ def get_research_opportunities_summary(
         if is_missing_scan_opportunities_error(e):
             return empty_research_opportunities_summary()
         raise
-    rows = list(res.data or [])
 
     # Derive close semantics once so all summary/breakdown calculations are consistent.
     for row in rows:
@@ -1068,6 +1139,10 @@ def get_research_opportunities_summary(
             key_fn=lambda row: row.get("surface") or "straight_bets",
             preferred_order=SURFACE_ORDER,
         ),
+        by_market=_aggregate_breakdown(
+            rows,
+            key_fn=lambda row: row.get("market") or row.get("source_market_key") or "Unknown",
+        ),
         by_source=_aggregate_breakdown(
             rows,
             key_fn=lambda row: row.get("_product_source_label") or UNKNOWN_SOURCE_LABEL,
@@ -1079,6 +1154,7 @@ def get_research_opportunities_summary(
             key_fn=lambda row: _edge_bucket(_coerce_float(row.get("first_ev_percentage"))),
             preferred_order=EDGE_BUCKET_ORDER,
         ),
+        by_drop_time=_aggregate_drop_time_breakdown(rows),
         by_odds_bucket=_aggregate_breakdown(
             rows,
             key_fn=lambda row: _odds_bucket(_coerce_float(row.get("first_book_odds"))),

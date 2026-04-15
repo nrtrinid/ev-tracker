@@ -85,6 +85,7 @@ def test_research_opportunities_summary_impl_delegates_to_summary_builder():
         beat_close_pct=50.0,
         avg_clv_percent=0.8,
         by_surface=[],
+        by_market=[],
         by_source=[],
         by_sportsbook=[],
         by_edge_bucket=[],

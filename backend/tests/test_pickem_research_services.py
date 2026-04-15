@@ -21,8 +21,18 @@ class _Query:
         self._mode = mode
         self._payload = payload
         self._filters = list(filters or [])
+        self._order_by: list[tuple[str, bool]] = []
+        self._range: tuple[int, int] | None = None
 
     def select(self, _fields):
+        return self
+
+    def order(self, key, desc=False):
+        self._order_by.append((key, bool(desc)))
+        return self
+
+    def range(self, start, end):
+        self._range = (int(start), int(end))
         return self
 
     def in_(self, key, values):
@@ -51,6 +61,13 @@ class _Query:
         matched = [row for row in rows if all(predicate(row) for predicate in self._filters)]
 
         if self._mode == "select":
+            for key, desc in reversed(self._order_by):
+                matched.sort(key=lambda row: row.get(key), reverse=desc)
+            if self._range is None:
+                matched = matched[:1000]
+            else:
+                start, end = self._range
+                matched = matched[start:end + 1]
             return _Resp([dict(row) for row in matched])
 
         if self._mode == "update":
@@ -405,6 +422,62 @@ def test_get_pickem_research_summary_counts_supported_mlb_rows_as_auto_settle_pe
     assert summary.auto_settle_pending_count == 1
     assert summary.manual_result_count == 0
     assert summary.manual_only_sports == []
+
+
+def test_get_pickem_research_summary_pages_past_postgrest_default_limit():
+    rows = []
+    for idx in range(1005):
+        rows.append(
+            {
+                "observation_key": f"board_pickem_consensus|2026-04-01|evt-{idx}|over",
+                "comparison_key": f"evt-{idx}|jokic|player_points|24.5",
+                "sport": "basketball_nba",
+                "event": "Nuggets @ Suns",
+                "commence_time": "2026-04-02T01:00:00Z",
+                "market": "player_points",
+                "market_key": "player_points",
+                "event_id": f"evt-{idx}",
+                "player_name": "Nikola Jokic",
+                "team": "Denver Nuggets",
+                "opponent": "Phoenix Suns",
+                "selection_side": "over",
+                "line_value": 24.5,
+                "calibration_bucket": "65-70%",
+                "first_source": "cron_board_drop",
+                "last_source": "cron_board_drop",
+                "surfaced_count": 1,
+                "first_seen_at": "2026-04-01T15:30:00Z",
+                "last_seen_at": "2026-04-01T15:30:00Z",
+                "first_display_probability": 0.67,
+                "last_display_probability": 0.67,
+                "first_fair_odds_american": -203.0,
+                "last_fair_odds_american": -203.0,
+                "first_books_matched_count": 3,
+                "last_books_matched_count": 3,
+                "first_confidence_label": "high",
+                "last_confidence_label": "high",
+                "ev_basis": "best_market_price",
+                "first_selected_sportsbook": "FanDuel",
+                "last_selected_sportsbook": "FanDuel",
+                "first_selected_market_odds": 105.0,
+                "last_selected_market_odds": 105.0,
+                "first_projected_edge_pct": 4.0,
+                "last_projected_edge_pct": 4.0,
+                "close_true_prob": 0.64,
+                "close_quality": "paired",
+                "close_captured_at": "2026-04-01T23:40:00Z",
+                "close_edge_pct": -1.2,
+                "actual_result": "win" if idx % 2 == 0 else "loss",
+                "settled_at": "2026-04-02T05:00:00Z",
+            }
+        )
+
+    summary = get_pickem_research_summary(_DB(rows=rows))
+
+    assert summary.captured_count == 1005
+    assert summary.settled_count == 1005
+    assert summary.decisive_count == 1005
+    assert summary.by_market[0].captured_count == 1005
 
 
 def test_get_pickem_research_summary_still_flags_unsupported_mlb_markets_as_manual_only():

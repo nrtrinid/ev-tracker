@@ -1029,9 +1029,11 @@ export interface ResearchOpportunitySummary {
   beat_close_pct: number | null;
   avg_clv_percent: number | null;
   by_surface: ResearchOpportunityBreakdownItem[];
+  by_market: ResearchOpportunityBreakdownItem[];
   by_source: ResearchOpportunityBreakdownItem[];
   by_sportsbook: ResearchOpportunityBreakdownItem[];
   by_edge_bucket: ResearchOpportunityBreakdownItem[];
+  by_drop_time: ResearchOpportunityBreakdownItem[];
   by_odds_bucket: ResearchOpportunityBreakdownItem[];
   status_buckets: ResearchOpportunityStatusBucket[];
   recent_opportunities: ResearchOpportunityRecentRow[];

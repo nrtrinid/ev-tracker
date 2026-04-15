@@ -13,6 +13,7 @@ from models import (
     ModelCalibrationSummaryResponse,
 )
 from services.player_prop_weights import is_missing_scan_opportunity_model_evaluations_error
+from services.supabase_paging import fetch_all_rows
 
 BASELINE_MODEL_KEY = "props_v1_live"
 SHADOW_MODEL_KEY = "props_v2_shadow"
@@ -56,6 +57,10 @@ def _comparison_close_status(row: dict[str, Any]) -> str:
     if _coerce_float(row.get("first_clv_ev_percent")) is None:
         return "invalid"
     if row.get("first_beat_close") is None:
+        return "invalid"
+    if _coerce_float(row.get("first_brier_score")) is None:
+        return "invalid"
+    if _coerce_float(row.get("first_log_loss")) is None:
         return "invalid"
     return "valid"
 
@@ -173,6 +178,7 @@ def _build_breakdown(
     rows: list[dict[str, Any]],
     *,
     key_fn,
+    paired_opportunity_keys: set[str] | None = None,
 ) -> list[ModelCalibrationBreakdownItem]:
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
@@ -181,7 +187,13 @@ def _build_breakdown(
     items: list[ModelCalibrationBreakdownItem] = []
     for key, bucket_rows in groups.items():
         valid_rows = [row for row in bucket_rows if row.get("_close_status") == "valid"]
-        paired_rows = [row for row in valid_rows if row.get("close_quality") == "paired"]
+        paired_count = len(
+            {
+                str(row.get("opportunity_key") or "")
+                for row in valid_rows
+                if str(row.get("opportunity_key") or "") in (paired_opportunity_keys or set())
+            }
+        )
         beat_close_count = sum(1 for row in valid_rows if row.get("first_beat_close") is True)
 
         avg_brier = None
@@ -211,7 +223,7 @@ def _build_breakdown(
                 key=key,
                 captured_count=len(bucket_rows),
                 valid_close_count=len(valid_rows),
-                paired_close_count=len(paired_rows),
+                paired_close_count=paired_count,
                 avg_brier_score=avg_brier,
                 avg_log_loss=avg_log_loss,
                 avg_clv_percent=avg_clv,
@@ -230,27 +242,57 @@ def _average_metric(rows: list[dict[str, Any]], field: str, digits: int) -> floa
     return round(sum(values) / len(values), digits)
 
 
+def _paired_release_gate_rows(
+    valid_rows: list[dict[str, Any]],
+) -> tuple[list[tuple[dict[str, Any], dict[str, Any]]], set[str]]:
+    comparison_groups: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
+    comparison_keys: set[str] = set()
+
+    for row in valid_rows:
+        model_key = str(row.get("model_key") or "").strip()
+        if model_key not in {BASELINE_MODEL_KEY, SHADOW_MODEL_KEY}:
+            continue
+        opportunity_key = str(row.get("opportunity_key") or "").strip()
+        if not opportunity_key:
+            continue
+        comparison_groups[opportunity_key][model_key] = row
+        comparison_keys.add(opportunity_key)
+
+    paired_rows: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for opportunity_key, group in comparison_groups.items():
+        baseline = group.get(BASELINE_MODEL_KEY)
+        candidate = group.get(SHADOW_MODEL_KEY)
+        if baseline is None or candidate is None:
+            continue
+        paired_rows.append((baseline, candidate))
+
+    return paired_rows, comparison_keys
+
+
 def get_model_calibration_summary(db) -> ModelCalibrationSummaryResponse:
     try:
-        result = (
-            db.table("scan_opportunity_model_evaluations")
-            .select(
-                "opportunity_key,model_key,capture_role,surface,sport,event,team,sportsbook,sportsbook_key,market,event_id,"
-                "player_name,selection_side,line_value,first_seen_at,last_seen_at,first_true_prob,last_true_prob,"
-                "first_reference_odds,last_reference_odds,first_ev_percentage,last_ev_percentage,"
-                "first_confidence_score,last_confidence_score,first_reference_bookmaker_count,last_reference_bookmaker_count,"
-                "first_interpolation_mode,last_interpolation_mode,close_reference_odds,close_opposing_reference_odds,"
-                "close_true_prob,close_quality,close_captured_at,first_clv_ev_percent,last_clv_ev_percent,"
-                "first_beat_close,last_beat_close,first_brier_score,last_brier_score,first_log_loss,last_log_loss"
+        rows = fetch_all_rows(
+            query_factory=lambda offset, page_size: (
+                db.table("scan_opportunity_model_evaluations")
+                .select(
+                    "opportunity_key,model_key,capture_role,surface,sport,event,team,sportsbook,sportsbook_key,market,event_id,"
+                    "player_name,selection_side,line_value,first_seen_at,last_seen_at,first_true_prob,last_true_prob,"
+                    "first_reference_odds,last_reference_odds,first_ev_percentage,last_ev_percentage,"
+                    "first_confidence_score,last_confidence_score,first_reference_bookmaker_count,last_reference_bookmaker_count,"
+                    "first_interpolation_mode,last_interpolation_mode,close_reference_odds,close_opposing_reference_odds,"
+                    "close_true_prob,close_quality,close_captured_at,first_clv_ev_percent,last_clv_ev_percent,"
+                    "first_beat_close,last_beat_close,first_brier_score,last_brier_score,first_log_loss,last_log_loss"
+                )
+                .order("opportunity_key", desc=False)
+                .order("model_key", desc=False)
+                .range(offset, offset + page_size - 1)
             )
-            .execute()
         )
     except Exception as exc:
         if is_missing_scan_opportunity_model_evaluations_error(exc):
             return empty_model_calibration_summary()
         raise
 
-    rows = list(result.data or [])
     if not rows:
         return empty_model_calibration_summary()
 
@@ -260,15 +302,33 @@ def get_model_calibration_summary(db) -> ModelCalibrationSummaryResponse:
         row["_cohort_key"] = first_seen_dt.date().isoformat() if first_seen_dt is not None else "unknown"
 
     valid_rows = [row for row in rows if row.get("_close_status") == "valid"]
-    paired_rows = [row for row in valid_rows if row.get("close_quality") == "paired"]
     fallback_rows = [row for row in valid_rows if row.get("close_quality") == "single"]
+    paired_rows, comparison_opportunity_keys = _paired_release_gate_rows(valid_rows)
+    paired_opportunity_keys = {
+        str(baseline.get("opportunity_key") or "")
+        for baseline, _candidate in paired_rows
+        if str(baseline.get("opportunity_key") or "")
+    }
 
-    by_model = _build_breakdown(rows, key_fn=lambda row: row.get("model_key") or "Unknown")
-    by_market = _build_breakdown(rows, key_fn=lambda row: row.get("market") or "Unknown")
-    by_sportsbook = _build_breakdown(rows, key_fn=lambda row: row.get("sportsbook") or "Unknown")
+    by_model = _build_breakdown(
+        rows,
+        key_fn=lambda row: row.get("model_key") or "Unknown",
+        paired_opportunity_keys=paired_opportunity_keys,
+    )
+    by_market = _build_breakdown(
+        rows,
+        key_fn=lambda row: row.get("market") or "Unknown",
+        paired_opportunity_keys=paired_opportunity_keys,
+    )
+    by_sportsbook = _build_breakdown(
+        rows,
+        key_fn=lambda row: row.get("sportsbook") or "Unknown",
+        paired_opportunity_keys=paired_opportunity_keys,
+    )
     by_interpolation_mode = _build_breakdown(
         rows,
         key_fn=lambda row: row.get("first_interpolation_mode") or "Unknown",
+        paired_opportunity_keys=paired_opportunity_keys,
     )
 
     cohort_trend: list[ModelCalibrationCohortTrendRow] = []
@@ -339,8 +399,8 @@ def get_model_calibration_summary(db) -> ModelCalibrationSummaryResponse:
             )
         )
 
-    baseline_rows = [row for row in valid_rows if str(row.get("model_key") or "") == BASELINE_MODEL_KEY]
-    candidate_rows = [row for row in valid_rows if str(row.get("model_key") or "") == SHADOW_MODEL_KEY]
+    baseline_rows = [baseline for baseline, _candidate in paired_rows]
+    candidate_rows = [candidate for _baseline, candidate in paired_rows]
     baseline_beat_close_pct = (
         round((sum(1 for row in baseline_rows if row.get("first_beat_close") is True) / len(baseline_rows)) * 100, 2)
         if baseline_rows
@@ -359,9 +419,9 @@ def get_model_calibration_summary(db) -> ModelCalibrationSummaryResponse:
     candidate_avg_clv = _average_metric(candidate_rows, "first_clv_ev_percent", 2)
 
     reasons: list[str] = []
-    eligible = len(candidate_rows) >= 200 and len(baseline_rows) >= 200
+    eligible = len(paired_rows) >= 200
     if not eligible:
-        reasons.append("Need at least 200 valid closes for both baseline and shadow models.")
+        reasons.append("Need at least 200 paired valid closes shared by baseline and shadow models.")
     if eligible and candidate_avg_brier is not None and baseline_avg_brier is not None and candidate_avg_brier >= baseline_avg_brier:
         reasons.append("Shadow model Brier score is not better than the live baseline.")
     if eligible and candidate_avg_log is not None and baseline_avg_log is not None and candidate_avg_log >= baseline_avg_log:
@@ -394,7 +454,11 @@ def get_model_calibration_summary(db) -> ModelCalibrationSummaryResponse:
         valid_close_count=len(valid_rows),
         paired_close_count=len(paired_rows),
         fallback_close_count=len(fallback_rows),
-        paired_close_pct=round((len(paired_rows) / len(valid_rows)) * 100, 2) if valid_rows else None,
+        paired_close_pct=(
+            round((len(paired_rows) / len(comparison_opportunity_keys)) * 100, 2)
+            if comparison_opportunity_keys
+            else None
+        ),
         by_model=by_model,
         by_market=by_market,
         by_sportsbook=by_sportsbook,

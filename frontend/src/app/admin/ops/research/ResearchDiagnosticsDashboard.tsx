@@ -162,23 +162,24 @@ function DataLoading() {
   return <div className="text-sm text-muted-foreground">Loading diagnostics...</div>;
 }
 
-function ModelCalibrationBreakdownTable({ rows }: { rows: ModelCalibrationBreakdownItem[] }) {
-  if (!rows.length) return null;
+function ModelCalibrationBreakdownTable({ rows }: { rows?: ModelCalibrationBreakdownItem[] | null }) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  if (!safeRows.length) return null;
 
   return (
     <div className="space-y-1.5">
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">By model</p>
       <div className="space-y-1.5">
-        {rows.slice(0, 8).map((row) => (
+        {safeRows.slice(0, 8).map((row) => (
           <div key={row.key} className="rounded-md border border-border/70 bg-muted/20 px-2.5 py-2">
             <div className="flex items-center justify-between gap-2">
               <p className="truncate text-xs font-medium text-foreground">{row.key}</p>
               <p className="font-mono text-[11px] tabular-nums text-muted-foreground">
-                Valid {formatCount(row.valid_close_count)}
+                Valid rows {formatCount(row.valid_close_count)}
               </p>
             </div>
             <div className="mt-1.5 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-              <BreakdownMetric label="Paired" value={formatCount(row.paired_close_count)} />
+              <BreakdownMetric label="Paired opps" value={formatCount(row.paired_close_count)} />
               <BreakdownMetric label=">Close" value={formatPercent(row.beat_close_pct)} />
               <BreakdownMetric label="Avg CLV" value={formatPercent(row.avg_clv_percent)} />
               <BreakdownMetric label="Brier" value={formatScore(row.avg_brier_score)} />
@@ -190,14 +191,15 @@ function ModelCalibrationBreakdownTable({ rows }: { rows: ModelCalibrationBreakd
   );
 }
 
-function PickEmProbabilityBucketTable({ rows }: { rows: PickEmResearchBreakdownItem[] }) {
-  if (!rows.length) return null;
+function PickEmProbabilityBucketTable({ rows }: { rows?: PickEmResearchBreakdownItem[] | null }) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  if (!safeRows.length) return null;
 
   return (
     <div className="space-y-1.5">
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">By probability bucket</p>
       <div className="space-y-1.5">
-        {rows.slice(0, 8).map((row) => (
+        {safeRows.slice(0, 8).map((row) => (
           <div key={row.key} className="rounded-md border border-border/70 bg-muted/20 px-2.5 py-2">
             <div className="flex items-center justify-between gap-2">
               <p className="truncate text-xs font-medium text-foreground">{row.key}</p>
@@ -217,8 +219,9 @@ function PickEmProbabilityBucketTable({ rows }: { rows: PickEmResearchBreakdownI
   );
 }
 
-function ResearchEdgeBucketBreakdown({ rows }: { rows: ResearchOpportunityBreakdownItem[] }) {
-  if (!rows.length) return null;
+function ResearchEdgeBucketBreakdown({ rows }: { rows?: ResearchOpportunityBreakdownItem[] | null }) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  if (!safeRows.length) return null;
 
   return (
     <div className="space-y-1.5">
@@ -243,7 +246,93 @@ function ResearchEdgeBucketBreakdown({ rows }: { rows: ResearchOpportunityBreakd
               </tr>
             </thead>
             <tbody>
-              {rows.slice(0, 8).map((row) => (
+              {safeRows.slice(0, 8).map((row) => (
+                <tr key={row.key} className="border-t border-border/50">
+                  <td className="py-1.5 pr-2 text-muted-foreground truncate">{row.key}</td>
+                  <td className="py-1.5 text-right font-mono tabular-nums">{formatCount(row.captured_count)}</td>
+                  <td className="py-1.5 text-right font-mono tabular-nums">{formatPercent(row.beat_close_pct)}</td>
+                  <td className="py-1.5 text-right font-mono tabular-nums">{formatPercent(row.avg_clv_percent)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResearchMarketBreakdown({ rows }: { rows?: ResearchOpportunityBreakdownItem[] | null }) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  if (!safeRows.length) return null;
+
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">By market</p>
+      <div className="rounded-md border border-border/70 bg-muted/20 px-2.5 py-2">
+        <div className="overflow-x-auto">
+          <table className="w-full table-fixed text-xs">
+            <colgroup>
+              <col className="w-[45%]" />
+              <col className="w-[15%]" />
+              <col className="w-[20%]" />
+              <col className="w-[20%]" />
+            </colgroup>
+            <thead>
+              <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                <th className="pb-1.5 text-left font-medium">Market</th>
+                <th className="pb-1.5 text-right font-medium">Count</th>
+                <th className="pb-1.5 text-right font-medium" title="Beat close % (better than close)">
+                  &gt;Close
+                </th>
+                <th className="pb-1.5 text-right font-medium">Avg CLV</th>
+              </tr>
+            </thead>
+            <tbody>
+              {safeRows.slice(0, 8).map((row) => (
+                <tr key={row.key} className="border-t border-border/50">
+                  <td className="py-1.5 pr-2 text-muted-foreground truncate">{row.key}</td>
+                  <td className="py-1.5 text-right font-mono tabular-nums">{formatCount(row.captured_count)}</td>
+                  <td className="py-1.5 text-right font-mono tabular-nums">{formatPercent(row.beat_close_pct)}</td>
+                  <td className="py-1.5 text-right font-mono tabular-nums">{formatPercent(row.avg_clv_percent)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResearchDropTimeBreakdown({ rows }: { rows?: ResearchOpportunityBreakdownItem[] | null }) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  if (!safeRows.length) return null;
+
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">By drop time</p>
+      <div className="rounded-md border border-border/70 bg-muted/20 px-2.5 py-2">
+        <div className="overflow-x-auto">
+          <table className="w-full table-fixed text-xs">
+            <colgroup>
+              <col className="w-[45%]" />
+              <col className="w-[15%]" />
+              <col className="w-[20%]" />
+              <col className="w-[20%]" />
+            </colgroup>
+            <thead>
+              <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                <th className="pb-1.5 text-left font-medium">Drop time</th>
+                <th className="pb-1.5 text-right font-medium">Count</th>
+                <th className="pb-1.5 text-right font-medium" title="Beat close % (better than close)">
+                  &gt;Close
+                </th>
+                <th className="pb-1.5 text-right font-medium">Avg CLV</th>
+              </tr>
+            </thead>
+            <tbody>
+              {safeRows.slice(0, 8).map((row) => (
                 <tr key={row.key} className="border-t border-border/50">
                   <td className="py-1.5 pr-2 text-muted-foreground truncate">{row.key}</td>
                   <td className="py-1.5 text-right font-mono tabular-nums">{formatCount(row.captured_count)}</td>
@@ -371,7 +460,9 @@ export function ResearchDiagnosticsDashboard() {
                     <StatCell label="Beat close" value={formatPercent(research.beat_close_pct)} />
                     <StatCell label="Avg CLV" value={formatPercent(research.avg_clv_percent)} />
                   </div>
+                  <ResearchMarketBreakdown rows={research.by_market} />
                   <ResearchEdgeBucketBreakdown rows={research.by_edge_bucket} />
+                  <ResearchDropTimeBreakdown rows={research.by_drop_time} />
                 </>
               )}
             </CardContent>
@@ -396,9 +487,9 @@ export function ResearchDiagnosticsDashboard() {
               {loaded && calibration && (
                 <>
                   <div className="grid grid-cols-2 gap-2">
-                    <StatCell label="Captured" value={formatCount(calibration.captured_count)} />
-                    <StatCell label="Valid close" value={formatCount(calibration.valid_close_count)} />
-                    <StatCell label="Paired" value={formatCount(calibration.paired_close_count)} />
+                    <StatCell label="Captured rows" value={formatCount(calibration.captured_count)} />
+                    <StatCell label="Valid rows" value={formatCount(calibration.valid_close_count)} />
+                    <StatCell label="Paired opps" value={formatCount(calibration.paired_close_count)} />
                     <StatCell label="Paired %" value={formatPercent(calibration.paired_close_pct)} />
                     <StatCell label="Candidate Brier" value={formatScore(calibration.release_gate.candidate_avg_brier_score)} />
                     <StatCell label="Baseline Brier" value={formatScore(calibration.release_gate.baseline_avg_brier_score)} />
@@ -406,10 +497,10 @@ export function ResearchDiagnosticsDashboard() {
                     <StatCell label="Baseline CLV" value={formatPercent(calibration.release_gate.baseline_avg_clv_percent)} />
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    By model: Valid = trusted close snapshots. Paired = opportunities where baseline and candidate both have close-derived metrics.
+                    Captured and valid counts are evaluation rows. Paired opportunities are unique opportunity keys where both baseline and candidate have valid close-derived metrics.
                   </p>
                   <ModelCalibrationBreakdownTable rows={calibration.by_model} />
-                  {calibration.release_gate.reasons.length > 0 && (
+                  {Array.isArray(calibration.release_gate.reasons) && calibration.release_gate.reasons.length > 0 && (
                     <p className="text-xs text-muted-foreground">Gate notes: {calibration.release_gate.reasons.join("; ")}</p>
                   )}
                 </>
@@ -439,7 +530,7 @@ export function ResearchDiagnosticsDashboard() {
                     <StatCell label="Hit delta" value={formatPercent(pickEm.hit_rate_delta_pct_points, 2)} />
                     <StatCell label="Avg Brier" value={formatScore(pickEm.avg_brier_score)} />
                   </div>
-                  {pickEm.manual_only_sports.length > 0 && (
+                  {Array.isArray(pickEm.manual_only_sports) && pickEm.manual_only_sports.length > 0 && (
                     <p className="text-xs text-muted-foreground">
                       Manual-only sports in this sample: {pickEm.manual_only_sports.map(formatSportLabel).join(", ")}.
                       These rows stay in validation tracking, but results are expected to be graded manually during beta.

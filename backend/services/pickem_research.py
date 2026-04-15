@@ -11,6 +11,7 @@ from models import (
     PickEmResearchRecentRow,
     PickEmResearchSummaryResponse,
 )
+from services.supabase_paging import fetch_all_rows
 
 OBSERVATION_KIND = "board_pickem_consensus"
 EV_BASIS_BEST_MARKET = "best_market_price"
@@ -19,6 +20,8 @@ OBSERVATION_QUERY_CHUNK_SIZE = 200
 
 PROBABILITY_BUCKET_ORDER = ["50-55%", "55-60%", "60-65%", "65-70%", "70%+", "Unknown"]
 BOOKS_MATCHED_BUCKET_ORDER = ["1 book", "2 books", "3 books", "4+ books", "Unknown"]
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -695,25 +698,27 @@ def _build_breakdown(
 
 def get_pickem_research_summary(db) -> PickEmResearchSummaryResponse:
     try:
-        result = (
-            db.table("pickem_research_observations")
-            .select(
-                "observation_key,comparison_key,sport,event,commence_time,market,market_key,event_id,player_name,team,opponent,"
-                "selection_side,line_value,calibration_bucket,first_source,last_source,surfaced_count,first_seen_at,last_seen_at,"
-                "first_display_probability,last_display_probability,first_fair_odds_american,last_fair_odds_american,"
-                "first_books_matched_count,last_books_matched_count,first_confidence_label,last_confidence_label,"
-                "ev_basis,first_selected_sportsbook,last_selected_sportsbook,first_selected_market_odds,last_selected_market_odds,"
-                "first_projected_edge_pct,last_projected_edge_pct,close_true_prob,close_quality,close_captured_at,close_edge_pct,"
-                "actual_result,settled_at"
+        rows = fetch_all_rows(
+            query_factory=lambda offset, page_size: (
+                db.table("pickem_research_observations")
+                .select(
+                    "observation_key,comparison_key,sport,event,commence_time,market,market_key,event_id,player_name,team,opponent,"
+                    "selection_side,line_value,calibration_bucket,first_source,last_source,surfaced_count,first_seen_at,last_seen_at,"
+                    "first_display_probability,last_display_probability,first_fair_odds_american,last_fair_odds_american,"
+                    "first_books_matched_count,last_books_matched_count,first_confidence_label,last_confidence_label,"
+                    "ev_basis,first_selected_sportsbook,last_selected_sportsbook,first_selected_market_odds,last_selected_market_odds,"
+                    "first_projected_edge_pct,last_projected_edge_pct,close_true_prob,close_quality,close_captured_at,close_edge_pct,"
+                    "actual_result,settled_at"
+                )
+                .order("observation_key", desc=False)
+                .range(offset, offset + page_size - 1)
             )
-            .execute()
         )
     except Exception as exc:
         if is_missing_pickem_research_observations_error(exc):
             return empty_pickem_research_summary()
         raise
 
-    rows = list(result.data or [])
     if not rows:
         return empty_pickem_research_summary()
 
