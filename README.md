@@ -37,12 +37,11 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 
 ## Feature Set
 
-### Scanner And Daily Board
+### Daily Drop Board
 - Daily-drop board powers Home across `Promos`, `Game Lines`, and `Player Props`
 - Manual straight-bet scanner across NBA, NCAAB, and MLB
-- Straight-bet cards can surface moneylines, spreads, and totals when exact-line references are available
 - **Standard EV** lens: top +EV game lines sorted by edge
-- **Profit Boost** lens: recalculates EV after applying a 30% or 50% profit multiplier
+- **Profit Boost** lens: recalculates EV after applying an x% profit multiplier
 - **Bonus Bet** lens: sorts by retention rate (`true_prob × decimal_odds`) to maximize free-bet conversion
 - **Qualifier** lens: filters odds between −250 and +150, minimizing expected qualifying loss
 - Result filter bar: Search, Time presets, Standard-only Edge threshold, and More menu controls
@@ -98,7 +97,7 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 ┌─────────────────────────────────────────────────────┐
 │                     Browser                         │
 │ Next.js 14 (App Router)  ·  React Query  ·  Tailwind│
-│   /  /scanner  /analytics  /bets  /settings          │
+│   /  /scanner  /analytics  /bets  /settings         │
 └───────────────────┬─────────────────────────────────┘
                     │  HTTPS / JSON
 ┌───────────────────▼─────────────────────────────────┐
