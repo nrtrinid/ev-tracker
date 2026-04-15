@@ -871,7 +871,6 @@ def _check_scheduler_freshness(scheduler_expected: bool) -> tuple[bool, dict]:
             snapshot = load_scheduler_job_snapshot(
                 db=db,
                 retry_supabase=_retry_supabase,
-                log_event=_log_event,
             )
             now = datetime.now(UTC)
 
