@@ -63,6 +63,9 @@ PLAYER_PROP_REFERENCE_BOOK_WEIGHTS: dict[str, float] = {
     "betonlineag": 3.0,
     "bovada": 1.5,
 }
+PLAYER_PROP_YES_NO_MARKETS: set[str] = {
+    "batter_home_runs",
+}
 # Default surfaced-prop trust gate:
 # 3 reference books gives us enough market confirmation to avoid thin two-book
 # consensus artifacts without starving the slate as aggressively as a 4-book gate.
@@ -242,22 +245,43 @@ def _to_line_numeric(value) -> float | None:
         return None
 
 
-def _normalize_prop_outcomes(outcomes: list[dict]) -> list[dict]:
+def _normalize_prop_outcome_side(name: str, *, market_key: str | None = None) -> str | None:
+    normalized_name = str(name or "").strip().lower()
+    if normalized_name in {"over", "under"}:
+        return normalized_name
+    normalized_market = str(market_key or "").strip().lower()
+    if normalized_market in PLAYER_PROP_YES_NO_MARKETS:
+        if normalized_name == "yes":
+            return "over"
+        if normalized_name == "no":
+            return "under"
+    return None
+
+
+def _normalize_prop_outcomes(outcomes: list[dict], *, market_key: str | None = None) -> list[dict]:
+    normalized_market = str(market_key or "").strip().lower()
     normalized: dict[tuple[str, float | None], dict[str, dict]] = {}
     for outcome in outcomes:
         name = str(outcome.get("name") or "").strip()
-        if name.lower() not in {"over", "under"}:
+        side = _normalize_prop_outcome_side(name, market_key=normalized_market)
+        if side not in {"over", "under"}:
             continue
         line_value = outcome.get("point")
         try:
             line_numeric = float(line_value) if line_value is not None else None
         except Exception:
             line_numeric = None
+        if line_numeric is None and normalized_market in PLAYER_PROP_YES_NO_MARKETS:
+            line_numeric = 0.5
         description = str(outcome.get("description") or "").strip()
         player_name = description.split("(")[0].strip() if description else ""
         if not player_name:
             continue
-        normalized.setdefault((player_name, line_numeric), {})[name.lower()] = outcome
+        normalized_outcome = dict(outcome)
+        normalized_outcome["name"] = side.title()
+        if line_numeric is not None:
+            normalized_outcome["point"] = line_numeric
+        normalized.setdefault((player_name, line_numeric), {})[side] = normalized_outcome
     flattened: list[dict] = []
     for (_player_name, _line), pair in normalized.items():
         if "over" in pair and "under" in pair:
@@ -355,7 +379,7 @@ def _build_prop_market_book_pairs(
             book_market = _extract_market_meta(bookmakers, book_key, market_key)
             if not book_market:
                 continue
-            normalized_book = _normalize_prop_outcomes(book_market["outcomes"])
+            normalized_book = _normalize_prop_outcomes(book_market["outcomes"], market_key=market_key)
             if not normalized_book:
                 continue
 
@@ -416,7 +440,10 @@ def _collect_prop_market_presence(
             market_key = str(market.get("key") or "").strip()
             if market_key not in target_market_set:
                 continue
-            normalized_outcomes = _normalize_prop_outcomes(market.get("outcomes") or [])
+            normalized_outcomes = _normalize_prop_outcomes(
+                market.get("outcomes") or [],
+                market_key=market_key,
+            )
             if not normalized_outcomes:
                 continue
             provider_market_books.setdefault(market_key, set()).add(book_key or "unknown")

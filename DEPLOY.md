@@ -25,7 +25,7 @@ This deploy runs two backend roles:
 
 Recommended env:
 
-- API container: `APP_ROLE=api`, `ENABLE_SCHEDULER=1`, `UVICORN_WORKERS=2`
+- API container: `APP_ROLE=api`, `ENABLE_SCHEDULER=0`, `UVICORN_WORKERS=2`
 - scheduler container: `APP_ROLE=scheduler`, `ENABLE_SCHEDULER=1`
 
 ## One-Line Deploy From Local

@@ -178,6 +178,30 @@ def test_normalize_prop_outcomes_keeps_complete_over_under_pairs():
     assert {entry["name"] for entry in normalized} == {"Over", "Under"}
 
 
+def test_normalize_prop_outcomes_maps_home_run_yes_no_to_over_under_with_point():
+    outcomes = [
+        {"name": "Yes", "description": "Shohei Ohtani", "price": 175},
+        {"name": "No", "description": "Shohei Ohtani", "price": -230},
+    ]
+
+    normalized = _normalize_prop_outcomes(outcomes, market_key="batter_home_runs")
+
+    assert len(normalized) == 2
+    assert {entry["name"] for entry in normalized} == {"Over", "Under"}
+    assert {entry.get("point") for entry in normalized} == {0.5}
+
+
+def test_normalize_prop_outcomes_ignores_yes_no_for_non_yes_no_markets():
+    outcomes = [
+        {"name": "Yes", "description": "Nikola Jokic", "price": 105},
+        {"name": "No", "description": "Nikola Jokic", "price": -125},
+    ]
+
+    normalized = _normalize_prop_outcomes(outcomes, market_key="player_points")
+
+    assert normalized == []
+
+
 def test_match_curated_events_uses_canonical_team_pairs():
     curated_games = [
         {

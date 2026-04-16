@@ -2050,16 +2050,21 @@ def readiness_check():
     runtime = _runtime_state()
     db_ok, db_error = _check_db_ready()
     scheduler_fresh_ok, scheduler_freshness = _check_scheduler_freshness(runtime["scheduler_expected"])
+    app_role = (os.getenv("APP_ROLE") or "").strip().lower()
 
     scheduler_state_ok = (not runtime["scheduler_expected"]) or runtime["scheduler_running"]
-    if not scheduler_state_ok and (os.getenv("APP_ROLE") or "").strip().lower() == "api":
+    if not scheduler_state_ok and app_role == "api":
         scheduler_state_ok = True
+
+    # API and scheduler run as separate containers in production.
+    # Keep reporting freshness details, but do not fail API readiness on scheduler freshness.
+    scheduler_fresh_check_ok = scheduler_fresh_ok if app_role != "api" else True
 
     checks = {
         "supabase_env": runtime["supabase_url_configured"] and runtime["supabase_service_role_configured"],
         "db_connectivity": db_ok,
         "scheduler_state": scheduler_state_ok,
-        "scheduler_freshness": scheduler_fresh_ok,
+        "scheduler_freshness": scheduler_fresh_check_ok,
     }
     ready = all(checks.values())
 

@@ -23,6 +23,9 @@ Version labels use pre-release suffixes until the app is ready for outside users
   - Promoted the six standard MLB sportsbook markets in the shared player-props feed: pitcher strikeouts, total bases, hits, hits + runs + RBIs, home runs, and batter strikeouts.
   - Kept the existing 3-book sportsbook gate and 2-book pick'em gate unchanged while expanding the market set.
   - Fixed player-props board snapshot fallback metadata so empty or mixed props payloads no longer default to `basketball_nba`.
+- **Readiness gate split-role hardening**
+  - Updated `/ready` so `APP_ROLE=api` no longer fails readiness on scheduler freshness while still reporting scheduler freshness details for operators.
+  - Preserved scheduler freshness enforcement for scheduler-enabled roles.
 - **Onboarding + settings UX reliability**
   - Fixed onboarding reset sync so backend reset state now authoritatively clears stale local onboarding flags.
   - Updated settings onboarding summary to split Daily Drops tutorial progress from Home/Scanner review prompts.

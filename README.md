@@ -189,7 +189,7 @@ Frontend bridge routes (for serverless schedulers that should not hold backend s
 
 Health endpoints:
 - `GET /health` for liveness (process is up)
-- `GET /ready` for readiness (Supabase env + DB connectivity + scheduler state/freshness)
+- `GET /ready` for readiness (Supabase env + DB connectivity; scheduler freshness is advisory for `APP_ROLE=api` and enforced for scheduler roles)
 - `GET /api/ops/status` for operator status (requires `X-Ops-Token`)
 - `GET /api/ops/clv-debug` for CLV audit counts/samples across bets + research tracking (requires `X-Ops-Token`)
 
