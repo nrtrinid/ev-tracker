@@ -4,6 +4,9 @@ from urllib.parse import urlparse
 
 ScannerDeeplinkLevel = Literal["selection", "market", "event", "homepage"]
 
+BETMGM_STATE_TEMPLATE_HOST = "sports.{state}.betmgm.com"
+BETMGM_CANONICAL_HOST = "sports.betmgm.com"
+
 
 SPORTSBOOK_HOMEPAGES: dict[str, str] = {
     "BetMGM": "https://sports.betmgm.com/",
@@ -16,11 +19,23 @@ SPORTSBOOK_HOMEPAGES: dict[str, str] = {
 }
 
 
+def _canonicalize_betmgm_template_host(candidate: str) -> str:
+    lower = candidate.lower()
+    marker_index = lower.find(BETMGM_STATE_TEMPLATE_HOST)
+    if marker_index < 0:
+        return candidate
+    return (
+        candidate[:marker_index]
+        + BETMGM_CANONICAL_HOST
+        + candidate[marker_index + len(BETMGM_STATE_TEMPLATE_HOST) :]
+    )
+
+
 def normalize_sportsbook_link(value: str | None) -> str | None:
     if not value:
         return None
 
-    candidate = str(value).strip()
+    candidate = _canonicalize_betmgm_template_host(str(value).strip())
     if not candidate or "{" in candidate or "}" in candidate:
         return None
 

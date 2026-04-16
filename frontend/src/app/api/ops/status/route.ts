@@ -5,6 +5,16 @@ import { assertAdminAccess } from "@/lib/server/admin-access";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+const DEFAULT_OPS_BRIDGE_TIMEOUT_MS = 15000;
+
+function opsBridgeTimeoutMs(): number {
+  const raw = Number(process.env.OPS_BRIDGE_TIMEOUT_MS ?? DEFAULT_OPS_BRIDGE_TIMEOUT_MS);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return DEFAULT_OPS_BRIDGE_TIMEOUT_MS;
+  }
+  return Math.trunc(raw);
+}
+
 export async function GET() {
   const access = await assertAdminAccess();
   if (!access.ok) {
@@ -38,6 +48,8 @@ export async function GET() {
 
   try {
     const endpoint = `${backendBaseUrl.replace(/\/$/, "")}/api/ops/status`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), opsBridgeTimeoutMs());
     const resp = await fetch(endpoint, {
       method: "GET",
       cache: "no-store",
@@ -45,6 +57,9 @@ export async function GET() {
         accept: "application/json",
         "x-ops-token": cronToken,
       },
+      signal: controller.signal,
+    }).finally(() => {
+      clearTimeout(timeout);
     });
 
     const data = await resp.json().catch(() => ({ error: "Invalid backend response" }));
@@ -53,6 +68,12 @@ export async function GET() {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {
+    if (error instanceof Error && error.name == "AbortError") {
+      return NextResponse.json(
+        { error: "Operator status request timed out" },
+        { status: 504, headers: { "Cache-Control": "no-store" } }
+      );
+    }
     console.error("Ops bridge error:", error);
     return NextResponse.json(
       { error: "Failed to fetch operator status" },

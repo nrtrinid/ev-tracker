@@ -26,13 +26,22 @@ export interface ScannerActionModel {
   trustHint?: string;
 }
 
+const BETMGM_STATE_TEMPLATE_HOST_REGEX = /(https?:\/\/)sports\.\{state\}\.betmgm\.com(?=\/|$)/i;
+
+function canonicalizeBetmgmTemplateHost(value: string): string {
+  return value.replace(BETMGM_STATE_TEMPLATE_HOST_REGEX, (_, protocol: string) => {
+    return `${protocol}sports.betmgm.com`;
+  });
+}
+
 export function normalizeSportsbookDeeplink(value: string | null | undefined): string | null {
   if (!value) return null;
-  if (value.includes("{") || value.includes("}")) {
+  const candidate = canonicalizeBetmgmTemplateHost(value.trim());
+  if (candidate.includes("{") || candidate.includes("}")) {
     return null;
   }
   try {
-    const parsed = new URL(value);
+    const parsed = new URL(candidate);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return null;
     }

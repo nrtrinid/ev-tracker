@@ -541,6 +541,7 @@ def _validate_environment() -> None:
             environment=environment,
         )
 
+    app_role = _app_role()
     scheduler_enabled = os.getenv("ENABLE_SCHEDULER") == "1"
     odds_api_configured = bool(os.getenv("ODDS_API_KEY"))
     cron_token_configured = bool(os.getenv("CRON_TOKEN"))
@@ -572,6 +573,24 @@ def _validate_environment() -> None:
             "startup.env_scheduler_without_odds_key",
             level="warning",
             message="ENABLE_SCHEDULER=1 but ODDS_API_KEY is missing; scan jobs will fail.",
+        )
+
+    if app_role == "api" and scheduler_enabled:
+        _log_event(
+            "startup.env_split_role_mismatch",
+            level="warning",
+            app_role=app_role,
+            scheduler_enabled=scheduler_enabled,
+            message="APP_ROLE=api should use ENABLE_SCHEDULER=0 in split-role deployments.",
+        )
+
+    if app_role == "scheduler" and not scheduler_enabled:
+        _log_event(
+            "startup.env_split_role_mismatch",
+            level="warning",
+            app_role=app_role,
+            scheduler_enabled=scheduler_enabled,
+            message="APP_ROLE=scheduler should use ENABLE_SCHEDULER=1 in split-role deployments.",
         )
 
     if not cron_token_configured:

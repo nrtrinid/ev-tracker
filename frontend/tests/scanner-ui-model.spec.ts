@@ -13,7 +13,22 @@ test.describe("scanner ui model", () => {
     expect(normalizeSportsbookDeeplink("http://example.com/bet")).toContain("http://");
     expect(normalizeSportsbookDeeplink("javascript:alert(1)")).toBeNull();
     expect(normalizeSportsbookDeeplink("not-a-url")).toBeNull();
-    expect(normalizeSportsbookDeeplink("https://sports.{state}.betmgm.com/en/sports")).toBeNull();
+    expect(normalizeSportsbookDeeplink("https://sports.{state}.betmgm.com/en/sports")).toBe(
+      "https://sports.betmgm.com/en/sports"
+    );
+  });
+
+  test("keeps destination-aware copy for canonicalized BetMGM links", async () => {
+    const model = buildScannerActionModel({
+      sportsbook: "BetMGM",
+      sportsbookDeeplinkUrl: "https://sports.{state}.betmgm.com/en/sports/events/evt-123",
+      sportsbookDeeplinkLevel: "event",
+    });
+
+    expect(model.primary.kind).toBe("open");
+    expect(model.primary.href).toBe("https://sports.betmgm.com/en/sports/events/evt-123");
+    expect(model.primary.label).toBe("Open Event at BetMGM");
+    expect(model.secondary?.label).toBe("Review & Log");
   });
 
   test("builds selection-level open-first action hierarchy", async () => {

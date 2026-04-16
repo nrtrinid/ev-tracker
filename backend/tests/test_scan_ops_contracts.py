@@ -148,6 +148,45 @@ def test_ready_api_role_ignores_scheduler_freshness(monkeypatch, public_client):
 
 
 @pytest.mark.integration
+def test_ready_scheduler_role_requires_scheduler_freshness(monkeypatch, public_client):
+    import main
+
+    monkeypatch.setenv("APP_ROLE", "scheduler")
+    monkeypatch.setattr(main, "_runtime_state", lambda: {
+        "environment": "production",
+        "scheduler_expected": True,
+        "scheduler_running": True,
+        "redis_configured": True,
+        "cron_token_configured": True,
+        "odds_api_key_configured": True,
+        "supabase_url_configured": True,
+        "supabase_service_role_configured": True,
+        "discord": {
+            "heartbeat_enabled": False,
+            "scan_alert_mode": "off",
+            "alert_delivery": {},
+            "test_delivery": {},
+            "last_schedule_stats": {},
+        },
+    }, raising=True)
+    monkeypatch.setattr(main, "_check_db_ready", lambda: (True, None), raising=True)
+    monkeypatch.setattr(main, "_check_scheduler_freshness", lambda _expected: (False, {
+        "enabled": True,
+        "fresh": False,
+        "reason": "stale",
+        "jobs": {},
+    }), raising=True)
+
+    resp = public_client.get("/ready")
+
+    assert resp.status_code == 503
+    body = resp.json()["detail"]
+    assert body["status"] == "not_ready"
+    assert body["checks"]["scheduler_freshness"] is False
+    assert body["scheduler_freshness"]["fresh"] is False
+
+
+@pytest.mark.integration
 def test_scan_bets_contract_shape(auth_client, auth_headers, monkeypatch):
     import services.odds_api as odds_api
 

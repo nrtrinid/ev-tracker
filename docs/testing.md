@@ -41,6 +41,11 @@ Quick local readiness smoke (optional):
 - PowerShell: `Invoke-WebRequest -Uri http://localhost:8000/ready`
 - macOS/Linux: `curl -i http://localhost:8000/ready`
 
+Role-aware readiness checks (split-role deployments):
+
+- API role (`APP_ROLE=api`, `ENABLE_SCHEDULER=0`): scheduler freshness is advisory and should not fail readiness.
+- Scheduler role (`APP_ROLE=scheduler`, `ENABLE_SCHEDULER=1`): stale scheduler freshness should fail readiness.
+
 #### Backend integration tests
 
 Prereqs:
@@ -95,6 +100,7 @@ The ops-access flow needs real non-admin credentials. The smoke flow needs a rea
 Before sharing `main` with testers:
 
 - run backend unit and hardening tests
+- verify readiness semantics in split-role mode (`api` role tolerant to stale scheduler freshness; `scheduler` role strict)
 - run Discord backend tests
 - run backend integration tests against a dedicated test user
 - run frontend `build` and `typecheck`

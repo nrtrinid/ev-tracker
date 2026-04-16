@@ -5,6 +5,16 @@ import { assertAdminAccess } from "@/lib/server/admin-access";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+const DEFAULT_ADMIN_BRIDGE_TIMEOUT_MS = 20000;
+
+function adminBridgeTimeoutMs(): number {
+  const raw = Number(process.env.ADMIN_BRIDGE_TIMEOUT_MS ?? DEFAULT_ADMIN_BRIDGE_TIMEOUT_MS);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return DEFAULT_ADMIN_BRIDGE_TIMEOUT_MS;
+  }
+  return Math.trunc(raw);
+}
+
 /** Proxies to FastAPI `POST /api/ops/trigger/auto-settle` using the ops token (admin-only). */
 export async function POST() {
   const access = await assertAdminAccess();
@@ -39,6 +49,8 @@ export async function POST() {
 
   try {
     const endpoint = `${backendBaseUrl}/api/ops/trigger/auto-settle`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), adminBridgeTimeoutMs());
     const resp = await fetch(endpoint, {
       method: "POST",
       headers: {
@@ -47,6 +59,9 @@ export async function POST() {
         "x-ops-token": cronToken,
       },
       body: JSON.stringify({}),
+      signal: controller.signal,
+    }).finally(() => {
+      clearTimeout(timeout);
     });
 
     const data = await resp.json().catch(() => ({ detail: "Invalid backend response" }));
@@ -55,6 +70,12 @@ export async function POST() {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {
+    if (error instanceof Error && error.name == "AbortError") {
+      return NextResponse.json(
+        { detail: "Backend auto-settle trigger timed out" },
+        { status: 504, headers: { "Cache-Control": "no-store" } }
+      );
+    }
     console.error("Admin trigger-auto-settle proxy error:", error);
     return NextResponse.json(
       { detail: "Failed to reach backend" },

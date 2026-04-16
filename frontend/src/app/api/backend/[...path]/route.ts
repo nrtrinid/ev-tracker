@@ -9,6 +9,16 @@ import {
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+const DEFAULT_PROXY_TIMEOUT_MS = 15000;
+
+function proxyTimeoutMs(): number {
+  const raw = Number(process.env.BACKEND_PROXY_TIMEOUT_MS ?? DEFAULT_PROXY_TIMEOUT_MS);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return DEFAULT_PROXY_TIMEOUT_MS;
+  }
+  return Math.trunc(raw);
+}
+
 type RouteContext = {
   params: {
     path: string[];
@@ -81,12 +91,17 @@ async function proxyRequest(request: Request, { params }: RouteContext) {
       method === "GET" || method === "HEAD"
         ? undefined
         : (() => request.arrayBuffer())();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), proxyTimeoutMs());
 
     const response = await fetch(targetUrl, {
       method,
       cache: "no-store",
       headers: buildUpstreamHeaders(request),
       body: upstreamBody ? await upstreamBody : undefined,
+      signal: controller.signal,
+    }).finally(() => {
+      clearTimeout(timeout);
     });
 
     const responseBody = await response.arrayBuffer();
@@ -95,6 +110,12 @@ async function proxyRequest(request: Request, { params }: RouteContext) {
       headers: buildDownstreamHeaders(response.headers),
     });
   } catch (error) {
+    if (error instanceof Error && error.name == "AbortError") {
+      return NextResponse.json(
+        { detail: "Backend request timed out" },
+        { status: 504, headers: { "Cache-Control": "no-store" } },
+      );
+    }
     console.error("Backend proxy error:", error);
     return NextResponse.json(
       { detail: "Failed to reach backend" },

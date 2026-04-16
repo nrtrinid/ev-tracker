@@ -402,7 +402,7 @@ def test_build_pickem_cards_from_candidates_uses_looser_pickem_gate():
     assert pickem_cards[0]["consensus_side"] == "over"
 
 
-def test_parse_prop_sides_falls_back_to_homepage_when_provider_links_are_unusable():
+def test_parse_prop_sides_canonicalizes_betmgm_state_template_links():
     event_payload = {
         "id": "evt-homepage",
         "home_team": "Suns",
@@ -463,8 +463,8 @@ def test_parse_prop_sides_falls_back_to_homepage_when_provider_links_are_unusabl
     )
 
     betmgm_over = next(side for side in sides if side["sportsbook"] == "BetMGM" and side["selection_side"] == "over")
-    assert betmgm_over["sportsbook_deeplink_url"] == "https://sports.betmgm.com/"
-    assert betmgm_over["sportsbook_deeplink_level"] == "homepage"
+    assert betmgm_over["sportsbook_deeplink_url"] == "https://sports.betmgm.com/en/sports?options=bad"
+    assert betmgm_over["sportsbook_deeplink_level"] == "selection"
 
 
 def test_parse_prop_sides_uses_lookup_for_team_and_participant_context():

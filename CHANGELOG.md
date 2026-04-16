@@ -26,6 +26,10 @@ Version labels use pre-release suffixes until the app is ready for outside users
 - **Readiness gate split-role hardening**
   - Updated `/ready` so `APP_ROLE=api` no longer fails readiness on scheduler freshness while still reporting scheduler freshness details for operators.
   - Preserved scheduler freshness enforcement for scheduler-enabled roles.
+- **Reliability guardrails (split-role + bridge timeouts)**
+  - Added startup warnings when `APP_ROLE` and `ENABLE_SCHEDULER` are misaligned in split-role deployments.
+  - Added `backend_api` container healthcheck and healthy dependency gating for Caddy in compose.
+  - Added frontend bridge request timeouts for backend proxy, ops status, and admin trigger routes to fail fast when upstream stalls.
 - **Onboarding + settings UX reliability**
   - Fixed onboarding reset sync so backend reset state now authoritatively clears stale local onboarding flags.
   - Updated settings onboarding summary to split Daily Drops tutorial progress from Home/Scanner review prompts.

@@ -68,12 +68,36 @@ docker compose up -d --force-recreate backend_api backend_scheduler caddy
 
 When Discord webhook values change, always run the force-recreate command above and then re-run the Discord verification checks below.
 
+## Deploy Modes And Split-Role Safety
+
+- Use `docker compose up -d --build` for code/image changes.
+- Use `docker compose up -d --force-recreate backend_api backend_scheduler caddy` for environment changes.
+- Always recreate `backend_api` and `backend_scheduler` together after env updates to avoid split-role drift.
+
+Expected role/env alignment:
+
+- `backend_api`: `APP_ROLE=api`, `ENABLE_SCHEDULER=0`
+- `backend_scheduler`: `APP_ROLE=scheduler`, `ENABLE_SCHEDULER=1`
+
+Quick verification after deploy:
+
+```bash
+docker compose config | grep -nE "backend_api|backend_scheduler|APP_ROLE|ENABLE_SCHEDULER"
+```
+
 ## Health Checks
 
 ```bash
 curl -i http://5.78.192.196/health
 curl -i http://5.78.192.196/ready
 ```
+
+Expected:
+
+- `/health` returns `200` while the API process is alive.
+- `/ready` returns `200` when Supabase env and DB connectivity are healthy.
+- For API role, `scheduler_freshness` is advisory and should not fail readiness.
+- For scheduler role, stale scheduler freshness should fail readiness.
 
 ## Ops Checks
 

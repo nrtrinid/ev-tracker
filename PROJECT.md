@@ -272,7 +272,8 @@ ev-betting-tracker/
 | `SUPABASE_SERVICE_ROLE_KEY` | Service role key (bypasses RLS) |
 | `ODDS_API_KEY` | The Odds API key |
 | `ENVIRONMENT` | `development` (limit scans) or `production` |
-| `ENABLE_SCHEDULER` | `1` to run APScheduler jobs in this process |
+| `APP_ROLE` | Runtime role (`api` or `scheduler`) used by entrypoint orchestration and readiness behavior |
+| `ENABLE_SCHEDULER` | `1` to run APScheduler jobs in this process; use `0` for `APP_ROLE=api` and `1` for `APP_ROLE=scheduler` in split-role deploys |
 | `TESTING` | `1` disables scheduler startup for tests |
 | `CRON_TOKEN` | Shared secret for backend cron/ops protected endpoints |
 | `DISCORD_WEBHOOK_URL` | Optional webhook for scan/settle alerts |
@@ -289,6 +290,9 @@ ev-betting-tracker/
 | `CRON_SECRET` | Authorization secret for frontend cron bridge endpoints |
 | `CRON_TOKEN` | Optional dedicated backend cron token for forwarded requests |
 | `OPS_ADMIN_EMAILS` | Comma-separated allowlist for `/admin/ops` and `/api/ops/status` |
+| `BACKEND_PROXY_TIMEOUT_MS` | Optional timeout for `/api/backend/*` bridge calls (default `15000`) |
+| `OPS_BRIDGE_TIMEOUT_MS` | Optional timeout for `/api/ops/status` frontend bridge calls (default `15000`) |
+| `ADMIN_BRIDGE_TIMEOUT_MS` | Optional timeout for admin trigger bridges (default `20000`) |
 
 ---
 
