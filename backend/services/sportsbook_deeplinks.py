@@ -1,5 +1,5 @@
 from typing import Literal
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 
 ScannerDeeplinkLevel = Literal["selection", "market", "event", "homepage"]
@@ -20,14 +20,40 @@ SPORTSBOOK_HOMEPAGES: dict[str, str] = {
 
 
 def _canonicalize_betmgm_template_host(candidate: str) -> str:
-    lower = candidate.lower()
-    marker_index = lower.find(BETMGM_STATE_TEMPLATE_HOST)
-    if marker_index < 0:
+    try:
+        parsed = urlparse(candidate)
+    except Exception:
         return candidate
-    return (
-        candidate[:marker_index]
-        + BETMGM_CANONICAL_HOST
-        + candidate[marker_index + len(BETMGM_STATE_TEMPLATE_HOST) :]
+
+    netloc = parsed.netloc
+    if not netloc:
+        return candidate
+
+    userinfo = ""
+    hostport = netloc
+    if "@" in hostport:
+        userinfo, hostport = hostport.rsplit("@", 1)
+
+    host = hostport
+    port = ""
+    if hostport.startswith("["):
+        # IPv6 literals are not expected here, but keep parsing safe.
+        closing = hostport.find("]")
+        if closing >= 0:
+            host = hostport[: closing + 1]
+            port = hostport[closing + 1 :]
+    elif ":" in hostport:
+        maybe_host, maybe_port = hostport.rsplit(":", 1)
+        if maybe_port.isdigit():
+            host = maybe_host
+            port = f":{maybe_port}"
+
+    if host.lower() != BETMGM_STATE_TEMPLATE_HOST:
+        return candidate
+
+    canonical_netloc = f"{userinfo + '@' if userinfo else ''}{BETMGM_CANONICAL_HOST}{port}"
+    return urlunparse(
+        (parsed.scheme, canonical_netloc, parsed.path, parsed.params, parsed.query, parsed.fragment)
     )
 
 

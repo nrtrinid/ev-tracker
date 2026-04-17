@@ -16,6 +16,10 @@ test.describe("scanner ui model", () => {
     expect(normalizeSportsbookDeeplink("https://sports.{state}.betmgm.com/en/sports")).toBe(
       "https://sports.betmgm.com/en/sports"
     );
+    expect(normalizeSportsbookDeeplink("https://sports.{state}.betmgm.com:8443/en/sports")).toBe(
+      "https://sports.betmgm.com:8443/en/sports"
+    );
+    expect(normalizeSportsbookDeeplink("https://sports.{state}.betmgm.com.evil.com/en/sports")).toBeNull();
   });
 
   test("keeps destination-aware copy for canonicalized BetMGM links", async () => {

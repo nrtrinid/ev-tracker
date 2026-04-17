@@ -26,6 +26,16 @@ services:
     environment:
       APP_ROLE: scheduler
       ENABLE_SCHEDULER: "1"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os,pathlib,sys; cmd=pathlib.Path('/proc/1/cmdline').read_text(); ok=os.getenv('APP_ROLE')=='scheduler' and os.getenv('ENABLE_SCHEDULER')=='1' and 'entrypoint.py' in cmd; sys.exit(0 if ok else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
 
   caddy:

@@ -90,6 +90,7 @@ docker compose config | grep -nE "backend_api|backend_scheduler|APP_ROLE|ENABLE_
 ```bash
 curl -i http://5.78.192.196/health
 curl -i http://5.78.192.196/ready
+docker compose ps backend_api backend_scheduler
 ```
 
 Expected:
@@ -98,6 +99,7 @@ Expected:
 - `/ready` returns `200` when Supabase env and DB connectivity are healthy.
 - For API role, `scheduler_freshness` is advisory and should not fail readiness.
 - For scheduler role, stale scheduler freshness should fail readiness.
+- `backend_api` and `backend_scheduler` both report `healthy` in `docker compose ps`.
 
 ## Ops Checks
 

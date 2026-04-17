@@ -29,7 +29,10 @@ Version labels use pre-release suffixes until the app is ready for outside users
 - **Reliability guardrails (split-role + bridge timeouts)**
   - Added startup warnings when `APP_ROLE` and `ENABLE_SCHEDULER` are misaligned in split-role deployments.
   - Added `backend_api` container healthcheck and healthy dependency gating for Caddy in compose.
+  - Added `backend_scheduler` container healthcheck so scheduler role drift is visible in compose health state.
   - Added frontend bridge request timeouts for backend proxy, ops status, and admin trigger routes to fail fast when upstream stalls.
+  - Added targeted frontend route tests that assert timeout branches return deterministic `504` responses.
+  - Tightened BetMGM deeplink canonicalization to exact placeholder-host matching and added hostile embedding regression tests.
 - **Onboarding + settings UX reliability**
   - Fixed onboarding reset sync so backend reset state now authoritatively clears stale local onboarding flags.
   - Updated settings onboarding summary to split Daily Drops tutorial progress from Home/Scanner review prompts.

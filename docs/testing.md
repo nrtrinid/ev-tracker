@@ -78,6 +78,8 @@ From `frontend/`:
 - `npm run test:e2e`
 - `npm run test:ops-utils`
 - `npm run test:ops-access`
+- `npm run test:route-timeouts`
+- `npm run test:quarantined`
 
 The ops-access flow needs real non-admin credentials. The smoke flow needs a real login.
 

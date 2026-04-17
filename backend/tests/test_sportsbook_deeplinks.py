@@ -13,9 +13,21 @@ def test_normalize_sportsbook_link_canonicalizes_betmgm_state_templates():
     )
 
 
+def test_normalize_sportsbook_link_canonicalizes_betmgm_state_templates_with_port():
+    assert (
+        normalize_sportsbook_link("https://sports.{state}.betmgm.com:8443/en/sports/events/evt-123")
+        == "https://sports.betmgm.com:8443/en/sports/events/evt-123"
+    )
+
+
 def test_normalize_sportsbook_link_rejects_non_http_and_unknown_templates():
     assert normalize_sportsbook_link("javascript:alert(1)") is None
     assert normalize_sportsbook_link("https://sports.{region}.betmgm.com/en/sports") is None
+
+
+def test_normalize_sportsbook_link_rejects_partial_betmgm_template_embeddings():
+    assert normalize_sportsbook_link("https://sports.{state}.betmgm.com.evil.com/en/sports") is None
+    assert normalize_sportsbook_link("https://example.com/path/sports.{state}.betmgm.com/en/sports") is None
 
 
 def test_resolve_sportsbook_deeplink_prefers_most_specific_provider_link():

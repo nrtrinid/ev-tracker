@@ -26,7 +26,7 @@ export interface ScannerActionModel {
   trustHint?: string;
 }
 
-const BETMGM_STATE_TEMPLATE_HOST_REGEX = /(https?:\/\/)sports\.\{state\}\.betmgm\.com(?=\/|$)/i;
+const BETMGM_STATE_TEMPLATE_HOST_REGEX = /(https?:\/\/)sports\.\{state\}\.betmgm\.com(?=[:\/]|$)/i;
 
 function canonicalizeBetmgmTemplateHost(value: string): string {
   return value.replace(BETMGM_STATE_TEMPLATE_HOST_REGEX, (_, protocol: string) => {
