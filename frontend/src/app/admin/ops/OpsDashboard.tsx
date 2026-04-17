@@ -808,6 +808,16 @@ export function OpsDashboard() {
     try {
       setIsRefreshingBoard(true);
       const result = await adminRefreshMarkets();
+
+      const refreshAccepted = Boolean(result.accepted || result.pending);
+      if (refreshAccepted) {
+        toast.success("Daily drop refresh started", {
+          description: `Queued board refresh run ${result.run_id}. It will continue in the background.`,
+        });
+        await refreshAllPanels();
+        return;
+      }
+
       toast.success("Daily drop refresh started", {
         description: result.board_drop
           ? `Completed board refresh for ${result.total_sides ?? 0} surfaced picks.`

@@ -888,6 +888,9 @@ export interface AdminMarketRefreshResponse {
 /** Response from POST /api/ops/trigger/scan (proxied via admin manual scan button). */
 export interface OpsTriggerScanResponse {
   ok: boolean;
+  accepted?: boolean;
+  pending?: boolean;
+  detail?: string;
   run_id: string;
   started_at: string;
   finished_at: string;

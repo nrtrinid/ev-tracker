@@ -292,6 +292,7 @@ ev-betting-tracker/
 | `OPS_ADMIN_EMAILS` | Comma-separated allowlist for `/admin/ops` and `/api/ops/status` |
 | `BACKEND_PROXY_TIMEOUT_MS` | Optional timeout for `/api/backend/*` bridge calls (default `15000`) |
 | `OPS_BRIDGE_TIMEOUT_MS` | Optional timeout for `/api/ops/status` frontend bridge calls (default `15000`) |
+| `ADMIN_SCAN_BRIDGE_TIMEOUT_MS` | Optional timeout for `/api/admin/refresh-markets` bridge calls (default `180000`; falls back to `ADMIN_BRIDGE_TIMEOUT_MS`) |
 | `ADMIN_BRIDGE_TIMEOUT_MS` | Optional timeout for admin trigger bridges (default `20000`) |
 
 ---

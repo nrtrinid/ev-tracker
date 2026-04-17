@@ -103,6 +103,7 @@ def test_ops_endpoints_require_ops_token(public_client):
     assert public_client.get("/api/ops/status").status_code == 401
     assert public_client.get("/api/ops/research-opportunities/summary").status_code == 401
     assert public_client.post("/api/ops/trigger/scan").status_code == 401
+    assert public_client.post("/api/ops/trigger/scan/async").status_code == 401
     assert public_client.post("/api/ops/trigger/auto-settle").status_code == 401
     assert public_client.post("/api/ops/trigger/test-discord").status_code == 401
 
@@ -848,6 +849,37 @@ def test_ops_trigger_scan_contract_shape(auth_client, monkeypatch):
     assert isinstance(body.get("alerts_scheduled"), int)
     assert body["total_sides"] == 10
     assert body["result"]["props_sides"] == 4
+
+
+@pytest.mark.integration
+def test_ops_trigger_scan_async_contract_shape(auth_client, monkeypatch):
+    import main
+
+    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
+    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+
+    async def _fake_background_runner(*, main_module, run_id: str):
+        main_module._set_ops_status(
+            "last_ops_trigger_scan",
+            {
+                "run_id": run_id,
+                "captured_at": "2026-03-20T18:00:00Z",
+                "board_drop": True,
+                "pending": False,
+            },
+        )
+
+    monkeypatch.setattr("routes.ops_cron._run_ops_board_drop_background", _fake_background_runner, raising=True)
+
+    resp = auth_client.post("/api/ops/trigger/scan/async", headers={"X-Ops-Token": "ops-secret"})
+    assert resp.status_code == 202
+
+    body = resp.json()
+    assert body.get("ok") is True
+    assert body.get("accepted") is True
+    assert body.get("pending") is True
+    assert body.get("board_drop") is True
+    assert isinstance(body.get("run_id"), str)
 
 
 @pytest.mark.integration

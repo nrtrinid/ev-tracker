@@ -1057,6 +1057,104 @@ async def cron_test_discord_impl(
         "delivery_status": delivery.get("delivery_status") if isinstance(delivery, dict) else None,
     }
 
+def _accepted_board_drop_payload(*, run_id: str, started_at: str) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "accepted": True,
+        "pending": True,
+        "run_id": run_id,
+        "started_at": started_at,
+        "finished_at": started_at,
+        "duration_ms": 0,
+        "board_drop": True,
+        "result": {
+            "scan_label": "Ops Manual Board Refresh",
+            "duration_ms": 0,
+        },
+        "errors": [],
+        "total_sides": None,
+        "alerts_scheduled": 0,
+        "detail": "Board refresh accepted and running in the background",
+    }
+
+
+async def _run_ops_board_drop_background(*, main_module: Any, run_id: str) -> None:
+    try:
+        await cron_run_board_drop_impl(
+            x_cron_token=None,
+            require_valid_cron_token=lambda _token: None,
+            new_run_id=lambda _prefix: run_id,
+            log_event=main_module._log_event,
+            set_ops_status=main_module._set_ops_status,
+            persist_ops_job_run=main_module._persist_ops_job_run,
+            get_db=main_module.get_db,
+            retry_supabase=main_module._retry_supabase,
+            run_id_prefix="ops_board_drop",
+            log_prefix="ops.trigger.board_drop",
+            board_drop_source="ops_trigger_board_drop",
+            ops_status_key="last_ops_trigger_scan",
+            scan_label="Ops Manual Board Refresh",
+        )
+    except Exception as exc:
+        main_module._log_event(
+            "ops.trigger.board_drop.background_failed",
+            level="error",
+            run_id=run_id,
+            error_class=type(exc).__name__,
+            error=str(exc),
+        )
+
+
+@router.post("/api/ops/trigger/scan/async", status_code=202)
+async def ops_trigger_scan_async(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    import main
+
+    # Keep explicit token validation parity with the sync trigger endpoint.
+    main._require_ops_token(x_ops_token, x_cron_token)
+
+    started_at = _utc_now_iso()
+    run_id = main._new_run_id("ops_board_drop")
+    accepted_payload = _accepted_board_drop_payload(run_id=run_id, started_at=started_at)
+
+    main._set_ops_status(
+        "last_ops_trigger_scan",
+        {
+            "run_id": run_id,
+            "started_at": started_at,
+            "captured_at": started_at,
+            "board_drop": True,
+            "status": "queued",
+            "pending": True,
+            "error_count": 0,
+            "errors": [],
+            "result": accepted_payload.get("result"),
+        },
+    )
+
+    main._persist_ops_job_run(
+        job_kind="ops_trigger_board_drop",
+        source="ops_trigger",
+        status="queued",
+        run_id=run_id,
+        scan_session_id=run_id,
+        surface="board_drop",
+        scan_scope="all",
+        requested_sport="board",
+        captured_at=started_at,
+        started_at=started_at,
+        duration_ms=0,
+        error_count=0,
+        errors=[],
+        meta={"accepted": True, "pending": True},
+    )
+
+    asyncio.create_task(_run_ops_board_drop_background(main_module=main, run_id=run_id))
+    return accepted_payload
+
 
 async def cron_test_discord_alert_impl(
     x_cron_token: str | None,

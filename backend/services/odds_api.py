@@ -390,6 +390,18 @@ def get_odds_api_activity_snapshot() -> dict:
     }
 
 
+def _should_bypass_get_cached_or_scan_cache(source: str | None) -> bool:
+    normalized = str(source or "").strip().lower()
+    if not normalized:
+        return False
+    # User-triggered scans and board-drop runs should force fresh odds pulls.
+    if normalized.startswith("manual_scan"):
+        return True
+    if "board_drop" in normalized:
+        return True
+    return False
+
+
 async def get_cached_or_scan(sport: str, source: str = "unknown") -> dict:
     """
     Return sides for this sport from cache if fresh (< CACHE_TTL_SECONDS),
@@ -400,41 +412,44 @@ async def get_cached_or_scan(sport: str, source: str = "unknown") -> dict:
         _locks[sport] = asyncio.Lock()
     async with _locks[sport]:
         now = time.time()
-        shared_entry = get_scan_cache(sport)
-        if isinstance(shared_entry, dict):
-            fetched_at = shared_entry.get("fetched_at")
-            if isinstance(fetched_at, (int, float)) and (now - fetched_at) < CACHE_TTL_SECONDS:
-                _cache[sport] = shared_entry
-                _append_odds_api_activity(
-                    source=source,
-                    endpoint=f"/sports/{sport}/odds",
-                    sport=sport,
-                    cache_hit=True,
-                    outbound_call_made=False,
-                    status_code=200,
-                    duration_ms=0.0,
-                    api_requests_remaining=shared_entry.get("api_requests_remaining"),
-                    error_type=None,
-                    error_message=None,
-                )
-                return {**shared_entry, "cache_hit": True}
+        bypass_cache = _should_bypass_get_cached_or_scan_cache(source)
 
-        if sport in _cache:
-            entry = _cache[sport]
-            if (now - entry["fetched_at"]) < CACHE_TTL_SECONDS:
-                _append_odds_api_activity(
-                    source=source,
-                    endpoint=f"/sports/{sport}/odds",
-                    sport=sport,
-                    cache_hit=True,
-                    outbound_call_made=False,
-                    status_code=200,
-                    duration_ms=0.0,
-                    api_requests_remaining=entry.get("api_requests_remaining"),
-                    error_type=None,
-                    error_message=None,
-                )
-                return {**entry, "cache_hit": True}
+        if not bypass_cache:
+            shared_entry = get_scan_cache(sport)
+            if isinstance(shared_entry, dict):
+                fetched_at = shared_entry.get("fetched_at")
+                if isinstance(fetched_at, (int, float)) and (now - fetched_at) < CACHE_TTL_SECONDS:
+                    _cache[sport] = shared_entry
+                    _append_odds_api_activity(
+                        source=source,
+                        endpoint=f"/sports/{sport}/odds",
+                        sport=sport,
+                        cache_hit=True,
+                        outbound_call_made=False,
+                        status_code=200,
+                        duration_ms=0.0,
+                        api_requests_remaining=shared_entry.get("api_requests_remaining"),
+                        error_type=None,
+                        error_message=None,
+                    )
+                    return {**shared_entry, "cache_hit": True}
+
+            if sport in _cache:
+                entry = _cache[sport]
+                if (now - entry["fetched_at"]) < CACHE_TTL_SECONDS:
+                    _append_odds_api_activity(
+                        source=source,
+                        endpoint=f"/sports/{sport}/odds",
+                        sport=sport,
+                        cache_hit=True,
+                        outbound_call_made=False,
+                        status_code=200,
+                        duration_ms=0.0,
+                        api_requests_remaining=entry.get("api_requests_remaining"),
+                        error_type=None,
+                        error_message=None,
+                    )
+                    return {**entry, "cache_hit": True}
 
         result = await scan_all_sides(sport, source=source)
         result["fetched_at"] = now

@@ -9,6 +9,7 @@ import {
 const DEFAULT_PROXY_TIMEOUT_MS = 15000;
 const DEFAULT_OPS_BRIDGE_TIMEOUT_MS = 15000;
 const DEFAULT_ADMIN_BRIDGE_TIMEOUT_MS = 20000;
+const DEFAULT_ADMIN_SCAN_BRIDGE_TIMEOUT_MS = 180000;
 
 export type RouteContext = {
   params: {
@@ -74,6 +75,15 @@ function opsBridgeTimeoutMs(): number {
 function adminBridgeTimeoutMs(): number {
   const raw = Number(process.env.ADMIN_BRIDGE_TIMEOUT_MS ?? DEFAULT_ADMIN_BRIDGE_TIMEOUT_MS);
   return resolveTimeoutMs(raw, DEFAULT_ADMIN_BRIDGE_TIMEOUT_MS);
+}
+
+function adminScanBridgeTimeoutMs(): number {
+  const raw = Number(
+    process.env.ADMIN_SCAN_BRIDGE_TIMEOUT_MS
+      ?? process.env.ADMIN_BRIDGE_TIMEOUT_MS
+      ?? DEFAULT_ADMIN_SCAN_BRIDGE_TIMEOUT_MS
+  );
+  return resolveTimeoutMs(raw, DEFAULT_ADMIN_SCAN_BRIDGE_TIMEOUT_MS);
 }
 
 async function resolveAdminAccess(assertAccess?: () => Promise<AdminAccessResult>): Promise<AdminAccessResult> {
@@ -291,12 +301,13 @@ export async function postAdminRefreshMarketsRouteImpl(deps: RefreshMarketsRoute
   }
 
   try {
-    const endpoint = `${backendBaseUrl}/api/ops/trigger/scan`;
+    const asyncEndpoint = `${backendBaseUrl}/api/ops/trigger/scan/async`;
+    const fallbackEndpoint = `${backendBaseUrl}/api/ops/trigger/scan`;
     const fetchFn = deps.fetchFn ?? fetch;
-    const timeoutMs = resolveTimeoutMs(deps.timeoutMs, adminBridgeTimeoutMs());
+    const timeoutMs = resolveTimeoutMs(deps.timeoutMs, adminScanBridgeTimeoutMs());
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    const resp = await fetchFn(endpoint, {
+    const requestInit: RequestInit = {
       method: "POST",
       headers: {
         accept: "application/json",
@@ -305,9 +316,19 @@ export async function postAdminRefreshMarketsRouteImpl(deps: RefreshMarketsRoute
       },
       body: JSON.stringify({}),
       signal: controller.signal,
-    }).finally(() => {
+    };
+
+    let resp: Response;
+    try {
+      resp = await fetchFn(asyncEndpoint, requestInit);
+      if (resp.status === 404) {
+        // Backward compatibility: older backend deployments only expose the sync endpoint.
+        resp = await fetchFn(fallbackEndpoint, requestInit);
+      }
+    } finally {
       clearTimeout(timeout);
-    });
+    }
+
     const raw = await resp.text();
     let data: unknown;
     try {

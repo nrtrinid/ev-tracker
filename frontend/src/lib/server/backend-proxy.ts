@@ -5,6 +5,7 @@ const EXACT_ALLOWED_BACKEND_PROXY_PATHS = new Set<string>([
   "/balances",
   "/ready",
   "/health",
+  "/analytics/events",
   "/api/scan-markets",
   "/api/scan-latest",
 ]);
