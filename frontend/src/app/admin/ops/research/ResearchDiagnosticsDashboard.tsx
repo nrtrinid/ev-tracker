@@ -349,14 +349,13 @@ function ResearchDropTimeBreakdown({ rows }: { rows?: ResearchOpportunityBreakdo
 }
 
 export function ResearchDiagnosticsDashboard() {
-  const [loaded, setLoaded] = useState(false);
   const [researchScope, setResearchScope] = useState<ResearchScope>("all");
   const researchQuery = useResearchOpportunitySummary({
-    enabled: loaded,
+    enabled: true,
     scope: researchScope === "displayed" ? "board_default" : "all",
   });
-  const calibrationQuery = useModelCalibrationSummary(loaded);
-  const pickEmQuery = usePickEmResearchSummary(loaded);
+  const calibrationQuery = useModelCalibrationSummary(true);
+  const pickEmQuery = usePickEmResearchSummary(true);
 
   const isAnyFetching = researchQuery.isFetching || calibrationQuery.isFetching || pickEmQuery.isFetching;
 
@@ -371,10 +370,6 @@ export function ResearchDiagnosticsDashboard() {
   const gateStyle = gateChip(calibration);
 
   function triggerRefresh() {
-    if (!loaded) {
-      setLoaded(true);
-      return;
-    }
     researchQuery.refetch();
     calibrationQuery.refetch();
     pickEmQuery.refetch();
@@ -396,7 +391,7 @@ export function ResearchDiagnosticsDashboard() {
             </Button>
             <Button type="button" variant="outline" size="sm" onClick={triggerRefresh} disabled={isAnyFetching}>
               <RefreshCcw className={`mr-1.5 h-4 w-4 ${isAnyFetching ? "animate-spin" : ""}`} />
-              {loaded ? "Refresh" : "Load diagnostics"}
+              Refresh
             </Button>
           </div>
         </div>
@@ -414,7 +409,7 @@ export function ResearchDiagnosticsDashboard() {
               <div className="flex items-center justify-between gap-2">
                 <h2 className="text-base font-semibold">CLV Research Tracker</h2>
                 <span className="inline-flex items-center rounded-md border border-border bg-muted px-2 py-1 text-xs text-muted-foreground">
-                  {research ? RESEARCH_STATUS_LABEL[research.aggregate_status] : "Not loaded"}
+                  {research ? RESEARCH_STATUS_LABEL[research.aggregate_status] : "Loading..."}
                 </span>
               </div>
               <div className="flex items-center gap-1.5 pt-1">
@@ -447,10 +442,9 @@ export function ResearchDiagnosticsDashboard() {
               </p>
             </CardHeader>
             <CardContent className="space-y-3">
-              {!loaded && <DataNotLoaded />}
-              {loaded && researchQuery.isLoading && !research && <DataLoading />}
-              {loaded && researchQuery.isError && <DataError message={researchError} />}
-              {loaded && research && (
+              {researchQuery.isLoading && !research && <DataLoading />}
+              {researchQuery.isError && <DataError message={researchError} />}
+              {research && (
                 <>
                   <div className="grid grid-cols-2 gap-2">
                     <StatCell label="Captured" value={formatCount(research.captured_count)} />
@@ -481,10 +475,9 @@ export function ResearchDiagnosticsDashboard() {
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
-              {!loaded && <DataNotLoaded />}
-              {loaded && calibrationQuery.isLoading && !calibration && <DataLoading />}
-              {loaded && calibrationQuery.isError && <DataError message={calibrationError} />}
-              {loaded && calibration && (
+              {calibrationQuery.isLoading && !calibration && <DataLoading />}
+              {calibrationQuery.isError && <DataError message={calibrationError} />}
+              {calibration && (
                 <>
                   <div className="grid grid-cols-2 gap-2">
                     <StatCell label="Captured rows" value={formatCount(calibration.captured_count)} />
@@ -513,10 +506,9 @@ export function ResearchDiagnosticsDashboard() {
               <h2 className="text-base font-semibold">Pick&apos;em Validation</h2>
             </CardHeader>
             <CardContent className="space-y-3">
-              {!loaded && <DataNotLoaded />}
-              {loaded && pickEmQuery.isLoading && !pickEm && <DataLoading />}
-              {loaded && pickEmQuery.isError && <DataError message={pickEmError} />}
-              {loaded && pickEm && (
+              {pickEmQuery.isLoading && !pickEm && <DataLoading />}
+              {pickEmQuery.isError && <DataError message={pickEmError} />}
+              {pickEm && (
                 <>
                   <div className="grid grid-cols-2 gap-2">
                     <StatCell label="Captured" value={formatCount(pickEm.captured_count)} />
