@@ -293,6 +293,17 @@ def test_filter_and_paginate_player_prop_board_items():
     assert filtered[0]["sportsbook"] == "FanDuel"
     assert filtered[0]["sport"] == "baseball_mlb"
 
+    market_search = filter_player_prop_board_items(
+        items,
+        books=["DraftKings"],
+        time_filter="all_games",
+        sport="basketball_nba",
+        market="all",
+        search="points",
+    )
+    assert len(market_search) == 1
+    assert market_search[0]["market_key"] == "player_points"
+
     page, has_more = paginate_board_items(items, page=1, page_size=1)
     assert len(page) == 1
     assert has_more is True

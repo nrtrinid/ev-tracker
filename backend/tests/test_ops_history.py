@@ -152,7 +152,7 @@ def test_load_ops_status_snapshot_prefers_durable_rows_and_rebuilds_activity():
                         "scan_window": {
                             "label": "Early-Look / Injury-Watch Scan",
                             "anchor_timezone": "America/Phoenix",
-                            "anchor_time_mst": "10:30",
+                            "anchor_time_mst": "09:30",
                         },
                     },
                 },
@@ -173,7 +173,7 @@ def test_load_ops_status_snapshot_prefers_durable_rows_and_rebuilds_activity():
                         "scan_window": {
                             "label": "Early-Look / Injury-Watch Scan",
                             "anchor_timezone": "America/Phoenix",
-                            "anchor_time_mst": "10:30",
+                            "anchor_time_mst": "09:30",
                         },
                         "board_alert": {
                             "attempted": True,
@@ -356,7 +356,7 @@ def test_load_ops_status_snapshot_prefers_durable_rows_and_rebuilds_activity():
     assert snapshot["last_manual_scan"]["total_sides"] == 31
     assert snapshot["last_scheduler_scan"]["run_id"] == "scheduled-1"
     assert snapshot["last_scheduler_scan"]["autolog_summary"] == {"enabled": False}
-    assert snapshot["last_scheduler_scan"]["scan_window"]["anchor_time_mst"] == "10:30"
+    assert snapshot["last_scheduler_scan"]["scan_window"]["anchor_time_mst"] == "09:30"
     assert snapshot["last_scheduler_scan"]["board_alert"]["delivery_status"] == "failed"
     assert snapshot["last_scheduler_scan"]["board_alert_attempted"] is True
     assert snapshot["last_scheduler_scan"]["board_alert_http_status"] == 429

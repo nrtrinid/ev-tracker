@@ -868,6 +868,9 @@ export function OpsDashboard() {
             <Button asChild variant="outline" size="sm">
               <Link href="/admin/ops/research">Research diagnostics</Link>
             </Button>
+            <Button asChild variant="outline" size="sm">
+              <Link href="/admin/ops/alt-pitcher-k">Alt Pitcher K Lookup</Link>
+            </Button>
             <Button
               type="button"
               variant="outline"

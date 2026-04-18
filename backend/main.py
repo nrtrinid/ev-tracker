@@ -70,8 +70,8 @@ DISCORD_SCAN_ALERT_MODE_ENV = "DISCORD_SCAN_ALERT_MODE"
 DISCORD_SCAN_ALERT_MODE_TIMED_PING = "timed_ping"
 DISCORD_SCAN_ALERT_MODE_EDGE_LIVE = "edge_live"
 SCHEDULED_SCAN_WINDOWS_MST: list[tuple[int, int, str]] = [
-    (10, 30, "Early-Look / Injury-Watch Scan"),
-    (15, 30, "Final Board / Bet Placement Scan"),
+    (9, 30, "Early-Look / Injury-Watch Scan"),
+    (15, 0, "Final Board / Bet Placement Scan"),
 ]
 
 
@@ -568,6 +568,9 @@ def _validate_environment() -> None:
     except Exception:
         pass
 
+    alert_route_kind = str(discord_alert_target.get("route_kind") or "")
+    alert_route_disabled = alert_route_kind == "alert_disabled"
+
     if scheduler_enabled and not odds_api_configured:
         _log_event(
             "startup.env_scheduler_without_odds_key",
@@ -600,7 +603,21 @@ def _validate_environment() -> None:
             message="CRON_TOKEN is missing; cron endpoints will reject requests.",
         )
 
-    if scheduler_enabled and not bool(discord_alert_target.get("webhook_configured")):
+    if scheduler_enabled and alert_route_disabled:
+        _log_event(
+            "startup.env_discord_alert_route_disabled",
+            route_kind=alert_route_kind,
+            message=(
+                "DISCORD_ENABLE_ALERT_ROUTE=0; alert-path Discord delivery is disabled. "
+                "Only debug/test routing is active."
+            ),
+        )
+
+    if (
+        scheduler_enabled
+        and not alert_route_disabled
+        and not bool(discord_alert_target.get("webhook_configured"))
+    ):
         _log_event(
             "startup.env_discord_alert_webhook_missing",
             level="warning",
@@ -660,6 +677,7 @@ def _validate_environment() -> None:
         scheduler_enabled=scheduler_enabled,
         cron_token_configured=cron_token_configured,
         odds_api_key_configured=odds_api_configured,
+        discord_alert_route_enabled=not alert_route_disabled,
         discord_alert_webhook_configured=bool(discord_alert_target.get("webhook_configured")),
         discord_alert_route_kind=discord_alert_target.get("route_kind"),
         discord_test_webhook_configured=bool(discord_test_target.get("webhook_configured")),
@@ -1264,7 +1282,7 @@ async def _run_auto_settler_job():
 
 
 async def _run_scheduled_board_drop_job():
-    """Run the trusted-beta board pipeline for the scheduled 10:30 and 3:30 windows."""
+    """Run the trusted-beta board pipeline for the scheduled 9:30 and 3:00 windows."""
     from services.daily_board import run_daily_board_drop
     from services.discord_alerts import (
         DiscordDeliveryError,
@@ -3266,12 +3284,20 @@ async def ops_trigger_test_discord(
     return {"ok": True, "scheduled": True, "run_id": run_id}
 
 
+def _discord_test_alert_message_type() -> str:
+    raw = (os.getenv("DISCORD_TEST_ALERT_MESSAGE_TYPE") or "test").strip().lower()
+    if raw in {"alert", "test"}:
+        return raw
+    return "test"
+
+
 async def ops_trigger_test_discord_alert(
     x_ops_token: str | None = None, x_cron_token: str | None = None
 ) -> dict[str, bool | str]:
     """
-    Trigger a test message to the alert webhook (DISCORD_ALERT_WEBHOOK_URL).
-    Useful for verifying the dedicated alert webhook is configured and working.
+    Trigger a test message for Discord alert diagnostics.
+    Uses debug/test routing by default to avoid alert-channel noise.
+    Set DISCORD_TEST_ALERT_MESSAGE_TYPE=alert to hit the alert webhook path directly.
     Security: requires X-Ops-Token header matching CRON_TOKEN.
     """
     _require_ops_token(x_ops_token, x_cron_token)
@@ -3279,6 +3305,7 @@ async def ops_trigger_test_discord_alert(
     run_id = _new_run_id("ops_discord_alert_test")
     started_at = time.monotonic()
     _log_event("ops.trigger.discord_alert_test.started", run_id=run_id)
+    test_alert_message_type = _discord_test_alert_message_type()
 
     from services.discord_alerts import send_discord_webhook
 
@@ -3286,7 +3313,10 @@ async def ops_trigger_test_discord_alert(
         "embeds": [
             {
                 "title": "Alert Webhook Test",
-                "description": "If you can read this, DISCORD_ALERT_WEBHOOK_URL is working.",
+                "description": (
+                    "If you can read this, the Discord test route is working. "
+                    "Set DISCORD_TEST_ALERT_MESSAGE_TYPE=alert to test the alert webhook path directly."
+                ),
                 "fields": [
                     {"name": "Server time (UTC)", "value": _utc_now_iso(), "inline": False},
                 ],
@@ -3295,13 +3325,18 @@ async def ops_trigger_test_discord_alert(
     }
 
     # Awaited directly so any Discord error surfaces in logs/response.
-    await send_discord_webhook(payload, message_type="alert")
+    await send_discord_webhook(payload, message_type=test_alert_message_type)
     _log_event(
         "ops.trigger.discord_alert_test.completed",
         run_id=run_id,
         duration_ms=round((time.monotonic() - started_at) * 1000, 2),
     )
-    return {"ok": True, "scheduled": True, "run_id": run_id}
+    return {
+        "ok": True,
+        "scheduled": True,
+        "run_id": run_id,
+        "message_type": test_alert_message_type,
+    }
 
 
 if __name__ == "__main__":

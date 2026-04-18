@@ -1,10 +1,16 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
 import httpx
 
 from services.player_props import (
+    ALT_PITCHER_K_LOOKUP_MAX_CANDIDATE_EVENTS,
+    ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+    ALT_PITCHER_K_LOOKUP_NORMAL_MARKET_KEY,
+    ALT_PITCHER_K_LOOKUP_TTL_SECONDS,
     PLAYER_PROP_REFERENCE_SOURCE,
+    _alt_pitcher_k_lookup_cache_key,
     _aggregate_reference_estimates,
     _build_pickem_cards_from_candidates,
     _book_weight_for_model,
@@ -20,6 +26,7 @@ from services.player_props import (
     _weighted_consensus_prob,
     get_cached_or_scan_player_props,
     get_player_prop_markets,
+    lookup_alt_pitcher_k_exact_line,
     scan_player_props,
     scan_player_props_for_event_ids,
 )
@@ -877,6 +884,991 @@ def test_build_prizepicks_comparison_cards_allows_thin_exact_line_support_for_pr
     assert cards[0]["exact_line_bookmaker_count"] == 1
     assert cards[0]["confidence_label"] == "thin"
     assert counts == {"matched": 1, "unmatched": 0, "filtered": 0}
+
+
+@pytest.mark.asyncio
+async def test_lookup_alt_pitcher_k_exact_line_returns_low_confidence_for_two_books(monkeypatch):
+    events_payload = [
+        {
+            "id": "evt-mlb-1",
+            "home_team": "Boston Red Sox",
+            "away_team": "New York Yankees",
+            "commence_time": "2026-07-04T23:10:00Z",
+        }
+    ]
+    alt_market_payload = {
+        "id": "evt-mlb-1",
+        "home_team": "Boston Red Sox",
+        "away_team": "New York Yankees",
+        "commence_time": "2026-07-04T23:10:00Z",
+        "sport_key": "baseball_mlb",
+        "bookmakers": [
+            {
+                "key": "bovada",
+                "markets": [
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -110},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -110},
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "draftkings",
+                "markets": [
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": 105},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -125},
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+
+    monkeypatch.setattr(
+        "services.player_props.get_json",
+        lambda _key: None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "services.player_props.set_json",
+        lambda *_args, **_kwargs: None,
+        raising=False,
+    )
+
+    async def _fake_fetch_events(_sport: str, *, source: str = "unknown"):
+        assert _sport == "baseball_mlb"
+        return events_payload, httpx.Response(200)
+
+    async def _fake_fetch_prop_market_for_event(*, sport: str, event_id: str, markets: list[str], source: str):
+        assert sport == "baseball_mlb"
+        assert event_id == "evt-mlb-1"
+        assert markets == [ALT_PITCHER_K_LOOKUP_MARKET_KEY, ALT_PITCHER_K_LOOKUP_NORMAL_MARKET_KEY]
+        return alt_market_payload, httpx.Response(200)
+
+    monkeypatch.setattr("services.player_props.fetch_events", _fake_fetch_events, raising=False)
+    monkeypatch.setattr("services.player_props._fetch_prop_market_for_event", _fake_fetch_prop_market_for_event, raising=False)
+
+    result = await lookup_alt_pitcher_k_exact_line(
+        player_name="Gerrit Cole",
+        team=None,
+        opponent=None,
+        line_value=6.5,
+        game_date=None,
+    )
+
+    assert result["status"] == "ok"
+    assert result["resolution_mode"] == "exact_pair"
+    assert result["confidence"]["bucket"] == "low"
+    assert result["confidence"]["paired_books_count"] == 2
+    assert result["consensus"]["paired_books_count"] == 2
+    assert result["consensus"]["reference_books_count"] == 2
+    assert result["cache"]["hit"] is False
+    assert result["warning"] is None
+
+
+@pytest.mark.asyncio
+async def test_lookup_alt_pitcher_k_exact_line_returns_normal_confidence_for_three_books(monkeypatch):
+    events_payload = [
+        {
+            "id": "evt-mlb-1",
+            "home_team": "Boston Red Sox",
+            "away_team": "New York Yankees",
+            "commence_time": "2026-07-04T23:10:00Z",
+        }
+    ]
+    alt_market_payload = {
+        "id": "evt-mlb-1",
+        "home_team": "Boston Red Sox",
+        "away_team": "New York Yankees",
+        "commence_time": "2026-07-04T23:10:00Z",
+        "sport_key": "baseball_mlb",
+        "bookmakers": [
+            {
+                "key": "bovada",
+                "markets": [
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -110},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -110},
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "draftkings",
+                "markets": [
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": 105},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -125},
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "betmgm",
+                "markets": [
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": 100},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -120},
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+
+    monkeypatch.setattr("services.player_props.get_json", lambda _key: None, raising=False)
+    monkeypatch.setattr("services.player_props.set_json", lambda *_args, **_kwargs: None, raising=False)
+
+    async def _fake_fetch_events(_sport: str, *, source: str = "unknown"):
+        return events_payload, httpx.Response(200)
+
+    async def _fake_fetch_prop_market_for_event(*, sport: str, event_id: str, markets: list[str], source: str):
+        return alt_market_payload, httpx.Response(200)
+
+    monkeypatch.setattr("services.player_props.fetch_events", _fake_fetch_events, raising=False)
+    monkeypatch.setattr("services.player_props._fetch_prop_market_for_event", _fake_fetch_prop_market_for_event, raising=False)
+
+    result = await lookup_alt_pitcher_k_exact_line(
+        player_name="Gerrit Cole",
+        team="New York Yankees",
+        opponent="Boston Red Sox",
+        line_value=6.5,
+        game_date="2026-07-04",
+    )
+
+    assert result["status"] == "ok"
+    assert result["resolution_mode"] == "exact_pair"
+    assert result["confidence"]["bucket"] == "normal"
+    assert result["confidence"]["paired_books_count"] == 3
+    assert result["consensus"]["paired_books_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_lookup_alt_pitcher_k_exact_line_returns_ambiguous_event_for_doubleheader(monkeypatch):
+    events_payload = [
+        {
+            "id": "evt-mlb-1",
+            "home_team": "Boston Red Sox",
+            "away_team": "New York Yankees",
+            "commence_time": "2026-07-04T17:05:00Z",
+        },
+        {
+            "id": "evt-mlb-2",
+            "home_team": "Boston Red Sox",
+            "away_team": "New York Yankees",
+            "commence_time": "2026-07-04T23:10:00Z",
+        },
+    ]
+    alt_market_payloads = {
+        "evt-mlb-1": {
+            "id": "evt-mlb-1",
+            "home_team": "Boston Red Sox",
+            "away_team": "New York Yankees",
+            "commence_time": "2026-07-04T17:05:00Z",
+            "sport_key": "baseball_mlb",
+            "bookmakers": [
+                {
+                    "key": "bovada",
+                    "markets": [
+                        {
+                            "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                            "outcomes": [
+                                {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -110},
+                                {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -110},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+        "evt-mlb-2": {
+            "id": "evt-mlb-2",
+            "home_team": "Boston Red Sox",
+            "away_team": "New York Yankees",
+            "commence_time": "2026-07-04T23:10:00Z",
+            "sport_key": "baseball_mlb",
+            "bookmakers": [
+                {
+                    "key": "draftkings",
+                    "markets": [
+                        {
+                            "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                            "outcomes": [
+                                {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": 105},
+                                {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -125},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+
+    monkeypatch.setattr("services.player_props.get_json", lambda _key: None, raising=False)
+    monkeypatch.setattr("services.player_props.set_json", lambda *_args, **_kwargs: None, raising=False)
+
+    async def _fake_fetch_events(_sport: str, *, source: str = "unknown"):
+        return events_payload, httpx.Response(200)
+
+    async def _fake_fetch_prop_market_for_event(*, sport: str, event_id: str, markets: list[str], source: str):
+        assert sport == "baseball_mlb"
+        assert markets == [ALT_PITCHER_K_LOOKUP_MARKET_KEY]
+        return alt_market_payloads[event_id], httpx.Response(200)
+
+    monkeypatch.setattr("services.player_props.fetch_events", _fake_fetch_events, raising=False)
+    monkeypatch.setattr("services.player_props._fetch_prop_market_for_event", _fake_fetch_prop_market_for_event, raising=False)
+
+    result = await lookup_alt_pitcher_k_exact_line(
+        player_name="Gerrit Cole",
+        team=None,
+        opponent=None,
+        line_value=6.5,
+        game_date=None,
+    )
+
+    assert result["status"] == "ambiguous_event"
+    assert len(result["candidate_events"]) == 2
+    assert "Add pitcher team, opponent, or game date" in result["warning"]
+
+
+@pytest.mark.asyncio
+async def test_lookup_alt_pitcher_k_exact_line_does_not_fall_back_to_base_market_or_other_line(monkeypatch):
+    events_payload = [
+        {
+            "id": "evt-mlb-1",
+            "home_team": "Boston Red Sox",
+            "away_team": "New York Yankees",
+            "commence_time": "2026-07-04T23:10:00Z",
+        }
+    ]
+    mixed_market_payload = {
+        "id": "evt-mlb-1",
+        "home_team": "Boston Red Sox",
+        "away_team": "New York Yankees",
+        "commence_time": "2026-07-04T23:10:00Z",
+        "sport_key": "baseball_mlb",
+        "bookmakers": [
+            {
+                "key": "bovada",
+                "markets": [
+                    {
+                        "key": "pitcher_strikeouts",
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -110},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -110},
+                        ],
+                    },
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 7.5, "price": 120},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 7.5, "price": -140},
+                        ],
+                    },
+                ],
+            }
+        ],
+    }
+
+    monkeypatch.setattr("services.player_props.get_json", lambda _key: None, raising=False)
+    monkeypatch.setattr("services.player_props.set_json", lambda *_args, **_kwargs: None, raising=False)
+
+    async def _fake_fetch_events(_sport: str, *, source: str = "unknown"):
+        return events_payload, httpx.Response(200)
+
+    async def _fake_fetch_prop_market_for_event(*, sport: str, event_id: str, markets: list[str], source: str):
+        assert markets == [ALT_PITCHER_K_LOOKUP_MARKET_KEY, ALT_PITCHER_K_LOOKUP_NORMAL_MARKET_KEY]
+        return mixed_market_payload, httpx.Response(200)
+
+    monkeypatch.setattr("services.player_props.fetch_events", _fake_fetch_events, raising=False)
+    monkeypatch.setattr("services.player_props._fetch_prop_market_for_event", _fake_fetch_prop_market_for_event, raising=False)
+
+    result = await lookup_alt_pitcher_k_exact_line(
+        player_name="Gerrit Cole",
+        team=None,
+        opponent=None,
+        line_value=6.5,
+        game_date=None,
+    )
+
+    assert result["status"] == "not_found"
+    assert result["event"]["event_id"] == "evt-mlb-1"
+    assert "Add pitcher team, opponent, or game date" in result["warning"]
+
+
+@pytest.mark.asyncio
+async def test_lookup_alt_pitcher_k_exact_line_returns_insufficient_depth_for_single_book(monkeypatch):
+    events_payload = [
+        {
+            "id": "evt-mlb-1",
+            "home_team": "Boston Red Sox",
+            "away_team": "New York Yankees",
+            "commence_time": "2026-07-04T23:10:00Z",
+        }
+    ]
+    alt_market_payload = {
+        "id": "evt-mlb-1",
+        "home_team": "Boston Red Sox",
+        "away_team": "New York Yankees",
+        "commence_time": "2026-07-04T23:10:00Z",
+        "sport_key": "baseball_mlb",
+        "bookmakers": [
+            {
+                "key": "draftkings",
+                "markets": [
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": 105},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -125},
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    monkeypatch.setattr("services.player_props.get_json", lambda _key: None, raising=False)
+    monkeypatch.setattr("services.player_props.set_json", lambda *_args, **_kwargs: None, raising=False)
+
+    async def _fake_fetch_events(_sport: str, *, source: str = "unknown"):
+        return events_payload, httpx.Response(200)
+
+    async def _fake_fetch_prop_market_for_event(*, sport: str, event_id: str, markets: list[str], source: str):
+        return alt_market_payload, httpx.Response(200)
+
+    monkeypatch.setattr("services.player_props.fetch_events", _fake_fetch_events, raising=False)
+    monkeypatch.setattr("services.player_props._fetch_prop_market_for_event", _fake_fetch_prop_market_for_event, raising=False)
+
+    result = await lookup_alt_pitcher_k_exact_line(
+        player_name="Gerrit Cole",
+        team="New York Yankees",
+        opponent="Boston Red Sox",
+        line_value=6.5,
+        game_date="2026-07-04",
+    )
+
+    assert result["status"] == "insufficient_depth"
+    assert result["resolution_mode"] == "exact_pair"
+    assert result["confidence"]["bucket"] == "insufficient_depth"
+    assert result["consensus"]["paired_books_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_lookup_alt_pitcher_k_exact_line_models_from_nearby_paired_lines(monkeypatch):
+    events_payload = [
+        {
+            "id": "evt-mlb-1",
+            "home_team": "Boston Red Sox",
+            "away_team": "New York Yankees",
+            "commence_time": "2026-07-04T23:10:00Z",
+        }
+    ]
+    alt_market_payload = {
+        "id": "evt-mlb-1",
+        "home_team": "Boston Red Sox",
+        "away_team": "New York Yankees",
+        "commence_time": "2026-07-04T23:10:00Z",
+        "sport_key": "baseball_mlb",
+        "bookmakers": [
+            {
+                "key": "bovada",
+                "markets": [
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 5.5, "price": -150},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 5.5, "price": 120},
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 7.5, "price": 145},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 7.5, "price": -175},
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "draftkings",
+                "markets": [
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 5.5, "price": -145},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 5.5, "price": 118},
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 7.5, "price": 150},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 7.5, "price": -180},
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "fanduel",
+                "markets": [
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": 105},
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+
+    monkeypatch.setattr("services.player_props.get_json", lambda _key: None, raising=False)
+    monkeypatch.setattr("services.player_props.set_json", lambda *_args, **_kwargs: None, raising=False)
+
+    async def _fake_fetch_events(_sport: str, *, source: str = "unknown"):
+        return events_payload, httpx.Response(200)
+
+    async def _fake_fetch_prop_market_for_event(*, sport: str, event_id: str, markets: list[str], source: str):
+        assert sport == "baseball_mlb"
+        assert event_id == "evt-mlb-1"
+        assert markets == [ALT_PITCHER_K_LOOKUP_MARKET_KEY, ALT_PITCHER_K_LOOKUP_NORMAL_MARKET_KEY]
+        return alt_market_payload, httpx.Response(200)
+
+    monkeypatch.setattr("services.player_props.fetch_events", _fake_fetch_events, raising=False)
+    monkeypatch.setattr("services.player_props._fetch_prop_market_for_event", _fake_fetch_prop_market_for_event, raising=False)
+
+    result = await lookup_alt_pitcher_k_exact_line(
+        player_name="Gerrit Cole",
+        team="New York Yankees",
+        opponent="Boston Red Sox",
+        line_value=6.5,
+        game_date="2026-07-04",
+    )
+
+    assert result["status"] == "ok"
+    assert result["resolution_mode"] == "modeled_nearby_pairs"
+    assert result["warning"] == "Fair odds are modeled from nearby paired alt lines because no exact target over/under pair was available."
+    assert result["consensus"]["paired_books_count"] == 0
+    assert result["consensus"]["reference_books_count"] == 2
+    assert result["consensus"]["reference_books"] == ["Bovada", "DraftKings"]
+    assert result["consensus"]["offers"] == [
+        {
+            "sportsbook": "FanDuel",
+            "over_odds": 105.0,
+            "over_deeplink_url": "https://sportsbook.fanduel.com/",
+            "under_odds": None,
+            "under_deeplink_url": "https://sportsbook.fanduel.com/",
+        }
+    ]
+    assert result["confidence"]["bucket"] == "low"
+    assert result["confidence"]["reason"] == "modeled_from_nearby_paired_lines_two_reference_books"
+    assert result["confidence"]["paired_books_count"] == 2
+    assert result["observed_offers"][0]["line_value"] == 6.5
+
+
+@pytest.mark.asyncio
+async def test_lookup_alt_pitcher_k_exact_line_can_use_normal_market_as_secondary_anchor(monkeypatch):
+    events_payload = [
+        {
+            "id": "evt-mlb-1",
+            "home_team": "Boston Red Sox",
+            "away_team": "New York Yankees",
+            "commence_time": "2026-07-04T23:10:00Z",
+        }
+    ]
+    mixed_market_payload = {
+        "id": "evt-mlb-1",
+        "home_team": "Boston Red Sox",
+        "away_team": "New York Yankees",
+        "commence_time": "2026-07-04T23:10:00Z",
+        "sport_key": "baseball_mlb",
+        "bookmakers": [
+            {
+                "key": "bovada",
+                "markets": [
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 5.5, "price": -150},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 5.5, "price": 120},
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 7.5, "price": 145},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 7.5, "price": -175},
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "draftkings",
+                "markets": [
+                    {
+                        "key": "pitcher_strikeouts",
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -110},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -110},
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "fanduel",
+                "markets": [
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": 105},
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+
+    monkeypatch.setattr("services.player_props.get_json", lambda _key: None, raising=False)
+    monkeypatch.setattr("services.player_props.set_json", lambda *_args, **_kwargs: None, raising=False)
+
+    async def _fake_fetch_events(_sport: str, *, source: str = "unknown"):
+        return events_payload, httpx.Response(200)
+
+    async def _fake_fetch_prop_market_for_event(*, sport: str, event_id: str, markets: list[str], source: str):
+        assert sport == "baseball_mlb"
+        assert event_id == "evt-mlb-1"
+        assert markets == [ALT_PITCHER_K_LOOKUP_MARKET_KEY, "pitcher_strikeouts"]
+        return mixed_market_payload, httpx.Response(200)
+
+    monkeypatch.setattr("services.player_props.fetch_events", _fake_fetch_events, raising=False)
+    monkeypatch.setattr("services.player_props._fetch_prop_market_for_event", _fake_fetch_prop_market_for_event, raising=False)
+
+    result = await lookup_alt_pitcher_k_exact_line(
+        player_name="Gerrit Cole",
+        team="New York Yankees",
+        opponent="Boston Red Sox",
+        line_value=6.5,
+        game_date="2026-07-04",
+    )
+
+    assert result["status"] == "ok"
+    assert result["resolution_mode"] == "modeled_nearby_pairs"
+    assert result["warning"] == "Fair odds are modeled from nearby paired alt lines, with the normal pitcher strikeouts market used as a secondary anchor."
+    assert result["consensus"]["paired_books_count"] == 0
+    assert result["consensus"]["reference_books_count"] == 2
+    assert result["consensus"]["reference_books"] == ["Bovada", "DraftKings"]
+    assert result["confidence"]["bucket"] == "low"
+    assert result["confidence"]["reason"] == "modeled_from_nearby_paired_lines_two_reference_books_with_normal_line_anchor"
+
+
+@pytest.mark.asyncio
+async def test_lookup_alt_pitcher_k_exact_line_returns_observed_only_for_one_sided_ladder(monkeypatch):
+    events_payload = [
+        {
+            "id": "evt-mlb-1",
+            "home_team": "Boston Red Sox",
+            "away_team": "New York Yankees",
+            "commence_time": "2026-07-04T23:10:00Z",
+        }
+    ]
+    alt_market_payload = {
+        "id": "evt-mlb-1",
+        "home_team": "Boston Red Sox",
+        "away_team": "New York Yankees",
+        "commence_time": "2026-07-04T23:10:00Z",
+        "sport_key": "baseball_mlb",
+        "bookmakers": [
+            {
+                "key": "bovada",
+                "markets": [
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": 105},
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "draftkings",
+                "markets": [
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 5.5, "price": -140},
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "fanduel",
+                "markets": [
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 7.5, "price": -190},
+                        ],
+                    },
+                    {
+                        "key": "pitcher_strikeouts",
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -112},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -108},
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+
+    monkeypatch.setattr("services.player_props.get_json", lambda _key: None, raising=False)
+    monkeypatch.setattr("services.player_props.set_json", lambda *_args, **_kwargs: None, raising=False)
+
+    async def _fake_fetch_events(_sport: str, *, source: str = "unknown"):
+        return events_payload, httpx.Response(200)
+
+    async def _fake_fetch_prop_market_for_event(*, sport: str, event_id: str, markets: list[str], source: str):
+        assert sport == "baseball_mlb"
+        assert event_id == "evt-mlb-1"
+        assert markets == [ALT_PITCHER_K_LOOKUP_MARKET_KEY, "pitcher_strikeouts"]
+        return alt_market_payload, httpx.Response(200)
+
+    monkeypatch.setattr("services.player_props.fetch_events", _fake_fetch_events, raising=False)
+    monkeypatch.setattr("services.player_props._fetch_prop_market_for_event", _fake_fetch_prop_market_for_event, raising=False)
+
+    result = await lookup_alt_pitcher_k_exact_line(
+        player_name="Gerrit Cole",
+        team="New York Yankees",
+        opponent="Boston Red Sox",
+        line_value=6.5,
+        game_date="2026-07-04",
+    )
+
+    assert result["status"] == "insufficient_depth"
+    assert result["resolution_mode"] == "observed_only_one_sided"
+    assert result["consensus"] is None
+    assert result["confidence"]["bucket"] == "insufficient_depth"
+    assert result["confidence"]["reason"] == "one_sided_ladder_only_no_paired_nearby_anchors"
+    assert "one-sided alt ladder evidence" in result["warning"]
+    assert len(result["observed_offers"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_lookup_alt_pitcher_k_exact_line_stops_broad_search_before_event_market_fetch(monkeypatch):
+    events_payload = [
+        {
+            "id": f"evt-mlb-{index}",
+            "home_team": f"Home Team {index}",
+            "away_team": f"Away Team {index}",
+            "commence_time": f"2026-07-{(index % 9) + 1:02d}T23:10:00Z",
+        }
+        for index in range(ALT_PITCHER_K_LOOKUP_MAX_CANDIDATE_EVENTS + 1)
+    ]
+    calls = {"fetch_prop_market_for_event": 0}
+
+    monkeypatch.setattr("services.player_props.get_json", lambda _key: None, raising=False)
+    monkeypatch.setattr("services.player_props.set_json", lambda *_args, **_kwargs: None, raising=False)
+
+    async def _fake_fetch_events(_sport: str, *, source: str = "unknown"):
+        assert _sport == "baseball_mlb"
+        return events_payload, httpx.Response(200)
+
+    async def _fake_fetch_prop_market_for_event(*_args, **_kwargs):
+        calls["fetch_prop_market_for_event"] += 1
+        raise AssertionError("event-market fetch should not run once the broad-search guardrail trips")
+
+    monkeypatch.setattr("services.player_props.fetch_events", _fake_fetch_events, raising=False)
+    monkeypatch.setattr("services.player_props._fetch_prop_market_for_event", _fake_fetch_prop_market_for_event, raising=False)
+
+    result = await lookup_alt_pitcher_k_exact_line(
+        player_name="Gerrit Cole",
+        team=None,
+        opponent=None,
+        line_value=6.5,
+        game_date=None,
+    )
+
+    assert result["status"] == "ambiguous_event"
+    assert result["resolution_mode"] is None
+    assert len(result["candidate_events"]) == ALT_PITCHER_K_LOOKUP_MAX_CANDIDATE_EVENTS + 1
+    assert "too many live MLB events" in result["warning"]
+    assert calls["fetch_prop_market_for_event"] == 0
+
+
+@pytest.mark.asyncio
+async def test_lookup_alt_pitcher_k_exact_line_uses_dedicated_cache(monkeypatch):
+    import services.player_props as player_props
+
+    store: dict[str, dict] = {}
+    stored_ttls: list[int] = []
+    calls = {"fetch_events": 0}
+    player_props._alt_pitcher_k_lookup_locks.clear()
+
+    events_payload = [
+        {
+            "id": "evt-mlb-1",
+            "home_team": "Boston Red Sox",
+            "away_team": "New York Yankees",
+            "commence_time": "2026-07-04T23:10:00Z",
+        }
+    ]
+    alt_market_payload = {
+        "id": "evt-mlb-1",
+        "home_team": "Boston Red Sox",
+        "away_team": "New York Yankees",
+        "commence_time": "2026-07-04T23:10:00Z",
+        "sport_key": "baseball_mlb",
+        "bookmakers": [
+            {
+                "key": "bovada",
+                "markets": [
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -110},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -110},
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "draftkings",
+                "markets": [
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": 105},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -125},
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+
+    monkeypatch.setattr(player_props, "get_json", lambda key: store.get(key), raising=True)
+    monkeypatch.setattr(
+        player_props,
+        "set_json",
+        lambda key, value, ttl_seconds: (store.__setitem__(key, dict(value)), stored_ttls.append(ttl_seconds)),
+        raising=True,
+    )
+
+    async def _fake_fetch_events(_sport: str, *, source: str = "unknown"):
+        calls["fetch_events"] += 1
+        return events_payload, httpx.Response(200)
+
+    async def _fake_fetch_prop_market_for_event(*, sport: str, event_id: str, markets: list[str], source: str):
+        return alt_market_payload, httpx.Response(200)
+
+    monkeypatch.setattr(player_props, "fetch_events", _fake_fetch_events, raising=True)
+    monkeypatch.setattr(player_props, "_fetch_prop_market_for_event", _fake_fetch_prop_market_for_event, raising=True)
+
+    first = await lookup_alt_pitcher_k_exact_line(
+        player_name="Gerrit Cole",
+        team="New York Yankees",
+        opponent="Boston Red Sox",
+        line_value=6.5,
+        game_date="2026-07-04",
+    )
+    second = await lookup_alt_pitcher_k_exact_line(
+        player_name="Gerrit Cole",
+        team="New York Yankees",
+        opponent="Boston Red Sox",
+        line_value=6.5,
+        game_date="2026-07-04",
+    )
+
+    expected_key = _alt_pitcher_k_lookup_cache_key(
+        game_date="2026-07-04",
+        team="New York Yankees",
+        opponent="Boston Red Sox",
+        player_name="Gerrit Cole",
+        line_value=6.5,
+    )
+    assert calls["fetch_events"] == 1
+    assert expected_key in store
+    assert stored_ttls == [ALT_PITCHER_K_LOOKUP_TTL_SECONDS, ALT_PITCHER_K_LOOKUP_TTL_SECONDS]
+    assert first["cache"]["hit"] is False
+    assert second["cache"]["hit"] is True
+
+
+@pytest.mark.asyncio
+async def test_lookup_alt_pitcher_k_exact_line_reuses_cached_event_market_payload_for_other_lines(monkeypatch):
+    import services.player_props as player_props
+
+    store: dict[str, dict] = {}
+    calls = {"fetch_events": 0, "fetch_prop_market_for_event": 0}
+    player_props._alt_pitcher_k_lookup_locks.clear()
+    player_props._alt_pitcher_k_event_market_locks.clear()
+
+    events_payload = [
+        {
+            "id": "evt-mlb-1",
+            "home_team": "Boston Red Sox",
+            "away_team": "New York Yankees",
+            "commence_time": "2026-07-04T23:10:00Z",
+        }
+    ]
+    alt_market_payload = {
+        "id": "evt-mlb-1",
+        "home_team": "Boston Red Sox",
+        "away_team": "New York Yankees",
+        "commence_time": "2026-07-04T23:10:00Z",
+        "sport_key": "baseball_mlb",
+        "bookmakers": [
+            {
+                "key": "bovada",
+                "markets": [
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 5.5, "price": -150},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 5.5, "price": 120},
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 7.5, "price": 145},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 7.5, "price": -175},
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "draftkings",
+                "markets": [
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 5.5, "price": -145},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 5.5, "price": 118},
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 7.5, "price": 150},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 7.5, "price": -180},
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+
+    monkeypatch.setattr(player_props, "get_json", lambda key: store.get(key), raising=True)
+    monkeypatch.setattr(player_props, "set_json", lambda key, value, _ttl: store.__setitem__(key, dict(value)), raising=True)
+
+    async def _fake_fetch_events(_sport: str, *, source: str = "unknown"):
+        calls["fetch_events"] += 1
+        return events_payload, httpx.Response(200)
+
+    async def _fake_fetch_prop_market_for_event(*, sport: str, event_id: str, markets: list[str], source: str):
+        calls["fetch_prop_market_for_event"] += 1
+        assert sport == "baseball_mlb"
+        assert event_id == "evt-mlb-1"
+        assert markets == [ALT_PITCHER_K_LOOKUP_MARKET_KEY, ALT_PITCHER_K_LOOKUP_NORMAL_MARKET_KEY]
+        return alt_market_payload, httpx.Response(200)
+
+    monkeypatch.setattr(player_props, "fetch_events", _fake_fetch_events, raising=True)
+    monkeypatch.setattr(player_props, "_fetch_prop_market_for_event", _fake_fetch_prop_market_for_event, raising=True)
+
+    first = await lookup_alt_pitcher_k_exact_line(
+        player_name="Gerrit Cole",
+        team="New York Yankees",
+        opponent="Boston Red Sox",
+        line_value=5.5,
+        game_date="2026-07-04",
+    )
+    second = await lookup_alt_pitcher_k_exact_line(
+        player_name="Gerrit Cole",
+        team="New York Yankees",
+        opponent="Boston Red Sox",
+        line_value=7.5,
+        game_date="2026-07-04",
+    )
+
+    assert calls["fetch_events"] == 2
+    assert calls["fetch_prop_market_for_event"] == 1
+    assert first["status"] == "ok"
+    assert second["status"] == "ok"
+    assert first["resolution_mode"] == "exact_pair"
+    assert second["resolution_mode"] == "exact_pair"
+
+
+@pytest.mark.asyncio
+async def test_lookup_alt_pitcher_k_exact_line_dedupes_in_flight_requests(monkeypatch):
+    import services.player_props as player_props
+
+    store: dict[str, dict] = {}
+    calls = {"fetch_events": 0}
+    player_props._alt_pitcher_k_lookup_locks.clear()
+
+    events_payload = [
+        {
+            "id": "evt-mlb-1",
+            "home_team": "Boston Red Sox",
+            "away_team": "New York Yankees",
+            "commence_time": "2026-07-04T23:10:00Z",
+        }
+    ]
+    alt_market_payload = {
+        "id": "evt-mlb-1",
+        "home_team": "Boston Red Sox",
+        "away_team": "New York Yankees",
+        "commence_time": "2026-07-04T23:10:00Z",
+        "sport_key": "baseball_mlb",
+        "bookmakers": [
+            {
+                "key": "bovada",
+                "markets": [
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -110},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -110},
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "draftkings",
+                "markets": [
+                    {
+                        "key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                        "outcomes": [
+                            {"name": "Over", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": 105},
+                            {"name": "Under", "description": "Gerrit Cole (New York Yankees)", "point": 6.5, "price": -125},
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+
+    monkeypatch.setattr(player_props, "get_json", lambda key: store.get(key), raising=True)
+    monkeypatch.setattr(player_props, "set_json", lambda key, value, _ttl: store.__setitem__(key, dict(value)), raising=True)
+
+    async def _fake_fetch_events(_sport: str, *, source: str = "unknown"):
+        calls["fetch_events"] += 1
+        await asyncio.sleep(0.02)
+        return events_payload, httpx.Response(200)
+
+    async def _fake_fetch_prop_market_for_event(*, sport: str, event_id: str, markets: list[str], source: str):
+        return alt_market_payload, httpx.Response(200)
+
+    monkeypatch.setattr(player_props, "fetch_events", _fake_fetch_events, raising=True)
+    monkeypatch.setattr(player_props, "_fetch_prop_market_for_event", _fake_fetch_prop_market_for_event, raising=True)
+
+    first, second = await asyncio.gather(
+        lookup_alt_pitcher_k_exact_line(
+            player_name="Gerrit Cole",
+            team="New York Yankees",
+            opponent="Boston Red Sox",
+            line_value=6.5,
+            game_date="2026-07-04",
+        ),
+        lookup_alt_pitcher_k_exact_line(
+            player_name="Gerrit Cole",
+            team="New York Yankees",
+            opponent="Boston Red Sox",
+            line_value=6.5,
+            game_date="2026-07-04",
+        ),
+    )
+
+    assert calls["fetch_events"] == 1
+    assert {first["cache"]["hit"], second["cache"]["hit"]} == {False, True}
 
 
 @pytest.mark.asyncio

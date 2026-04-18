@@ -137,7 +137,7 @@ export function ScannerResultsPane({
                   "Adjust your market filters or try a new scan later."
                 : nullState === "backend_empty"
                 ? "Try a refresh later, or switch books if you want a different slate."
-                : "Try Reset, loosen Safer Odds, or turn off Hide Logged to see more options."}
+                : "Try Reset, widen books/time filters, or switch views to see more options."}
             </p>
             {nullState === "filter_empty" && (
               <p className="mt-2 text-xs text-muted-foreground">{activeResultFilterSummary}</p>

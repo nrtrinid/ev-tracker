@@ -142,14 +142,6 @@ function BreakdownMetric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function DataNotLoaded() {
-  return (
-    <div className="rounded-md border border-dashed border-border px-3 py-2 text-sm text-muted-foreground">
-      Load diagnostics to run these endpoint summaries on demand.
-    </div>
-  );
-}
-
 function DataError({ message }: { message: string }) {
   return (
     <div className="rounded-md border border-[#B85C38]/35 bg-[#B85C38]/10 px-3 py-2 text-sm text-[#8B3D20]">
@@ -289,7 +281,7 @@ function ResearchMarketBreakdown({ rows }: { rows?: ResearchOpportunityBreakdown
               </tr>
             </thead>
             <tbody>
-              {safeRows.slice(0, 8).map((row) => (
+              {safeRows.map((row) => (
                 <tr key={row.key} className="border-t border-border/50">
                   <td className="py-1.5 pr-2 text-muted-foreground truncate">{row.key}</td>
                   <td className="py-1.5 text-right font-mono tabular-nums">{formatCount(row.captured_count)}</td>

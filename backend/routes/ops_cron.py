@@ -10,19 +10,35 @@ from fastapi import APIRouter, Depends, HTTPException, Header, Query
 
 from dependencies import require_ops_token
 from models import (
+    AltPitcherKLookupResponse,
     ModelCalibrationSummaryResponse,
     PickEmResearchSummaryResponse,
     ResearchOpportunitySummaryResponse,
 )
+from services.shared_state import allow_fixed_window_rate_limit
 
 
 router = APIRouter()
 DISCORD_SCAN_ALERT_MODE_TIMED_PING = "timed_ping"
 DISCORD_SCAN_ALERT_MODE_EDGE_LIVE = "edge_live"
+DISCORD_TEST_ALERT_MESSAGE_TYPE_ENV = "DISCORD_TEST_ALERT_MESSAGE_TYPE"
+DISCORD_TEST_ALERT_MESSAGE_TYPE_DEFAULT = "test"
+ALT_PITCHER_K_LOOKUP_RATE_WINDOW_SECONDS = 5 * 60
+ALT_PITCHER_K_LOOKUP_RATE_MAX_REQUESTS = 30
 
 
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _discord_test_alert_message_type() -> str:
+    raw = (
+        os.getenv(DISCORD_TEST_ALERT_MESSAGE_TYPE_ENV)
+        or DISCORD_TEST_ALERT_MESSAGE_TYPE_DEFAULT
+    ).strip().lower()
+    if raw in {"alert", "test"}:
+        return raw
+    return DISCORD_TEST_ALERT_MESSAGE_TYPE_DEFAULT
 
 
 def _raise_if_delivery_disabled(delivery: Any, *, run_id: str, fallback_message_type: str) -> None:
@@ -787,6 +803,49 @@ def ops_pickem_research_summary_impl(
     return get_summary(get_db())
 
 
+async def ops_alt_pitcher_k_lookup_impl(
+    x_cron_token: str | None,
+    *,
+    require_valid_cron_token: Callable[[str | None], None],
+    player_name: str,
+    team: str | None,
+    opponent: str | None,
+    line_value: float,
+    game_date: str | None,
+) -> AltPitcherKLookupResponse:
+    require_valid_cron_token(x_cron_token)
+    allowed = allow_fixed_window_rate_limit(
+        bucket_key="ops:alt_pitcher_k_lookup",
+        max_requests=ALT_PITCHER_K_LOOKUP_RATE_MAX_REQUESTS,
+        window_seconds=ALT_PITCHER_K_LOOKUP_RATE_WINDOW_SECONDS,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many Alt Pitcher K lookup requests. Please try again shortly.",
+        )
+
+    from services.player_props import lookup_alt_pitcher_k_exact_line
+
+    try:
+        result = await lookup_alt_pitcher_k_exact_line(
+            player_name=player_name,
+            team=team,
+            opponent=opponent,
+            line_value=line_value,
+            game_date=game_date,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code if exc.response is not None else 502
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Alt Pitcher K lookup failed: {exc}") from exc
+
+    return AltPitcherKLookupResponse.model_validate(result)
+
+
 def ops_analytics_summary_impl(
     x_cron_token: str | None,
     *,
@@ -1165,12 +1224,13 @@ async def cron_test_discord_alert_impl(
     run_id_prefix: str = "cron_discord_alert_test",
     log_prefix: str = "cron.discord_alert_test",
 ) -> dict[str, Any]:
-    """Send a test message to the alert webhook (DISCORD_ALERT_WEBHOOK_URL)."""
+    """Send a test message for alert validation without spamming alert channels by default."""
     require_valid_cron_token(x_cron_token)
 
     run_id = new_run_id(run_id_prefix)
     started_at = time.monotonic()
     log_event(f"{log_prefix}.started", run_id=run_id)
+    test_alert_message_type = _discord_test_alert_message_type()
 
     from services.discord_alerts import send_discord_webhook
 
@@ -1178,7 +1238,10 @@ async def cron_test_discord_alert_impl(
         "embeds": [
             {
                 "title": "Alert Webhook Test",
-                "description": "If you can read this, DISCORD_ALERT_WEBHOOK_URL is working.",
+                "description": (
+                    "If you can read this, the Discord test route is working. "
+                    "Set DISCORD_TEST_ALERT_MESSAGE_TYPE=alert to test the alert webhook path directly."
+                ),
                 "fields": [
                     {"name": "Server time (UTC)", "value": datetime.now(UTC).isoformat() + "Z", "inline": False},
                 ],
@@ -1187,13 +1250,21 @@ async def cron_test_discord_alert_impl(
     }
 
     try:
-        delivery = await send_discord_webhook(payload, message_type="alert")
-        _raise_if_delivery_disabled(delivery, run_id=run_id, fallback_message_type="alert")
+        delivery = await send_discord_webhook(payload, message_type=test_alert_message_type)
+        _raise_if_delivery_disabled(
+            delivery,
+            run_id=run_id,
+            fallback_message_type=test_alert_message_type,
+        )
     except TypeError as exc:
         if "message_type" not in str(exc):
             raise
         delivery = await send_discord_webhook(payload)
-        _raise_if_delivery_disabled(delivery, run_id=run_id, fallback_message_type="alert")
+        _raise_if_delivery_disabled(
+            delivery,
+            run_id=run_id,
+            fallback_message_type=test_alert_message_type,
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -1217,7 +1288,7 @@ async def cron_test_discord_alert_impl(
             detail={
                 "ok": False,
                 "error": "discord_delivery_failed",
-                "message_type": "alert",
+                "message_type": test_alert_message_type,
                 "message": str(exc),
                 "run_id": run_id,
             },
@@ -1231,6 +1302,7 @@ async def cron_test_discord_alert_impl(
         "ok": True,
         "scheduled": True,
         "run_id": run_id,
+        "message_type": test_alert_message_type,
         "delivery_status": delivery.get("delivery_status") if isinstance(delivery, dict) else None,
     }
 
@@ -1355,6 +1427,30 @@ def ops_pickem_research_summary(
         require_valid_cron_token=lambda token: main._require_ops_token(token, None),
         get_db=main.get_db,
         get_summary=get_pickem_research_summary,
+    )
+
+
+@router.get("/api/ops/alt-pitcher-k-lookup", response_model=AltPitcherKLookupResponse)
+async def ops_alt_pitcher_k_lookup(
+    player_name: str = Query(...),
+    team: str | None = Query(default=None),
+    opponent: str | None = Query(default=None),
+    line_value: float = Query(...),
+    game_date: str | None = Query(default=None),
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    import main
+
+    return await ops_alt_pitcher_k_lookup_impl(
+        x_cron_token=x_ops_token or x_cron_token,
+        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        player_name=player_name,
+        team=team,
+        opponent=opponent,
+        line_value=line_value,
+        game_date=game_date,
     )
 
 

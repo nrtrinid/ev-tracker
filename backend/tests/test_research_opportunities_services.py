@@ -443,6 +443,7 @@ def test_get_research_opportunities_summary_aggregates_breakdowns_and_recent_row
                 "team": "Home",
                 "sportsbook": "DraftKings",
                 "market": "ML",
+                "source_market_key": "h2h",
                 "event_id": "evt-1",
                 "first_source": "manual_scan",
                 "last_source": "manual_scan",
@@ -495,6 +496,7 @@ def test_get_research_opportunities_summary_aggregates_breakdowns_and_recent_row
                 "team": "Dog",
                 "sportsbook": "DraftKings",
                 "market": "ML",
+                "source_market_key": "spreads",
                 "event_id": "evt-3",
                 "first_source": "ops_trigger_scan",
                 "last_source": "ops_trigger_scan",
@@ -528,8 +530,8 @@ def test_get_research_opportunities_summary_aggregates_breakdowns_and_recent_row
 
     assert [item.key for item in summary.by_surface] == ["straight_bets", "player_props"]
     assert summary.by_surface[0].captured_count == 2
-    assert [item.key for item in summary.by_market] == ["ML", "player_points"]
-    assert summary.by_market[0].captured_count == 2
+    assert [item.key for item in summary.by_market] == ["NBA | ML", "NBA | player_points", "NCAAB | Spreads"]
+    assert summary.by_market[0].captured_count == 1
     assert [item.key for item in summary.by_source] == [
         "Daily Drop (Scheduled)",
         "Daily Drop (Ops Trigger)",
@@ -588,9 +590,158 @@ def test_get_research_opportunities_summary_pages_past_postgrest_default_limit()
 
     assert summary.captured_count == 1004
     assert summary.valid_close_count == 1004
+    assert summary.by_market[0].key == "NBA | ML"
     assert summary.by_market[0].captured_count == 502
     assert [item.key for item in summary.by_drop_time] == ["First Look", "Daily Drop"]
     assert summary.by_drop_time[0].captured_count == 1004
+
+
+def test_get_research_opportunities_summary_by_market_includes_straight_market_keys_and_sport_tags():
+    db = _DB(
+        rows=[
+            {
+                "opportunity_key": "opp-h2h",
+                "surface": "straight_bets",
+                "first_seen_at": "2026-03-23T18:05:00Z",
+                "last_seen_at": "2026-03-23T18:07:00Z",
+                "commence_time": "2026-03-23T20:00:00Z",
+                "sport": "basketball_nba",
+                "event": "Away @ Home",
+                "team": "Home",
+                "sportsbook": "DraftKings",
+                "market": "ML",
+                "source_market_key": "h2h",
+                "event_id": "evt-1",
+                "first_source": "manual_scan",
+                "last_source": "manual_scan",
+                "seen_count": 1,
+                "first_ev_percentage": 1.5,
+                "first_book_odds": 140,
+                "best_book_odds": 150,
+                "latest_reference_odds": 120,
+                "reference_odds_at_close": None,
+                "close_captured_at": None,
+                "clv_ev_percent": None,
+                "beat_close": None,
+            },
+            {
+                "opportunity_key": "opp-spreads",
+                "surface": "straight_bets",
+                "first_seen_at": "2026-03-23T18:06:00Z",
+                "last_seen_at": "2026-03-23T18:08:00Z",
+                "commence_time": "2026-03-23T20:00:00Z",
+                "sport": "basketball_nba",
+                "event": "Away @ Home",
+                "team": "Home",
+                "sportsbook": "DraftKings",
+                "market": "ML",
+                "source_market_key": "spreads",
+                "event_id": "evt-1",
+                "first_source": "manual_scan",
+                "last_source": "manual_scan",
+                "seen_count": 1,
+                "first_ev_percentage": 1.8,
+                "first_book_odds": 140,
+                "best_book_odds": 150,
+                "latest_reference_odds": 120,
+                "reference_odds_at_close": None,
+                "close_captured_at": None,
+                "clv_ev_percent": None,
+                "beat_close": None,
+            },
+            {
+                "opportunity_key": "opp-totals",
+                "surface": "straight_bets",
+                "first_seen_at": "2026-03-23T18:07:00Z",
+                "last_seen_at": "2026-03-23T18:09:00Z",
+                "commence_time": "2026-03-23T20:00:00Z",
+                "sport": "basketball_nba",
+                "event": "Away @ Home",
+                "team": "Home",
+                "sportsbook": "DraftKings",
+                "market": "ML",
+                "source_market_key": "totals",
+                "event_id": "evt-1",
+                "first_source": "manual_scan",
+                "last_source": "manual_scan",
+                "seen_count": 1,
+                "first_ev_percentage": 2.1,
+                "first_book_odds": 140,
+                "best_book_odds": 150,
+                "latest_reference_odds": 120,
+                "reference_odds_at_close": None,
+                "close_captured_at": None,
+                "clv_ev_percent": None,
+                "beat_close": None,
+            },
+            {
+                "opportunity_key": "opp-pk",
+                "surface": "player_props",
+                "first_seen_at": "2026-03-23T18:10:00Z",
+                "last_seen_at": "2026-03-23T18:12:00Z",
+                "commence_time": "2026-03-23T21:00:00Z",
+                "sport": "baseball_mlb",
+                "event": "Road @ Favorite",
+                "team": "Yankees",
+                "sportsbook": "FanDuel",
+                "market": "pitcher_strikeouts",
+                "event_id": "evt-2",
+                "player_name": "Gerrit Cole",
+                "source_market_key": "pitcher_strikeouts",
+                "selection_side": "over",
+                "line_value": 6.5,
+                "first_source": "scheduled_scan",
+                "last_source": "scheduled_scan",
+                "seen_count": 2,
+                "first_ev_percentage": 2.6,
+                "first_book_odds": 320,
+                "best_book_odds": 340,
+                "latest_reference_odds": 290,
+                "reference_odds_at_close": None,
+                "close_captured_at": None,
+                "clv_ev_percent": None,
+                "beat_close": None,
+            },
+            {
+                "opportunity_key": "opp-bk",
+                "surface": "player_props",
+                "first_seen_at": "2026-03-23T18:11:00Z",
+                "last_seen_at": "2026-03-23T18:13:00Z",
+                "commence_time": "2026-03-23T21:00:00Z",
+                "sport": "baseball_mlb",
+                "event": "Road @ Favorite",
+                "team": "Yankees",
+                "sportsbook": "FanDuel",
+                "market": "batter_strikeouts",
+                "event_id": "evt-2",
+                "player_name": "Aaron Judge",
+                "source_market_key": "batter_strikeouts",
+                "selection_side": "over",
+                "line_value": 1.5,
+                "first_source": "scheduled_scan",
+                "last_source": "scheduled_scan",
+                "seen_count": 2,
+                "first_ev_percentage": 2.6,
+                "first_book_odds": 320,
+                "best_book_odds": 340,
+                "latest_reference_odds": 290,
+                "reference_odds_at_close": None,
+                "close_captured_at": None,
+                "clv_ev_percent": None,
+                "beat_close": None,
+            },
+        ]
+    )
+
+    summary = get_research_opportunities_summary(db)
+
+    assert [item.key for item in summary.by_market] == [
+        "NBA | ML",
+        "NBA | Spreads",
+        "NBA | Totals",
+        "MLB | batter_strikeouts",
+        "MLB | pitcher_strikeouts",
+    ]
 
 
 def test_get_research_opportunities_summary_returns_empty_when_table_missing():

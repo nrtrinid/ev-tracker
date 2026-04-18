@@ -33,6 +33,7 @@ import type {
   OpsTriggerAutoSettleResponse,
   AnalyticsSummary,
   AnalyticsUserDrilldown,
+  AltPitcherKLookupResponse,
   ScannerSurface,
 } from "./types";
 import { getSessionId as getAnalyticsSessionId } from "./analytics";
@@ -68,29 +69,84 @@ function getCorrelationId(): string {
   return browserBurstCorrelationId;
 }
 
-async function fetchAPI<T>(
-  endpoint: string,
-  options?: RequestInit
-): Promise<T> {
+async function getAccessTokenForApi(): Promise<string | null> {
   const supabase = createClient();
   const {
     data: { session },
   } = await supabase.auth.getSession();
 
+  if (session?.access_token) {
+    return session.access_token;
+  }
+
+  // After a hard refresh, session hydration can lag by a tick in development.
+  await new Promise((resolve) => setTimeout(resolve, 80));
+
+  const {
+    data: { session: hydratedSession },
+  } = await supabase.auth.getSession();
+
+  return hydratedSession?.access_token ?? null;
+}
+
+function buildApiHeaders(options: RequestInit | undefined, extras: {
+  correlationId: string;
+  analyticsSessionId: string | null;
+  accessToken: string | null;
+}): HeadersInit {
+  return {
+    "Content-Type": "application/json",
+    "X-Correlation-ID": extras.correlationId,
+    ...(extras.analyticsSessionId && { "X-Session-ID": extras.analyticsSessionId }),
+    ...(extras.accessToken && { Authorization: `Bearer ${extras.accessToken}` }),
+    ...options?.headers,
+  };
+}
+
+async function fetchAPI<T>(
+  endpoint: string,
+  options?: RequestInit
+): Promise<T> {
   const correlationId = getCorrelationId();
   const analyticsSessionId = getAnalyticsSessionId();
-  const res = await fetch(`${API_URL}${endpoint}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      "X-Correlation-ID": correlationId,
-      ...(analyticsSessionId && { "X-Session-ID": analyticsSessionId }),
-      ...(session?.access_token && {
-        Authorization: `Bearer ${session.access_token}`,
-      }),
-      ...options?.headers,
-    },
+  const accessToken = await getAccessTokenForApi();
+
+  if (!accessToken) {
+    throw new Error("Not authenticated. Sign in and try again.");
+  }
+
+  const requestHeaders = buildApiHeaders(options, {
+    correlationId,
+    analyticsSessionId,
+    accessToken,
   });
+
+  let res = await fetch(`${API_URL}${endpoint}`, {
+    ...options,
+    headers: requestHeaders,
+  });
+
+  if (res.status === 401) {
+    try {
+      const {
+        data: { session: refreshedSession },
+      } = await createClient().auth.refreshSession();
+      const refreshedToken = refreshedSession?.access_token ?? null;
+
+      if (refreshedToken && refreshedToken !== accessToken) {
+        res = await fetch(`${API_URL}${endpoint}`, {
+          ...options,
+          headers: buildApiHeaders(options, {
+            correlationId,
+            analyticsSessionId,
+            accessToken: refreshedToken,
+          }),
+        });
+      }
+    } catch {
+      // Fall through to normal error handling below.
+    }
+  }
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Unknown error" }));
@@ -525,6 +581,25 @@ export async function getBackendReadiness(): Promise<BackendReadiness> {
 
 export async function getOperatorStatus(): Promise<OperatorStatusResponse> {
   return fetchInternalAPI<OperatorStatusResponse>("/api/ops/status");
+}
+
+export async function getAltPitcherKLookup(
+  params: {
+    player_name: string;
+    team?: string | null;
+    opponent?: string | null;
+    line_value: number;
+    game_date?: string | null;
+  }
+): Promise<AltPitcherKLookupResponse> {
+  const query = new URLSearchParams({
+    player_name: params.player_name.trim(),
+    line_value: String(params.line_value),
+  });
+  if (params.team?.trim()) query.set("team", params.team.trim());
+  if (params.opponent?.trim()) query.set("opponent", params.opponent.trim());
+  if (params.game_date?.trim()) query.set("game_date", params.game_date.trim());
+  return fetchInternalAPI<AltPitcherKLookupResponse>(`/api/ops/alt-pitcher-k-lookup?${query.toString()}`);
 }
 
 function formatFetchErrorDetail(error: { detail?: unknown }, status: number): string {

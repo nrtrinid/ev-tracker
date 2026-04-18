@@ -667,6 +667,85 @@ def _odds_bucket(book_odds: float | None) -> str:
     return "+501+"
 
 
+def _sport_tag(value: Any) -> str:
+    normalized = _normalize_text(value)
+    if not normalized:
+        return ""
+    tokens = [token for token in normalized.split("_") if token]
+    if len(tokens) >= 2:
+        return tokens[-1].upper()
+    return normalized.upper()
+
+
+def _straight_market_label(row: dict[str, Any]) -> str:
+    normalized_market_key = _normalize_text(row.get("source_market_key")) or _normalize_text(row.get("market"))
+    if normalized_market_key in {"h2h", "moneyline", "ml"}:
+        return "ML"
+    if normalized_market_key in {"spreads", "spread"}:
+        return "Spreads"
+    if normalized_market_key in {"totals", "total"}:
+        return "Totals"
+
+    raw_market = str(row.get("market") or "").strip()
+    if raw_market:
+        return raw_market
+
+    raw_key = str(row.get("source_market_key") or "").strip()
+    if raw_key:
+        return raw_key
+
+    return "Unknown"
+
+
+def _market_breakdown_key(row: dict[str, Any]) -> str:
+    surface = _normalize_text(row.get("surface")) or "straight_bets"
+    if surface == "straight_bets":
+        market_label = _straight_market_label(row)
+    else:
+        market_label = str(row.get("market") or row.get("source_market_key") or "Unknown").strip() or "Unknown"
+
+    sport_tag = _sport_tag(row.get("sport"))
+    if not sport_tag:
+        return market_label
+    return f"{sport_tag} | {market_label}"
+
+
+def _split_market_breakdown_key(key: str) -> tuple[str, str]:
+    raw = str(key or "").strip()
+    if "|" not in raw:
+        return "", raw or "Unknown"
+
+    sport_tag, market_label = raw.split("|", 1)
+    return sport_tag.strip().upper(), market_label.strip() or "Unknown"
+
+
+def _sort_market_breakdown(items: list[ResearchOpportunityBreakdownItem]) -> list[ResearchOpportunityBreakdownItem]:
+    """Sort by sport group first, then market prevalence within each sport."""
+
+    sport_totals: dict[str, int] = defaultdict(int)
+    parsed: dict[str, tuple[str, str]] = {}
+
+    for item in items:
+        sport_tag, market_label = _split_market_breakdown_key(item.key)
+        parsed[item.key] = (sport_tag, market_label)
+        sport_totals[sport_tag] += int(item.captured_count or 0)
+
+    def _sort_key(item: ResearchOpportunityBreakdownItem) -> tuple[int, int, str, int, str, str]:
+        sport_tag, market_label = parsed.get(item.key, ("", item.key))
+        has_sport_penalty = 0 if sport_tag else 1
+        sport_total = int(sport_totals.get(sport_tag, item.captured_count or 0) or 0)
+        return (
+            has_sport_penalty,
+            -sport_total,
+            sport_tag or "zzz",
+            -int(item.captured_count or 0),
+            market_label.lower(),
+            item.key.lower(),
+        )
+
+    return sorted(items, key=_sort_key)
+
+
 def _aggregate_breakdown(
     rows: list[dict[str, Any]],
     *,
@@ -1139,9 +1218,11 @@ def get_research_opportunities_summary(
             key_fn=lambda row: row.get("surface") or "straight_bets",
             preferred_order=SURFACE_ORDER,
         ),
-        by_market=_aggregate_breakdown(
-            rows,
-            key_fn=lambda row: row.get("market") or row.get("source_market_key") or "Unknown",
+        by_market=_sort_market_breakdown(
+            _aggregate_breakdown(
+                rows,
+                key_fn=_market_breakdown_key,
+            )
         ),
         by_source=_aggregate_breakdown(
             rows,

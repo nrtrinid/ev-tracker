@@ -17,7 +17,7 @@ def _game(event_id: str, commence_time: str, offers: int = 2) -> dict:
 
 
 def test_select_daily_games_prefers_after_drop_when_before_drop():
-    # Before 3:30 PM Phoenix on 2026-03-26.
+    # Before 3:00 PM Phoenix on 2026-03-26.
     now = datetime(2026, 3, 26, 21, 0, 0, tzinfo=timezone.utc)  # 14:00 Phoenix
     games = [
         _game("early", "2026-03-26T22:00:00Z"),  # 15:00 Phoenix (before drop) -> fallback bucket
@@ -34,7 +34,7 @@ def test_select_daily_games_prefers_after_drop_when_before_drop():
 
 
 def test_select_daily_games_prefers_after_now_when_after_drop():
-    # After 3:30 PM Phoenix on 2026-03-26.
+    # After 3:00 PM Phoenix on 2026-03-26.
     now = datetime(2026, 3, 27, 0, 0, 0, tzinfo=timezone.utc)  # 17:00 Phoenix
     games = [
         _game("before_now", "2026-03-26T23:30:00Z"),  # 16:30 Phoenix, still future relative to cutoff? (but before now)
@@ -143,7 +143,7 @@ async def test_run_daily_board_drop_limits_game_lines_to_nba_and_mlb(monkeypatch
         db=None,
         source="scheduled_board_drop",
         scan_label="Final Board / Bet Placement Scan",
-        mst_anchor_time="15:30",
+        mst_anchor_time="15:00",
         retry_supabase=lambda fn: fn(),
         log_event=lambda *_args, **_kwargs: None,
     )

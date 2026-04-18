@@ -277,6 +277,9 @@ ev-betting-tracker/
 | `TESTING` | `1` disables scheduler startup for tests |
 | `CRON_TOKEN` | Shared secret for backend cron/ops protected endpoints |
 | `DISCORD_WEBHOOK_URL` | Optional webhook for scan/settle alerts |
+| `DISCORD_ALERT_WEBHOOK_URL` | Optional dedicated webhook for user-facing board-drop alerts |
+| `DISCORD_DEBUG_WEBHOOK_URL` | Optional dedicated webhook for debug/test/heartbeat messages |
+| `DISCORD_ALLOW_DEBUG_FALLBACK_TO_PRIMARY` | Set `1` to let heartbeat/test messages fall back to `DISCORD_WEBHOOK_URL` |
 | `REDIS_URL` | Optional shared state backend for rate-limit/cache coordination |
 
 ### Frontend (`.env.local`)

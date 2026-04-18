@@ -30,6 +30,13 @@ export const queryKeys = {
   summary: ["summary"] as const,
   backendReadiness: ["backend-readiness"] as const,
   operatorStatus: ["operator-status"] as const,
+  altPitcherKLookup: (params: {
+    player_name: string;
+    team?: string | null;
+    opponent?: string | null;
+    line_value: number;
+    game_date?: string | null;
+  }) => ["alt-pitcher-k-lookup", params] as const,
   analyticsSummary: (windowDays: number) => ["analytics-summary", windowDays] as const,
   analyticsUserDrilldown: (windowDays: number, maxUsers: number, timelineLimit: number) =>
     ["analytics-user-drilldown", windowDays, maxUsers, timelineLimit] as const,
@@ -203,6 +210,35 @@ export function useOperatorStatus() {
     refetchInterval: 60_000,
     staleTime: 30_000,
     retry: 1,
+  });
+}
+
+export function useAltPitcherKLookup(
+  params: {
+    player_name: string;
+    team?: string | null;
+    opponent?: string | null;
+    line_value: number;
+    game_date?: string | null;
+  } | null,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: queryKeys.altPitcherKLookup(
+      params ?? {
+        player_name: "",
+        line_value: 0,
+      },
+    ),
+    queryFn: () => {
+      if (!params) {
+        throw new Error("Lookup parameters are required");
+      }
+      return api.getAltPitcherKLookup(params);
+    },
+    enabled: enabled && !!params,
+    staleTime: 0,
+    retry: 0,
   });
 }
 

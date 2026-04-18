@@ -119,7 +119,7 @@ async def test_uses_america_phoenix_timezone_when_available(monkeypatch):
 
     scan_jobs = [j for j in scheduler.jobs if j["func"] == main._run_scheduled_board_drop_job]
     assert len(scan_jobs) == 2
-    assert {(j["trigger"].hour, j["trigger"].minute) for j in scan_jobs} == {(10, 30), (15, 30)}
+    assert {(j["trigger"].hour, j["trigger"].minute) for j in scan_jobs} == {(9, 30), (15, 0)}
     assert all(getattr(j["trigger"], "timezone", None) == main.PHOENIX_TZ for j in scan_jobs)
 
     auto_settle_jobs = [j for j in scheduler.jobs if j["func"] == main._run_auto_settler_job]
@@ -194,7 +194,7 @@ async def test_scheduled_board_drop_job_runs_daily_board_pipeline(monkeypatch):
     assert len(called) == 1
     assert called[0]["source"] == "scheduled_board_drop"
     assert called[0]["scan_label"] in {"Early-Look / Injury-Watch Scan", "Final Board / Bet Placement Scan"}
-    assert called[0]["mst_anchor_time"] in {"10:30", "15:30"}
+    assert called[0]["mst_anchor_time"] in {"09:30", "15:00"}
     assert called[0]["retry_supabase_is_callable"] is True
     assert called[0]["log_event_is_callable"] is True
 
@@ -276,7 +276,7 @@ async def test_scheduled_board_drop_job_timed_ping_mode_sends_single_board_alert
     assert snapshot["board_alert_attempted"] is True
     assert snapshot["board_alert_delivery_status"] == "delivered"
     assert snapshot["board_alert_http_status"] == 204
-    assert snapshot["scan_window"]["anchor_time_mst"] in {"10:30", "15:30"}
+    assert snapshot["scan_window"]["anchor_time_mst"] in {"09:30", "15:00"}
 
 
 def test_scheduler_freshness_uses_startup_grace_when_no_success(monkeypatch):
@@ -386,6 +386,7 @@ def test_validate_environment_warns_when_scheduler_enabled_without_discord_alert
     main = _reload_main(monkeypatch)
 
     monkeypatch.setenv("ENABLE_SCHEDULER", "1")
+    monkeypatch.setenv("DISCORD_ENABLE_ALERT_ROUTE", "1")
     monkeypatch.delenv("DISCORD_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("DISCORD_ALERT_WEBHOOK_URL", raising=False)
 

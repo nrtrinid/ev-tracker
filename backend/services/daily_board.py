@@ -50,7 +50,7 @@ except Exception:
     # even when IANA tzdata isn't available in the runtime (common on Windows).
     PHOENIX_TZ = timezone(timedelta(hours=-7))
 DAILY_DROP_HOUR = 15
-DAILY_DROP_MINUTE = 30
+DAILY_DROP_MINUTE = 0
 
 
 def _phoenix_drop_for_date(day: datetime) -> datetime:

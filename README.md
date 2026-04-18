@@ -163,8 +163,10 @@ CRON_TOKEN=your-random-cron-token
 BETA_INVITE_CODE="Daily Drop"
 OPS_ADMIN_EMAILS=ops@example.com
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+DISCORD_ENABLE_ALERT_ROUTE=1
 DISCORD_ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...
 DISCORD_DEBUG_WEBHOOK_URL=https://discord.com/api/webhooks/...
+DISCORD_TEST_ALERT_MESSAGE_TYPE=test
 # Optional: shared state backend for multi-instance rate-limit/cache coordination
 # REDIS_URL=redis://localhost:6379/0
 ALERT_DEDUPE_TTL_SECONDS=21600
@@ -173,10 +175,10 @@ ALERT_DEDUPE_TTL_SECONDS=21600
 ### Operator-triggered automation
 If you want external wake/trigger automation, use a scheduler (cron-job.org, GitHub Actions, etc.) to hit these endpoints:
 
-- `POST /api/ops/trigger/scan` (warms scanner cache; sends Discord +EV alerts if configured)
+- `POST /api/ops/trigger/scan` (warms scanner cache; alert-path Discord sends run only when `DISCORD_ENABLE_ALERT_ROUTE=1`)
 - `POST /api/ops/trigger/auto-settle` (grades eligible pending ML bets)
-- `POST /api/ops/trigger/test-discord` (sends a test Discord message)
-- `POST /api/ops/trigger/test-discord-alert` (sends a test alert through the alert webhook path)
+- `POST /api/ops/trigger/test-discord` (sends a test Discord message through the debug/test route)
+- `POST /api/ops/trigger/test-discord-alert` (routes through debug/test by default to avoid alert-channel noise; set `DISCORD_TEST_ALERT_MESSAGE_TYPE=alert` to explicitly test alert-path wiring)
 
 All operator endpoints require the header `X-Ops-Token` matching `CRON_TOKEN`.
 

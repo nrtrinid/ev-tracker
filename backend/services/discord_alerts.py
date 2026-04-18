@@ -10,6 +10,7 @@ from services.match_keys import alert_key_from_side
 
 ALERTED_KEYS: set[str] = set()
 _warned_missing_webhook = False
+_warned_alert_route_disabled = False
 ALERT_DEDUPE_TTL_SECONDS = int(os.getenv("ALERT_DEDUPE_TTL_SECONDS", "21600"))
 
 FRONTEND_BASE_URL = "https://ev-tracker-gamma.vercel.app"
@@ -48,10 +49,30 @@ def _empty_schedule_stats() -> dict[str, int]:
 _LAST_SCHEDULE_STATS: dict[str, int] = _empty_schedule_stats()
 
 
+def _is_alert_route_enabled() -> bool:
+    # Keep alert-path delivery enabled unless explicitly disabled.
+    return (os.getenv("DISCORD_ENABLE_ALERT_ROUTE") or "1").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _resolve_route_config(message_type: str = "alert") -> dict[str, Any]:
     normalized = (message_type or "alert").strip().lower() or "alert"
 
     if normalized == "alert":
+        # Default-safe behavior: alert-path Discord delivery is opt-in.
+        if not _is_alert_route_enabled():
+            return {
+                "message_type": normalized,
+                "route_kind": "alert_disabled",
+                "webhook_url": None,
+                "webhook_source": None,
+                "mention_role_id": None,
+                "role_source": None,
+            }
         route_prefix = "alert"
         webhook_env = "DISCORD_ALERT_WEBHOOK_URL"
         role_env = "DISCORD_ALERT_MENTION_ROLE_ID"
@@ -64,13 +85,20 @@ def _resolve_route_config(message_type: str = "alert") -> dict[str, Any]:
         webhook_env = None
         role_env = None
 
+    # Keep alert fallback enabled (when alert routing is enabled), but require
+    # explicit opt-in before routing heartbeat/test traffic to the primary webhook.
+    allow_primary_fallback = (
+        normalized not in {"heartbeat", "test"}
+        or os.getenv("DISCORD_ALLOW_DEBUG_FALLBACK_TO_PRIMARY") == "1"
+    )
+
     webhook_url = None
     webhook_source = None
     if webhook_env and os.getenv(webhook_env):
         webhook_url = os.getenv(webhook_env)
         webhook_source = webhook_env
         route_kind = f"{route_prefix}_dedicated"
-    elif os.getenv("DISCORD_WEBHOOK_URL"):
+    elif allow_primary_fallback and os.getenv("DISCORD_WEBHOOK_URL"):
         webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
         webhook_source = "DISCORD_WEBHOOK_URL"
         route_kind = f"{route_prefix}_primary_fallback"
@@ -82,7 +110,7 @@ def _resolve_route_config(message_type: str = "alert") -> dict[str, Any]:
     if role_env and os.getenv(role_env):
         role_id = os.getenv(role_env)
         role_source = role_env
-    elif os.getenv("DISCORD_MENTION_ROLE_ID"):
+    elif allow_primary_fallback and os.getenv("DISCORD_MENTION_ROLE_ID"):
         role_id = os.getenv("DISCORD_MENTION_ROLE_ID")
         role_source = "DISCORD_MENTION_ROLE_ID"
 
@@ -245,7 +273,7 @@ def build_board_drop_alert_payload(
 
 
 async def send_discord_webhook(payload: dict[str, Any], message_type: str = "alert") -> dict[str, Any]:
-    global _warned_missing_webhook
+    global _warned_alert_route_disabled, _warned_missing_webhook
 
     route_config = _resolve_route_config(message_type)
     target = describe_discord_delivery_target(message_type)
@@ -253,7 +281,14 @@ async def send_discord_webhook(payload: dict[str, Any], message_type: str = "ale
     role_id = route_config["mention_role_id"]
 
     if not webhook_url:
-        if not _warned_missing_webhook:
+        if route_config.get("route_kind") == "alert_disabled":
+            if not _warned_alert_route_disabled:
+                _warned_alert_route_disabled = True
+                print(
+                    "[Discord] Alert route disabled (DISCORD_ENABLE_ALERT_ROUTE=0); "
+                    "alert-path notifications suppressed."
+                )
+        elif not _warned_missing_webhook:
             _warned_missing_webhook = True
             print("[Discord] DISCORD_WEBHOOK_URL not set; alerts disabled.")
         return {

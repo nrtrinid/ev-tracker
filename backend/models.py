@@ -513,6 +513,100 @@ class PlayerPropBoardDetail(BaseModel):
     reference_bookmaker_count: int | None = None
 
 
+class AltPitcherKLookupRequest(BaseModel):
+    """Exact-line admin lookup request for MLB alternate pitcher strikeouts."""
+
+    player_name: str
+    team: str | None = None
+    opponent: str | None = None
+    line_value: float
+    game_date: str | None = None
+
+
+class AltPitcherKLookupEvent(BaseModel):
+    """Matched event metadata for the admin lookup."""
+
+    event_id: str | None = None
+    event: str
+    commence_time: str | None = None
+
+
+class AltPitcherKLookupOffer(BaseModel):
+    """Per-book exact-line alternate pitcher strikeout prices."""
+
+    sportsbook: str
+    over_odds: float | None = None
+    over_deeplink_url: str | None = None
+    under_odds: float | None = None
+    under_deeplink_url: str | None = None
+
+
+class AltPitcherKLookupObservedOffer(BaseModel):
+    """Observed alt-ladder offer for the matched player/event, including one-sided points."""
+
+    sportsbook: str
+    line_value: float
+    over_odds: float | None = None
+    over_deeplink_url: str | None = None
+    under_odds: float | None = None
+    under_deeplink_url: str | None = None
+
+
+class AltPitcherKLookupConsensus(BaseModel):
+    """Consensus pricing output for an exact alternate pitcher strikeout line."""
+
+    over_prob: float | None = None
+    under_prob: float | None = None
+    fair_over_odds: int | None = None
+    fair_under_odds: int | None = None
+    paired_books: list[str] = Field(default_factory=list)
+    paired_books_count: int = 0
+    reference_books: list[str] = Field(default_factory=list)
+    reference_books_count: int = 0
+    best_over_sportsbook: str | None = None
+    best_over_odds: float | None = None
+    best_over_deeplink_url: str | None = None
+    best_under_sportsbook: str | None = None
+    best_under_odds: float | None = None
+    best_under_deeplink_url: str | None = None
+    offers: list[AltPitcherKLookupOffer] = Field(default_factory=list)
+
+
+class AltPitcherKLookupConfidence(BaseModel):
+    """Lookup-specific confidence metadata for admin review."""
+
+    bucket: Literal["insufficient_depth", "low", "normal", "high"]
+    paired_books_count: int = 0
+    repo_label: str | None = None
+    repo_score: float | None = None
+    prob_std: float | None = None
+    reason: str
+
+
+class AltPitcherKLookupCache(BaseModel):
+    """Short-TTL lookup cache metadata."""
+
+    hit: bool = False
+    ttl_seconds: int
+
+
+class AltPitcherKLookupResponse(BaseModel):
+    """Admin-only exact lookup response for MLB alternate pitcher strikeouts."""
+
+    status: Literal["ok", "not_found", "ambiguous_event", "insufficient_depth"]
+    sport: Literal["baseball_mlb"] = "baseball_mlb"
+    market_key: Literal["pitcher_strikeouts_alternate"] = "pitcher_strikeouts_alternate"
+    resolution_mode: Literal["exact_pair", "modeled_nearby_pairs", "observed_only_one_sided"] | None = None
+    lookup: AltPitcherKLookupRequest
+    event: AltPitcherKLookupEvent | None = None
+    consensus: AltPitcherKLookupConsensus | None = None
+    confidence: AltPitcherKLookupConfidence | None = None
+    warning: str | None = None
+    cache: AltPitcherKLookupCache
+    observed_offers: list[AltPitcherKLookupObservedOffer] = Field(default_factory=list)
+    candidate_events: list[AltPitcherKLookupEvent] = Field(default_factory=list)
+
+
 class ScopedRefreshResponse(BaseModel):
     """Response for manual scoped board refresh."""
 

@@ -19,6 +19,10 @@ Version labels use pre-release suffixes until the app is ready for outside users
 
 ### Changed
 
+- **Discord routing safety**
+  - Kept alert-path Discord delivery enabled by default (`DISCORD_ENABLE_ALERT_ROUTE=1`) so regular scheduled scans continue notifying as configured.
+  - Routed `/api/ops/trigger/test-discord-alert` through debug/test delivery by default to avoid alert-channel noise during testing (`DISCORD_TEST_ALERT_MESSAGE_TYPE=test`).
+  - Added an explicit override (`DISCORD_TEST_ALERT_MESSAGE_TYPE=alert`) for intentional alert-path test validation.
 - **MLB player props**
   - Promoted the six standard MLB sportsbook markets in the shared player-props feed: pitcher strikeouts, total bases, hits, hits + runs + RBIs, home runs, and batter strikeouts.
   - Kept the existing 3-book sportsbook gate and 2-book pick'em gate unchanged while expanding the market set.

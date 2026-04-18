@@ -361,6 +361,84 @@ export interface PlayerPropBoardDetail {
   reference_bookmaker_count?: number | null;
 }
 
+export interface AltPitcherKLookupRequest {
+  player_name: string;
+  team?: string | null;
+  opponent?: string | null;
+  line_value: number;
+  game_date?: string | null;
+}
+
+export interface AltPitcherKLookupEvent {
+  event_id?: string | null;
+  event: string;
+  commence_time?: string | null;
+}
+
+export interface AltPitcherKLookupOffer {
+  sportsbook: string;
+  over_odds?: number | null;
+  over_deeplink_url?: string | null;
+  under_odds?: number | null;
+  under_deeplink_url?: string | null;
+}
+
+export interface AltPitcherKLookupObservedOffer {
+  sportsbook: string;
+  line_value: number;
+  over_odds?: number | null;
+  over_deeplink_url?: string | null;
+  under_odds?: number | null;
+  under_deeplink_url?: string | null;
+}
+
+export interface AltPitcherKLookupConsensus {
+  over_prob?: number | null;
+  under_prob?: number | null;
+  fair_over_odds?: number | null;
+  fair_under_odds?: number | null;
+  paired_books: string[];
+  paired_books_count: number;
+  reference_books: string[];
+  reference_books_count: number;
+  best_over_sportsbook?: string | null;
+  best_over_odds?: number | null;
+  best_over_deeplink_url?: string | null;
+  best_under_sportsbook?: string | null;
+  best_under_odds?: number | null;
+  best_under_deeplink_url?: string | null;
+  offers: AltPitcherKLookupOffer[];
+}
+
+export interface AltPitcherKLookupConfidence {
+  bucket: "insufficient_depth" | "low" | "normal" | "high";
+  paired_books_count: number;
+  repo_label?: string | null;
+  repo_score?: number | null;
+  prob_std?: number | null;
+  reason: string;
+}
+
+export interface AltPitcherKLookupCache {
+  hit: boolean;
+  ttl_seconds: number;
+}
+
+export interface AltPitcherKLookupResponse {
+  status: "ok" | "not_found" | "ambiguous_event" | "insufficient_depth";
+  sport: "baseball_mlb";
+  market_key: "pitcher_strikeouts_alternate";
+  resolution_mode?: "exact_pair" | "modeled_nearby_pairs" | "observed_only_one_sided" | null;
+  lookup: AltPitcherKLookupRequest;
+  event?: AltPitcherKLookupEvent | null;
+  consensus?: AltPitcherKLookupConsensus | null;
+  confidence?: AltPitcherKLookupConfidence | null;
+  warning?: string | null;
+  cache: AltPitcherKLookupCache;
+  observed_offers: AltPitcherKLookupObservedOffer[];
+  candidate_events: AltPitcherKLookupEvent[];
+}
+
 export interface PlayerPropBoardPickEmCard {
   comparison_key: string;
   event_id?: string | null;

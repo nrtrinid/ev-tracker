@@ -107,7 +107,7 @@ def test_build_board_drop_alert_payload():
 
     payload = mod.build_board_drop_alert_payload(
         window_label="Early-Look / Injury-Watch Scan",
-        anchor_time_mst="10:30",
+        anchor_time_mst="09:30",
         result={
             "props_sides": 24,
             "straight_sides": 11,
@@ -117,7 +117,7 @@ def test_build_board_drop_alert_payload():
 
     embed = payload["embeds"][0]
     assert embed["title"] == "Trusted Beta Board Live"
-    assert "10:30 MST" in embed["description"]
+    assert "09:30 MST" in embed["description"]
     fields = {field["name"]: field["value"] for field in embed["fields"]}
     assert fields["Player Props"] == "24"
     assert fields["Game Lines"] == "11"
@@ -208,6 +208,7 @@ def test_schedule_alerts_records_skip_telemetry(monkeypatch):
 @pytest.mark.asyncio
 async def test_send_discord_webhook_noop_without_env(monkeypatch, capsys):
     mod = _reload_discord_alerts()
+    monkeypatch.setenv("DISCORD_ENABLE_ALERT_ROUTE", "1")
     monkeypatch.delenv("DISCORD_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("DISCORD_ALERT_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("DISCORD_DEBUG_WEBHOOK_URL", raising=False)
@@ -221,8 +222,24 @@ async def test_send_discord_webhook_noop_without_env(monkeypatch, capsys):
 
 
 @pytest.mark.asyncio
+async def test_send_discord_webhook_alert_route_disabled_when_explicitly_disabled(monkeypatch, capsys):
+    mod = _reload_discord_alerts()
+    monkeypatch.setenv("DISCORD_ENABLE_ALERT_ROUTE", "0")
+    monkeypatch.setenv("DISCORD_ALERT_WEBHOOK_URL", "https://alert-webhook")
+
+    delivery = await mod.send_discord_webhook({"content": "hi"}, message_type="alert")
+    out = capsys.readouterr().out
+
+    assert "Alert route disabled" in out
+    assert delivery["delivery_status"] == "disabled_no_webhook"
+    assert delivery["route_kind"] == "alert_disabled"
+    assert delivery["webhook_source"] is None
+
+
+@pytest.mark.asyncio
 async def test_send_discord_webhook_returns_delivery_metadata_on_success(monkeypatch):
     mod = _reload_discord_alerts()
+    monkeypatch.setenv("DISCORD_ENABLE_ALERT_ROUTE", "1")
     monkeypatch.setenv("DISCORD_ALERT_WEBHOOK_URL", "https://alert-webhook")
 
     class FakeResponse:
@@ -254,6 +271,7 @@ async def test_send_discord_webhook_returns_delivery_metadata_on_success(monkeyp
 @pytest.mark.asyncio
 async def test_send_discord_webhook_wraps_http_errors(monkeypatch):
     mod = _reload_discord_alerts()
+    monkeypatch.setenv("DISCORD_ENABLE_ALERT_ROUTE", "1")
     monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://primary-webhook")
 
     class FakeResponse:
@@ -287,6 +305,7 @@ async def test_send_discord_webhook_wraps_http_errors(monkeypatch):
 def test_get_webhook_and_role_alert_routing(monkeypatch):
     """Test that alert messages route to dedicated alert webhook when set."""
     mod = _reload_discord_alerts()
+    monkeypatch.setenv("DISCORD_ENABLE_ALERT_ROUTE", "1")
     
     monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://primary-webhook")
     monkeypatch.setenv("DISCORD_MENTION_ROLE_ID", "primary-role")
@@ -303,6 +322,7 @@ def test_get_webhook_and_role_alert_routing(monkeypatch):
 def test_describe_discord_delivery_target_alert_fallback(monkeypatch):
     mod = _reload_discord_alerts()
 
+    monkeypatch.setenv("DISCORD_ENABLE_ALERT_ROUTE", "1")
     monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://primary-webhook")
     monkeypatch.delenv("DISCORD_ALERT_WEBHOOK_URL", raising=False)
 
@@ -347,6 +367,7 @@ def test_get_webhook_and_role_test_routing(monkeypatch):
 def test_get_webhook_and_role_alert_fallback_to_primary(monkeypatch):
     """Test that alert messages fall back to primary webhook when alert webhook not set."""
     mod = _reload_discord_alerts()
+    monkeypatch.setenv("DISCORD_ENABLE_ALERT_ROUTE", "1")
     
     monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://primary-webhook")
     monkeypatch.setenv("DISCORD_MENTION_ROLE_ID", "primary-role")
@@ -360,17 +381,35 @@ def test_get_webhook_and_role_alert_fallback_to_primary(monkeypatch):
     assert role == "primary-role"
 
 
-def test_get_webhook_and_role_heartbeat_fallback_to_primary(monkeypatch):
-    """Test that heartbeat messages fall back to primary webhook when debug webhook not set."""
+def test_get_webhook_and_role_heartbeat_does_not_fallback_by_default(monkeypatch):
+    """Test that heartbeat messages stay unconfigured unless debug fallback is explicitly enabled."""
     mod = _reload_discord_alerts()
     
     monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://primary-webhook")
     monkeypatch.setenv("DISCORD_MENTION_ROLE_ID", "primary-role")
     monkeypatch.delenv("DISCORD_DEBUG_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("DISCORD_DEBUG_MENTION_ROLE_ID", raising=False)
+    monkeypatch.delenv("DISCORD_ALLOW_DEBUG_FALLBACK_TO_PRIMARY", raising=False)
     monkeypatch.delenv("DISCORD_ALERT_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("DISCORD_ALERT_MENTION_ROLE_ID", raising=False)
     
+    webhook, role = mod._get_webhook_and_role("heartbeat")
+    assert webhook is None
+    assert role is None
+
+
+def test_get_webhook_and_role_heartbeat_fallback_to_primary_when_opted_in(monkeypatch):
+    """Test that heartbeat messages can fall back to primary webhook when explicitly allowed."""
+    mod = _reload_discord_alerts()
+
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://primary-webhook")
+    monkeypatch.setenv("DISCORD_MENTION_ROLE_ID", "primary-role")
+    monkeypatch.setenv("DISCORD_ALLOW_DEBUG_FALLBACK_TO_PRIMARY", "1")
+    monkeypatch.delenv("DISCORD_DEBUG_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("DISCORD_DEBUG_MENTION_ROLE_ID", raising=False)
+    monkeypatch.delenv("DISCORD_ALERT_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("DISCORD_ALERT_MENTION_ROLE_ID", raising=False)
+
     webhook, role = mod._get_webhook_and_role("heartbeat")
     assert webhook == "https://primary-webhook"
     assert role == "primary-role"

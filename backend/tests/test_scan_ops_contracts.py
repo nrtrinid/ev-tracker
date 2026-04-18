@@ -102,6 +102,16 @@ def test_scan_endpoints_require_auth(public_client):
 def test_ops_endpoints_require_ops_token(public_client):
     assert public_client.get("/api/ops/status").status_code == 401
     assert public_client.get("/api/ops/research-opportunities/summary").status_code == 401
+    assert public_client.get(
+        "/api/ops/alt-pitcher-k-lookup",
+        params={
+            "player_name": "Gerrit Cole",
+            "team": "New York Yankees",
+            "opponent": "Boston Red Sox",
+            "line_value": 6.5,
+            "game_date": "2026-07-04",
+        },
+    ).status_code == 401
     assert public_client.post("/api/ops/trigger/scan").status_code == 401
     assert public_client.post("/api/ops/trigger/scan/async").status_code == 401
     assert public_client.post("/api/ops/trigger/auto-settle").status_code == 401
@@ -687,9 +697,275 @@ def test_ops_status_contract_shape_normal(auth_client, monkeypatch):
 
     resp = auth_client.get("/api/ops/status", headers={"X-Ops-Token": "ops-secret"})
     assert resp.status_code == 200
-
     body = resp.json()
     _assert_shape_like(body, _load_fixture("ops_status_normal.json"))
+
+
+@pytest.mark.integration
+def test_ops_alt_pitcher_k_lookup_contract_shape(public_client, monkeypatch):
+    import services.player_props as player_props
+
+    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
+
+    async def _fake_lookup(*, player_name: str, team: str | None, opponent: str | None, line_value: float, game_date: str | None, source: str = "ops_alt_pitcher_k_lookup"):
+        assert player_name == "Gerrit Cole"
+        assert team == "New York Yankees"
+        assert opponent == "Boston Red Sox"
+        assert line_value == 6.5
+        assert game_date == "2026-07-04"
+        return {
+            "status": "ok",
+            "sport": "baseball_mlb",
+            "market_key": "pitcher_strikeouts_alternate",
+            "resolution_mode": "exact_pair",
+            "lookup": {
+                "player_name": player_name,
+                "team": team,
+                "opponent": opponent,
+                "line_value": line_value,
+                "game_date": game_date,
+            },
+            "event": {
+                "event_id": "evt-mlb-1",
+                "event": "New York Yankees @ Boston Red Sox",
+                "commence_time": "2026-07-04T23:10:00Z",
+            },
+            "consensus": {
+                "over_prob": 0.5238,
+                "under_prob": 0.4762,
+                "fair_over_odds": -110,
+                "fair_under_odds": 110,
+                "paired_books": ["Bovada", "DraftKings"],
+                "paired_books_count": 2,
+                "reference_books": ["Bovada", "DraftKings"],
+                "reference_books_count": 2,
+                "best_over_sportsbook": "DraftKings",
+                "best_over_odds": 105,
+                "best_over_deeplink_url": None,
+                "best_under_sportsbook": "Bovada",
+                "best_under_odds": -110,
+                "best_under_deeplink_url": None,
+                "offers": [
+                    {
+                        "sportsbook": "Bovada",
+                        "over_odds": -110,
+                        "over_deeplink_url": None,
+                        "under_odds": -110,
+                        "under_deeplink_url": None,
+                    }
+                ],
+            },
+            "confidence": {
+                "bucket": "low",
+                "paired_books_count": 2,
+                "repo_label": "solid",
+                "repo_score": 0.5,
+                "prob_std": 0.01,
+                "reason": "two_paired_books_exact_line",
+            },
+            "warning": None,
+            "cache": {
+                "hit": False,
+                "ttl_seconds": 60,
+            },
+            "observed_offers": [
+                {
+                    "sportsbook": "Bovada",
+                    "line_value": 6.5,
+                    "over_odds": -110,
+                    "over_deeplink_url": None,
+                    "under_odds": -110,
+                    "under_deeplink_url": None,
+                }
+            ],
+            "candidate_events": [],
+        }
+
+    monkeypatch.setattr(player_props, "lookup_alt_pitcher_k_exact_line", _fake_lookup, raising=True)
+
+    resp = public_client.get(
+        "/api/ops/alt-pitcher-k-lookup",
+        params={
+            "player_name": "Gerrit Cole",
+            "team": "New York Yankees",
+            "opponent": "Boston Red Sox",
+            "line_value": 6.5,
+            "game_date": "2026-07-04",
+        },
+        headers={"X-Ops-Token": "ops-secret"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    _assert_shape_like(
+        body,
+        {
+            "status": "ok",
+            "sport": "baseball_mlb",
+            "market_key": "pitcher_strikeouts_alternate",
+            "resolution_mode": "exact_pair",
+            "lookup": {
+                "player_name": "Gerrit Cole",
+                "team": "New York Yankees",
+                "opponent": "Boston Red Sox",
+                "line_value": 6.5,
+                "game_date": "2026-07-04",
+            },
+            "event": {
+                "event_id": "evt-mlb-1",
+                "event": "New York Yankees @ Boston Red Sox",
+                "commence_time": "2026-07-04T23:10:00Z",
+            },
+            "consensus": {
+                "over_prob": 0.5238,
+                "under_prob": 0.4762,
+                "fair_over_odds": -110,
+                "fair_under_odds": 110,
+                "paired_books": ["Bovada"],
+                "paired_books_count": 2,
+                "reference_books": ["Bovada", "DraftKings"],
+                "reference_books_count": 2,
+                "best_over_sportsbook": "DraftKings",
+                "best_over_odds": 105,
+                "best_over_deeplink_url": None,
+                "best_under_sportsbook": "Bovada",
+                "best_under_odds": -110,
+                "best_under_deeplink_url": None,
+                "offers": [
+                    {
+                        "sportsbook": "Bovada",
+                        "over_odds": -110,
+                        "over_deeplink_url": None,
+                        "under_odds": -110,
+                        "under_deeplink_url": None,
+                    }
+                ],
+            },
+            "confidence": {
+                "bucket": "low",
+                "paired_books_count": 2,
+                "repo_label": "solid",
+                "repo_score": 0.5,
+                "prob_std": 0.01,
+                "reason": "two_paired_books_exact_line",
+            },
+            "warning": None,
+            "cache": {
+                "hit": False,
+                "ttl_seconds": 60,
+            },
+            "observed_offers": [
+                {
+                    "sportsbook": "Bovada",
+                    "line_value": 6.5,
+                    "over_odds": -110,
+                    "over_deeplink_url": None,
+                    "under_odds": -110,
+                    "under_deeplink_url": None,
+                }
+            ],
+            "candidate_events": [],
+        },
+    )
+
+
+@pytest.mark.integration
+def test_ops_alt_pitcher_k_lookup_allows_optional_context(public_client, monkeypatch):
+    import services.player_props as player_props
+
+    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
+
+    async def _fake_lookup(*, player_name: str, team: str | None, opponent: str | None, line_value: float, game_date: str | None, source: str = "ops_alt_pitcher_k_lookup"):
+        assert player_name == "Gerrit Cole"
+        assert team is None
+        assert opponent is None
+        assert line_value == 6.5
+        assert game_date is None
+        return {
+            "status": "not_found",
+            "sport": "baseball_mlb",
+            "market_key": "pitcher_strikeouts_alternate",
+            "resolution_mode": None,
+            "lookup": {
+                "player_name": player_name,
+                "team": team,
+                "opponent": opponent,
+                "line_value": line_value,
+                "game_date": game_date,
+            },
+            "warning": "Player name + exact line alone did not find a unique live alt K line. Add pitcher team, opponent, or game date if you have it.",
+            "cache": {
+                "hit": False,
+                "ttl_seconds": 60,
+            },
+            "observed_offers": [],
+            "candidate_events": [],
+        }
+
+    monkeypatch.setattr(player_props, "lookup_alt_pitcher_k_exact_line", _fake_lookup, raising=True)
+
+    resp = public_client.get(
+        "/api/ops/alt-pitcher-k-lookup",
+        params={
+            "player_name": "Gerrit Cole",
+            "line_value": 6.5,
+        },
+        headers={"X-Ops-Token": "ops-secret"},
+    )
+
+    assert resp.status_code == 200
+    _assert_shape_like(
+        resp.json(),
+        {
+            "status": "not_found",
+            "sport": "baseball_mlb",
+            "market_key": "pitcher_strikeouts_alternate",
+            "resolution_mode": None,
+            "lookup": {
+                "player_name": "Gerrit Cole",
+                "team": None,
+                "opponent": None,
+                "line_value": 6.5,
+                "game_date": None,
+            },
+            "warning": "Player name + exact line alone did not find a unique live alt K line. Add pitcher team, opponent, or game date if you have it.",
+            "cache": {
+                "hit": False,
+                "ttl_seconds": 60,
+            },
+            "observed_offers": [],
+            "candidate_events": [],
+        },
+    )
+
+
+@pytest.mark.integration
+def test_ops_alt_pitcher_k_lookup_rate_limit_returns_429(public_client, monkeypatch):
+    import routes.ops_cron as ops_cron
+    import services.player_props as player_props
+
+    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
+    monkeypatch.setattr(ops_cron, "allow_fixed_window_rate_limit", lambda **_kwargs: False, raising=True)
+
+    async def _boom_lookup(**_kwargs):
+        raise AssertionError("lookup should not run when rate limit is exceeded")
+
+    monkeypatch.setattr(player_props, "lookup_alt_pitcher_k_exact_line", _boom_lookup, raising=True)
+
+    resp = public_client.get(
+        "/api/ops/alt-pitcher-k-lookup",
+        params={
+            "player_name": "Gerrit Cole",
+            "team": "New York Yankees",
+            "opponent": "Boston Red Sox",
+            "line_value": 6.5,
+            "game_date": "2026-07-04",
+        },
+        headers={"X-Ops-Token": "ops-secret"},
+    )
+
+    assert resp.status_code == 429
+    assert "Too many Alt Pitcher K lookup requests" in resp.json()["detail"]
 
 
 @pytest.mark.integration
@@ -1026,8 +1302,11 @@ def test_ops_trigger_test_discord_alert_contract_shape(auth_client, monkeypatch)
     import services.discord_alerts as discord_alerts
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
+    monkeypatch.delenv("DISCORD_TEST_ALERT_MESSAGE_TYPE", raising=False)
+    seen_message_types: list[str] = []
 
     async def _fake_send_discord_webhook(_payload, message_type="alert"):
+        seen_message_types.append(message_type)
         return None
 
     monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
@@ -1039,6 +1318,8 @@ def test_ops_trigger_test_discord_alert_contract_shape(auth_client, monkeypatch)
     assert body.get("ok") is True
     assert body.get("scheduled") is True
     assert isinstance(body.get("run_id"), str)
+    assert body.get("message_type") == "test"
+    assert seen_message_types == ["test"]
 
 
 @pytest.mark.integration
@@ -1046,12 +1327,13 @@ def test_ops_trigger_test_discord_alert_returns_config_diagnostics_when_unconfig
     import services.discord_alerts as discord_alerts
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
+    monkeypatch.delenv("DISCORD_TEST_ALERT_MESSAGE_TYPE", raising=False)
 
     async def _fake_send_discord_webhook(_payload, message_type="alert"):
         return {
             "ok": False,
             "message_type": message_type,
-            "route_kind": "alert_unconfigured",
+            "route_kind": "test_unconfigured",
             "webhook_source": None,
             "delivery_status": "disabled_no_webhook",
             "status_code": None,
@@ -1065,6 +1347,6 @@ def test_ops_trigger_test_discord_alert_returns_config_diagnostics_when_unconfig
 
     body = resp.json()
     assert body["detail"]["error"] == "discord_webhook_not_configured"
-    assert body["detail"]["message_type"] == "alert"
-    assert body["detail"]["route_kind"] == "alert_unconfigured"
+    assert body["detail"]["message_type"] == "test"
+    assert body["detail"]["route_kind"] == "test_unconfigured"
     assert body["detail"]["webhook_source"] is None

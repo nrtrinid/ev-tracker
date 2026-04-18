@@ -124,8 +124,10 @@ const PROMOS_SUBMODES: Array<{
 
 const PLAYER_PROP_BOOKS = ["Bovada", "BetOnline.ag", "DraftKings", "FanDuel", "BetMGM", "Caesars"];
 const STRAIGHT_BET_BOOKS = ["DraftKings", "FanDuel", "BetMGM", "Caesars", "ESPN Bet"];
+const PROMO_BOOKS = Array.from(new Set([...PLAYER_PROP_BOOKS, ...STRAIGHT_BET_BOOKS]));
 const DEFAULT_PLAYER_PROP_BOOKS = ["DraftKings", "FanDuel", "BetMGM", "Caesars", "Bovada", "BetOnline.ag"];
 const DEFAULT_STRAIGHT_BET_BOOKS = ["DraftKings", "FanDuel"];
+const DEFAULT_PROMO_BOOKS = Array.from(new Set([...DEFAULT_PLAYER_PROP_BOOKS, ...DEFAULT_STRAIGHT_BET_BOOKS]));
 const PLAYER_PROP_PAGE_SIZE = 10;
 const PROMO_PLAYER_PROP_PAGE_SIZE = 200;
 
@@ -152,6 +154,7 @@ const BOOST_PRESETS = [25, 30, 50] as const;
 type StoredScannerBooks = {
   player_props?: unknown;
   straight_bets?: unknown;
+  promos?: unknown;
 };
 
 function buildPromoDedupeKey(side: MarketSide): string {
@@ -224,6 +227,15 @@ function sanitizeStoredBooks(stored: unknown, allowed: readonly string[], fallba
   const allow = new Set(allowed);
   const next = stored.filter((b): b is string => typeof b === "string" && allow.has(b));
   return next.length > 0 ? next : fallback;
+}
+
+function toggleBookSelection(current: string[], book: string): string[] {
+  if (current.includes(book)) {
+    // Keep at least one selected book to avoid API fallback behavior that can look like stale filtering.
+    if (current.length <= 1) return current;
+    return current.filter((candidate) => candidate !== book);
+  }
+  return [...current, book];
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -334,6 +346,17 @@ function sameStringSet(a: string[], b: string[]): boolean {
 
 function formatMarketTypeLabel(market: string): string {
   return formatPlayerPropMarketLabel(market);
+}
+
+function getSearchableMarketTokens(side: MarketSide): string[] {
+  const marketKey = String(side.market_key ?? "").trim().toLowerCase();
+  const marketLabel = String((side as { market?: string }).market ?? "").trim();
+
+  if (marketKey === "h2h") return ["h2h", "moneyline", "ml", marketLabel].filter(Boolean);
+  if (marketKey === "spreads") return ["spreads", "spread", marketLabel].filter(Boolean);
+  if (marketKey === "totals") return ["totals", "total", "over under", "ou", marketLabel].filter(Boolean);
+
+  return [marketKey, marketLabel].filter(Boolean);
 }
 
 function parseFeaturedLines(gameContext: unknown): FeaturedSportBucket[] {
@@ -749,6 +772,7 @@ export default function MarketsPage() {
   // Per-surface book selections — persisted in localStorage (see hydrate / persist effects below)
   const [selectedPropBooks, setSelectedPropBooks] = useState<string[]>(DEFAULT_PLAYER_PROP_BOOKS);
   const [selectedGameLineBooks, setSelectedGameLineBooks] = useState<string[]>(DEFAULT_STRAIGHT_BET_BOOKS);
+  const [selectedPromoBooks, setSelectedPromoBooks] = useState<string[]>(DEFAULT_PROMO_BOOKS);
   const [booksHydrated, setBooksHydrated] = useState(false);
   const [visibleCount, setVisibleCount] = useState(10);
   const [searchQuery, setSearchQuery] = useState("");
@@ -778,9 +802,20 @@ export default function MarketsPage() {
     search: "",
   }));
 
-  const selectedBooks = primaryMode === "straight_bets" ? selectedGameLineBooks : selectedPropBooks;
-  const setSelectedBooks = primaryMode === "straight_bets" ? setSelectedGameLineBooks : setSelectedPropBooks;
+  const selectedBooks =
+    primaryMode === "straight_bets"
+      ? selectedGameLineBooks
+      : primaryMode === "promos"
+        ? selectedPromoBooks
+        : selectedPropBooks;
+  const setSelectedBooks =
+    primaryMode === "straight_bets"
+      ? setSelectedGameLineBooks
+      : primaryMode === "promos"
+        ? setSelectedPromoBooks
+        : setSelectedPropBooks;
   const tzOffsetMinutes = useMemo(() => new Date().getTimezoneOffset(), []);
+  const selectedPlayerPropsBooks = primaryMode === "promos" ? selectedPromoBooks : selectedPropBooks;
   const appliedPlayerPropsBooks = playerPropsQueryFilters.books;
   const appliedPlayerPropsTimeFilter = playerPropsQueryFilters.timeFilter;
   const appliedPlayerPropsSportFilter = playerPropsQueryFilters.sport;
@@ -829,11 +864,28 @@ export default function MarketsPage() {
       const raw = localStorage.getItem(SCANNER_BOOKS_STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as StoredScannerBooks;
-        setSelectedPropBooks(
-          sanitizeStoredBooks(parsed.player_props, PLAYER_PROP_BOOKS, DEFAULT_PLAYER_PROP_BOOKS),
+        const hydratedPropBooks = sanitizeStoredBooks(
+          parsed.player_props,
+          PLAYER_PROP_BOOKS,
+          DEFAULT_PLAYER_PROP_BOOKS,
         );
-        setSelectedGameLineBooks(
-          sanitizeStoredBooks(parsed.straight_bets, STRAIGHT_BET_BOOKS, DEFAULT_STRAIGHT_BET_BOOKS),
+        const hydratedGameLineBooks = sanitizeStoredBooks(
+          parsed.straight_bets,
+          STRAIGHT_BET_BOOKS,
+          DEFAULT_STRAIGHT_BET_BOOKS,
+        );
+        const legacyPromoFallback = PROMO_BOOKS.filter(
+          (book) => hydratedPropBooks.includes(book) || hydratedGameLineBooks.includes(book),
+        );
+
+        setSelectedPropBooks(hydratedPropBooks);
+        setSelectedGameLineBooks(hydratedGameLineBooks);
+        setSelectedPromoBooks(
+          sanitizeStoredBooks(
+            parsed.promos,
+            PROMO_BOOKS,
+            legacyPromoFallback.length > 0 ? legacyPromoFallback : DEFAULT_PROMO_BOOKS,
+          ),
         );
       }
     } catch {
@@ -847,12 +899,16 @@ export default function MarketsPage() {
     try {
       localStorage.setItem(
         SCANNER_BOOKS_STORAGE_KEY,
-        JSON.stringify({ player_props: selectedPropBooks, straight_bets: selectedGameLineBooks }),
+        JSON.stringify({
+          player_props: selectedPropBooks,
+          straight_bets: selectedGameLineBooks,
+          promos: selectedPromoBooks,
+        }),
       );
     } catch {
       // ignore quota / private mode
     }
-  }, [booksHydrated, selectedPropBooks, selectedGameLineBooks]);
+  }, [booksHydrated, selectedGameLineBooks, selectedPromoBooks, selectedPropBooks]);
 
   useEffect(() => {
     try {
@@ -886,7 +942,7 @@ export default function MarketsPage() {
   useEffect(() => {
     const normalizedPlayerPropsSearch = expandTeamAliasSearchQuery(deferredPlayerPropsSearchQuery.trim());
     const nextFilters = {
-      books: [...selectedPropBooks].sort(),
+      books: [...selectedPlayerPropsBooks].sort(),
       timeFilter,
       sport: propSportFilter,
       market: propMarketFilter,
@@ -907,7 +963,13 @@ export default function MarketsPage() {
       });
     }, 250);
     return () => window.clearTimeout(handle);
-  }, [deferredPlayerPropsSearchQuery, propMarketFilter, propSportFilter, selectedPropBooks, timeFilter]);
+  }, [
+    deferredPlayerPropsSearchQuery,
+    propMarketFilter,
+    propSportFilter,
+    selectedPlayerPropsBooks,
+    timeFilter,
+  ]);
 
   // ── Board freshness: realtime invalidation ───────────────────────────────
   // Subscribe to Supabase realtime for canonical board changes (surface=board)
@@ -1232,13 +1294,13 @@ export default function MarketsPage() {
     if (primaryMode === "promos") {
       const promoProps = rankScannerSidesByLens({
         sides: sidesForRanking.filter((side) => side.surface === "player_props"),
-        selectedBooks: selectedPropBooks,
+        selectedBooks: selectedPromoBooks,
         activeLens,
         boostPercent,
       });
       const promoStraight = rankScannerSidesByLens({
         sides: sidesForRanking.filter((side) => side.surface !== "player_props"),
-        selectedBooks: selectedGameLineBooks,
+        selectedBooks: selectedPromoBooks,
         activeLens,
         boostPercent,
       });
@@ -1265,8 +1327,7 @@ export default function MarketsPage() {
     activePlayerPropsListPage?.items,
     allSides,
     selectedBooks,
-    selectedPropBooks,
-    selectedGameLineBooks,
+    selectedPromoBooks,
     viewMode,
     activeLens,
     primaryMode,
@@ -1287,13 +1348,14 @@ export default function MarketsPage() {
     if (!searchQuery.trim()) return marketFiltered;
     const q = searchQuery.trim();
     return marketFiltered.filter((s) => {
+      const marketTokens = getSearchableMarketTokens(s);
       return matchesTeamAliasSearch(q, [
         s.event,
         s.event_short ?? "",
         s.sport,
         s.sportsbook,
         "player_name" in s ? (s as { player_name?: string }).player_name : "",
-        String(s.market_key ?? ""),
+        ...marketTokens,
         "team" in s ? (s as { team?: string }).team : "",
         "team_short" in s ? (s as { team_short?: string }).team_short : "",
         "opponent" in s ? (s as { opponent?: string }).opponent : "",
@@ -1370,7 +1432,6 @@ export default function MarketsPage() {
     const activeSportFilter = primaryMode === "player_props" ? appliedPlayerPropsSportFilter : propSportFilter;
     const activeMarketFilter = primaryMode === "player_props" ? appliedPlayerPropsMarketFilter : propMarketFilter;
     const activeSearchValue = primaryMode === "player_props" ? appliedPlayerPropsSearchQuery : searchQuery.trim();
-    const activeBooks = primaryMode === "player_props" ? appliedPlayerPropsBooks : selectedBooks;
     if (activeTimeFilter !== "today") {
       const label =
         activeTimeFilter === "upcoming"
@@ -1380,15 +1441,24 @@ export default function MarketsPage() {
             : "Closed Today";
       chips.push(`Time: ${label}`);
     }
-    const defaultBooks = primaryMode === "straight_bets" ? DEFAULT_STRAIGHT_BET_BOOKS : DEFAULT_PLAYER_PROP_BOOKS;
-    if (!sameStringSet(activeBooks, defaultBooks)) {
-      chips.push(`Books: ${activeBooks.length}`);
+    if (primaryMode === "promos") {
+      if (!sameStringSet(selectedPromoBooks, DEFAULT_PROMO_BOOKS)) {
+        chips.push(`Books: ${selectedPromoBooks.length}`);
+      }
+    } else {
+      const activeBooks = primaryMode === "player_props" ? appliedPlayerPropsBooks : selectedBooks;
+      const defaultBooks = primaryMode === "straight_bets" ? DEFAULT_STRAIGHT_BET_BOOKS : DEFAULT_PLAYER_PROP_BOOKS;
+      if (!sameStringSet(activeBooks, defaultBooks)) {
+        chips.push(`Books: ${activeBooks.length}`);
+      }
     }
-    if (primaryMode === "player_props" && activeSportFilter !== "all") {
-      chips.push(`Sport: ${SPORT_KEY_TO_DISPLAY[activeSportFilter] ?? activeSportFilter}`);
+    if ((primaryMode === "player_props" || primaryMode === "promos") && activeSportFilter !== "all") {
+      const label = SPORT_KEY_TO_DISPLAY[activeSportFilter] ?? activeSportFilter;
+      chips.push(primaryMode === "promos" ? `Prop Sport: ${label}` : `Sport: ${label}`);
     }
-    if (primaryMode === "player_props" && activeMarketFilter !== "all") {
-      chips.push(`Market: ${formatPlayerPropMarketLabel(activeMarketFilter)}`);
+    if ((primaryMode === "player_props" || primaryMode === "promos") && activeMarketFilter !== "all") {
+      const label = formatPlayerPropMarketLabel(activeMarketFilter);
+      chips.push(primaryMode === "promos" ? `Prop Market: ${label}` : `Market: ${label}`);
     }
     if (primaryMode === "straight_bets" && straightBetMarketFilter !== "all") {
       const label =
@@ -1419,6 +1489,7 @@ export default function MarketsPage() {
     propSportFilter,
     searchQuery,
     selectedBooks,
+    selectedPromoBooks,
     straightBetMarketFilter,
     timeFilter,
   ]);
@@ -1432,6 +1503,8 @@ export default function MarketsPage() {
     setSearchQuery("");
     if (primaryMode === "straight_bets") {
       setSelectedGameLineBooks(DEFAULT_STRAIGHT_BET_BOOKS);
+    } else if (primaryMode === "promos") {
+      setSelectedPromoBooks(DEFAULT_PROMO_BOOKS);
     } else {
       setSelectedPropBooks(DEFAULT_PLAYER_PROP_BOOKS);
     }
@@ -1444,7 +1517,7 @@ export default function MarketsPage() {
   }, [isPickEmView, propSideFilter]);
 
   useEffect(() => {
-    if (primaryMode !== "player_props") return;
+    if (primaryMode === "straight_bets") return;
     if (propMarketFilter === "all") return;
     if (availablePropMarketsForSport.includes(propMarketFilter)) return;
     setPropMarketFilter("all");
@@ -1916,9 +1989,9 @@ export default function MarketsPage() {
               <input
                 type="text"
                 placeholder={
-                  primaryMode === "player_props"
-                    ? "Search players, teams, events…"
-                    : "Search teams, events…"
+                  primaryMode === "straight_bets"
+                    ? "Search teams, events…"
+                    : "Search players, teams, books, markets…"
                 }
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -1940,28 +2013,49 @@ export default function MarketsPage() {
           </div>
           {filtersOpen && (
             <div className="rounded-md border border-border bg-card p-3 space-y-3 animate-slide-up" style={{ animationDelay: "0ms", animationFillMode: "both" }}>
-              <div>
-                <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Books</p>
-                <MultiSelectFilterPills
-                  selectedValues={selectedBooks}
-                  options={(primaryMode === "straight_bets" ? STRAIGHT_BET_BOOKS : PLAYER_PROP_BOOKS).map((book) => ({
-                    value: book,
-                    label: book,
-                  }))}
-                  onToggleValue={(book) =>
-                    setSelectedBooks((prev) =>
-                      prev.includes(book) ? prev.filter((b) => b !== book) : [...prev, book],
-                    )
-                  }
-                  className="flex flex-wrap gap-1.5"
-                  baseButtonClassName="rounded-md px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95"
-                  activeClassName="text-white"
-                  inactiveClassName="bg-muted text-muted-foreground hover:text-foreground"
-                  getButtonClassName={(option, active) =>
-                    active ? BOOK_COLORS[option.value] || "bg-foreground" : undefined
-                  }
-                />
-              </div>
+              {primaryMode === "promos" ? (
+                <div>
+                  <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Books</p>
+                  <MultiSelectFilterPills
+                    selectedValues={selectedPromoBooks}
+                    options={PROMO_BOOKS.map((book) => ({
+                      value: book,
+                      label: book,
+                    }))}
+                    onToggleValue={(book) =>
+                      setSelectedPromoBooks((prev) => toggleBookSelection(prev, book))
+                    }
+                    className="flex flex-wrap gap-1.5"
+                    baseButtonClassName="rounded-md px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95"
+                    activeClassName="text-white"
+                    inactiveClassName="bg-muted text-muted-foreground hover:text-foreground"
+                    getButtonClassName={(option, active) =>
+                      active ? BOOK_COLORS[option.value] || "bg-foreground" : undefined
+                    }
+                  />
+                </div>
+              ) : (
+                <div>
+                  <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Books</p>
+                  <MultiSelectFilterPills
+                    selectedValues={selectedBooks}
+                    options={(primaryMode === "straight_bets" ? STRAIGHT_BET_BOOKS : PLAYER_PROP_BOOKS).map((book) => ({
+                      value: book,
+                      label: book,
+                    }))}
+                    onToggleValue={(book) =>
+                      setSelectedBooks((prev) => toggleBookSelection(prev, book))
+                    }
+                    className="flex flex-wrap gap-1.5"
+                    baseButtonClassName="rounded-md px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95"
+                    activeClassName="text-white"
+                    inactiveClassName="bg-muted text-muted-foreground hover:text-foreground"
+                    getButtonClassName={(option, active) =>
+                      active ? BOOK_COLORS[option.value] || "bg-foreground" : undefined
+                    }
+                  />
+                </div>
+              )}
               <div>
                 <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Time</p>
                 <SingleSelectFilterPills<BoardTimeFilter>
@@ -1996,9 +2090,11 @@ export default function MarketsPage() {
                   />
                 </div>
               )}
-              {primaryMode === "player_props" && (
+              {(primaryMode === "player_props" || primaryMode === "promos") && (
                 <div>
-                  <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Sport</p>
+                  <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                    {primaryMode === "promos" ? "Prop Sport" : "Sport"}
+                  </p>
                   <SingleSelectFilterPills
                     value={propSportFilter}
                     onValueChange={setPropSportFilter}
@@ -2012,9 +2108,11 @@ export default function MarketsPage() {
                   />
                 </div>
               )}
-              {primaryMode === "player_props" && (
+              {(primaryMode === "player_props" || primaryMode === "promos") && (
                 <div>
-                  <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Market Type</p>
+                  <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                    {primaryMode === "promos" ? "Prop Market" : "Market Type"}
+                  </p>
                   <SingleSelectFilterPills
                     value={propMarketFilter}
                     onValueChange={setPropMarketFilter}

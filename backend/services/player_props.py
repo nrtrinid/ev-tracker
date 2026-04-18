@@ -4,8 +4,9 @@ import logging
 import math
 import os
 import time
-from statistics import median
 from datetime import datetime, timedelta, timezone
+from datetime import date
+from statistics import median
 from typing import Any
 
 import httpx
@@ -31,7 +32,7 @@ from services.odds_api import (
     fetch_events,
 )
 from services.sportsbook_deeplinks import resolve_sportsbook_deeplink
-from services.shared_state import get_scan_cache, set_scan_cache
+from services.shared_state import get_json, get_scan_cache, set_json, set_scan_cache
 from services.team_aliases import canonical_short_name, canonical_team_token, build_short_event_label
 
 
@@ -77,9 +78,18 @@ PLAYER_PROP_MIN_CLV_REFERENCE_BOOKMAKERS = 1
 PLAYER_PROP_MIN_CLV_REFERENCE_BOOKMAKERS_ENV = "PLAYER_PROP_CLV_MIN_REFERENCE_BOOKMAKERS"
 PLAYER_PROP_FALLBACK_MAX_EVENTS = 3
 PLAYER_PROP_CACHE_VERSION = "v2"
+ALT_PITCHER_K_LOOKUP_SPORT = "baseball_mlb"
+ALT_PITCHER_K_LOOKUP_MARKET_KEY = "pitcher_strikeouts_alternate"
+ALT_PITCHER_K_LOOKUP_NORMAL_MARKET_KEY = "pitcher_strikeouts"
+ALT_PITCHER_K_LOOKUP_TTL_SECONDS = 60
+ALT_PITCHER_K_LOOKUP_CACHE_PREFIX = "ops:alt-pitcher-k:v1"
+ALT_PITCHER_K_EVENT_MARKET_CACHE_PREFIX = "ops:alt-pitcher-k:event-market:v1"
+ALT_PITCHER_K_LOOKUP_MAX_CANDIDATE_EVENTS = 6
 
 _props_cache: dict[str, dict] = {}
 _props_locks: dict[str, asyncio.Lock] = {}
+_alt_pitcher_k_lookup_locks: dict[str, asyncio.Lock] = {}
+_alt_pitcher_k_event_market_locks: dict[str, asyncio.Lock] = {}
 logger = logging.getLogger("ev_tracker")
 
 
@@ -154,6 +164,54 @@ def _resolve_scan_player_prop_markets(sport: str | None = None) -> list[str]:
 
 def _prop_cache_slot(sport: str) -> str:
     return f"{PLAYER_PROPS_SURFACE}:{PLAYER_PROP_CACHE_VERSION}:{sport}"
+
+
+def _format_lookup_line_value(value: float | int) -> str:
+    parsed = _to_line_numeric(value)
+    if parsed is None:
+        raise ValueError("line_value is required")
+    if float(parsed).is_integer():
+        return str(int(parsed))
+    return format(float(parsed), "g")
+
+
+def _alt_pitcher_k_lookup_cache_key(
+    *,
+    game_date: str | None,
+    team: str | None,
+    opponent: str | None,
+    player_name: str,
+    line_value: float,
+) -> str:
+    return ":".join(
+        [
+            ALT_PITCHER_K_LOOKUP_CACHE_PREFIX,
+            str(game_date or "").strip() or "any-date",
+            _canonical_team_name(team, sport=ALT_PITCHER_K_LOOKUP_SPORT) or "any-team",
+            _canonical_team_name(opponent, sport=ALT_PITCHER_K_LOOKUP_SPORT) or "any-opponent",
+            _canonical_player_name(player_name) or "unknown-player",
+            _format_lookup_line_value(line_value),
+        ]
+    )
+
+
+def _alt_pitcher_k_event_market_cache_key(
+    *,
+    sport: str,
+    event_id: str,
+    markets: list[str],
+) -> str:
+    normalized_markets = ",".join(
+        sorted(str(market or "").strip().lower() for market in markets if str(market or "").strip())
+    ) or "none"
+    return ":".join(
+        [
+            ALT_PITCHER_K_EVENT_MARKET_CACHE_PREFIX,
+            str(sport or "").strip().lower() or "unknown-sport",
+            str(event_id or "").strip() or "unknown-event",
+            normalized_markets,
+        ]
+    )
 
 
 def _should_bypass_prop_cache(source: str | None) -> bool:
@@ -351,6 +409,36 @@ async def _fetch_prop_market_for_event(*, sport: str, event_id: str, markets: li
         raise
 
 
+async def _get_alt_pitcher_k_cached_event_market_payload(
+    *,
+    sport: str,
+    event_id: str,
+    markets: list[str],
+    source: str,
+) -> dict:
+    cache_key = _alt_pitcher_k_event_market_cache_key(
+        sport=sport,
+        event_id=event_id,
+        markets=markets,
+    )
+    if cache_key not in _alt_pitcher_k_event_market_locks:
+        _alt_pitcher_k_event_market_locks[cache_key] = asyncio.Lock()
+
+    async with _alt_pitcher_k_event_market_locks[cache_key]:
+        cached_payload = get_json(cache_key)
+        if isinstance(cached_payload, dict):
+            return cached_payload
+
+        payload, _resp = await _fetch_prop_market_for_event(
+            sport=sport,
+            event_id=event_id,
+            markets=markets,
+            source=source,
+        )
+        set_json(cache_key, payload, ALT_PITCHER_K_LOOKUP_TTL_SECONDS)
+        return payload
+
+
 def _extract_market_meta(bookmakers: list[dict], book_key: str, market_key: str) -> dict | None:
     for bookmaker in bookmakers:
         if bookmaker.get("key") != book_key:
@@ -406,6 +494,52 @@ def _build_prop_market_book_pairs(
             }
 
     return selection_pairs_by_market_book, deeplink_context_by_market_book
+
+
+def _build_alt_pitcher_k_ladder_entries(
+    *,
+    bookmakers: list[dict],
+) -> tuple[dict[str, dict[tuple[str, float | None], dict[str, dict]]], dict[str, dict[str, str | None]]]:
+    selection_entries_by_book: dict[str, dict[tuple[str, float | None], dict[str, dict]]] = {}
+    deeplink_context_by_book: dict[str, dict[str, str | None]] = {}
+
+    for book_key in PLAYER_PROP_BOOKS.keys():
+        book_market = _extract_market_meta(bookmakers, book_key, ALT_PITCHER_K_LOOKUP_MARKET_KEY)
+        if not book_market:
+            continue
+
+        selections: dict[tuple[str, float | None], dict[str, dict]] = {}
+        for outcome in book_market["outcomes"] or []:
+            side = _normalize_prop_outcome_side(
+                outcome.get("name"),
+                market_key=ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+            )
+            if side not in {"over", "under"}:
+                continue
+
+            player_name = _extract_player_name(outcome.get("description"))
+            if not player_name:
+                continue
+
+            line_value = _to_line_numeric(outcome.get("point"))
+            if line_value is None:
+                continue
+
+            normalized_outcome = dict(outcome)
+            normalized_outcome["name"] = side.title()
+            normalized_outcome["point"] = line_value
+            selections.setdefault((player_name, line_value), {})[side] = normalized_outcome
+
+        if not selections:
+            continue
+
+        selection_entries_by_book[book_key] = selections
+        deeplink_context_by_book[book_key] = {
+            "market_link": book_market.get("market_link"),
+            "event_link": book_market.get("event_link"),
+        }
+
+    return selection_entries_by_book, deeplink_context_by_book
 
 
 def _empty_prop_market_event_counts(target_markets: list[str]) -> dict[str, int]:
@@ -598,6 +732,34 @@ def _book_line_pairs_for_player(
         values.append((float(line_value), pair))
     values.sort(key=lambda item: item[0])
     return values
+
+
+def _merge_selection_pairs_by_book(
+    *,
+    primary_selection_pairs_by_book: dict[str, dict[tuple[str, float | None], dict[str, dict]]],
+    secondary_selection_pairs_by_book: dict[str, dict[tuple[str, float | None], dict[str, dict]]],
+) -> dict[str, dict[tuple[str, float | None], dict[str, dict]]]:
+    merged: dict[str, dict[tuple[str, float | None], dict[str, dict]]] = {
+        book_key: dict(selection_pairs)
+        for book_key, selection_pairs in primary_selection_pairs_by_book.items()
+    }
+
+    for book_key, selection_pairs in secondary_selection_pairs_by_book.items():
+        merged_pairs = merged.setdefault(book_key, {})
+        for pair_key, pair in selection_pairs.items():
+            merged_pairs.setdefault(pair_key, pair)
+
+    return merged
+
+
+def _reference_book_count(reference_estimates: list[dict[str, Any]]) -> int:
+    return len(
+        {
+            str(estimate.get("book_key") or "").strip()
+            for estimate in reference_estimates
+            if str(estimate.get("book_key") or "").strip()
+        }
+    )
 
 
 def _interpolate_logit_probability(
@@ -1036,6 +1198,50 @@ def _parse_commence_time(value: str | None) -> datetime | None:
         return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except Exception:
         return None
+
+
+def _parse_iso_lookup_date(value: str | None) -> date | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError as exc:
+        raise ValueError("game_date must be YYYY-MM-DD") from exc
+
+
+def _alt_pitcher_k_lookup_matches_event(
+    event_payload: dict,
+    *,
+    team_key: str | None,
+    opponent_key: str | None,
+    game_date: date | None,
+) -> bool:
+    home_key = _canonical_team_name(event_payload.get("home_team"), sport=ALT_PITCHER_K_LOOKUP_SPORT)
+    away_key = _canonical_team_name(event_payload.get("away_team"), sport=ALT_PITCHER_K_LOOKUP_SPORT)
+    if team_key and team_key not in {home_key, away_key}:
+        return False
+    if opponent_key and opponent_key not in {home_key, away_key}:
+        return False
+    if team_key and opponent_key and {team_key, opponent_key} != {home_key, away_key}:
+        return False
+
+    if game_date is None:
+        return True
+    commence_dt = _parse_commence_time(str(event_payload.get("commence_time") or ""))
+    if commence_dt is None:
+        return False
+    return commence_dt.date() == game_date
+
+
+def _build_alt_pitcher_k_lookup_event_payload(event_payload: dict) -> dict[str, str | None]:
+    away = str(event_payload.get("away_team") or "").strip()
+    home = str(event_payload.get("home_team") or "").strip()
+    return {
+        "event_id": str(event_payload.get("id") or "").strip() or None,
+        "event": f"{away} @ {home}".strip(),
+        "commence_time": str(event_payload.get("commence_time") or "").strip() or None,
+    }
 
 
 def _pick_best_outcome_offer(offers: list[dict], price_key: str) -> dict | None:
@@ -1614,6 +1820,647 @@ def _build_prizepicks_comparison_cards(
         matched += 1
 
     return cards, {"matched": matched, "unmatched": unmatched, "filtered": filtered}
+
+
+def _display_bookmakers(book_keys: list[str]) -> list[str]:
+    displays: list[str] = []
+    seen: set[str] = set()
+    for book_key in book_keys:
+        display = PLAYER_PROP_BOOKS.get(str(book_key or "").strip(), str(book_key or "").strip())
+        if not display or display in seen:
+            continue
+        seen.add(display)
+        displays.append(display)
+    return displays
+
+
+def _build_alt_pitcher_k_observed_offers(
+    *,
+    selection_entries_by_book: dict[str, dict[tuple[str, float | None], dict[str, dict]]],
+    deeplink_context_by_book: dict[str, dict[str, str | None]],
+    player_name: str,
+    line_value: float,
+) -> list[dict[str, Any]]:
+    target_player_key = _canonical_player_name(player_name)
+    observed_offers: list[dict[str, Any]] = []
+
+    for book_key, selections in selection_entries_by_book.items():
+        deeplink_context = deeplink_context_by_book.get(book_key) or {}
+        book_display = PLAYER_PROP_BOOKS.get(book_key, book_key)
+        for (candidate_player_name, candidate_line_value), pair in selections.items():
+            if candidate_line_value is None:
+                continue
+            if _canonical_player_name(candidate_player_name) != target_player_key:
+                continue
+
+            over_outcome = pair.get("over")
+            under_outcome = pair.get("under")
+            if not over_outcome and not under_outcome:
+                continue
+
+            over_deeplink, _ = resolve_sportsbook_deeplink(
+                sportsbook=book_display,
+                selection_link=(over_outcome or {}).get("link") or (over_outcome or {}).get("url"),
+                market_link=deeplink_context.get("market_link"),
+                event_link=deeplink_context.get("event_link"),
+            )
+            under_deeplink, _ = resolve_sportsbook_deeplink(
+                sportsbook=book_display,
+                selection_link=(under_outcome or {}).get("link") or (under_outcome or {}).get("url"),
+                market_link=deeplink_context.get("market_link"),
+                event_link=deeplink_context.get("event_link"),
+            )
+
+            observed_offers.append(
+                {
+                    "sportsbook": book_display,
+                    "line_value": float(candidate_line_value),
+                    "over_odds": float(over_outcome["price"]) if over_outcome and over_outcome.get("price") is not None else None,
+                    "over_deeplink_url": over_deeplink,
+                    "under_odds": float(under_outcome["price"]) if under_outcome and under_outcome.get("price") is not None else None,
+                    "under_deeplink_url": under_deeplink,
+                }
+            )
+
+    observed_offers.sort(
+        key=lambda offer: (
+            abs(float(offer.get("line_value") or 0.0) - float(line_value)),
+            float(offer.get("line_value") or 0.0),
+            str(offer.get("sportsbook") or ""),
+        )
+    )
+    return observed_offers
+
+
+def _target_line_offers_from_observed_offers(
+    observed_offers: list[dict[str, Any]],
+    *,
+    line_value: float,
+) -> list[dict[str, Any]]:
+    target_offers = [
+        {
+            "sportsbook": str(offer.get("sportsbook") or ""),
+            "over_odds": offer.get("over_odds"),
+            "over_deeplink_url": offer.get("over_deeplink_url"),
+            "under_odds": offer.get("under_odds"),
+            "under_deeplink_url": offer.get("under_deeplink_url"),
+        }
+        for offer in observed_offers
+        if _to_line_numeric(offer.get("line_value")) == line_value
+    ]
+    target_offers.sort(key=lambda offer: str(offer.get("sportsbook") or ""))
+    return target_offers
+
+
+def _find_alt_pitcher_k_references(
+    *,
+    reference_index: dict[tuple[str, str, str, float | None], dict],
+    player_name: str,
+    team: str | None,
+    line_value: float,
+) -> list[dict[str, Any]]:
+    player_key = _canonical_player_name(player_name)
+    team_key = _canonical_team_name(team, sport=ALT_PITCHER_K_LOOKUP_SPORT) if team else None
+    matching_entries = [
+        entry
+        for (candidate_player_key, candidate_team_key, candidate_market_key, candidate_line_value), entry in reference_index.items()
+        if candidate_player_key == player_key
+        and candidate_market_key == ALT_PITCHER_K_LOOKUP_MARKET_KEY
+        and candidate_line_value == line_value
+        and (team_key is None or candidate_team_key == team_key)
+    ]
+    return matching_entries
+
+
+def _alt_pitcher_k_lookup_confidence_bucket(paired_books_count: int) -> tuple[str, str]:
+    if paired_books_count < 2:
+        return "insufficient_depth", "fewer_than_two_paired_books_exact_line"
+    if paired_books_count == 2:
+        return "low", "two_paired_books_exact_line"
+    if paired_books_count == 3:
+        return "normal", "three_paired_books_exact_line"
+    return "high", "four_or_more_paired_books_exact_line"
+
+
+def _alt_pitcher_k_lookup_response_with_cache(payload: dict[str, Any], *, cache_hit: bool) -> dict[str, Any]:
+    response = dict(payload)
+    cache_payload = dict(response.get("cache") or {})
+    cache_payload["hit"] = cache_hit
+    cache_payload.setdefault("ttl_seconds", ALT_PITCHER_K_LOOKUP_TTL_SECONDS)
+    response["cache"] = cache_payload
+    return response
+
+
+def _build_alt_pitcher_k_lookup_base_response(
+    *,
+    player_name: str,
+    team: str | None,
+    opponent: str | None,
+    line_value: float,
+    game_date: str | None,
+) -> dict[str, Any]:
+    return {
+        "sport": ALT_PITCHER_K_LOOKUP_SPORT,
+        "market_key": ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+        "lookup": {
+            "player_name": player_name,
+            "team": team or None,
+            "opponent": opponent or None,
+            "line_value": line_value,
+            "game_date": game_date or None,
+        },
+        "resolution_mode": None,
+        "event": None,
+        "consensus": None,
+        "confidence": None,
+        "warning": None,
+        "cache": {
+            "hit": False,
+            "ttl_seconds": ALT_PITCHER_K_LOOKUP_TTL_SECONDS,
+        },
+        "observed_offers": [],
+        "candidate_events": [],
+    }
+
+
+def _build_alt_pitcher_k_candidate_events(event_payloads: list[dict]) -> list[dict[str, str | None]]:
+    candidate_events: list[dict[str, str | None]] = []
+    seen_keys: set[tuple[str | None, str, str | None]] = set()
+    for event_payload in event_payloads:
+        candidate_event = _build_alt_pitcher_k_lookup_event_payload(event_payload)
+        candidate_key = (
+            candidate_event.get("event_id"),
+            str(candidate_event.get("event") or ""),
+            candidate_event.get("commence_time"),
+        )
+        if candidate_key in seen_keys:
+            continue
+        seen_keys.add(candidate_key)
+        candidate_events.append(candidate_event)
+    return candidate_events
+
+
+def _build_alt_pitcher_k_lookup_warning(
+    *,
+    status: str,
+    team: str | None,
+    opponent: str | None,
+    game_date: str | None,
+) -> str | None:
+    if all(str(value or "").strip() for value in (team, opponent, game_date)):
+        return None
+    if status == "ambiguous_event":
+        return "Player name + exact line matched multiple live events. Add pitcher team, opponent, or game date to narrow it down."
+    if status == "not_found":
+        return "Player name + exact line alone did not find a unique live alt K line. Add pitcher team, opponent, or game date if you have it."
+    return None
+
+
+def _build_alt_pitcher_k_lookup_consensus(reference: dict[str, Any]) -> dict[str, Any]:
+    offers = [
+        {
+            "sportsbook": str(offer.get("sportsbook") or ""),
+            "over_odds": float(offer["over_odds"]) if offer.get("over_odds") is not None else None,
+            "over_deeplink_url": offer.get("over_deeplink_url"),
+            "under_odds": float(offer["under_odds"]) if offer.get("under_odds") is not None else None,
+            "under_deeplink_url": offer.get("under_deeplink_url"),
+        }
+        for offer in list(reference.get("offers") or [])
+    ]
+    over_prob = float(reference.get("consensus_over_prob") or 0.0)
+    under_prob = float(reference.get("consensus_under_prob") or 0.0)
+    return {
+        "over_prob": over_prob,
+        "under_prob": under_prob,
+        "fair_over_odds": _reference_american_from_true_prob(over_prob),
+        "fair_under_odds": _reference_american_from_true_prob(under_prob),
+        "paired_books": list(reference.get("exact_line_bookmakers") or []),
+        "paired_books_count": int(reference.get("exact_line_bookmaker_count") or 0),
+        "reference_books": list(reference.get("exact_line_bookmakers") or []),
+        "reference_books_count": int(reference.get("exact_line_bookmaker_count") or 0),
+        "best_over_sportsbook": reference.get("best_over_sportsbook"),
+        "best_over_odds": reference.get("best_over_odds"),
+        "best_over_deeplink_url": reference.get("best_over_deeplink_url"),
+        "best_under_sportsbook": reference.get("best_under_sportsbook"),
+        "best_under_odds": reference.get("best_under_odds"),
+        "best_under_deeplink_url": reference.get("best_under_deeplink_url"),
+        "offers": offers,
+    }
+
+
+def _build_alt_pitcher_k_lookup_confidence_payload(
+    *,
+    bucket: str,
+    paired_books_count: int,
+    reason: str,
+    repo_label: str | None = None,
+    repo_score: float | None = None,
+    prob_std: float | None = None,
+) -> dict[str, Any]:
+    return {
+        "bucket": bucket,
+        "paired_books_count": paired_books_count,
+        "repo_label": repo_label,
+        "repo_score": repo_score,
+        "prob_std": prob_std,
+        "reason": reason,
+    }
+
+
+def _build_alt_pitcher_k_modeled_consensus(
+    *,
+    aggregation: dict[str, Any],
+    confidence_score: float | None,
+    line_value: float,
+    observed_offers: list[dict[str, Any]],
+) -> dict[str, Any]:
+    raw_true_prob = _clip_probability(float(aggregation.get("raw_true_prob") or aggregation.get("true_prob") or 0.5))
+    true_prob, _shrink_factor = _shrink_probability_toward_even(
+        raw_true_prob,
+        confidence_score=confidence_score,
+    )
+    target_line_offers = _target_line_offers_from_observed_offers(
+        observed_offers,
+        line_value=line_value,
+    )
+    best_over_offer = _pick_best_outcome_offer(target_line_offers, "over_odds")
+    best_under_offer = _pick_best_outcome_offer(target_line_offers, "under_odds")
+    reference_books = _display_bookmakers(list(aggregation.get("reference_bookmakers") or []))
+
+    return {
+        "over_prob": round(float(true_prob), 4),
+        "under_prob": round(float(1.0 - true_prob), 4),
+        "fair_over_odds": _reference_american_from_true_prob(true_prob),
+        "fair_under_odds": _reference_american_from_true_prob(1.0 - true_prob),
+        "paired_books": [],
+        "paired_books_count": 0,
+        "reference_books": reference_books,
+        "reference_books_count": len(reference_books),
+        "best_over_sportsbook": best_over_offer.get("sportsbook") if best_over_offer else None,
+        "best_over_odds": best_over_offer.get("over_odds") if best_over_offer else None,
+        "best_over_deeplink_url": best_over_offer.get("over_deeplink_url") if best_over_offer else None,
+        "best_under_sportsbook": best_under_offer.get("sportsbook") if best_under_offer else None,
+        "best_under_odds": best_under_offer.get("under_odds") if best_under_offer else None,
+        "best_under_deeplink_url": best_under_offer.get("under_deeplink_url") if best_under_offer else None,
+        "offers": target_line_offers,
+    }
+
+
+async def _lookup_alt_pitcher_k_exact_line_uncached(
+    *,
+    player_name: str,
+    team: str | None,
+    opponent: str | None,
+    line_value: float,
+    game_date: str | None,
+    source: str,
+) -> dict[str, Any]:
+    base_response = _build_alt_pitcher_k_lookup_base_response(
+        player_name=player_name,
+        team=team,
+        opponent=opponent,
+        line_value=line_value,
+        game_date=game_date,
+    )
+    parsed_game_date = _parse_iso_lookup_date(game_date)
+    team_key = _canonical_team_name(team, sport=ALT_PITCHER_K_LOOKUP_SPORT) if team else None
+    opponent_key = _canonical_team_name(opponent, sport=ALT_PITCHER_K_LOOKUP_SPORT) if opponent else None
+
+    events, _events_response = await fetch_events(ALT_PITCHER_K_LOOKUP_SPORT, source=source)
+    candidate_events = [
+        event
+        for event in events
+        if _alt_pitcher_k_lookup_matches_event(
+            event,
+            team_key=team_key,
+            opponent_key=opponent_key,
+            game_date=parsed_game_date,
+        )
+    ]
+    if not candidate_events:
+        response = {
+            **base_response,
+            "status": "not_found",
+        }
+        response["warning"] = _build_alt_pitcher_k_lookup_warning(
+            status="not_found",
+            team=team,
+            opponent=opponent,
+            game_date=game_date,
+        )
+        return response
+
+    if len(candidate_events) > ALT_PITCHER_K_LOOKUP_MAX_CANDIDATE_EVENTS:
+        return {
+            **base_response,
+            "status": "ambiguous_event",
+            "candidate_events": _build_alt_pitcher_k_candidate_events(candidate_events),
+            "warning": (
+                "This lookup would need to inspect too many live MLB events for one admin request. "
+                "Add pitcher team, opponent, or game date to narrow it down."
+            ),
+        }
+
+    exact_matches: list[tuple[dict, dict[str, Any], list[dict[str, Any]]]] = []
+    modeled_matches: list[tuple[dict, dict[str, Any], dict[str, Any], list[dict[str, Any]], bool]] = []
+    observed_only_matches: list[tuple[dict, list[dict[str, Any]]]] = []
+    weight_overrides = get_player_prop_weight_overrides()
+    allow_normal_line_anchor = len(candidate_events) == 1
+    for candidate_event in candidate_events:
+        markets_to_fetch = [ALT_PITCHER_K_LOOKUP_MARKET_KEY]
+        if allow_normal_line_anchor:
+            markets_to_fetch.append(ALT_PITCHER_K_LOOKUP_NORMAL_MARKET_KEY)
+        matched_event_payload = await _get_alt_pitcher_k_cached_event_market_payload(
+            sport=ALT_PITCHER_K_LOOKUP_SPORT,
+            event_id=str(candidate_event.get("id") or ""),
+            markets=markets_to_fetch,
+            source=source,
+        )
+        selection_pairs_by_market_book, _deeplink_context_by_market_book = _build_prop_market_book_pairs(
+            bookmakers=matched_event_payload.get("bookmakers") or [],
+            target_markets=markets_to_fetch,
+        )
+        selection_pairs_by_book = selection_pairs_by_market_book.get(ALT_PITCHER_K_LOOKUP_MARKET_KEY, {})
+        normal_line_selection_pairs_by_book = selection_pairs_by_market_book.get(ALT_PITCHER_K_LOOKUP_NORMAL_MARKET_KEY, {})
+        selection_entries_by_book, deeplink_context_by_book = _build_alt_pitcher_k_ladder_entries(
+            bookmakers=matched_event_payload.get("bookmakers") or [],
+        )
+        observed_offers = _build_alt_pitcher_k_observed_offers(
+            selection_entries_by_book=selection_entries_by_book,
+            deeplink_context_by_book=deeplink_context_by_book,
+            player_name=player_name,
+            line_value=line_value,
+        )
+        has_any_paired_player_lines = any(
+            _canonical_player_name(candidate_player_name) == _canonical_player_name(player_name)
+            for book_pairs in selection_pairs_by_book.values()
+            for (candidate_player_name, _candidate_line_value) in book_pairs.keys()
+        )
+        reference_index, _fallback_index = _build_exact_line_reference_index(
+            event_payload=matched_event_payload,
+            target_markets=[ALT_PITCHER_K_LOOKUP_MARKET_KEY],
+            player_context_lookup=None,
+        )
+        matched_references = _find_alt_pitcher_k_references(
+            reference_index=reference_index,
+            player_name=player_name,
+            team=team,
+            line_value=line_value,
+        )
+        for matched_reference in matched_references:
+            exact_matches.append((matched_event_payload, matched_reference, observed_offers))
+        if matched_references:
+            continue
+
+        reference_estimates = _build_reference_estimates_for_side(
+            selection_pairs_by_book=selection_pairs_by_book,
+            current_book_key="__lookup__",
+            player_name=player_name,
+            line_value=line_value,
+            side="over",
+            model_key=PLAYER_PROP_MODEL_V2_LIVE,
+        )
+        normal_line_anchor_used = False
+        if (
+            allow_normal_line_anchor
+            and reference_estimates
+            and _reference_book_count(reference_estimates) < 2
+            and normal_line_selection_pairs_by_book
+        ):
+            anchored_selection_pairs_by_book = _merge_selection_pairs_by_book(
+                primary_selection_pairs_by_book=selection_pairs_by_book,
+                secondary_selection_pairs_by_book=normal_line_selection_pairs_by_book,
+            )
+            anchored_reference_estimates = _build_reference_estimates_for_side(
+                selection_pairs_by_book=anchored_selection_pairs_by_book,
+                current_book_key="__lookup__",
+                player_name=player_name,
+                line_value=line_value,
+                side="over",
+                model_key=PLAYER_PROP_MODEL_V2_LIVE,
+            )
+            if _reference_book_count(anchored_reference_estimates) > _reference_book_count(reference_estimates):
+                reference_estimates = anchored_reference_estimates
+                normal_line_anchor_used = True
+        if reference_estimates:
+            aggregation = _aggregate_reference_estimates(
+                reference_estimates=reference_estimates,
+                model_key=PLAYER_PROP_MODEL_V2_LIVE,
+                market_key=ALT_PITCHER_K_LOOKUP_MARKET_KEY,
+                weight_overrides=weight_overrides,
+            )
+            if aggregation:
+                confidence_label, confidence_score, prob_std = _compute_confidence(
+                    reference_bookmakers=list(aggregation.get("reference_bookmakers") or []),
+                    reference_probs=list(aggregation.get("reference_probs") or []),
+                )
+                modeled_matches.append(
+                    (
+                        matched_event_payload,
+                        aggregation,
+                        {
+                            "repo_label": confidence_label,
+                            "repo_score": confidence_score,
+                            "prob_std": prob_std,
+                        },
+                        observed_offers,
+                        normal_line_anchor_used,
+                    )
+                )
+                continue
+
+        if observed_offers and not has_any_paired_player_lines:
+            observed_only_matches.append((matched_event_payload, observed_offers))
+
+    if len(exact_matches) > 1:
+        response = {
+            **base_response,
+            "status": "ambiguous_event",
+            "candidate_events": _build_alt_pitcher_k_candidate_events(
+                [event_payload for event_payload, _reference, _observed_offers in exact_matches]
+            ),
+        }
+        response["warning"] = _build_alt_pitcher_k_lookup_warning(
+            status="ambiguous_event",
+            team=team,
+            opponent=opponent,
+            game_date=game_date,
+        )
+        return response
+
+    if len(modeled_matches) > 1:
+        response = {
+            **base_response,
+            "status": "ambiguous_event",
+            "candidate_events": _build_alt_pitcher_k_candidate_events(
+                [event_payload for event_payload, _aggregation, _repo_confidence, _observed_offers, _normal_line_anchor_used in modeled_matches]
+            ),
+        }
+        response["warning"] = _build_alt_pitcher_k_lookup_warning(
+            status="ambiguous_event",
+            team=team,
+            opponent=opponent,
+            game_date=game_date,
+        )
+        return response
+
+    if len(observed_only_matches) > 1:
+        response = {
+            **base_response,
+            "status": "ambiguous_event",
+            "candidate_events": _build_alt_pitcher_k_candidate_events(
+                [event_payload for event_payload, _observed_offers in observed_only_matches]
+            ),
+        }
+        response["warning"] = _build_alt_pitcher_k_lookup_warning(
+            status="ambiguous_event",
+            team=team,
+            opponent=opponent,
+            game_date=game_date,
+        )
+        return response
+
+    if not exact_matches and not modeled_matches and not observed_only_matches:
+        response = {
+            **base_response,
+            "status": "not_found",
+        }
+        if len(candidate_events) == 1:
+            response["event"] = _build_alt_pitcher_k_lookup_event_payload(candidate_events[0])
+        response["warning"] = _build_alt_pitcher_k_lookup_warning(
+            status="not_found",
+            team=team,
+            opponent=opponent,
+            game_date=game_date,
+        )
+        return response
+
+    if exact_matches:
+        matched_event_payload, matched_reference, observed_offers = exact_matches[0]
+        event_payload = _build_alt_pitcher_k_lookup_event_payload(matched_event_payload)
+        paired_books_count = int(matched_reference.get("exact_line_bookmaker_count") or 0)
+        confidence_bucket, confidence_reason = _alt_pitcher_k_lookup_confidence_bucket(paired_books_count)
+        return {
+            **base_response,
+            "status": "ok" if paired_books_count >= 2 else "insufficient_depth",
+            "resolution_mode": "exact_pair",
+            "event": event_payload,
+            "consensus": _build_alt_pitcher_k_lookup_consensus(matched_reference),
+            "confidence": _build_alt_pitcher_k_lookup_confidence_payload(
+                bucket=confidence_bucket,
+                paired_books_count=paired_books_count,
+                repo_label=matched_reference.get("confidence_label"),
+                repo_score=matched_reference.get("confidence_score"),
+                prob_std=matched_reference.get("prob_std"),
+                reason=confidence_reason,
+            ),
+            "observed_offers": observed_offers,
+        }
+
+    if modeled_matches:
+        matched_event_payload, aggregation, repo_confidence, observed_offers, normal_line_anchor_used = modeled_matches[0]
+        event_payload = _build_alt_pitcher_k_lookup_event_payload(matched_event_payload)
+        reference_books_count = len(list(aggregation.get("reference_bookmakers") or []))
+        confidence_bucket, _confidence_reason = _alt_pitcher_k_lookup_confidence_bucket(reference_books_count)
+        modeled_reason = {
+            0: "modeled_from_nearby_paired_lines_without_reference_books",
+            1: "modeled_from_nearby_paired_lines_single_reference_book",
+            2: "modeled_from_nearby_paired_lines_two_reference_books",
+            3: "modeled_from_nearby_paired_lines_three_reference_books",
+        }.get(reference_books_count, "modeled_from_nearby_paired_lines_four_or_more_reference_books")
+        if normal_line_anchor_used:
+            modeled_reason = f"{modeled_reason}_with_normal_line_anchor"
+        return {
+            **base_response,
+            "status": "ok" if reference_books_count >= 2 else "insufficient_depth",
+            "resolution_mode": "modeled_nearby_pairs",
+            "event": event_payload,
+            "consensus": _build_alt_pitcher_k_modeled_consensus(
+                aggregation=aggregation,
+                confidence_score=repo_confidence.get("repo_score"),
+                line_value=line_value,
+                observed_offers=observed_offers,
+            ),
+            "confidence": _build_alt_pitcher_k_lookup_confidence_payload(
+                bucket=confidence_bucket,
+                paired_books_count=reference_books_count,
+                repo_label=repo_confidence.get("repo_label"),
+                repo_score=repo_confidence.get("repo_score"),
+                prob_std=repo_confidence.get("prob_std"),
+                reason=modeled_reason,
+            ),
+            "warning": (
+                "Fair odds are modeled from nearby paired alt lines because no exact target over/under pair was available."
+                if not normal_line_anchor_used
+                else "Fair odds are modeled from nearby paired alt lines, with the normal pitcher strikeouts market used as a secondary anchor."
+            ),
+            "observed_offers": observed_offers,
+        }
+
+    matched_event_payload, observed_offers = observed_only_matches[0]
+    event_payload = _build_alt_pitcher_k_lookup_event_payload(matched_event_payload)
+    return {
+        **base_response,
+        "status": "insufficient_depth",
+        "resolution_mode": "observed_only_one_sided",
+        "event": event_payload,
+        "confidence": _build_alt_pitcher_k_lookup_confidence_payload(
+            bucket="insufficient_depth",
+            paired_books_count=0,
+            reason="one_sided_ladder_only_no_paired_nearby_anchors",
+        ),
+        "warning": "Only one-sided alt ladder evidence was available for this player/event. Showing observed books and lines without fair pricing.",
+        "observed_offers": observed_offers,
+    }
+
+
+async def lookup_alt_pitcher_k_exact_line(
+    *,
+    player_name: str,
+    team: str | None,
+    opponent: str | None,
+    line_value: float,
+    game_date: str | None,
+    source: str = "ops_alt_pitcher_k_lookup",
+) -> dict[str, Any]:
+    normalized_player_name = str(player_name or "").strip()
+    normalized_team = str(team or "").strip() or None
+    normalized_opponent = str(opponent or "").strip() or None
+    if not normalized_player_name:
+        raise ValueError("player_name is required")
+
+    normalized_line_value = _to_line_numeric(line_value)
+    if normalized_line_value is None:
+        raise ValueError("line_value is required")
+
+    parsed_game_date = _parse_iso_lookup_date(game_date)
+    normalized_game_date = parsed_game_date.isoformat() if parsed_game_date else None
+    cache_key = _alt_pitcher_k_lookup_cache_key(
+        game_date=normalized_game_date,
+        team=normalized_team,
+        opponent=normalized_opponent,
+        player_name=normalized_player_name,
+        line_value=normalized_line_value,
+    )
+    if cache_key not in _alt_pitcher_k_lookup_locks:
+        _alt_pitcher_k_lookup_locks[cache_key] = asyncio.Lock()
+
+    async with _alt_pitcher_k_lookup_locks[cache_key]:
+        cached_payload = get_json(cache_key)
+        if isinstance(cached_payload, dict):
+            return _alt_pitcher_k_lookup_response_with_cache(cached_payload, cache_hit=True)
+
+        live_payload = await _lookup_alt_pitcher_k_exact_line_uncached(
+            player_name=normalized_player_name,
+            team=normalized_team,
+            opponent=normalized_opponent,
+            line_value=normalized_line_value,
+            game_date=normalized_game_date,
+            source=source,
+        )
+        live_response = _alt_pitcher_k_lookup_response_with_cache(live_payload, cache_hit=False)
+        set_json(cache_key, live_response, ALT_PITCHER_K_LOOKUP_TTL_SECONDS)
+        return live_response
 
 
 async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:

@@ -25,7 +25,7 @@ Suggested structure:
 
 Recommended routing:
 
-- `DISCORD_ALERT_WEBHOOK_URL` -> alert/beta-alerts channel for the `10:30` and `15:30` board drops
+- `DISCORD_ALERT_WEBHOOK_URL` -> alert/beta-alerts channel for the `09:30` and `15:00` board drops
 - `DISCORD_DEBUG_WEBHOOK_URL` -> debug/ops channel
 - `DISCORD_WEBHOOK_URL` -> fallback only
 
