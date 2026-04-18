@@ -2,6 +2,15 @@
 
 This document is the short runbook for the friends-only trusted beta.
 
+## Current Release Baseline
+
+- Trusted-beta release line: `2.2.0-beta.2`
+- Release commit on `main`: `fa32d5f`
+- Production deploy checks completed:
+  - `/health` returned `200`
+  - `/ready` returned `200`
+  - `backend_api`, `backend_scheduler`, and `caddy` are running
+
 ## What Testers Should Expect
 
 - `main` is the beta branch and should feel stable enough to share.

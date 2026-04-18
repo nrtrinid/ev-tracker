@@ -11,6 +11,14 @@ Version labels use pre-release suffixes until the app is ready for outside users
 
 ### Added
 
+- No unreleased entries yet.
+
+## [2.2.0-beta.2] - 2026-04-17
+
+### Added
+
+- **Admin alt pitcher K lookup**
+  - Added an admin-only exact-line MLB alternate pitcher strikeout lookup flow with route protection, typed API bridge, dedicated response models, and targeted tests.
 - **MLB player props main-feed expansion**
   - Added `batter_home_runs` to the shared MLB player-prop market registry, frontend labels, and auto-settle path.
 - **Theme preference persistence**
@@ -19,10 +27,13 @@ Version labels use pre-release suffixes until the app is ready for outside users
 
 ### Changed
 
+- **Trusted-beta UX and search reliability**
+  - Improved Markets search behavior so player-prop matching includes market labels/keys and straight-bet search accepts user-facing market terms.
+  - Improved Promos filter transparency by exposing separate prop/game-line book controls and consistent reset/chip behavior.
+  - Updated scanner empty-state guidance copy to match active controls.
 - **Discord routing safety**
-  - Kept alert-path Discord delivery enabled by default (`DISCORD_ENABLE_ALERT_ROUTE=1`) so regular scheduled scans continue notifying as configured.
-  - Routed `/api/ops/trigger/test-discord-alert` through debug/test delivery by default to avoid alert-channel noise during testing (`DISCORD_TEST_ALERT_MESSAGE_TYPE=test`).
-  - Added an explicit override (`DISCORD_TEST_ALERT_MESSAGE_TYPE=alert`) for intentional alert-path test validation.
+  - Hardened debug/test routing so heartbeat/test traffic only falls back to primary Discord webhook/role when explicitly enabled.
+  - Added env/docs/test coverage for `DISCORD_ALLOW_DEBUG_FALLBACK_TO_PRIMARY` behavior.
 - **MLB player props**
   - Promoted the six standard MLB sportsbook markets in the shared player-props feed: pitcher strikeouts, total bases, hits, hits + runs + RBIs, home runs, and batter strikeouts.
   - Kept the existing 3-book sportsbook gate and 2-book pick'em gate unchanged while expanding the market set.
@@ -41,9 +52,14 @@ Version labels use pre-release suffixes until the app is ready for outside users
   - Fixed onboarding reset sync so backend reset state now authoritatively clears stale local onboarding flags.
   - Updated settings onboarding summary to split Daily Drops tutorial progress from Home/Scanner review prompts.
   - Removed the "Current theme" subtitle under the settings light/dark controls.
+- **Research diagnostics clarity**
+  - Improved CLV research `By market` aggregation labels to include sport tags and preserve straight-bet market-type distinctions (ML/Spreads/Totals).
+- **Release hardening**
+  - Cleared admin research dashboard production lint failure by removing an unused diagnostics helper component.
 
 ### Docs
 
+- Refreshed trusted-beta handoff and runbook context for the deployed trusted-beta baseline.
 - Updated README, PROJECT.md, DEPLOY.md, and docs/testing.md to match the current route surface, migration chain, and test command conventions.
 
 ## [2.2.0-beta.1] - 2026-04-01
@@ -182,6 +198,7 @@ Version labels use pre-release suffixes until the app is ready for outside users
 ---
 
 [2.2.0-beta.1]: https://github.com/nrtrinid/ev-tracker/compare/v2.2.0-alpha.4...v2.2.0-beta.1
+[2.2.0-beta.2]: https://github.com/nrtrinid/ev-tracker/compare/v2.2.0-beta.1...v2.2.0-beta.2
 [2.2.0-alpha.1]: https://github.com/nrtrinid/ev-tracker/compare/v2.1.0...v2.2.0-alpha.1
 [2.2.0-alpha.2]: https://github.com/nrtrinid/ev-tracker/compare/v2.2.0-alpha.1...v2.2.0-alpha.2
 [2.2.0-alpha.3]: https://github.com/nrtrinid/ev-tracker/compare/v2.2.0-alpha.2...v2.2.0-alpha.3
