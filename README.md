@@ -308,6 +308,7 @@ A small but meaningful test suite protects EV math, settlement/profit logic, sch
 | [database/README.md](./database/README.md) | Canonical migration chain and schema parity workflow |
 | [AGENTS.md](./AGENTS.md) | Agent-facing repo conventions, guardrails, and fast validation commands |
 | [HANDOFF.md](./HANDOFF.md) | Current focus, recent changes, open risks, and next concrete tasks |
+| [FUTURE_PLANS.md](./FUTURE_PLANS.md) | Living launch roadmap with must-ship, should-ship, and later priorities |
 
 ---
 
