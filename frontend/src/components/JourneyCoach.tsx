@@ -256,7 +256,10 @@ export function JourneyCoach({
             <button
               type="button"
               className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-              onClick={() => handleDismiss(candidate.persistStep!)}
+              onClick={() => {
+                setTemporarilyHiddenKey(candidate.key);
+                handleDismiss(candidate.persistStep!);
+              }}
               aria-label="Dismiss"
             >
               <X className="h-3.5 w-3.5" />

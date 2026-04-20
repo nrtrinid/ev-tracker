@@ -10,6 +10,8 @@ import type {
   BetCreate,
   BetUpdate,
   BetResult,
+  OnboardingEventRequest,
+  OnboardingState,
   PlayerPropBoardItem,
   PlayerPropBoardPageResponse,
   PlayerPropBoardPickEmCard,
@@ -405,11 +407,105 @@ export function useOnboardingState() {
   });
 }
 
+function applyOptimisticOnboardingEvent(
+  current: OnboardingState | null | undefined,
+  payload: OnboardingEventRequest,
+): OnboardingState {
+  const nowIso = new Date().toISOString();
+  const completed = current?.completed ?? [];
+  const dismissed = current?.dismissed ?? [];
+  const version = current?.version ?? 2;
+
+  if (payload.event === "reset") {
+    return {
+      version,
+      completed: [],
+      dismissed: [],
+      last_seen_at: nowIso,
+    };
+  }
+
+  if (!payload.step) {
+    return {
+      version,
+      completed,
+      dismissed,
+      last_seen_at: nowIso,
+    };
+  }
+
+  if (payload.event === "complete_step") {
+    const nextCompleted = completed.includes(payload.step)
+      ? completed
+      : [...completed, payload.step];
+    return {
+      version,
+      completed: nextCompleted,
+      dismissed: dismissed.filter((step) => step !== payload.step),
+      last_seen_at: nowIso,
+    };
+  }
+
+  if (payload.event === "dismiss_step") {
+    if (completed.includes(payload.step) || dismissed.includes(payload.step)) {
+      return {
+        version,
+        completed,
+        dismissed,
+        last_seen_at: nowIso,
+      };
+    }
+
+    return {
+      version,
+      completed,
+      dismissed: [...dismissed, payload.step],
+      last_seen_at: nowIso,
+    };
+  }
+
+  return {
+    version,
+    completed,
+    dismissed,
+    last_seen_at: nowIso,
+  };
+}
+
 export function useApplyOnboardingEvent() {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: api.applyOnboardingEvent,
+    onMutate: async (payload) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.onboardingState });
+      await queryClient.cancelQueries({ queryKey: queryKeys.settings });
+
+      const previousOnboardingState = queryClient.getQueryData<OnboardingState>(queryKeys.onboardingState);
+      const previousSettings = queryClient.getQueryData<Settings>(queryKeys.settings);
+      const baselineState = previousOnboardingState ?? previousSettings?.onboarding_state ?? null;
+      const optimisticState = applyOptimisticOnboardingEvent(baselineState, payload);
+
+      queryClient.setQueryData(queryKeys.onboardingState, optimisticState);
+      queryClient.setQueryData(queryKeys.settings, (current: Settings | undefined) => {
+        if (!current) return current;
+        return {
+          ...current,
+          onboarding_state: optimisticState,
+        };
+      });
+
+      return {
+        previousOnboardingState,
+        previousSettings,
+      };
+    },
+    onError: (_error, _payload, context) => {
+      if (!context) return;
+
+      queryClient.setQueryData(queryKeys.onboardingState, context.previousOnboardingState);
+      queryClient.setQueryData(queryKeys.settings, context.previousSettings);
+    },
     onSuccess: (nextState) => {
       queryClient.setQueryData(queryKeys.onboardingState, nextState);
       queryClient.setQueryData(queryKeys.settings, (current: Settings | undefined) => {
