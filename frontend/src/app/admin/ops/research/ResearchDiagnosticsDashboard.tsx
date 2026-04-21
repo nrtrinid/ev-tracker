@@ -273,7 +273,12 @@ function ResearchMarketBreakdown({ rows }: { rows?: ResearchOpportunityBreakdown
             <thead>
               <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
                 <th className="pb-1.5 text-left font-medium">Market</th>
-                <th className="pb-1.5 text-right font-medium">Count</th>
+                <th
+                  className="pb-1.5 text-right font-medium"
+                  title="Captured rows / valid close rows"
+                >
+                  Count (cap/valid)
+                </th>
                 <th className="pb-1.5 text-right font-medium" title="Beat close % (better than close)">
                   &gt;Close
                 </th>
@@ -284,7 +289,9 @@ function ResearchMarketBreakdown({ rows }: { rows?: ResearchOpportunityBreakdown
               {safeRows.map((row) => (
                 <tr key={row.key} className="border-t border-border/50">
                   <td className="py-1.5 pr-2 text-muted-foreground truncate">{row.key}</td>
-                  <td className="py-1.5 text-right font-mono tabular-nums">{formatCount(row.captured_count)}</td>
+                  <td className="py-1.5 text-right font-mono tabular-nums">
+                    {formatCount(row.captured_count)} / {formatCount(row.valid_close_count)}
+                  </td>
                   <td className="py-1.5 text-right font-mono tabular-nums">{formatPercent(row.beat_close_pct)}</td>
                   <td className="py-1.5 text-right font-mono tabular-nums">{formatPercent(row.avg_clv_percent)}</td>
                 </tr>

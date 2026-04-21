@@ -101,10 +101,11 @@ Focus: reliability polish and operational confidence after must-ship items land.
   - Next step: Lock persistence/hydration behavior and add focused tests for dismiss/complete/revisit flows.
   - Codex fit: Good for implementation and tests; final UX acceptance needs human review.
 
-- [ ] Stabilize beta analytics semantics and move drilldown into a dedicated ops analytics page. [Owner: Frontend/Backend/Ops] [Target week: 2026-W18]
+- [-] Stabilize beta analytics semantics and move drilldown into a dedicated ops analytics page. [Owner: Frontend/Backend/Ops] [Target week: 2026-W18]
   - Why: Current summary metrics can disagree or produce invalid conversion rates. Operators need a trustworthy read layer for beta follow-up without overloading the main ops homepage.
   - User impact: Low for external testers, medium for operator decision quality.
   - Engineering risk: Low to medium.
+  - Progress update (2026-04-21): Updated ops research diagnostics `By market` count display to show `captured_count / valid_close_count`, so effective CLV sample size is explicit instead of implied by captured rows alone.
   - Next step: Keep a compact beta-health snapshot on the ops homepage, move the detailed drilldown to a dedicated subpage, and add denominator/invariant guards so invalid funnel math is surfaced clearly.
   - Codex fit: High.
 
