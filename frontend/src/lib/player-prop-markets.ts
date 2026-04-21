@@ -6,10 +6,9 @@ export const PLAYER_PROP_MARKET_OPTIONS = [
   "player_threes",
   "pitcher_strikeouts",
   "batter_total_bases",
+  "batter_total_bases_alternate",
   "batter_hits",
   "batter_hits_runs_rbis",
-  "batter_home_runs",
-  "batter_strikeouts",
 ] as const;
 
 export const PLAYER_PROP_SPORT_OPTIONS = [
@@ -30,9 +29,6 @@ const PLAYER_PROP_MARKET_SPORTS: Record<string, string[]> = {
   batter_hits: ["baseball_mlb"],
   batter_hits_alternate: ["baseball_mlb"],
   batter_hits_runs_rbis: ["baseball_mlb"],
-  batter_home_runs: ["baseball_mlb"],
-  batter_strikeouts: ["baseball_mlb"],
-  batter_strikeouts_alternate: ["baseball_mlb"],
 };
 
 const PLAYER_PROP_MARKET_BADGES: Record<string, string> = {

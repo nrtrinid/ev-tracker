@@ -9,9 +9,14 @@ Version labels use pre-release suffixes until the app is ready for outside users
 
 ## [Unreleased]
 
-### Added
+### Changed
 
-- No unreleased entries yet.
+- **MLB prop market scope**
+  - Removed `batter_home_runs`, `batter_strikeouts`, and `batter_strikeouts_alternate` from the supported/shared MLB prop scan registry.
+  - Kept historical labels and settlement support intact for existing logged bets while narrowing active scan coverage to the remaining MLB prop set.
+- **MLB alt total-bases support**
+  - Promoted `batter_total_bases_alternate` into the default MLB prop scan set and scanner market filters.
+  - Added canonical `2+ -> over 1.5` threshold handling so one-sided alternate total-base ladders can surface as sportsbook targets while fair odds still come from paired reference books.
 
 ## [2.2.0-beta.2] - 2026-04-17
 

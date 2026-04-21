@@ -53,8 +53,8 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 - Player Props surface with two clear modes:
   - **Sportsbooks** for curated prop cards with consensus fair odds
   - **Pick'em** for exact-line board comparisons and matching-book support
-- MLB sportsbook props now use the six standard markets in the shared main feed:
-  - Pitcher Strikeouts, Total Bases, Hits, Hits + Runs + RBIs, Home Runs, and Batter Strikeouts
+- MLB sportsbook props now use five standard markets in the shared main feed:
+  - Pitcher Strikeouts, Total Bases, Total Bases Alt, Hits, and Hits + Runs + RBIs
 - Promos merges promo-ranked game lines and player props into one board view
 - Pregame-only availability messaging so stale scans explain when started games are hidden
 

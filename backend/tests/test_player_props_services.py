@@ -54,10 +54,9 @@ def test_get_player_prop_markets_uses_mlb_defaults_for_baseball(monkeypatch):
     assert get_player_prop_markets("baseball_mlb") == [
         "pitcher_strikeouts",
         "batter_total_bases",
+        "batter_total_bases_alternate",
         "batter_hits",
         "batter_hits_runs_rbis",
-        "batter_strikeouts",
-        "batter_home_runs",
     ]
 
 
@@ -79,10 +78,9 @@ def test_get_player_prop_markets_shadow_toggle_does_not_change_mlb_defaults(monk
     assert get_player_prop_markets("baseball_mlb") == [
         "pitcher_strikeouts",
         "batter_total_bases",
+        "batter_total_bases_alternate",
         "batter_hits",
         "batter_hits_runs_rbis",
-        "batter_strikeouts",
-        "batter_home_runs",
     ]
 
 
@@ -93,10 +91,9 @@ def test_get_player_prop_markets_specific_shadow_toggle_does_not_change_mlb_defa
     assert get_player_prop_markets("baseball_mlb") == [
         "pitcher_strikeouts",
         "batter_total_bases",
+        "batter_total_bases_alternate",
         "batter_hits",
         "batter_hits_runs_rbis",
-        "batter_strikeouts",
-        "batter_home_runs",
     ]
 
 
@@ -107,14 +104,11 @@ def test_get_player_prop_markets_can_append_alternate_mlb_markets_via_sport_togg
     assert get_player_prop_markets("baseball_mlb") == [
         "pitcher_strikeouts",
         "batter_total_bases",
+        "batter_total_bases_alternate",
         "batter_hits",
         "batter_hits_runs_rbis",
-        "batter_strikeouts",
-        "batter_home_runs",
         "pitcher_strikeouts_alternate",
-        "batter_total_bases_alternate",
         "batter_hits_alternate",
-        "batter_strikeouts_alternate",
     ]
 
 
@@ -207,6 +201,23 @@ def test_normalize_prop_outcomes_ignores_yes_no_for_non_yes_no_markets():
     normalized = _normalize_prop_outcomes(outcomes, market_key="player_points")
 
     assert normalized == []
+
+
+def test_normalize_prop_outcomes_canonicalizes_alt_total_bases_thresholds():
+    outcomes = [
+        {"name": "Over", "description": "Mookie Betts", "point": 2, "price": 145},
+    ]
+
+    normalized = _normalize_prop_outcomes(
+        outcomes,
+        market_key="batter_total_bases_alternate",
+        require_pairs=False,
+    )
+
+    assert len(normalized) == 1
+    assert normalized[0]["name"] == "Over"
+    assert normalized[0]["point"] == 1.5
+    assert normalized[0]["source_point"] == 2.0
 
 
 def test_match_curated_events_uses_canonical_team_pairs():
@@ -591,6 +602,70 @@ def test_parse_prop_sides_filters_thin_consensus_candidates_by_default():
     assert {side["reference_bookmaker_count"] for side in candidates} == {1}
     assert surfaced == []
     assert len(thin_ok) == 4
+
+
+def test_build_prop_side_candidates_supports_one_sided_alt_total_bases_target_offer():
+    event_payload = {
+        "id": "evt-alt-tb",
+        "home_team": "Dodgers",
+        "away_team": "Padres",
+        "commence_time": "2026-03-21T03:00:00Z",
+        "bookmakers": [
+            {
+                "key": "fanduel",
+                "markets": [
+                    {
+                        "key": "batter_total_bases_alternate",
+                        "outcomes": [
+                            {"name": "Over", "description": "Mookie Betts (Dodgers)", "point": 2, "price": 140},
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "bovada",
+                "markets": [
+                    {
+                        "key": "batter_total_bases",
+                        "outcomes": [
+                            {"name": "Over", "description": "Mookie Betts (Dodgers)", "point": 1.5, "price": -115},
+                            {"name": "Under", "description": "Mookie Betts (Dodgers)", "point": 1.5, "price": -105},
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "betonlineag",
+                "markets": [
+                    {
+                        "key": "batter_total_bases",
+                        "outcomes": [
+                            {"name": "Over", "description": "Mookie Betts (Dodgers)", "point": 1.5, "price": -110},
+                            {"name": "Under", "description": "Mookie Betts (Dodgers)", "point": 1.5, "price": -110},
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+
+    candidates = _build_prop_side_candidates(
+        sport="baseball_mlb",
+        event_payload=event_payload,
+        target_markets=["batter_total_bases", "batter_total_bases_alternate"],
+    )
+
+    alt_offer = next(
+        side for side in candidates
+        if side["sportsbook"] == "FanDuel"
+        and side["market_key"] == "batter_total_bases_alternate"
+        and side["selection_side"] == "over"
+    )
+
+    assert alt_offer["line_value"] == 1.5
+    assert alt_offer["display_name"] == "Mookie Betts Over 2+ TB ALT"
+    assert alt_offer["reference_bookmakers"] == ["bovada", "betonlineag"]
+    assert alt_offer["reference_bookmaker_count"] == 2
 
 
 def test_normalize_prizepicks_projection_maps_supported_nba_market():

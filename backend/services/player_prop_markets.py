@@ -23,9 +23,6 @@ PLAYER_PROP_MARKET_SPORTS: dict[str, tuple[str, ...]] = {
     "batter_hits": ("baseball_mlb",),
     "batter_hits_alternate": ("baseball_mlb",),
     "batter_hits_runs_rbis": ("baseball_mlb",),
-    "batter_home_runs": ("baseball_mlb",),
-    "batter_strikeouts": ("baseball_mlb",),
-    "batter_strikeouts_alternate": ("baseball_mlb",),
 }
 
 PLAYER_PROP_DEFAULT_MARKETS_BY_SPORT: dict[str, list[str]] = {
@@ -39,10 +36,9 @@ PLAYER_PROP_DEFAULT_MARKETS_BY_SPORT: dict[str, list[str]] = {
     "baseball_mlb": [
         "pitcher_strikeouts",
         "batter_total_bases",
+        "batter_total_bases_alternate",
         "batter_hits",
         "batter_hits_runs_rbis",
-        "batter_strikeouts",
-        "batter_home_runs",
     ],
 }
 
@@ -55,9 +51,7 @@ PLAYER_PROP_ALTERNATE_MARKETS_BY_SPORT: dict[str, list[str]] = {
     "basketball_nba": [],
     "baseball_mlb": [
         "pitcher_strikeouts_alternate",
-        "batter_total_bases_alternate",
         "batter_hits_alternate",
-        "batter_strikeouts_alternate",
     ],
 }
 

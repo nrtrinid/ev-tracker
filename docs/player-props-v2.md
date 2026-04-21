@@ -51,10 +51,9 @@ Current standard MLB sportsbook markets:
 
 - `pitcher_strikeouts`
 - `batter_total_bases`
+- `batter_total_bases_alternate`
 - `batter_hits`
 - `batter_hits_runs_rbis`
-- `batter_home_runs`
-- `batter_strikeouts`
 
 ## Operator Checklist
 

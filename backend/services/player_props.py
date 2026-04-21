@@ -67,6 +67,18 @@ PLAYER_PROP_REFERENCE_BOOK_WEIGHTS: dict[str, float] = {
 PLAYER_PROP_YES_NO_MARKETS: set[str] = {
     "batter_home_runs",
 }
+PLAYER_PROP_ONE_SIDED_TARGET_MARKETS: set[str] = {
+    "batter_total_bases_alternate",
+}
+PLAYER_PROP_DISCRETE_ALT_LINE_MARKETS: set[str] = {
+    "batter_total_bases_alternate",
+}
+PLAYER_PROP_REFERENCE_MARKET_ALIASES: dict[str, tuple[str, ...]] = {
+    "batter_total_bases_alternate": (
+        "batter_total_bases_alternate",
+        "batter_total_bases",
+    ),
+}
 # Default surfaced-prop trust gate:
 # 3 reference books gives us enough market confirmation to avoid thin two-book
 # consensus artifacts without starving the slate as aggressively as a 4-book gate.
@@ -263,9 +275,26 @@ def _build_prop_display_name(
     side: str,
     line_value: float | None,
     market_key: str,
+    source_line_value: float | None = None,
 ) -> str:
+    normalized_market = str(market_key or "").strip().lower()
+    line_token: str | None = None
     if line_value is not None:
-        base = f"{player_name} {side.title()} {line_value:g}"
+        line_token = f"{line_value:g}"
+        if (
+            normalized_market in PLAYER_PROP_ONE_SIDED_TARGET_MARKETS
+            and side.strip().lower() == "over"
+            and source_line_value is not None
+        ):
+            rounded_source_line = round(float(source_line_value))
+            if (
+                abs(float(source_line_value) - rounded_source_line) < 1e-9
+                and abs(float(line_value) - (float(rounded_source_line) - 0.5)) < 1e-9
+            ):
+                line_token = f"{rounded_source_line}+"
+
+    if line_token is not None:
+        base = f"{player_name} {side.title()} {line_token}"
     else:
         base = f"{player_name} {side.title()}"
     suffix = _prop_market_display_suffix(market_key)
@@ -303,6 +332,35 @@ def _to_line_numeric(value) -> float | None:
         return None
 
 
+def _market_supports_one_sided_target_offers(market_key: str | None) -> bool:
+    return str(market_key or "").strip().lower() in PLAYER_PROP_ONE_SIDED_TARGET_MARKETS
+
+
+def _canonicalize_prop_line_numeric(
+    line_numeric: float | None,
+    *,
+    market_key: str | None,
+) -> float | None:
+    if line_numeric is None:
+        return None
+
+    normalized_market = str(market_key or "").strip().lower()
+    if normalized_market not in PLAYER_PROP_DISCRETE_ALT_LINE_MARKETS:
+        return line_numeric
+
+    rounded = round(float(line_numeric))
+    if abs(float(line_numeric) - rounded) >= 1e-9 or rounded < 1:
+        return float(line_numeric)
+    return float(rounded) - 0.5
+
+
+def _reference_market_keys_for_target_market(market_key: str | None) -> tuple[str, ...]:
+    normalized_market = str(market_key or "").strip().lower()
+    if not normalized_market:
+        return tuple()
+    return PLAYER_PROP_REFERENCE_MARKET_ALIASES.get(normalized_market, (normalized_market,))
+
+
 def _normalize_prop_outcome_side(name: str, *, market_key: str | None = None) -> str | None:
     normalized_name = str(name or "").strip().lower()
     if normalized_name in {"over", "under"}:
@@ -316,7 +374,12 @@ def _normalize_prop_outcome_side(name: str, *, market_key: str | None = None) ->
     return None
 
 
-def _normalize_prop_outcomes(outcomes: list[dict], *, market_key: str | None = None) -> list[dict]:
+def _normalize_prop_outcomes(
+    outcomes: list[dict],
+    *,
+    market_key: str | None = None,
+    require_pairs: bool = True,
+) -> list[dict]:
     normalized_market = str(market_key or "").strip().lower()
     normalized: dict[tuple[str, float | None], dict[str, dict]] = {}
     for outcome in outcomes:
@@ -325,10 +388,11 @@ def _normalize_prop_outcomes(outcomes: list[dict], *, market_key: str | None = N
         if side not in {"over", "under"}:
             continue
         line_value = outcome.get("point")
-        try:
-            line_numeric = float(line_value) if line_value is not None else None
-        except Exception:
-            line_numeric = None
+        raw_line_numeric = _to_line_numeric(line_value)
+        line_numeric = _canonicalize_prop_line_numeric(
+            raw_line_numeric,
+            market_key=normalized_market,
+        )
         if line_numeric is None and normalized_market in PLAYER_PROP_YES_NO_MARKETS:
             line_numeric = 0.5
         description = str(outcome.get("description") or "").strip()
@@ -339,11 +403,17 @@ def _normalize_prop_outcomes(outcomes: list[dict], *, market_key: str | None = N
         normalized_outcome["name"] = side.title()
         if line_numeric is not None:
             normalized_outcome["point"] = line_numeric
+        if raw_line_numeric is not None:
+            normalized_outcome["source_point"] = raw_line_numeric
         normalized.setdefault((player_name, line_numeric), {})[side] = normalized_outcome
     flattened: list[dict] = []
     for (_player_name, _line), pair in normalized.items():
-        if "over" in pair and "under" in pair:
-            flattened.extend([pair["over"], pair["under"]])
+        if require_pairs and not ("over" in pair and "under" in pair):
+            continue
+        if "over" in pair:
+            flattened.append(pair["over"])
+        if "under" in pair:
+            flattened.append(pair["under"])
     return flattened
 
 
@@ -459,6 +529,19 @@ def _build_prop_market_book_pairs(
     bookmakers: list[dict],
     target_markets: list[str],
 ) -> tuple[dict[str, dict[str, dict[tuple[str, float | None], dict[str, dict]]]], dict[str, dict[str, dict[str, str | None]]]]:
+    return _build_prop_market_selections_by_book(
+        bookmakers=bookmakers,
+        target_markets=target_markets,
+        allow_one_sided_target_offers=False,
+    )
+
+
+def _build_prop_market_selections_by_book(
+    *,
+    bookmakers: list[dict],
+    target_markets: list[str],
+    allow_one_sided_target_offers: bool,
+) -> tuple[dict[str, dict[str, dict[tuple[str, float | None], dict[str, dict]]]], dict[str, dict[str, dict[str, str | None]]]]:
     selection_pairs_by_market_book: dict[str, dict[str, dict[tuple[str, float | None], dict[str, dict]]]] = {}
     deeplink_context_by_market_book: dict[str, dict[str, dict[str, str | None]]] = {}
 
@@ -467,7 +550,14 @@ def _build_prop_market_book_pairs(
             book_market = _extract_market_meta(bookmakers, book_key, market_key)
             if not book_market:
                 continue
-            normalized_book = _normalize_prop_outcomes(book_market["outcomes"], market_key=market_key)
+            normalized_book = _normalize_prop_outcomes(
+                book_market["outcomes"],
+                market_key=market_key,
+                require_pairs=not (
+                    allow_one_sided_target_offers
+                    and _market_supports_one_sided_target_offers(market_key)
+                ),
+            )
             if not normalized_book:
                 continue
 
@@ -480,10 +570,12 @@ def _build_prop_market_book_pairs(
                 side = str(outcome.get("name") or "").strip().lower()
                 selections.setdefault((player_name, line_value), {})[side] = outcome
 
-            valid_selections = {
-                key: pair for key, pair in selections.items()
-                if "over" in pair and "under" in pair
-            }
+            valid_selections = selections
+            if not allow_one_sided_target_offers or not _market_supports_one_sided_target_offers(market_key):
+                valid_selections = {
+                    key: pair for key, pair in selections.items()
+                    if "over" in pair and "under" in pair
+                }
             if not valid_selections:
                 continue
 
@@ -577,6 +669,7 @@ def _collect_prop_market_presence(
             normalized_outcomes = _normalize_prop_outcomes(
                 market.get("outcomes") or [],
                 market_key=market_key,
+                require_pairs=not _market_supports_one_sided_target_offers(market_key),
             )
             if not normalized_outcomes:
                 continue
@@ -1397,13 +1490,27 @@ def _build_prop_side_candidates(
         bookmakers=bookmakers,
         target_markets=target_markets,
     )
+    target_selections_by_market_book, target_deeplink_context_by_market_book = _build_prop_market_selections_by_book(
+        bookmakers=bookmakers,
+        target_markets=target_markets,
+        allow_one_sided_target_offers=True,
+    )
 
     for market_key in target_markets:
         selection_pairs_by_book = selection_pairs_by_market_book.get(market_key, {})
-        deeplink_context_by_book = deeplink_context_by_market_book.get(market_key, {})
+        reference_market_keys = _reference_market_keys_for_target_market(market_key)
+        reference_selection_pairs_by_book = selection_pairs_by_book
+        for reference_market_key in reference_market_keys[1:]:
+            reference_selection_pairs_by_book = _merge_selection_pairs_by_book(
+                primary_selection_pairs_by_book=reference_selection_pairs_by_book,
+                secondary_selection_pairs_by_book=selection_pairs_by_market_book.get(reference_market_key, {}) or {},
+            )
+
+        target_selections_by_book = target_selections_by_market_book.get(market_key, {})
+        deeplink_context_by_book = target_deeplink_context_by_market_book.get(market_key, {})
 
         for book_key, book_display in PLAYER_PROP_BOOKS.items():
-            book_pairs = selection_pairs_by_book.get(book_key)
+            book_pairs = target_selections_by_book.get(book_key)
             if not book_pairs:
                 continue
             deeplink_context = deeplink_context_by_book.get(book_key) or {}
@@ -1420,7 +1527,7 @@ def _build_prop_side_candidates(
                         continue
 
                     active_evaluation, model_evaluations = _build_prop_model_evaluations_for_candidate(
-                        selection_pairs_by_book=selection_pairs_by_book,
+                        selection_pairs_by_book=reference_selection_pairs_by_book,
                         current_book_key=book_key,
                         market_key=market_key,
                         player_name=player_name,
@@ -1444,6 +1551,7 @@ def _build_prop_side_candidates(
                         side=side,
                         line_value=line_value,
                         market_key=market_key,
+                        source_line_value=_to_line_numeric(outcome.get("source_point")),
                     )
                     player_team, participant_id = _resolve_player_context(
                         player_name=player_name,
