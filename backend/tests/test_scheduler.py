@@ -887,3 +887,7 @@ async def test_scheduled_board_drop_ops_status_includes_autolog_summary(monkeypa
     assert snapshot["autolog_summary"]["enabled"] is True
     assert snapshot["autolog_summary"]["configured"] is True
 
+    latest_refresh = main.app.state.ops_status["last_board_refresh"]
+    assert latest_refresh["kind"] == "board_drop"
+    assert latest_refresh["source"] == "scheduler"
+    assert latest_refresh["canonical_board_updated"] is True

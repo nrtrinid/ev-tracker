@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import type {
   BoardDropResultSummary,
+  BoardRefreshStatus,
   BoardDropRunStatus,
   OddsApiActivityCall,
   OddsApiActivityScanDetail,
@@ -366,6 +367,17 @@ function getBoardRunTimestamp(run?: BoardDropRunStatus | null): string | null {
   return run.finished_at || run.captured_at || run.started_at || null;
 }
 
+function getBoardRefreshTimestamp(refresh?: BoardRefreshStatus | null): string | null {
+  if (!refresh) return null;
+  return refresh.finished_at || refresh.refreshed_at || refresh.captured_at || refresh.started_at || null;
+}
+
+function formatScopedRefreshLabel(refresh?: BoardRefreshStatus | null): string {
+  if (!refresh) return "Scoped refresh";
+  if (refresh.result?.scan_label) return refresh.result.scan_label;
+  return refresh.surface === "player_props" ? "Scoped player props refresh" : "Scoped game-lines refresh";
+}
+
 function getBoardRunErrorCount(run?: BoardDropRunStatus | null): number {
   if (!run) return 0;
   const explicit = "error_count" in run ? Number((run as { error_count?: number }).error_count || 0) : 0;
@@ -516,6 +528,7 @@ export function OddsApiActivityCard({ data }: Props) {
 
   const schedulerRun = data?.ops?.last_scheduler_scan ?? null;
   const manualRun = data?.ops?.last_ops_trigger_scan ?? null;
+  const latestRefresh = data?.ops?.last_board_refresh ?? null;
   const boardRuns = useMemo<BoardRunDescriptor[]>(
     () =>
       [
@@ -549,6 +562,13 @@ export function OddsApiActivityCard({ data }: Props) {
     [manualRun, schedulerRun],
   );
   const latestBoardRun = boardRuns[0] ?? null;
+  const latestRefreshTimestamp = getBoardRefreshTimestamp(latestRefresh);
+  const scopedRefreshIsLatest = useMemo(() => {
+    if (!latestRefresh || latestRefresh.kind !== "scoped_refresh") return false;
+    const refreshTs = parseOpsTimestamp(latestRefreshTimestamp)?.getTime() ?? 0;
+    const boardTs = parseOpsTimestamp(latestBoardRun?.timestamp)?.getTime() ?? 0;
+    return refreshTs >= boardTs;
+  }, [latestBoardRun?.timestamp, latestRefresh, latestRefreshTimestamp]);
 
   const remainingSnapshot = useMemo(() => {
     for (const call of oddsRecentCalls) {
@@ -815,6 +835,21 @@ export function OddsApiActivityCard({ data }: Props) {
             {boardWarnings.map((warning) => (
               <WarningCallout key={warning.key} warning={warning} />
             ))}
+          </div>
+        ) : null}
+
+        {scopedRefreshIsLatest ? (
+          <div className="rounded border border-primary/25 bg-primary/5 px-3 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Latest Operator Refresh
+            </p>
+            <p className="mt-1 text-sm font-medium">
+              {formatScopedRefreshLabel(latestRefresh)} · {formatTimeWithRelative(latestRefreshTimestamp, "Unknown")}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              This updated the {latestRefresh?.surface === "player_props" ? "player props" : "game lines"} scoped cache
+              only and did not republish canonical board:latest.
+            </p>
           </div>
         ) : null}
 

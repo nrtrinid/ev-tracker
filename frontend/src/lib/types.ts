@@ -768,6 +768,9 @@ export interface ManualSettlementPendingSummary {
 }
 
 export interface BoardDropRunStatus {
+  source?: string;
+  status?: string;
+  surface?: ScannerSurface | "board_drop" | null;
   run_id?: string;
   started_at?: string;
   finished_at?: string;
@@ -794,6 +797,21 @@ export interface BoardDropRunStatus {
   board_alert_delivery_status?: string | null;
   board_alert_http_status?: number | null;
   board_alert_error?: string | null;
+}
+
+export interface BoardRefreshStatus extends BoardDropRunStatus {
+  kind?: "board_drop" | "scoped_refresh";
+  canonical_board_updated?: boolean;
+  refreshed_at?: string | null;
+  error_count?: number;
+  errors?: unknown[];
+  scan_window?: {
+    label?: string;
+    anchor_timezone?: string;
+    anchor_time_mst?: string;
+  } | null;
+  hard_errors?: number;
+  autolog_summary?: Record<string, unknown> | null;
 }
 
 export interface AutoSettleRunStatus {
@@ -858,6 +876,7 @@ export interface OperatorStatusResponse {
       hard_errors?: number;
       autolog_summary?: Record<string, unknown> | null;
     }) | null;
+    last_board_refresh?: BoardRefreshStatus | null;
     last_jit_clv?: {
       source?: string;
       run_id?: string;

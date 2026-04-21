@@ -55,6 +55,12 @@ Current standard MLB sportsbook markets:
 - `batter_hits`
 - `batter_hits_runs_rbis`
 
+Canonical-equivalent MLB TB offers are deduped at surfacing time:
+
+- `Over 1.5 TB` and `Over 2+ TB ALT` from the same sportsbook collapse to a single surfaced offer
+- ties prefer the standard TB market to avoid noisy duplicate cards
+- the alternate market still survives when it is the better sportsbook price or the only observed target offer
+
 ## Operator Checklist
 
 1. Run a manual `/scanner/player_props` scan.

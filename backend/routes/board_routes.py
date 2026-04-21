@@ -7,6 +7,7 @@ POST /api/board/refresh — scoped manual refresh (rate-limited, does NOT overwr
 from __future__ import annotations
 
 import os
+import time
 
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -62,6 +63,14 @@ def _noop_log_event(*_args, **_kwargs) -> None:
     return None
 
 
+def _noop_set_ops_status(*_args, **_kwargs) -> None:
+    return None
+
+
+def _noop_persist_ops_job_run(**_kwargs) -> None:
+    return None
+
+
 async def _refresh_player_props_result(*, source: str) -> dict:
     from services.player_props import (
         get_cached_or_scan_player_props,
@@ -113,9 +122,94 @@ def _resolve_main_runtime_hooks():
         log_event = getattr(main_module, "_log_event", _noop_log_event)
         boot_id = getattr(main_module, "_BOOT_ID", None)
         sync_pickem = getattr(main_module, "_sync_pickem_research_from_props_payload", lambda *_args, **_kwargs: None)
-        return log_event, boot_id, sync_pickem
+        set_ops_status = getattr(main_module, "_set_ops_status", _noop_set_ops_status)
+        persist_ops_job_run = getattr(main_module, "_persist_ops_job_run", _noop_persist_ops_job_run)
+        return log_event, boot_id, sync_pickem, set_ops_status, persist_ops_job_run
     except Exception:
-        return _noop_log_event, None, (lambda *_args, **_kwargs: None)
+        return _noop_log_event, None, (lambda *_args, **_kwargs: None), _noop_set_ops_status, _noop_persist_ops_job_run
+
+
+def _scoped_refresh_label(surface: str) -> str:
+    return "Manual Player Props Refresh" if surface == "player_props" else "Manual Game Lines Refresh"
+
+
+def _surface_sports_from_sides(sides: list[dict]) -> list[str]:
+    sports = {
+        str(side.get("sport") or "").strip().lower()
+        for side in sides
+        if isinstance(side, dict) and str(side.get("sport") or "").strip()
+    }
+    return sorted(sports)
+
+
+def _build_scoped_refresh_result_summary(*, surface: str, scan_payload: FullScanResponse) -> dict[str, object]:
+    total_sides = len(scan_payload.sides)
+    summary: dict[str, object] = {
+        "scan_label": _scoped_refresh_label(surface),
+        "total_sides": total_sides,
+    }
+    if surface == "player_props":
+        summary["props_sides"] = total_sides
+        summary["props_events_fetched"] = scan_payload.events_fetched
+        summary["props_events_with_both_books"] = scan_payload.events_with_both_books
+        summary["props_api_requests_remaining"] = scan_payload.api_requests_remaining
+        diagnostics = scan_payload.diagnostics
+        if diagnostics is not None:
+            summary["props_candidate_sides"] = diagnostics.candidate_sides_count
+            summary["props_quality_gate_filtered"] = diagnostics.quality_gate_filtered_count
+            summary["props_events_skipped_pregame"] = diagnostics.events_skipped_pregame
+            summary["props_events_with_provider_markets"] = diagnostics.events_with_provider_markets
+            summary["props_events_with_supported_book_markets"] = diagnostics.events_with_supported_book_markets
+            summary["props_events_provider_only"] = diagnostics.events_provider_only
+            summary["props_events_with_results"] = diagnostics.events_with_results
+            summary["props_quality_gate_min_reference_bookmakers"] = diagnostics.quality_gate_min_reference_bookmakers
+            summary["props_pickem_quality_gate_min_reference_bookmakers"] = diagnostics.pickem_quality_gate_min_reference_bookmakers
+    else:
+        summary["straight_sides"] = total_sides
+        summary["game_lines_events_fetched"] = scan_payload.events_fetched
+        summary["game_lines_events_with_both_books"] = scan_payload.events_with_both_books
+        summary["game_lines_api_requests_remaining"] = scan_payload.api_requests_remaining
+        summary["game_line_sports_scanned"] = _surface_sports_from_sides([side.model_dump() for side in scan_payload.sides])
+    return summary
+
+
+def _build_scoped_refresh_status_payload(
+    *,
+    run_id: str,
+    surface: str,
+    status: str,
+    started_at: str,
+    finished_at: str,
+    duration_ms: float,
+    refreshed_at: str,
+    scan_payload: FullScanResponse | None,
+    errors: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    result_summary = (
+        _build_scoped_refresh_result_summary(surface=surface, scan_payload=scan_payload)
+        if scan_payload is not None
+        else {"scan_label": _scoped_refresh_label(surface)}
+    )
+    total_sides = len(scan_payload.sides) if scan_payload is not None else None
+    payload: dict[str, object] = {
+        "kind": "scoped_refresh",
+        "source": "manual_refresh",
+        "surface": surface,
+        "status": status,
+        "canonical_board_updated": False,
+        "run_id": run_id,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "captured_at": finished_at,
+        "refreshed_at": refreshed_at,
+        "duration_ms": duration_ms,
+        "total_sides": total_sides,
+        "result": result_summary,
+    }
+    if errors is not None:
+        payload["error_count"] = len(errors)
+        payload["errors"] = errors
+    return payload
 
 
 def _empty_surface(surface: str) -> FullScanResponse:
@@ -207,7 +301,7 @@ def get_board_latest(user: dict = Depends(get_current_user)):
     when the canonical board is absent or missing a surface.
     Returns an empty board only if no data exists anywhere.
     """
-    _log_event, _BOOT_ID, _ = _resolve_main_runtime_hooks()
+    _log_event, _BOOT_ID, _, _, _ = _resolve_main_runtime_hooks()
 
     request_id = f"board_latest_{uuid4().hex[:10]}"
     rss_before = rss_mb()
@@ -449,7 +543,7 @@ def get_board_latest_surface(
     user: dict = Depends(get_current_user),
 ):
     """Load a per-surface latest payload from global_scan_cache (surface:latest)."""
-    _log_event, _boot_id, _ = _resolve_main_runtime_hooks()
+    _log_event, _boot_id, _, _, _ = _resolve_main_runtime_hooks()
     from services.scan_cache import load_latest_scan_payload
 
     request_id = f"board_surface_{uuid4().hex[:10]}"
@@ -693,7 +787,7 @@ def get_board_latest_promos(
 
     Loads per-surface latest payloads and returns a capped combined sides list.
     """
-    _log_event, _boot_id, _ = _resolve_main_runtime_hooks()
+    _log_event, _boot_id, _, _, _ = _resolve_main_runtime_hooks()
     from services.scan_cache import load_latest_scan_payload
 
     request_id = f"board_promos_{uuid4().hex[:10]}"
@@ -808,6 +902,51 @@ async def refresh_board_scope(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to initialize database client: {e}")
 
+    _log_event, _boot_id, _sync_pickem_research_from_props_payload, _set_ops_status, _persist_ops_job_run = _resolve_main_runtime_hooks()
+    started_at = utc_now_iso_z()
+    started_clock = time.monotonic()
+    run_id = f"scoped_refresh_{uuid4().hex[:10]}"
+
+    def _record_scoped_refresh_failure(error: Exception, *, status_code: int, detail: str) -> None:
+        finished_at = utc_now_iso_z()
+        duration_ms = round((time.monotonic() - started_clock) * 1000, 2)
+        errors = [{"error": str(error), "error_class": type(error).__name__}]
+        status_payload = _build_scoped_refresh_status_payload(
+            run_id=run_id,
+            surface=scope,
+            status="failed",
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_ms=duration_ms,
+            refreshed_at=finished_at,
+            scan_payload=None,
+            errors=errors,
+        )
+        _set_ops_status("last_board_refresh", status_payload)
+        _persist_ops_job_run(
+            job_kind="board_scoped_refresh",
+            source="manual_refresh",
+            status="failed",
+            run_id=run_id,
+            scan_session_id=run_id,
+            surface=scope,
+            scan_scope="all",
+            requested_sport="all",
+            captured_at=finished_at,
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_ms=duration_ms,
+            error_count=len(errors),
+            errors=errors,
+            meta={
+                "canonical_board_updated": False,
+                "refreshed_at": finished_at,
+                "result_summary": status_payload.get("result"),
+                "response_status_code": status_code,
+                "response_detail": detail,
+            },
+        )
+
     try:
         if scope == "player_props":
             result = await _refresh_player_props_result(source="manual_refresh")
@@ -837,6 +976,7 @@ async def refresh_board_scope(
                 "scanned_at": scanned_at,
             }
     except Exception as e:
+        _record_scoped_refresh_failure(e, status_code=502, detail=f"Refresh failed: {e}")
         raise HTTPException(status_code=502, detail=f"Refresh failed: {e}")
 
     try:
@@ -852,9 +992,9 @@ async def refresh_board_scope(
             prizepicks_cards=result.get("prizepicks_cards"),
         )
     except Exception as e:
+        _record_scoped_refresh_failure(e, status_code=500, detail=f"Failed to build response: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to build response: {e}")
 
-    _log_event, _boot_id, _sync_pickem_research_from_props_payload = _resolve_main_runtime_hooks()
     refreshed_at = persist_scoped_refresh(
         db=db,
         surface=scope,
@@ -864,6 +1004,46 @@ async def refresh_board_scope(
     )
     if scope == "player_props" and not bool(result.get("cache_hit")):
         _sync_pickem_research_from_props_payload(scan_payload.model_dump(), source="manual_refresh")
+
+    finished_at = refreshed_at
+    duration_ms = round((time.monotonic() - started_clock) * 1000, 2)
+    status_payload = _build_scoped_refresh_status_payload(
+        run_id=run_id,
+        surface=scope,
+        status="completed",
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_ms=duration_ms,
+        refreshed_at=refreshed_at,
+        scan_payload=scan_payload,
+        errors=[],
+    )
+    _set_ops_status("last_board_refresh", status_payload)
+    _persist_ops_job_run(
+        job_kind="board_scoped_refresh",
+        source="manual_refresh",
+        status="completed",
+        run_id=run_id,
+        scan_session_id=run_id,
+        surface=scope,
+        scan_scope="all",
+        requested_sport="all",
+        captured_at=finished_at,
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_ms=duration_ms,
+        events_fetched=scan_payload.events_fetched,
+        events_with_both_books=scan_payload.events_with_both_books,
+        total_sides=len(scan_payload.sides),
+        api_requests_remaining=scan_payload.api_requests_remaining,
+        error_count=0,
+        errors=[],
+        meta={
+            "canonical_board_updated": False,
+            "refreshed_at": refreshed_at,
+            "result_summary": status_payload.get("result"),
+        },
+    )
 
     return ScopedRefreshResponse(
         surface=scope,  # type: ignore[arg-type]

@@ -18,6 +18,7 @@ RECENT_SCAN_DETAIL_QUERY_LIMIT = 200
 BOARD_DROP_SOURCES = {"scheduled_board_drop", "ops_trigger_board_drop", "cron_board_drop"}
 SCHEDULED_SCAN_JOB_KINDS = ("scheduled_board_drop", "scheduled_scan")
 OPS_TRIGGER_SCAN_JOB_KINDS = ("ops_trigger_board_drop", "ops_trigger_scan")
+BOARD_REFRESH_JOB_KINDS = ("scheduled_board_drop", "ops_trigger_board_drop", "board_scoped_refresh")
 
 _PRUNE_LOCK = threading.Lock()
 _LAST_PRUNE_ATTEMPT_MONOTONIC = 0.0
@@ -48,6 +49,7 @@ def build_empty_ops_status() -> dict[str, Any]:
         "last_clv_daily": None,
         "last_clv_replay": None,
         "last_ops_trigger_scan": None,
+        "last_board_refresh": None,
         "last_manual_scan": None,
         "last_auto_settle": None,
         "last_auto_settle_summary": None,
@@ -485,6 +487,43 @@ def _select_latest_job_run_any(
     return latest_row
 
 
+def _board_refresh_status_priority(status: Any) -> int:
+    normalized = str(status or "").strip().lower()
+    if normalized in {"completed", "completed_with_errors", "failed"}:
+        return 3
+    if normalized == "running":
+        return 2
+    if normalized == "queued":
+        return 1
+    return 0
+
+
+def _select_latest_board_refresh_row(
+    *,
+    db: Any,
+    retry_supabase: Callable[[Callable[[], Any]], Any] | None,
+) -> dict[str, Any] | None:
+    candidates: list[dict[str, Any]] = []
+    for job_kind in BOARD_REFRESH_JOB_KINDS:
+        candidates.extend(
+            _select_recent_job_runs(
+                db=db,
+                retry_supabase=retry_supabase,
+                job_kind=job_kind,
+                limit=2,
+            )
+        )
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda row: (
+            _parse_timestamp(row.get("captured_at")) or 0.0,
+            _board_refresh_status_priority(row.get("status")),
+        ),
+    )
+
+
 def _select_recent_job_runs(
     *,
     db: Any,
@@ -539,8 +578,23 @@ def _map_last_manual_scan(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _is_board_drop_job_row(row: dict[str, Any]) -> bool:
+    surface = str(row.get("surface") or "").strip().lower()
+    source = str(row.get("source") or "").strip().lower()
+    job_kind = str(row.get("job_kind") or "").strip().lower()
+    return surface == "board_drop" or source in BOARD_DROP_SOURCES or job_kind in {
+        "scheduled_board_drop",
+        "ops_trigger_board_drop",
+        "cron_board_drop",
+    }
+
+
 def _map_scan_run(row: dict[str, Any]) -> dict[str, Any]:
+    is_board_drop = _is_board_drop_job_row(row)
     mapped = {
+        "source": row.get("source"),
+        "status": row.get("status"),
+        "surface": row.get("surface") or ("board_drop" if is_board_drop else None),
         "run_id": row.get("run_id"),
         "started_at": row.get("started_at"),
         "finished_at": row.get("finished_at"),
@@ -560,11 +614,12 @@ def _map_scan_run(row: dict[str, Any]) -> dict[str, Any]:
         mapped["scan_window"] = meta.get("scan_window")
     if meta and "autolog_summary" in meta:
         mapped["autolog_summary"] = meta.get("autolog_summary")
-    if row.get("surface") == "board_drop":
+    if is_board_drop:
         mapped["board_drop"] = True
     if meta and isinstance(meta.get("result_summary"), dict):
         result_summary = meta.get("result_summary") or {}
-        mapped["board_drop"] = True
+        if is_board_drop:
+            mapped["board_drop"] = True
         mapped["result"] = result_summary
         if "props_events_scanned" in result_summary:
             mapped["props_events_scanned"] = result_summary.get("props_events_scanned")
@@ -600,6 +655,21 @@ def _map_scan_run(row: dict[str, Any]) -> dict[str, Any]:
                 if "board_alert_error" in meta
                 else board_alert.get("error")
             )
+    return mapped
+
+
+def _map_board_refresh_run(row: dict[str, Any]) -> dict[str, Any]:
+    meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+    is_board_drop = _is_board_drop_job_row(row)
+    mapped = _map_scan_run(row)
+    mapped["kind"] = "board_drop" if is_board_drop else "scoped_refresh"
+    mapped["canonical_board_updated"] = (
+        bool(meta.get("canonical_board_updated"))
+        if "canonical_board_updated" in meta
+        else is_board_drop
+    )
+    if meta.get("refreshed_at") is not None:
+        mapped["refreshed_at"] = meta.get("refreshed_at")
     return mapped
 
 
@@ -854,6 +924,10 @@ def load_ops_status_snapshot(
             retry_supabase=retry_supabase,
             job_kinds=OPS_TRIGGER_SCAN_JOB_KINDS,
         )
+        board_refresh = _select_latest_board_refresh_row(
+            db=resolved_db,
+            retry_supabase=retry_supabase,
+        )
         auto_settle = _select_latest_job_run(
             db=resolved_db, retry_supabase=retry_supabase, job_kind="auto_settle"
         )
@@ -890,6 +964,8 @@ def load_ops_status_snapshot(
         ops["last_scheduler_scan"] = _map_scan_run(scheduler)
     if ops_trigger:
         ops["last_ops_trigger_scan"] = _map_scan_run(ops_trigger)
+    if board_refresh:
+        ops["last_board_refresh"] = _map_board_refresh_run(board_refresh)
     if auto_settle:
         ops["last_auto_settle"] = _map_last_auto_settle(auto_settle)
         ops["last_auto_settle_summary"] = _map_last_auto_settle_summary(auto_settle)

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import types
@@ -1128,6 +1129,133 @@ def test_ops_trigger_scan_contract_shape(auth_client, monkeypatch):
 
 
 @pytest.mark.integration
+def test_ops_trigger_scan_piggybacks_clv_with_fresh_sides(auth_client, monkeypatch):
+    import main
+    import services.daily_board as daily_board
+    import services.discord_alerts as discord_alerts
+
+    captured_sides: list[list[dict]] = []
+    fresh_straight = [{"surface": "straight_bets", "selection_key": "straight-1"}]
+    fresh_props = [{"surface": "player_props", "selection_key": "prop-1"}]
+
+    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
+    monkeypatch.setenv("DISCORD_SCAN_ALERT_MODE", "edge_live")
+    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+
+    async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
+        assert source == "ops_trigger_board_drop"
+        assert scan_label == "Ops Manual Board Refresh"
+        assert mst_anchor_time is None
+        return {
+            "straight_sides": 3,
+            "props_sides": 2,
+            "fresh_straight_sides": fresh_straight,
+            "fresh_prop_sides": fresh_props,
+        }
+
+    def _fake_piggyback_clv(sides):
+        captured_sides.append(sides)
+
+    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_run_daily_board_drop, raising=True)
+    monkeypatch.setattr(discord_alerts, "schedule_alerts", lambda sides: len(sides), raising=True)
+    monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
+
+    resp = auth_client.post("/api/ops/trigger/scan", headers={"X-Ops-Token": "ops-secret"})
+    assert resp.status_code == 200
+    assert captured_sides == [[*fresh_straight, *fresh_props]]
+
+
+@pytest.mark.integration
+def test_ops_trigger_scan_skips_clv_piggyback_with_no_fresh_sides(auth_client, monkeypatch):
+    import main
+    import services.daily_board as daily_board
+    import services.discord_alerts as discord_alerts
+
+    piggyback_calls = 0
+
+    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
+    monkeypatch.setenv("DISCORD_SCAN_ALERT_MODE", "edge_live")
+    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+
+    async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
+        return {
+            "straight_sides": 0,
+            "props_sides": 0,
+            "fresh_straight_sides": [],
+            "fresh_prop_sides": [],
+        }
+
+    def _fake_piggyback_clv(_sides):
+        nonlocal piggyback_calls
+        piggyback_calls += 1
+
+    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_run_daily_board_drop, raising=True)
+    monkeypatch.setattr(discord_alerts, "schedule_alerts", lambda sides: len(sides), raising=True)
+    monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
+
+    resp = auth_client.post("/api/ops/trigger/scan", headers={"X-Ops-Token": "ops-secret"})
+    assert resp.status_code == 200
+    assert piggyback_calls == 0
+
+
+@pytest.mark.integration
+def test_ops_trigger_scan_clv_piggyback_failure_does_not_fail_route(auth_client, monkeypatch):
+    import main
+    import services.daily_board as daily_board
+    import services.discord_alerts as discord_alerts
+
+    created_tasks = 0
+    real_create_task = asyncio.create_task
+
+    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
+    monkeypatch.setenv("DISCORD_SCAN_ALERT_MODE", "edge_live")
+    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+
+    async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
+        return {
+            "straight_sides": 1,
+            "props_sides": 0,
+            "fresh_straight_sides": [{"surface": "straight_bets", "selection_key": "straight-1"}],
+            "fresh_prop_sides": [],
+        }
+
+    async def _fake_piggyback_clv(_sides):
+        raise RuntimeError("clv piggyback exploded")
+
+    def _tracking_create_task(coro):
+        nonlocal created_tasks
+        created_tasks += 1
+        return real_create_task(coro)
+
+    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_run_daily_board_drop, raising=True)
+    monkeypatch.setattr(discord_alerts, "schedule_alerts", lambda sides: len(sides), raising=True)
+    monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
+    monkeypatch.setattr("routes.ops_cron.asyncio.create_task", _tracking_create_task, raising=True)
+
+    resp = auth_client.post("/api/ops/trigger/scan", headers={"X-Ops-Token": "ops-secret"})
+    assert resp.status_code == 200
+    assert resp.json()["board_drop"] is True
+    assert created_tasks >= 1
+
+
+@pytest.mark.integration
+def test_ops_trigger_scan_async_background_runner_wires_clv_piggyback(monkeypatch):
+    import main
+    import routes.ops_cron as ops_cron
+
+    captured: dict[str, object] = {}
+
+    async def _fake_cron_run_board_drop_impl(*_args, **kwargs):
+        captured["piggyback_clv"] = kwargs.get("piggyback_clv")
+
+    monkeypatch.setattr(ops_cron, "cron_run_board_drop_impl", _fake_cron_run_board_drop_impl, raising=True)
+
+    asyncio.run(ops_cron._run_ops_board_drop_background(main_module=main, run_id="ops-board-drop-test"))
+
+    assert captured["piggyback_clv"] is main._piggyback_clv
+
+
+@pytest.mark.integration
 def test_ops_trigger_scan_async_contract_shape(auth_client, monkeypatch):
     import main
 
@@ -1156,6 +1284,114 @@ def test_ops_trigger_scan_async_contract_shape(auth_client, monkeypatch):
     assert body.get("pending") is True
     assert body.get("board_drop") is True
     assert isinstance(body.get("run_id"), str)
+    assert main.app.state.ops_status["last_board_refresh"]["status"] == "queued"
+    assert main.app.state.ops_status["last_board_refresh"]["kind"] == "board_drop"
+
+
+@pytest.mark.integration
+def test_scoped_board_refresh_updates_latest_board_refresh(auth_client, monkeypatch):
+    import main
+    import routes.board_routes as board_routes
+    import services.odds_api as odds_api
+    import services.shared_state as shared_state
+
+    main._init_ops_status()
+    persisted_runs: list[dict] = []
+
+    monkeypatch.setattr(shared_state, "allow_fixed_window_rate_limit", lambda **_kwargs: True, raising=True)
+    monkeypatch.setattr(board_routes, "get_db", lambda: _FakeDB({}), raising=True)
+    monkeypatch.setattr(board_routes, "_retry_supabase", lambda func, retries=2: func(), raising=True)
+    monkeypatch.setattr(
+        board_routes,
+        "persist_scoped_refresh",
+        lambda **_kwargs: "2026-03-20T18:00:00Z",
+        raising=True,
+    )
+    monkeypatch.setattr(main, "_persist_ops_job_run", lambda **kwargs: persisted_runs.append(kwargs), raising=True)
+
+    async def _fake_get_cached_or_scan(_sport: str, source: str = "manual_refresh"):
+        assert source == "manual_refresh"
+        return {
+            "sides": [
+                {
+                    "surface": "straight_bets",
+                    "sportsbook": "DraftKings",
+                    "sport": "basketball_nba",
+                    "event": "Lakers @ Warriors",
+                    "commence_time": "2026-03-20T18:00:00Z",
+                    "team": "Lakers",
+                    "pinnacle_odds": 105,
+                    "book_odds": 118,
+                    "true_prob": 0.51,
+                    "base_kelly_fraction": 0.02,
+                    "book_decimal": 2.18,
+                    "ev_percentage": 2.1,
+                }
+            ],
+            "events_fetched": 3,
+            "events_with_both_books": 2,
+            "api_requests_remaining": "490",
+            "scanned_at": "2026-03-20T17:58:00Z",
+        }
+
+    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)
+    monkeypatch.setattr(odds_api, "get_cached_or_scan", _fake_get_cached_or_scan, raising=True)
+
+    resp = auth_client.post("/api/board/refresh?scope=straight_bets")
+    assert resp.status_code == 200
+
+    body = resp.json()
+    assert body["surface"] == "straight_bets"
+    assert body["refreshed_at"] == "2026-03-20T18:00:00Z"
+    assert body["data"]["events_fetched"] == 3
+
+    latest_refresh = main.app.state.ops_status["last_board_refresh"]
+    assert latest_refresh["kind"] == "scoped_refresh"
+    assert latest_refresh["surface"] == "straight_bets"
+    assert latest_refresh["status"] == "completed"
+    assert latest_refresh["canonical_board_updated"] is False
+    assert latest_refresh["result"]["scan_label"] == "Manual Game Lines Refresh"
+    assert latest_refresh["result"]["straight_sides"] == 1
+
+    assert persisted_runs[0]["job_kind"] == "board_scoped_refresh"
+    assert persisted_runs[0]["status"] == "completed"
+    assert persisted_runs[0]["surface"] == "straight_bets"
+    assert persisted_runs[0]["meta"]["canonical_board_updated"] is False
+
+
+@pytest.mark.integration
+def test_scoped_board_refresh_failure_updates_latest_board_refresh(auth_client, monkeypatch):
+    import main
+    import routes.board_routes as board_routes
+    import services.shared_state as shared_state
+
+    main._init_ops_status()
+    persisted_runs: list[dict] = []
+
+    monkeypatch.setattr(shared_state, "allow_fixed_window_rate_limit", lambda **_kwargs: True, raising=True)
+    monkeypatch.setattr(board_routes, "get_db", lambda: _FakeDB({}), raising=True)
+    monkeypatch.setattr(main, "_persist_ops_job_run", lambda **kwargs: persisted_runs.append(kwargs), raising=True)
+
+    async def _raise_refresh(*, source: str):
+        raise RuntimeError(f"{source} exploded")
+
+    monkeypatch.setattr(board_routes, "_refresh_player_props_result", _raise_refresh, raising=True)
+
+    resp = auth_client.post("/api/board/refresh?scope=player_props")
+    assert resp.status_code == 502
+
+    latest_refresh = main.app.state.ops_status["last_board_refresh"]
+    assert latest_refresh["kind"] == "scoped_refresh"
+    assert latest_refresh["surface"] == "player_props"
+    assert latest_refresh["status"] == "failed"
+    assert latest_refresh["canonical_board_updated"] is False
+    assert latest_refresh["error_count"] == 1
+    assert latest_refresh["result"]["scan_label"] == "Manual Player Props Refresh"
+
+    assert persisted_runs[0]["job_kind"] == "board_scoped_refresh"
+    assert persisted_runs[0]["status"] == "failed"
+    assert persisted_runs[0]["surface"] == "player_props"
+    assert persisted_runs[0]["meta"]["canonical_board_updated"] is False
 
 
 @pytest.mark.integration

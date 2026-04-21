@@ -1624,6 +1624,87 @@ def _build_prop_side_candidates(
     return candidates
 
 
+def _canonical_target_offer_market_key(market_key: str | None) -> str:
+    normalized_market = str(market_key or "").strip().lower()
+    if not normalized_market:
+        return ""
+    reference_market_keys = _reference_market_keys_for_target_market(normalized_market)
+    if normalized_market in PLAYER_PROP_ONE_SIDED_TARGET_MARKETS and len(reference_market_keys) > 1:
+        return str(reference_market_keys[-1] or "").strip().lower()
+    return normalized_market
+
+
+def _equivalent_target_candidate_key(side: dict[str, Any]) -> tuple[str, str, str, str, str, float | None] | None:
+    sportsbook = str(side.get("sportsbook") or "").strip().lower()
+    canonical_market_key = _canonical_target_offer_market_key(side.get("market_key"))
+    player_name = _canonical_player_name(side.get("player_name"))
+    selection_side = str(side.get("selection_side") or "").strip().lower()
+    line_value = _to_line_numeric(side.get("line_value"))
+    event_key = str(side.get("event_id") or side.get("event") or "").strip().lower()
+    if not sportsbook or not canonical_market_key or not player_name or selection_side not in {"over", "under"}:
+        return None
+    return (
+        sportsbook,
+        event_key,
+        canonical_market_key,
+        player_name,
+        selection_side,
+        line_value,
+    )
+
+
+def _prefer_candidate_for_equivalent_offer(existing: dict[str, Any], incoming: dict[str, Any]) -> bool:
+    existing_quality = _american_price_quality(existing.get("book_odds"))
+    incoming_quality = _american_price_quality(incoming.get("book_odds"))
+    if existing_quality is None:
+        return incoming_quality is not None
+    if incoming_quality is not None and incoming_quality > existing_quality:
+        return True
+    if incoming_quality is not None and incoming_quality < existing_quality:
+        return False
+
+    existing_is_one_sided_alt = _market_supports_one_sided_target_offers(existing.get("market_key"))
+    incoming_is_one_sided_alt = _market_supports_one_sided_target_offers(incoming.get("market_key"))
+    if existing_is_one_sided_alt != incoming_is_one_sided_alt:
+        return not incoming_is_one_sided_alt
+
+    try:
+        incoming_ev = float(incoming.get("ev_percentage") or 0.0)
+    except Exception:
+        incoming_ev = 0.0
+    try:
+        existing_ev = float(existing.get("ev_percentage") or 0.0)
+    except Exception:
+        existing_ev = 0.0
+    return incoming_ev > existing_ev
+
+
+def _collapse_equivalent_target_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not candidates:
+        return []
+
+    deduped: list[dict[str, Any]] = []
+    grouped_indices: dict[tuple[str, str, str, str, str, float | None], int] = {}
+
+    for candidate in candidates:
+        key = _equivalent_target_candidate_key(candidate)
+        if key is None:
+            deduped.append(candidate)
+            continue
+
+        existing_index = grouped_indices.get(key)
+        if existing_index is None:
+            grouped_indices[key] = len(deduped)
+            deduped.append(candidate)
+            continue
+
+        existing = deduped[existing_index]
+        if _prefer_candidate_for_equivalent_offer(existing, candidate):
+            deduped[existing_index] = candidate
+
+    return deduped
+
+
 def _apply_reference_quality_gate(
     candidates: list[dict],
     *,
@@ -1681,9 +1762,11 @@ def _parse_prop_sides(
         player_context_lookup=player_context_lookup,
         weight_overrides=weight_overrides,
     )
-    return _apply_reference_quality_gate(
-        candidates,
-        min_reference_bookmakers=min_reference_bookmakers or get_player_prop_min_reference_bookmakers(),
+    return _collapse_equivalent_target_candidates(
+        _apply_reference_quality_gate(
+            candidates,
+            min_reference_bookmakers=min_reference_bookmakers or get_player_prop_min_reference_bookmakers(),
+        )
     )
 
 
@@ -2809,9 +2892,11 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
         )
         candidate_sides_count += len(event_candidates)
         pickem_candidates.extend(event_candidates)
-        event_sides = _apply_reference_quality_gate(
-            event_candidates,
-            min_reference_bookmakers=min_reference_bookmakers,
+        event_sides = _collapse_equivalent_target_candidates(
+            _apply_reference_quality_gate(
+                event_candidates,
+                min_reference_bookmakers=min_reference_bookmakers,
+            )
         )
         quality_gate_filtered_count += max(0, len(event_candidates) - len(event_sides))
         if event_sides:
@@ -3027,9 +3112,11 @@ async def scan_player_props_for_event_ids(
         )
         candidate_sides_count += len(event_candidates)
         pickem_candidates.extend(event_candidates)
-        event_sides = _apply_reference_quality_gate(
-            event_candidates,
-            min_reference_bookmakers=min_reference_bookmakers,
+        event_sides = _collapse_equivalent_target_candidates(
+            _apply_reference_quality_gate(
+                event_candidates,
+                min_reference_bookmakers=min_reference_bookmakers,
+            )
         )
         quality_gate_filtered_count += max(0, len(event_candidates) - len(event_sides))
         if event_sides:

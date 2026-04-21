@@ -668,6 +668,209 @@ def test_build_prop_side_candidates_supports_one_sided_alt_total_bases_target_of
     assert alt_offer["reference_bookmaker_count"] == 2
 
 
+def test_parse_prop_sides_prefers_standard_total_bases_when_alt_offer_is_redundant():
+    event_payload = {
+        "id": "evt-alt-tb-duplicate",
+        "home_team": "Rockies",
+        "away_team": "Padres",
+        "commence_time": "2026-03-21T03:00:00Z",
+        "bookmakers": [
+            {
+                "key": "betmgm",
+                "markets": [
+                    {
+                        "key": "batter_total_bases",
+                        "outcomes": [
+                            {"name": "Over", "description": "Hunter Goodman (Rockies)", "point": 1.5, "price": 115},
+                            {"name": "Under", "description": "Hunter Goodman (Rockies)", "point": 1.5, "price": -145},
+                        ],
+                    },
+                    {
+                        "key": "batter_total_bases_alternate",
+                        "outcomes": [
+                            {"name": "Over", "description": "Hunter Goodman (Rockies)", "point": 2, "price": 115},
+                        ],
+                    },
+                ],
+            },
+            {
+                "key": "bovada",
+                "markets": [
+                    {
+                        "key": "batter_total_bases",
+                        "outcomes": [
+                            {"name": "Over", "description": "Hunter Goodman (Rockies)", "point": 1.5, "price": -105},
+                            {"name": "Under", "description": "Hunter Goodman (Rockies)", "point": 1.5, "price": -115},
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "betonlineag",
+                "markets": [
+                    {
+                        "key": "batter_total_bases",
+                        "outcomes": [
+                            {"name": "Over", "description": "Hunter Goodman (Rockies)", "point": 1.5, "price": -102},
+                            {"name": "Under", "description": "Hunter Goodman (Rockies)", "point": 1.5, "price": -118},
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+
+    surfaced = _parse_prop_sides(
+        sport="baseball_mlb",
+        event_payload=event_payload,
+        target_markets=["batter_total_bases", "batter_total_bases_alternate"],
+        min_reference_bookmakers=2,
+    )
+
+    betmgm_over_offers = [
+        side for side in surfaced
+        if side["sportsbook"] == "BetMGM" and side["selection_side"] == "over"
+    ]
+
+    assert len(betmgm_over_offers) == 1
+    assert betmgm_over_offers[0]["market_key"] == "batter_total_bases"
+    assert betmgm_over_offers[0]["display_name"] == "Hunter Goodman Over 1.5 TB"
+
+
+def test_parse_prop_sides_keeps_alt_total_bases_when_it_has_the_better_price():
+    event_payload = {
+        "id": "evt-alt-tb-best-price",
+        "home_team": "Rockies",
+        "away_team": "Padres",
+        "commence_time": "2026-03-21T03:00:00Z",
+        "bookmakers": [
+            {
+                "key": "betmgm",
+                "markets": [
+                    {
+                        "key": "batter_total_bases",
+                        "outcomes": [
+                            {"name": "Over", "description": "Hunter Goodman (Rockies)", "point": 1.5, "price": 105},
+                            {"name": "Under", "description": "Hunter Goodman (Rockies)", "point": 1.5, "price": -135},
+                        ],
+                    },
+                    {
+                        "key": "batter_total_bases_alternate",
+                        "outcomes": [
+                            {"name": "Over", "description": "Hunter Goodman (Rockies)", "point": 2, "price": 120},
+                        ],
+                    },
+                ],
+            },
+            {
+                "key": "bovada",
+                "markets": [
+                    {
+                        "key": "batter_total_bases",
+                        "outcomes": [
+                            {"name": "Over", "description": "Hunter Goodman (Rockies)", "point": 1.5, "price": -105},
+                            {"name": "Under", "description": "Hunter Goodman (Rockies)", "point": 1.5, "price": -115},
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "betonlineag",
+                "markets": [
+                    {
+                        "key": "batter_total_bases",
+                        "outcomes": [
+                            {"name": "Over", "description": "Hunter Goodman (Rockies)", "point": 1.5, "price": -102},
+                            {"name": "Under", "description": "Hunter Goodman (Rockies)", "point": 1.5, "price": -118},
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+
+    surfaced = _parse_prop_sides(
+        sport="baseball_mlb",
+        event_payload=event_payload,
+        target_markets=["batter_total_bases", "batter_total_bases_alternate"],
+        min_reference_bookmakers=2,
+    )
+
+    betmgm_over_offers = [
+        side for side in surfaced
+        if side["sportsbook"] == "BetMGM" and side["selection_side"] == "over"
+    ]
+
+    assert len(betmgm_over_offers) == 1
+    assert betmgm_over_offers[0]["market_key"] == "batter_total_bases_alternate"
+    assert betmgm_over_offers[0]["display_name"] == "Hunter Goodman Over 2+ TB ALT"
+    assert betmgm_over_offers[0]["book_odds"] == 120.0
+
+
+def test_build_pickem_cards_from_candidates_keeps_same_book_support_when_alt_offer_exists():
+    event_payload = {
+        "id": "evt-alt-tb-pickem",
+        "home_team": "Rockies",
+        "away_team": "Padres",
+        "commence_time": "2026-03-21T03:00:00Z",
+        "bookmakers": [
+            {
+                "key": "betmgm",
+                "markets": [
+                    {
+                        "key": "batter_total_bases",
+                        "outcomes": [
+                            {"name": "Over", "description": "Hunter Goodman (Rockies)", "point": 1.5, "price": 105},
+                            {"name": "Under", "description": "Hunter Goodman (Rockies)", "point": 1.5, "price": -135},
+                        ],
+                    },
+                    {
+                        "key": "batter_total_bases_alternate",
+                        "outcomes": [
+                            {"name": "Over", "description": "Hunter Goodman (Rockies)", "point": 2, "price": 120},
+                        ],
+                    },
+                ],
+            },
+            {
+                "key": "bovada",
+                "markets": [
+                    {
+                        "key": "batter_total_bases",
+                        "outcomes": [
+                            {"name": "Over", "description": "Hunter Goodman (Rockies)", "point": 1.5, "price": -105},
+                            {"name": "Under", "description": "Hunter Goodman (Rockies)", "point": 1.5, "price": -115},
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "betonlineag",
+                "markets": [
+                    {
+                        "key": "batter_total_bases",
+                        "outcomes": [
+                            {"name": "Over", "description": "Hunter Goodman (Rockies)", "point": 1.5, "price": -102},
+                            {"name": "Under", "description": "Hunter Goodman (Rockies)", "point": 1.5, "price": -118},
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+
+    candidates = _build_prop_side_candidates(
+        sport="baseball_mlb",
+        event_payload=event_payload,
+        target_markets=["batter_total_bases", "batter_total_bases_alternate"],
+    )
+    cards = _build_pickem_cards_from_candidates(candidates, min_reference_bookmakers=2)
+
+    tb_card = next(card for card in cards if card["market_key"] == "batter_total_bases")
+
+    assert "BetMGM" in tb_card["exact_line_bookmakers"]
+
+
 def test_normalize_prizepicks_projection_maps_supported_nba_market():
     included_index = {
         "new_player:173819": {

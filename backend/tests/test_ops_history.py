@@ -208,6 +208,27 @@ def test_load_ops_status_snapshot_prefers_durable_rows_and_rebuilds_activity():
                     },
                 },
                 {
+                    "job_kind": "board_scoped_refresh",
+                    "source": "manual_refresh",
+                    "status": "completed",
+                    "run_id": "scoped-1",
+                    "captured_at": _iso(minutes_ago=7),
+                    "started_at": _iso(minutes_ago=8),
+                    "finished_at": _iso(minutes_ago=7),
+                    "duration_ms": 410.0,
+                    "total_sides": 12,
+                    "surface": "player_props",
+                    "meta": {
+                        "canonical_board_updated": False,
+                        "refreshed_at": _iso(minutes_ago=7),
+                        "result_summary": {
+                            "scan_label": "Manual Player Props Refresh",
+                            "props_sides": 12,
+                            "total_sides": 12,
+                        },
+                    },
+                },
+                {
                     "job_kind": "auto_settle",
                     "source": "cron",
                     "status": "completed",
@@ -364,6 +385,10 @@ def test_load_ops_status_snapshot_prefers_durable_rows_and_rebuilds_activity():
     assert snapshot["last_ops_trigger_scan"]["error_count"] == 1
     assert snapshot["last_ops_trigger_scan"]["board_drop"] is True
     assert snapshot["last_ops_trigger_scan"]["result"]["props_sides"] == 8
+    assert snapshot["last_board_refresh"]["run_id"] == "scoped-1"
+    assert snapshot["last_board_refresh"]["kind"] == "scoped_refresh"
+    assert snapshot["last_board_refresh"]["canonical_board_updated"] is False
+    assert snapshot["last_board_refresh"]["result"]["scan_label"] == "Manual Player Props Refresh"
     assert snapshot["last_auto_settle"]["settled"] == 5
     assert snapshot["last_auto_settle"]["props_settled"] == 2
     assert snapshot["last_auto_settle"]["manual_settlement_pending"]["total"] == 3

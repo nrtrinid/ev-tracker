@@ -14,6 +14,7 @@ import type {
   AutoSettleRunStatus,
   AutoSettleSummary,
   BoardDropResultSummary,
+  BoardRefreshStatus,
   BoardDropRunStatus,
   OddsApiActivityCall,
   OddsApiActivityScanDetail,
@@ -298,6 +299,12 @@ function getBoardRunTimestamp(run?: Pick<BoardDropRunStatus, "finished_at" | "ca
   return run?.finished_at || run?.captured_at || null;
 }
 
+function getBoardRefreshTimestamp(
+  refresh?: Pick<BoardRefreshStatus, "finished_at" | "refreshed_at" | "captured_at" | "started_at"> | null,
+): string | null {
+  return refresh?.finished_at || refresh?.refreshed_at || refresh?.captured_at || refresh?.started_at || null;
+}
+
 function getLatestBoardRun(
   scheduler?: BoardDropRunStatus | null,
   cron?: BoardDropRunStatus | null,
@@ -346,6 +353,74 @@ function formatBoardAlertLabel(run?: BoardDropRunStatus | null): string {
   if (deliveryStatus) return statusCode ? `${deliveryStatus} (${statusCode})` : deliveryStatus;
   if (attempted) return "Attempted";
   return "Not attempted";
+}
+
+function formatBoardRefreshWindowLabel(
+  refresh?: BoardRefreshStatus | null,
+  fallbackBoardRun?: BoardDropRunStatus | null,
+): string {
+  if (!refresh) return fallbackBoardRun ? formatBoardWindowLabel(fallbackBoardRun) : "Unknown";
+  if (refresh.kind === "scoped_refresh") {
+    if (refresh.result?.scan_label) return refresh.result.scan_label;
+    return refresh.surface === "player_props" ? "Manual Player Props Refresh" : "Manual Game Lines Refresh";
+  }
+  return formatBoardWindowLabel(refresh);
+}
+
+function formatBoardRefreshMixLabel(
+  refresh?: BoardRefreshStatus | null,
+  fallbackBoardRun?: BoardDropRunStatus | null,
+): string {
+  if (!refresh) return formatBoardMixLabel(fallbackBoardRun?.result ?? null, fallbackBoardRun?.total_sides ?? null);
+  if (refresh.kind === "scoped_refresh") {
+    const surfaceLabel = refresh.surface === "player_props" ? "Props only" : "Game lines only";
+    const totalSides =
+      typeof refresh.total_sides === "number"
+        ? refresh.total_sides
+        : typeof refresh.result?.total_sides === "number"
+          ? refresh.result.total_sides
+          : null;
+    return totalSides === null ? surfaceLabel : `${surfaceLabel} / ${totalSides} surfaced`;
+  }
+  return formatBoardMixLabel(refresh.result ?? null, refresh.total_sides ?? null);
+}
+
+function formatBoardRefreshPropsLabel(
+  refresh?: BoardRefreshStatus | null,
+  fallbackBoardRun?: BoardDropRunStatus | null,
+): string {
+  if (!refresh) return formatPropsFunnelLabel(fallbackBoardRun?.result ?? null);
+  if (refresh.kind === "scoped_refresh" && refresh.surface !== "player_props") return "Not a props refresh";
+  if (refresh.kind === "scoped_refresh") {
+    const funnel = formatPropsFunnelLabel(refresh.result ?? null);
+    if (funnel !== "Unknown") return funnel;
+    const surfaced =
+      typeof refresh.result?.props_sides === "number"
+        ? refresh.result.props_sides
+        : typeof refresh.total_sides === "number"
+          ? refresh.total_sides
+          : null;
+    return surfaced === null ? "Scoped props refresh" : `${surfaced} surfaced in scoped refresh`;
+  }
+  return formatPropsFunnelLabel(refresh.result ?? null);
+}
+
+function formatBoardRefreshPublishLabel(
+  refresh?: BoardRefreshStatus | null,
+  fallbackBoardRun?: BoardDropRunStatus | null,
+): string {
+  if (!refresh) return formatBoardAlertLabel(fallbackBoardRun);
+  if (refresh.kind === "scoped_refresh" || refresh.canonical_board_updated === false) {
+    return "Scoped cache only";
+  }
+  return formatBoardAlertLabel(refresh);
+}
+
+function formatBoardRefreshSurfaceLabel(refresh?: BoardRefreshStatus | null): string {
+  if (!refresh) return "board";
+  if (refresh.surface === "player_props") return "player props";
+  if (refresh.surface === "straight_bets") return "game lines";
+  return "daily board";
 }
 
 function formatAutoSettleSourceLabel(source?: string | null): string {
@@ -763,6 +838,7 @@ export function OpsDashboard() {
 
   const schedulerScan = query.data?.ops?.last_scheduler_scan;
   const cronScan = query.data?.ops?.last_ops_trigger_scan;
+  const latestBoardRefresh = query.data?.ops?.last_board_refresh ?? null;
   const manualScan = query.data?.ops?.last_manual_scan;
   const autoSettle = query.data?.ops?.last_auto_settle;
   const settleSummary = query.data?.ops?.last_auto_settle_summary;
@@ -783,9 +859,21 @@ export function OpsDashboard() {
   const primaryBoardMode =
     query.data?.runtime?.scheduler_expected === false ? "Ops trigger refreshes" : "Scheduler automation";
   const latestBoardRun = useMemo(() => getLatestBoardRun(schedulerScan, cronScan), [schedulerScan, cronScan]);
-  const latestBoardResult = latestBoardRun?.result ?? null;
+  const latestBoardRefreshTimestamp = getBoardRefreshTimestamp(latestBoardRefresh);
   const noBoardRunsYet = !schedulerScan && !cronScan;
   const noSettlementRunsYet = recentAutoSettleRuns.length === 0 && !settleSummary;
+  const latestRefreshErrorCount =
+    Number(schedulerScan?.hard_errors || 0) +
+    Number(cronScan?.error_count || 0) +
+    (latestBoardRefresh?.kind === "scoped_refresh" ? Number(latestBoardRefresh.error_count || 0) : 0);
+  const latestScopedRefreshNote =
+    latestBoardRefresh?.kind === "scoped_refresh"
+      ? `Latest refresh updated the ${formatBoardRefreshSurfaceLabel(latestBoardRefresh)} scoped cache only. ${
+          latestBoardRun
+            ? `Canonical board publish remains ${formatBoardWindowLabel(latestBoardRun)} at ${formatTime(getBoardRunTimestamp(latestBoardRun))}.`
+            : "No full board-drop publish has been recorded yet."
+        }`
+      : null;
 
   const latestSkippedTotals = settleSummary?.skipped_totals ?? recentAutoSettleRuns[0]?.skipped_totals ?? null;
   const skippedEntries = Object.entries(latestSkippedTotals || {});
@@ -804,6 +892,22 @@ export function OpsDashboard() {
     ]);
   }
 
+  async function waitForBoardRefreshToSettle(runId: string) {
+    const deadline = Date.now() + 45_000;
+    while (Date.now() < deadline) {
+      const next = await query.refetch();
+      const refresh = next.data?.ops?.last_board_refresh ?? null;
+      if (refresh?.run_id === runId) {
+        const status = (refresh.status || "").trim().toLowerCase();
+        if (!["queued", "running"].includes(status)) {
+          return refresh;
+        }
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1500));
+    }
+    return null;
+  }
+
   async function handleRefreshBoard() {
     try {
       setIsRefreshingBoard(true);
@@ -814,6 +918,8 @@ export function OpsDashboard() {
         toast.success("Daily drop refresh started", {
           description: `Queued board refresh run ${result.run_id}. It will continue in the background.`,
         });
+        await query.refetch();
+        await waitForBoardRefreshToSettle(result.run_id);
         await refreshAllPanels();
         return;
       }
@@ -929,22 +1035,38 @@ export function OpsDashboard() {
               <Row label="Primary mode" value={primaryBoardMode} />
               <Row label="Last scheduled board drop" value={formatTime(getBoardRunTimestamp(schedulerScan))} />
               <Row label="Last ops board refresh" value={formatTime(getBoardRunTimestamp(cronScan))} />
+              <Row label="Last board-affecting refresh" value={formatTime(latestBoardRefreshTimestamp)} />
               <Row label="Last manual market scan" value={formatTime(manualScan?.captured_at)} />
-              <Row label="Latest board window" value={formatBoardWindowLabel(latestBoardRun)} />
+              <Row
+                label="Latest board window"
+                value={formatBoardRefreshWindowLabel(latestBoardRefresh, latestBoardRun)}
+              />
               <Row
                 label="Latest board mix"
-                value={formatBoardMixLabel(latestBoardResult, latestBoardRun?.total_sides ?? null)}
+                value={formatBoardRefreshMixLabel(latestBoardRefresh, latestBoardRun)}
               />
-              <Row label="Latest props funnel" value={formatPropsFunnelLabel(latestBoardResult)} />
-              <Row label="Discord publish" value={formatBoardAlertLabel(latestBoardRun)} />
+              <Row
+                label="Latest props funnel"
+                value={formatBoardRefreshPropsLabel(latestBoardRefresh, latestBoardRun)}
+              />
+              <Row
+                label="Discord publish"
+                value={formatBoardRefreshPublishLabel(latestBoardRefresh, latestBoardRun)}
+              />
               <Row
                 label="Recent run errors"
-                value={String(Number(schedulerScan?.hard_errors || 0) + Number(cronScan?.error_count || 0))}
+                value={String(latestRefreshErrorCount)}
               />
 
               {automationState === "warning" && automationWarningReason && (
                 <p className="text-xs text-[#5C4D2E] bg-[#C4A35A]/10 border border-[#C4A35A]/30 rounded px-2 py-1">
                   Why warning: {automationWarningReason}
+                </p>
+              )}
+
+              {latestScopedRefreshNote && (
+                <p className="text-xs text-muted-foreground bg-muted/20 border border-border/60 rounded px-2 py-1">
+                  {latestScopedRefreshNote}
                 </p>
               )}
 

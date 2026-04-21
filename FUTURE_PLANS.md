@@ -29,11 +29,11 @@ Focus: trust/reliability fixes only.
   - Next step: Align annotation and rendering paths for straight bets + player props, then add integration/UI tests that assert all three states on both card types.
   - Codex fit: High.
 
-- [ ] Add dedicated middleware regression tests for auth + beta gating flows. [Owner: Frontend] [Target week: 2026-W17]
+- [x] Add dedicated middleware regression tests for auth + beta gating flows. [Owner: Frontend] [Completed: 2026-04-21]
   - Why: Middleware is the main access gate and redirect layer, but dedicated flow coverage is thin.
   - User impact: High.
   - Engineering risk: Low to medium.
-  - Next step: Add a path/state matrix for unauthenticated, approved beta, non-approved beta, and admin bypass behavior.
+  - Completed work: Added a dedicated middleware regression spec that exercises the trusted-beta redirect matrix for unauthenticated access, approved and non-approved beta users, admin allowlist bypass, auth-page redirects, and middleware bypass routes for cron, backend proxy, and beta-access APIs.
   - Codex fit: High.
 
 - [x] Normalize supported alt-line parsing across active beta books/markets (for example, `O/U 1.5` vs ladder formats that begin at `+2`). [Owner: Backend] [Completed: 2026-04-21]
@@ -58,11 +58,13 @@ Focus: trust/reliability fixes only.
   - Next step: Add route-level tests for mode handling, rate-limit/error branches, and scoped refresh contracts.
   - Codex fit: High.
 
-- [ ] Ensure daily-board pipeline card reflects the latest ops manual refresh state (no stale board status after manual refresh). [Owner: Backend/Frontend] [Target week: 2026-W17]
+- [x] Ensure daily-board pipeline card reflects the latest ops manual refresh state (no stale board status after manual refresh). [Owner: Backend/Frontend] [Completed: 2026-04-21]
   - Why: Operators report cases where manual refresh succeeds but the board pipeline card still shows stale state.
   - User impact: High (trust in board freshness and operator confidence).
   - Engineering risk: Medium.
-  - Next step: Validate manual refresh write/read path and freshness metadata wiring end-to-end, then add regression tests around latest board card freshness after ops-triggered refresh.
+  - Completed work: Added normalized `last_board_refresh` ops status across board-drop and scoped-refresh paths, persisted scoped refreshes into durable ops history without republishing canonical `board:latest`, and updated the ops dashboard to poll short-term after async refresh acceptance so the cards settle without waiting for the next background refetch window.
+  - Regression coverage: Added backend tests for scoped-refresh success/failure status persistence plus ops-history selection of the freshest board-affecting refresh, and updated scheduler/ops-trigger status assertions.
+  - Follow-up: Keep the broader board route contract expansion item below open for more exhaustive mode/rate-limit/scoped-refresh route coverage.
   - Codex fit: High.
 
 - [ ] Audit deeplink reliability and fallback behavior by sportsbook/platform. [Owner: Frontend/Product/Ops] [Target week: 2026-W18]
@@ -72,11 +74,13 @@ Focus: trust/reliability fixes only.
   - Next step: Build a per-book matrix across desktop/mobile/app, verify expected fallback behavior, and add per-book UI hints or graceful fallback copy where direct reachability is weak.
   - Codex fit: Good for the matrix and fallback implementation; final QA needs human validation.
 
-- [ ] Re-add CLV piggyback on admin-triggered scans for currently placed bets with CLV pending (not only JIT scheduler job coverage). [Owner: Backend] [Target week: 2026-W17]
+- [x] Re-add CLV piggyback on admin-triggered scans for currently placed bets with CLV pending (not only JIT scheduler job coverage). [Owner: Backend] [Completed: 2026-04-21]
   - Why: CLV pending bets can miss timely updates when only the JIT path runs; admin-triggered scans should also advance CLV snapshots.
   - User impact: Medium to high (faster CLV visibility on active bets).
   - Engineering risk: Medium.
-  - Next step: Ensure admin scan triggers invoke CLV piggyback update for eligible pending bets, then add contract tests for CLV-pending progression after admin-triggered scans.
+  - Completed work: Admin-triggered board refresh now piggybacks `main._piggyback_clv` on successful board-drop runs using only fresh sides returned by `run_daily_board_drop` (`fresh_straight_sides` + `fresh_prop_sides`).
+  - Regression coverage: Added backend ops-trigger contract coverage for sync/async piggyback wiring, empty fresh-side skip behavior, and best-effort failure isolation when piggyback execution raises.
+  - Follow-up: Keep the existing JIT CLV scheduler path unchanged as the safety-net close-line refresher.
   - Codex fit: High.
 
 - [ ] Resolve release/docs/runtime parity drift across status docs. [Owner: Docs] [Target week: 2026-W17]

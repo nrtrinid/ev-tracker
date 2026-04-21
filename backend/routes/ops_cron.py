@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import os
 import time
 from datetime import datetime, UTC
@@ -333,6 +334,7 @@ async def cron_run_board_drop_impl(
     persist_ops_job_run: Callable[..., None],
     get_db: Callable[[], Any],
     retry_supabase: Callable[[Callable[[], Any]], Any] | None,
+    piggyback_clv: Callable[[list[dict[str, Any]]], Any] | None = None,
     run_id_prefix: str = "ops_board_drop",
     log_prefix: str = "ops.trigger.board_drop",
     board_drop_source: str = "ops_trigger_board_drop",
@@ -408,9 +410,38 @@ async def cron_run_board_drop_impl(
         fresh_prop_sides = [
             side for side in (result.get("fresh_prop_sides") or []) if isinstance(side, dict)
         ]
+        fresh_sides = [*fresh_straight_sides, *fresh_prop_sides]
+
+        # Keep CLV piggyback best-effort and non-blocking so board refresh success semantics stay unchanged.
+        if piggyback_clv is not None and fresh_sides:
+            try:
+                piggyback_result = piggyback_clv(fresh_sides)
+                if inspect.isawaitable(piggyback_result):
+                    async def _run_piggyback() -> None:
+                        try:
+                            await piggyback_result
+                        except Exception as exc:
+                            log_event(
+                                f"{log_prefix}.clv_piggyback_failed",
+                                level="warning",
+                                run_id=run_id,
+                                error_class=type(exc).__name__,
+                                error=str(exc),
+                            )
+
+                    asyncio.create_task(_run_piggyback())
+            except Exception as exc:
+                log_event(
+                    f"{log_prefix}.clv_piggyback_failed",
+                    level="warning",
+                    run_id=run_id,
+                    error_class=type(exc).__name__,
+                    error=str(exc),
+                )
+
         scan_alert_mode = (os.getenv("DISCORD_SCAN_ALERT_MODE") or DISCORD_SCAN_ALERT_MODE_TIMED_PING).strip().lower()
         if scan_alert_mode == DISCORD_SCAN_ALERT_MODE_EDGE_LIVE:
-            alerts_scheduled += schedule_alerts([*fresh_straight_sides, *fresh_prop_sides])
+            alerts_scheduled += schedule_alerts(fresh_sides)
             schedule_stats = get_last_schedule_stats()
             alert_skip_totals["skipped_memory_dedupe"] += int(schedule_stats.get("skipped_memory_dedupe") or 0)
             alert_skip_totals["skipped_shared_dedupe"] += int(schedule_stats.get("skipped_shared_dedupe") or 0)
@@ -553,7 +584,16 @@ async def cron_run_board_drop_impl(
         "board_alert_http_status": board_alert.get("status_code"),
         "board_alert_error": board_alert.get("error"),
     }
+    board_refresh_status_payload = {
+        **status_payload,
+        "kind": "board_drop",
+        "source": "ops_trigger" if ops_status_key == "last_ops_trigger_scan" else "scheduler",
+        "surface": "board_drop",
+        "status": "completed" if not errors else "completed_with_errors",
+        "canonical_board_updated": True,
+    }
     set_ops_status(ops_status_key, status_payload)
+    set_ops_status("last_board_refresh", board_refresh_status_payload)
 
     persist_ops_job_run(
         job_kind="ops_trigger_board_drop",
@@ -1148,6 +1188,7 @@ async def _run_ops_board_drop_background(*, main_module: Any, run_id: str) -> No
             persist_ops_job_run=main_module._persist_ops_job_run,
             get_db=main_module.get_db,
             retry_supabase=main_module._retry_supabase,
+            piggyback_clv=main_module._piggyback_clv,
             run_id_prefix="ops_board_drop",
             log_prefix="ops.trigger.board_drop",
             board_drop_source="ops_trigger_board_drop",
@@ -1188,6 +1229,24 @@ async def ops_trigger_scan_async(
             "board_drop": True,
             "status": "queued",
             "pending": True,
+            "error_count": 0,
+            "errors": [],
+            "result": accepted_payload.get("result"),
+        },
+    )
+    main._set_ops_status(
+        "last_board_refresh",
+        {
+            "kind": "board_drop",
+            "source": "ops_trigger",
+            "surface": "board_drop",
+            "status": "queued",
+            "pending": True,
+            "canonical_board_updated": True,
+            "run_id": run_id,
+            "started_at": started_at,
+            "captured_at": started_at,
+            "board_drop": True,
             "error_count": 0,
             "errors": [],
             "result": accepted_payload.get("result"),
@@ -1324,6 +1383,7 @@ async def ops_trigger_scan(
         persist_ops_job_run=main._persist_ops_job_run,
         get_db=main.get_db,
         retry_supabase=main._retry_supabase,
+        piggyback_clv=main._piggyback_clv,
         run_id_prefix="ops_board_drop",
         log_prefix="ops.trigger.board_drop",
         board_drop_source="ops_trigger_board_drop",

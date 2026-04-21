@@ -8,25 +8,44 @@ import {
   parseAdminAllowlist,
 } from "@/lib/server/admin-access-utils";
 
-export async function middleware(request: NextRequest) {
-  const pathname = request.nextUrl.pathname;
-  const isLoginPath = pathname.startsWith("/login");
-  const isBetaAccessPath = pathname.startsWith("/beta-access");
-  const isBetaAccessApiPath = pathname.startsWith("/api/beta-access");
+type MiddlewareUser = {
+  id: string;
+  email?: string | null;
+} | null;
 
-  // Allow Vercel cron endpoints to run without Supabase auth redirects.
-  // These endpoints are protected separately via CRON_SECRET checks inside the route handlers.
-  if (
-    pathname.startsWith("/api/cron/") ||
-    pathname.startsWith("/api/backend/") ||
-    isBetaAccessApiPath
-  ) {
-    return NextResponse.next();
-  }
+type MiddlewareSettingsRow = {
+  beta_access_granted?: boolean | null;
+} | null;
 
+type MiddlewareSupabaseClient = {
+  auth: {
+    getUser: () => Promise<{
+      data: {
+        user: MiddlewareUser;
+      };
+    }>;
+  };
+  from: (_table: string) => {
+    select: (_columns: string) => {
+      eq: (_column: string, _value: string) => {
+        maybeSingle: () => PromiseLike<{
+          data: MiddlewareSettingsRow;
+        }>;
+      };
+    };
+  };
+};
+
+export interface MiddlewareDeps {
+  createClient?: (request: NextRequest) => MiddlewareSupabaseClient;
+  betaInviteCode?: string | undefined;
+  opsAdminEmails?: string | undefined;
+}
+
+function defaultCreateClient(request: NextRequest): MiddlewareSupabaseClient {
   let supabaseResponse = NextResponse.next({ request });
 
-  const supabase = createServerClient(
+  return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
@@ -45,7 +64,30 @@ export async function middleware(request: NextRequest) {
         },
       },
     }
-  );
+  ) as unknown as MiddlewareSupabaseClient;
+}
+
+export async function middlewareWithDeps(
+  request: NextRequest,
+  deps: MiddlewareDeps = {}
+) {
+  const pathname = request.nextUrl.pathname;
+  const isLoginPath = pathname.startsWith("/login");
+  const isBetaAccessPath = pathname.startsWith("/beta-access");
+  const isBetaAccessApiPath = pathname.startsWith("/api/beta-access");
+
+  // Allow Vercel cron endpoints to run without Supabase auth redirects.
+  // These endpoints are protected separately via CRON_SECRET checks inside the route handlers.
+  if (
+    pathname.startsWith("/api/cron/") ||
+    pathname.startsWith("/api/backend/") ||
+    isBetaAccessApiPath
+  ) {
+    return NextResponse.next();
+  }
+
+  const supabaseResponse = NextResponse.next({ request });
+  const supabase = (deps.createClient ?? defaultCreateClient)(request);
 
   // Use getUser() instead of getSession() for security in middleware
   const {
@@ -60,8 +102,12 @@ export async function middleware(request: NextRequest) {
   }
 
   if (user) {
-    const inviteCodeEnabled = betaInviteCodeEnabled(process.env.BETA_INVITE_CODE);
-    const adminAllowlist = parseAdminAllowlist(process.env.OPS_ADMIN_EMAILS);
+    const inviteCodeEnabled = betaInviteCodeEnabled(
+      deps.betaInviteCode ?? process.env.BETA_INVITE_CODE
+    );
+    const adminAllowlist = parseAdminAllowlist(
+      deps.opsAdminEmails ?? process.env.OPS_ADMIN_EMAILS
+    );
     const userEmail = user.email ? normalizeEmail(user.email) : "";
     const isAdmin = !!userEmail && adminAllowlist.includes(userEmail);
 
@@ -94,6 +140,10 @@ export async function middleware(request: NextRequest) {
   }
 
   return supabaseResponse;
+}
+
+export async function middleware(request: NextRequest) {
+  return middlewareWithDeps(request);
 }
 
 export const config = {
