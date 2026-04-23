@@ -185,7 +185,7 @@ ALERT_DEDUPE_TTL_SECONDS=21600
 ### Operator-triggered automation
 If you want external wake/trigger automation, use a scheduler (cron-job.org, GitHub Actions, etc.) to hit these endpoints:
 
-- `POST /api/ops/trigger/scan` (warms scanner cache; alert-path Discord sends run only when `DISCORD_ENABLE_ALERT_ROUTE=1`)
+- `POST /api/ops/trigger/scan` (warms scanner cache; manual ops-triggered notifications use the debug/heartbeat route while scheduled board-drop windows use the alert route)
 - `POST /api/ops/trigger/auto-settle` (grades eligible pending ML bets)
 - `POST /api/ops/trigger/test-discord` (sends a test Discord message through the debug/test route)
 - `POST /api/ops/trigger/test-discord-alert` (sends an alert-style validation message through the debug/test route without touching the live alert path)

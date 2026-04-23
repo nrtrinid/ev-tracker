@@ -1,4 +1,4 @@
-from services.board_snapshot import _payload_sports_included, persist_board_snapshot
+from services.board_snapshot import _payload_sports_included, persist_board_snapshot, persist_scoped_refresh
 
 
 class _FakeQuery:
@@ -56,3 +56,32 @@ def test_persist_board_snapshot_uses_all_fallback_for_empty_player_props_payload
     stored = db.query.rows[0]["payload"]["payload"]
     assert stored["meta"]["surfaces_included"] == ["player_props"]
     assert stored["meta"]["sports_included"] == ["all"]
+
+
+def test_persist_scoped_refresh_writes_only_scoped_key():
+    db = _FakeDB()
+
+    refreshed_at = persist_scoped_refresh(
+        db=db,
+        surface="player_props",
+        scan_payload={
+            "surface": "player_props",
+            "sport": "basketball_nba",
+            "sides": [],
+            "events_fetched": 0,
+            "events_with_both_books": 0,
+            "api_requests_remaining": "88",
+            "scanned_at": "2026-04-22T09:30:00Z",
+        },
+        retry_supabase=lambda operation: operation(),
+        log_event=lambda *args, **kwargs: None,
+    )
+
+    stored = db.query.rows[0]["payload"]
+    assert stored["key"] == "player_props:scoped:latest"
+    assert stored["surface"] == "player_props"
+    assert stored["payload"]["surface"] == "player_props"
+    assert stored["payload"]["refreshed_at"] == refreshed_at
+    assert stored["payload"]["data"]["surface"] == "player_props"
+    assert stored["payload"]["data"]["events_fetched"] == 0
+    assert all(row["payload"]["key"] != "board:latest" for row in db.query.rows)

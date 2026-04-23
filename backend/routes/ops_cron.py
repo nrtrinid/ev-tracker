@@ -335,6 +335,7 @@ async def cron_run_board_drop_impl(
     started_clock = time.monotonic()
     started = _utc_now_iso()
     log_event(f"{log_prefix}.started", run_id=run_id, started_at=started, scan_label=scan_label)
+    notification_message_type = "heartbeat" if ops_status_key == "last_ops_trigger_scan" else "alert"
 
     from services.daily_board import run_daily_board_drop
     from services.discord_alerts import (
@@ -429,7 +430,7 @@ async def cron_run_board_drop_impl(
 
         scan_alert_mode = (os.getenv("DISCORD_SCAN_ALERT_MODE") or DISCORD_SCAN_ALERT_MODE_TIMED_PING).strip().lower()
         if scan_alert_mode == DISCORD_SCAN_ALERT_MODE_EDGE_LIVE:
-            alerts_scheduled += schedule_alerts(fresh_sides)
+            alerts_scheduled += schedule_alerts(fresh_sides, message_type=notification_message_type)
             schedule_stats = get_last_schedule_stats()
             alert_skip_totals["skipped_memory_dedupe"] += int(schedule_stats.get("skipped_memory_dedupe") or 0)
             alert_skip_totals["skipped_shared_dedupe"] += int(schedule_stats.get("skipped_shared_dedupe") or 0)
@@ -439,6 +440,7 @@ async def cron_run_board_drop_impl(
                 run_id=run_id,
                 discord_alert_schedule=schedule_stats,
                 scan_alert_mode=scan_alert_mode,
+                message_type=notification_message_type,
             )
         else:
             board_alert_payload = build_board_drop_alert_payload(
@@ -451,8 +453,12 @@ async def cron_run_board_drop_impl(
                 },
             )
             try:
-                delivery = await send_discord_webhook(board_alert_payload, message_type="alert")
-                _raise_if_delivery_disabled(delivery, run_id=run_id, fallback_message_type="alert")
+                delivery = await send_discord_webhook(board_alert_payload, message_type=notification_message_type)
+                _raise_if_delivery_disabled(
+                    delivery,
+                    run_id=run_id,
+                    fallback_message_type=notification_message_type,
+                )
                 board_alert = {
                     "attempted": True,
                     "delivery_status": delivery.get("delivery_status") if isinstance(delivery, dict) else "delivered",
@@ -483,6 +489,7 @@ async def cron_run_board_drop_impl(
                 f"{log_prefix}.board_alert",
                 run_id=run_id,
                 scan_alert_mode=scan_alert_mode,
+                message_type=notification_message_type,
                 delivery_status=board_alert.get("delivery_status"),
                 status_code=board_alert.get("status_code"),
                 route_kind=board_alert.get("route_kind"),

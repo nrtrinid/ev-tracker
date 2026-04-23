@@ -344,23 +344,23 @@ async def send_discord_webhook(payload: dict[str, Any], message_type: str = "ale
         raise
 
 
-async def alert_for_side(side: dict[str, Any]) -> None:
+async def alert_for_side(side: dict[str, Any], message_type: str = "alert") -> None:
     payload = build_discord_payload(side)
-    await send_discord_webhook(payload)
+    await send_discord_webhook(payload, message_type=message_type)
 
 
-async def _alert_for_side_with_logging(side: dict[str, Any]) -> None:
+async def _alert_for_side_with_logging(side: dict[str, Any], message_type: str = "alert") -> None:
     try:
-        await alert_for_side(side)
+        await alert_for_side(side, message_type=message_type)
     except Exception as exc:
         key = make_alert_key(side)
-        print(f"[Discord] Background alert delivery failed for {key}: {exc}")
+        print(f"[Discord] Background {message_type} delivery failed for {key}: {exc}")
 
 
-def schedule_alerts(sides: list[dict[str, Any]]) -> int:
+def schedule_alerts(sides: list[dict[str, Any]], message_type: str = "alert") -> int:
     """
-    Fire-and-forget scheduling of Discord alerts for qualifying sides.
-    Returns the number of alerts that were scheduled (not necessarily delivered).
+    Fire-and-forget scheduling of Discord notifications for qualifying sides.
+    Returns the number of notifications that were scheduled (not necessarily delivered).
     """
     global _LAST_SCHEDULE_STATS
 
@@ -381,7 +381,7 @@ def schedule_alerts(sides: list[dict[str, Any]]) -> int:
         # Mark as alerted immediately to prevent duplicates within the same scan batch.
         ALERTED_KEYS.add(key)
         stats["scheduled"] += 1
-        asyncio.create_task(_alert_for_side_with_logging(side))
+        asyncio.create_task(_alert_for_side_with_logging(side, message_type=message_type))
 
     stats["skipped_total"] = (
         stats["skipped_memory_dedupe"]

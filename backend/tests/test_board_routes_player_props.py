@@ -10,7 +10,9 @@ ensure_supabase_stub()
 from routes.board_routes import (
     get_board_latest_promos,
     get_board_latest_player_prop_detail,
+    get_board_latest_player_props_browse,
     get_board_latest_player_props_opportunities,
+    get_board_latest_player_props_pickem,
 )
 
 
@@ -83,6 +85,160 @@ def test_get_board_latest_player_props_opportunities_filters_pages_and_annotates
     assert out["items"][0]["sportsbook"] == "DraftKings"
     assert out["items"][0]["scanner_duplicate_state"] == "better_now"
     assert out["available_sports"] == ["basketball_nba"]
+
+
+def test_get_board_latest_player_props_browse_filters_pages_and_annotates(monkeypatch):
+    def _fake_load_filtered_page(*, db, retry_supabase, view, page, page_size, filter_item):
+        assert view == "browse"
+        assert page == 2
+        assert page_size == 2
+        sample = {
+            "surface": "player_props",
+            "event_id": "evt-2",
+            "market_key": "player_assists",
+            "selection_key": "sel-2",
+            "sportsbook": "FanDuel",
+            "sport": "basketball_nba",
+            "event": "Kings @ Suns",
+            "event_short": "SAC @ PHX",
+            "commence_time": "2099-04-02T03:00:00Z",
+            "market": "player_assists",
+            "player_name": "Devin Booker",
+            "selection_side": "over",
+            "display_name": "Devin Booker Over 6.5 Assists",
+            "reference_odds": -102,
+            "reference_source": "consensus",
+            "reference_bookmaker_count": 2,
+            "confidence_label": "medium",
+            "book_odds": 108,
+            "true_prob": 0.53,
+            "base_kelly_fraction": 0.02,
+            "book_decimal": 2.08,
+            "ev_percentage": 5.5,
+        }
+        assert filter_item(sample) is True
+        return (
+            {
+                "scanned_at": "2026-04-02T00:00:00Z",
+                "available_books": ["DraftKings", "FanDuel"],
+                "available_markets": ["player_assists"],
+                "available_sports": ["basketball_nba"],
+            },
+            [sample],
+            3,
+            8,
+            True,
+        )
+
+    monkeypatch.setattr("routes.board_routes.get_db", lambda: object())
+    monkeypatch.setattr("routes.board_routes.load_player_prop_board_filtered_page", _fake_load_filtered_page)
+    monkeypatch.setattr(
+        "routes.board_routes.annotate_sides_with_duplicate_state",
+        lambda _db, _user_id, sides: [{**side, "scanner_duplicate_state": "already_logged"} for side in sides],
+    )
+
+    out = get_board_latest_player_props_browse(
+        page=2,
+        page_size=2,
+        books="FanDuel",
+        time_filter="all_games",
+        sport="basketball_nba",
+        market="player_assists",
+        search="Booker",
+        tz_offset_minutes=420,
+        user={"id": "user-1"},
+    )
+
+    assert out is not None
+    assert out["page"] == 2
+    assert out["page_size"] == 2
+    assert out["source_total"] == 8
+    assert out["total"] == 3
+    assert out["has_more"] is True
+    assert out["items"][0]["sportsbook"] == "FanDuel"
+    assert out["items"][0]["scanner_duplicate_state"] == "already_logged"
+
+
+def test_get_board_latest_player_props_pickem_filters_pages_without_duplicate_annotation(monkeypatch):
+    def _fake_load_filtered_page(*, db, retry_supabase, view, page, page_size, filter_item):
+        assert view == "pickem"
+        assert page == 1
+        assert page_size == 1
+        sample = {
+            "comparison_key": "evt-1|player_points|booker|24.5",
+            "sport": "basketball_nba",
+            "event": "Lakers @ Suns",
+            "commence_time": "2099-04-02T02:00:00Z",
+            "player_name": "Devin Booker",
+            "market_key": "player_points",
+            "market": "player_points",
+            "team": "Phoenix Suns",
+            "opponent": "Los Angeles Lakers",
+            "best_over_sportsbook": "DraftKings",
+            "best_under_sportsbook": "FanDuel",
+            "exact_line_bookmakers": ["DraftKings", "FanDuel"],
+        }
+        assert filter_item(sample) is True
+        return (
+            {
+                "scanned_at": "2026-04-02T00:00:00Z",
+                "available_books": ["DraftKings", "FanDuel"],
+                "available_markets": ["player_points"],
+                "available_sports": ["basketball_nba"],
+            },
+            [sample],
+            1,
+            1,
+            False,
+        )
+
+    monkeypatch.setattr("routes.board_routes.get_db", lambda: object())
+    monkeypatch.setattr("routes.board_routes.load_player_prop_board_filtered_page", _fake_load_filtered_page)
+    monkeypatch.setattr(
+        "routes.board_routes.annotate_sides_with_duplicate_state",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("pickem route should not annotate duplicate state")),
+    )
+
+    out = get_board_latest_player_props_pickem(
+        page=1,
+        page_size=1,
+        books="DraftKings",
+        time_filter="all_games",
+        sport="basketball_nba",
+        market="player_points",
+        search="Booker",
+        tz_offset_minutes=420,
+        user={"id": "user-1"},
+    )
+
+    assert out is not None
+    assert out["source_total"] == 1
+    assert out["total"] == 1
+    assert out["has_more"] is False
+    assert out["items"][0]["comparison_key"] == "evt-1|player_points|booker|24.5"
+
+
+def test_get_board_latest_player_prop_detail_returns_detail_when_present(monkeypatch):
+    monkeypatch.setattr("routes.board_routes.get_db", lambda: object())
+    monkeypatch.setattr(
+        "routes.board_routes.load_player_prop_board_detail",
+        lambda **_kwargs: {
+            "selection_key": "sel-1",
+            "sportsbook": "DraftKings",
+            "reference_bookmakers": ["DraftKings", "FanDuel"],
+            "reference_bookmaker_count": 2,
+        },
+    )
+
+    out = get_board_latest_player_prop_detail(
+        selection_key="sel-1",
+        sportsbook="DraftKings",
+        user={"id": "user-1"},
+    )
+
+    assert out["selection_key"] == "sel-1"
+    assert out["sportsbook"] == "DraftKings"
+    assert out["reference_bookmakers"] == ["DraftKings", "FanDuel"]
 
 
 def test_get_board_latest_player_prop_detail_raises_404_when_missing(monkeypatch):

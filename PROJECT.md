@@ -155,7 +155,7 @@ ev-betting-tracker/
 | DELETE | `/parlay-slips/{slip_id}` | Delete parlay slip |
 | POST | `/parlay-slips/{slip_id}/log` | Log parlay slip into bets |
 | POST | `/beta/access/grant` | Grant trusted-beta access by invite code |
-| POST | `/api/ops/trigger/scan` | Operator-triggered cache warm + alert scheduling |
+| POST | `/api/ops/trigger/scan` | Operator-triggered cache warm + debug/heartbeat notifications |
 | POST | `/api/ops/trigger/auto-settle` | Operator-triggered auto-settle run |
 | POST | `/api/ops/trigger/test-discord` | Test Discord message |
 | POST | `/api/ops/trigger/test-discord-alert` | Test alert-style Discord payloads on the debug route |

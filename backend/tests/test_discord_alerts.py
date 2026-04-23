@@ -205,6 +205,47 @@ def test_schedule_alerts_records_skip_telemetry(monkeypatch):
     assert stats["skipped_total"] == 3
 
 
+def test_schedule_alerts_supports_heartbeat_routing(monkeypatch):
+    mod = _reload_discord_alerts()
+    mod.ALERTED_KEYS.clear()
+
+    seen_message_types: list[str] = []
+
+    async def fake_alert_for_side(_side, message_type="alert"):
+        seen_message_types.append(message_type)
+
+    def fake_create_task(coro):
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+        class DummyTask:
+            pass
+
+        return DummyTask()
+
+    monkeypatch.setattr(mod, "alert_for_side", fake_alert_for_side, raising=True)
+    monkeypatch.setattr(mod.asyncio, "create_task", fake_create_task, raising=True)
+    monkeypatch.setattr(mod, "should_alert", lambda _side: True, raising=True)
+    monkeypatch.setattr(mod, "mark_alert_if_new", lambda *_args, **_kwargs: True, raising=True)
+
+    side = {
+        "sport": "basketball_nba",
+        "commence_time": "t",
+        "event": "A @ B",
+        "sportsbook": "DraftKings",
+        "team": "A",
+        "ev_percentage": 3.0,
+        "book_odds": 200,
+    }
+
+    scheduled = mod.schedule_alerts([side], message_type="heartbeat")
+    assert scheduled == 1
+    assert seen_message_types == ["heartbeat"]
+
+
 @pytest.mark.asyncio
 async def test_send_discord_webhook_noop_without_env(monkeypatch, capsys):
     mod = _reload_discord_alerts()
@@ -490,7 +531,7 @@ def test_schedule_alerts_logs_background_failures(monkeypatch, capsys):
     mod = _reload_discord_alerts()
     mod.ALERTED_KEYS.clear()
 
-    async def fake_alert_for_side(_side):
+    async def fake_alert_for_side(_side, message_type="alert"):
         raise RuntimeError("boom")
 
     def fake_create_task(coro):

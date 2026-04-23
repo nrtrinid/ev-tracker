@@ -225,10 +225,10 @@ def _empty_surface(surface: str) -> FullScanResponse:
 
 
 def _load_surface_fallback(db, surface: str) -> FullScanResponse | None:
-    """Try the per-surface latest cache (straight_bets:latest / player_props:latest).
+    """Load a per-surface latest cache payload without outbound API calls.
 
-    Used when the canonical board:latest snapshot is absent or lacks a given surface.
-    Never triggers outbound API calls.
+    This helper is kept for future fallback work; `/api/board/latest` currently
+    serves only the canonical snapshot metadata and optional game context.
     """
     from services.scan_cache import load_latest_scan_payload
     try:
@@ -297,9 +297,9 @@ def get_board_latest(user: dict = Depends(get_current_user)):
     """Return the latest canonical board snapshot.
 
     Pure DB read — never triggers outbound API calls.
-    Falls back to per-surface latest caches (straight_bets:latest / player_props:latest)
-    when the canonical board is absent or missing a surface.
-    Returns an empty board only if no data exists anywhere.
+    Serves the canonical snapshot metadata plus optional game context, with
+    nullable surface payloads. Returns an empty sentinel if the canonical
+    snapshot is missing or malformed.
     """
     _log_event, _BOOT_ID, _, _, _ = _resolve_main_runtime_hooks()
 

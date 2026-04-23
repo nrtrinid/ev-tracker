@@ -1,6 +1,6 @@
 # FUTURE_PLANS
 
-Last updated: 2026-04-22
+Last updated: 2026-04-23
 Source: Pass 2 roadmap revision (trusted beta hardening + recent beta analytics review)
 Planning mode: trusted beta hardening before wider beta expansion
 
@@ -82,7 +82,21 @@ Focus: trust/reliability fixes only.
   - Engineering risk: Medium.
   - Completed work: Admin-triggered board refresh now piggybacks `main._piggyback_clv` on successful board-drop runs using only fresh sides returned by `run_daily_board_drop` (`fresh_straight_sides` + `fresh_prop_sides`), and scheduled board-drop runs now use the same fresh-side piggyback path.
   - Regression coverage: Added backend ops-trigger contract coverage for sync/async piggyback wiring, empty fresh-side skip behavior, and best-effort failure isolation when piggyback execution raises, plus scheduler coverage for scheduled board-drop piggyback invocation and failure isolation.
-  - Follow-up: Keep the existing JIT CLV scheduler path unchanged as the safety-net close-line refresher.
+  - Follow-up: Keep the existing JIT CLV scheduler path unchanged as the safety-net close-line refresher, but re-open verification because current placed-bet CLV pills still appear stale after board update scans in some cases even after the piggyback wiring landed.
+  - Codex fit: High.
+
+- [ ] Fix CLV refresh parity between board update scans and placed-bet UI state. [Owner: Backend/Frontend] [Target week: 2026-W18]
+  - Why: We already re-added CLV piggyback on board update scans, but currently placed bets can still keep stale CLV pending/display pills after those scans complete. That makes users think CLV capture did not run, even when backend scan plumbing may have fired.
+  - User impact: High for trust in bet tracking and CLV reporting.
+  - Engineering risk: Medium.
+  - Next step: Trace the full path from board-refresh piggybacked CLV capture through persistence, bet-query serialization, and frontend invalidation/rendering so placed-bet CLV pills update immediately after a successful scan instead of waiting for some later refresh path.
+  - Codex fit: High.
+
+- [ ] Add spread auto-settle support and regression coverage. [Owner: Backend] [Target week: 2026-W18]
+  - Why: Spread bets do not appear to settle automatically today, which leaves a common straight-bet type dependent on manual cleanup and weakens trust in the tracker.
+  - User impact: High.
+  - Engineering risk: Medium.
+  - Next step: Audit the current auto-settle market/result matching path for spread bets, implement the missing line/outcome handling, and add targeted regression tests so spread wagers settle with the same reliability expectations as moneylines/totals where supported.
   - Codex fit: High.
 
 - [x] Resolve release/docs/runtime parity drift across status docs. [Owner: Docs] [Completed: 2026-04-22]
@@ -123,6 +137,13 @@ Focus: reliability polish and operational confidence after must-ship items land.
   - User impact: High for the CA cohort.
   - Engineering risk: Low.
   - Next step: Triage the current Alex-reported issue list, batch the CSS/state fixes, and re-test against actual CA-compatible usage flows.
+  - Codex fit: High.
+
+- [ ] Surface total balance in the global header and allow deposit/withdraw logging from anywhere. [Owner: Frontend] [Target week: 2026-W19]
+  - Why: Total balance is a core piece of user state, and deposit/withdraw logging is too buried under `More` -> `Settings` for an action users may want frequently. A global entry point would reduce friction and make bankroll management feel like a first-class workflow.
+  - User impact: Medium to high.
+  - Engineering risk: Low to medium.
+  - Next step: Add a compact top-right balance chip/button in the shared header, open a lightweight balance panel or modal with the current total plus `Deposit` / `Withdraw` actions, and keep the deeper settings page for full balance management details.
   - Codex fit: High.
 
 - [ ] Add internal coverage diagnostics for partial or unsupported book/market combinations. [Owner: Backend/Ops] [Target week: 2026-W19]

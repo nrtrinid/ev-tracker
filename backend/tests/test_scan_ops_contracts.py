@@ -1088,6 +1088,7 @@ def test_ops_trigger_scan_contract_shape(auth_client, monkeypatch):
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
     monkeypatch.setenv("DISCORD_SCAN_ALERT_MODE", "edge_live")
     monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+    seen_message_types: list[str] = []
 
     async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
         assert source == "ops_trigger_board_drop"
@@ -1111,8 +1112,12 @@ def test_ops_trigger_scan_contract_shape(auth_client, monkeypatch):
             "fresh_prop_sides": [{"surface": "player_props"}],
         }
 
+    def _fake_schedule_alerts(sides, message_type="alert"):
+        seen_message_types.append(message_type)
+        return len(sides)
+
     monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_run_daily_board_drop, raising=True)
-    monkeypatch.setattr(discord_alerts, "schedule_alerts", lambda sides: len(sides), raising=True)
+    monkeypatch.setattr(discord_alerts, "schedule_alerts", _fake_schedule_alerts, raising=True)
 
     resp = auth_client.post("/api/ops/trigger/scan", headers={"X-Ops-Token": "ops-secret"})
     assert resp.status_code == 200
@@ -1126,6 +1131,51 @@ def test_ops_trigger_scan_contract_shape(auth_client, monkeypatch):
     assert isinstance(body.get("alerts_scheduled"), int)
     assert body["total_sides"] == 10
     assert body["result"]["props_sides"] == 4
+    assert seen_message_types == ["heartbeat"]
+
+
+@pytest.mark.integration
+def test_ops_trigger_scan_timed_ping_routes_manual_board_refresh_to_heartbeat(auth_client, monkeypatch):
+    import main
+    import services.daily_board as daily_board
+    import services.discord_alerts as discord_alerts
+
+    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
+    monkeypatch.setenv("DISCORD_SCAN_ALERT_MODE", "timed_ping")
+    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+
+    async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
+        assert source == "ops_trigger_board_drop"
+        return {
+            "straight_sides": 4,
+            "props_sides": 2,
+            "featured_games_count": 3,
+            "fresh_straight_sides": [],
+            "fresh_prop_sides": [],
+        }
+
+    def _fail_if_edge_alerts_called(_sides, message_type="alert"):
+        raise AssertionError("schedule_alerts should not run in timed_ping mode")
+
+    sent: list[str] = []
+
+    async def _fake_send_discord_webhook(payload, message_type="alert"):
+        sent.append(message_type)
+        return {
+            "delivery_status": "delivered",
+            "status_code": 204,
+            "route_kind": "heartbeat_dedicated",
+            "webhook_source": "DISCORD_DEBUG_WEBHOOK_URL",
+        }
+
+    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_run_daily_board_drop, raising=True)
+    monkeypatch.setattr(discord_alerts, "schedule_alerts", _fail_if_edge_alerts_called, raising=True)
+    monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
+
+    resp = auth_client.post("/api/ops/trigger/scan", headers={"X-Ops-Token": "ops-secret"})
+    assert resp.status_code == 200
+    assert resp.json()["board_drop"] is True
+    assert sent == ["heartbeat"]
 
 
 @pytest.mark.integration
@@ -1157,7 +1207,7 @@ def test_ops_trigger_scan_piggybacks_clv_with_fresh_sides(auth_client, monkeypat
         captured_sides.append(sides)
 
     monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_run_daily_board_drop, raising=True)
-    monkeypatch.setattr(discord_alerts, "schedule_alerts", lambda sides: len(sides), raising=True)
+    monkeypatch.setattr(discord_alerts, "schedule_alerts", lambda sides, message_type="alert": len(sides), raising=True)
     monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
 
     resp = auth_client.post("/api/ops/trigger/scan", headers={"X-Ops-Token": "ops-secret"})
@@ -1190,7 +1240,7 @@ def test_ops_trigger_scan_skips_clv_piggyback_with_no_fresh_sides(auth_client, m
         piggyback_calls += 1
 
     monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_run_daily_board_drop, raising=True)
-    monkeypatch.setattr(discord_alerts, "schedule_alerts", lambda sides: len(sides), raising=True)
+    monkeypatch.setattr(discord_alerts, "schedule_alerts", lambda sides, message_type="alert": len(sides), raising=True)
     monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
 
     resp = auth_client.post("/api/ops/trigger/scan", headers={"X-Ops-Token": "ops-secret"})
@@ -1228,7 +1278,7 @@ def test_ops_trigger_scan_clv_piggyback_failure_does_not_fail_route(auth_client,
         return real_create_task(coro)
 
     monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_run_daily_board_drop, raising=True)
-    monkeypatch.setattr(discord_alerts, "schedule_alerts", lambda sides: len(sides), raising=True)
+    monkeypatch.setattr(discord_alerts, "schedule_alerts", lambda sides, message_type="alert": len(sides), raising=True)
     monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
     monkeypatch.setattr("routes.ops_cron.asyncio.create_task", _tracking_create_task, raising=True)
 
