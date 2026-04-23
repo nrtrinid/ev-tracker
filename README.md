@@ -47,6 +47,7 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 - Result filter bar: Search, Time presets, Standard-only Edge threshold, and More menu controls
 - More controls: Hide longshots, Hide already logged, and risk presets (Any/Safer/Balanced)
 - Distinct null states: "no scanner results" vs "no matches for active filters"
+- Duplicate-state badges identify `Already Placed`, `Placed Elsewhere`, and `Better Now` opportunities across straight bets and player props
 - Per-book badges (DK, FD, MGM, CZR, ESPN)
 - "Fair Odds" line shows the de-vigged Pinnacle line for every result
 - One-tap pre-fill into the log drawer

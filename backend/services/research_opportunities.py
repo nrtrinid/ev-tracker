@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 try:
@@ -45,9 +45,9 @@ if ZoneInfo is not None:
     try:
         PHOENIX_TZ = ZoneInfo("America/Phoenix")
     except Exception:  # pragma: no cover - fallback when zone lookup fails
-        PHOENIX_TZ = timezone.utc
+        PHOENIX_TZ = timezone(timedelta(hours=-7), name="America/Phoenix")
 else:  # pragma: no cover - fallback when zoneinfo is unavailable
-    PHOENIX_TZ = timezone.utc
+    PHOENIX_TZ = timezone(timedelta(hours=-7), name="America/Phoenix")
 
 
 def _utc_now() -> datetime:

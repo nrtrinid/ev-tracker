@@ -22,11 +22,12 @@ Status legend:
 
 Focus: trust/reliability fixes only.
 
-- [ ] Apply duplicate-state tags consistently across all scanner cards (not only player props): `Already Placed`, `Placed Elsewhere`, and `Better Now`. [Owner: Backend/Frontend] [Target week: 2026-W17]
+- [x] Apply duplicate-state tags consistently across all scanner cards (not only player props): `Already Placed`, `Placed Elsewhere`, and `Better Now`. [Owner: Backend/Frontend] [Completed: 2026-04-22]
   - Why: Duplicate labels influence logging and exposure decisions; inconsistent card tagging breaks user trust quickly.
   - User impact: High.
   - Engineering risk: Medium.
-  - Next step: Align annotation and rendering paths for straight bets + player props, then add integration/UI tests that assert all three states on both card types.
+  - Completed work: Consolidated duplicate annotation through the shared backend scanner duplicate service, extended straight-bet matching beyond moneyline with v2 selection identity plus legacy ML fallback, and updated scanner badges so `logged_elsewhere` renders as `Placed Elsewhere`.
+  - Regression coverage: Added backend unit coverage for moneyline, spread, total, cross-book, and prop duplicate states, plus frontend scanner duplicate-state coverage for all three badges across straight-bet and player-prop cards.
   - Codex fit: High.
 
 - [x] Add dedicated middleware regression tests for auth + beta gating flows. [Owner: Frontend] [Completed: 2026-04-21]
@@ -78,8 +79,8 @@ Focus: trust/reliability fixes only.
   - Why: CLV pending bets can miss timely updates when only the JIT path runs; admin-triggered scans should also advance CLV snapshots.
   - User impact: Medium to high (faster CLV visibility on active bets).
   - Engineering risk: Medium.
-  - Completed work: Admin-triggered board refresh now piggybacks `main._piggyback_clv` on successful board-drop runs using only fresh sides returned by `run_daily_board_drop` (`fresh_straight_sides` + `fresh_prop_sides`).
-  - Regression coverage: Added backend ops-trigger contract coverage for sync/async piggyback wiring, empty fresh-side skip behavior, and best-effort failure isolation when piggyback execution raises.
+  - Completed work: Admin-triggered board refresh now piggybacks `main._piggyback_clv` on successful board-drop runs using only fresh sides returned by `run_daily_board_drop` (`fresh_straight_sides` + `fresh_prop_sides`), and scheduled board-drop runs now use the same fresh-side piggyback path.
+  - Regression coverage: Added backend ops-trigger contract coverage for sync/async piggyback wiring, empty fresh-side skip behavior, and best-effort failure isolation when piggyback execution raises, plus scheduler coverage for scheduled board-drop piggyback invocation and failure isolation.
   - Follow-up: Keep the existing JIT CLV scheduler path unchanged as the safety-net close-line refresher.
   - Codex fit: High.
 

@@ -61,7 +61,7 @@ export function getScannerDuplicateBadge(
 
   if (state === "logged_elsewhere") {
     return {
-      label: "Logged Elsewhere",
+      label: "Placed Elsewhere",
       className:
         tone === "legacy"
           ? "rounded border border-primary/35 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"

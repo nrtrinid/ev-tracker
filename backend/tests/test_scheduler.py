@@ -200,6 +200,85 @@ async def test_scheduled_board_drop_job_runs_daily_board_pipeline(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_scheduled_board_drop_job_piggybacks_clv_with_fresh_sides(monkeypatch):
+    main = _reload_main(monkeypatch)
+
+    fresh_straight = [{"surface": "straight_bets", "selection_key": "straight-1"}]
+    fresh_props = [{"surface": "player_props", "selection_key": "prop-1"}]
+    piggyback_calls: list[list[dict]] = []
+
+    async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
+        return {
+            "straight_sides": 2,
+            "props_sides": 1,
+            "featured_games_count": 1,
+            "game_line_sports_scanned": ["basketball_nba"],
+            "props_events_scanned": 1,
+            "game_lines_events_fetched": 1,
+            "game_lines_events_with_both_books": 1,
+            "game_lines_api_requests_remaining": "99",
+            "props_events_fetched": 1,
+            "props_events_with_both_books": 1,
+            "props_api_requests_remaining": "99",
+            "fresh_straight_sides": fresh_straight,
+            "fresh_prop_sides": fresh_props,
+        }
+
+    import services.daily_board as daily_board
+
+    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_run_daily_board_drop, raising=True)
+
+    async def _fake_piggyback_clv(sides: list[dict]):
+        piggyback_calls.append(sides)
+
+    monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
+
+    await main._run_scheduled_board_drop_job()
+
+    assert piggyback_calls == [[*fresh_straight, *fresh_props]]
+
+
+@pytest.mark.asyncio
+async def test_scheduled_board_drop_job_clv_piggyback_failure_does_not_fail_publish(monkeypatch):
+    main = _reload_main(monkeypatch)
+
+    async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
+        return {
+            "straight_sides": 1,
+            "props_sides": 0,
+            "featured_games_count": 1,
+            "game_line_sports_scanned": ["basketball_nba"],
+            "props_events_scanned": 0,
+            "game_lines_events_fetched": 1,
+            "game_lines_events_with_both_books": 1,
+            "game_lines_api_requests_remaining": "99",
+            "props_events_fetched": 0,
+            "props_events_with_both_books": 0,
+            "props_api_requests_remaining": "99",
+            "fresh_straight_sides": [{"surface": "straight_bets", "selection_key": "straight-1"}],
+            "fresh_prop_sides": [],
+        }
+
+    import services.daily_board as daily_board
+
+    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_run_daily_board_drop, raising=True)
+
+    async def _failing_piggyback_clv(_sides: list[dict]):
+        raise RuntimeError("scheduled clv piggyback exploded")
+
+    monkeypatch.setattr(main, "_piggyback_clv", _failing_piggyback_clv, raising=True)
+
+    await main._run_scheduled_board_drop_job()
+
+    snapshot = main.app.state.ops_status["last_scheduler_scan"]
+    assert snapshot["hard_errors"] == 0
+    assert snapshot["status"] == "completed"
+    latest_refresh = main.app.state.ops_status["last_board_refresh"]
+    assert latest_refresh["status"] == "completed"
+    assert latest_refresh["source"] == "scheduler"
+
+
+@pytest.mark.asyncio
 async def test_scheduled_scan_aliases_use_board_drop_job(monkeypatch):
     main = _reload_main(monkeypatch)
 

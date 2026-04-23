@@ -218,96 +218,9 @@ def _annotate_sides_with_duplicate_state(db, user_id: str, sides: list[dict]) ->
     Matching scope: pending (unsettled exposure) only.
     State enum: new | logged_elsewhere | already_logged | better_now
     """
-    if not sides:
-        return sides
+    from services.scanner_duplicate_detection import annotate_sides_with_duplicate_state as _annotate
 
-    pending_res = (
-        db.table("bets")
-        .select("id,odds_american,sport,market,sportsbook,commence_time,clv_team,event,clv_sport_key,clv_event_id,result")
-        .eq("user_id", user_id)
-        .eq("result", "pending")
-        .eq("market", "ML")
-        .execute()
-    )
-
-    matches_by_key: dict[tuple[str, str, str, str, str], list[dict]] = {}
-    cross_book_matches_by_key: dict[tuple[str, str, str, str], list[dict]] = {}
-    for row in pending_res.data or []:
-        key = _scanner_match_key_from_bet(row)
-        legacy_key = _scanner_legacy_match_key_from_bet(row)
-        if not all([key[0], key[1], key[2], key[3], key[4]]):
-            continue
-        matches_by_key.setdefault(key, []).append(row)
-        matches_by_key.setdefault(legacy_key, []).append(row)
-        cross_book_matches_by_key.setdefault(key[:4], []).append(row)
-        cross_book_matches_by_key.setdefault(legacy_key[:4], []).append(row)
-
-    annotated: list[dict] = []
-    for side in sides:
-        side_out = dict(side)
-        key = _scanner_match_key_from_side(side)
-        legacy_key = _scanner_legacy_match_key_from_side(side)
-        matched = matches_by_key.get(key, [])
-        if not matched:
-            matched = matches_by_key.get(legacy_key, [])
-        cross_book_matched = cross_book_matches_by_key.get(key[:4], [])
-        if not cross_book_matched:
-            cross_book_matched = cross_book_matches_by_key.get(legacy_key[:4], [])
-        current_odds = side.get("book_odds")
-        current_quality = _price_quality_from_american(current_odds)
-        side_out["current_odds_american"] = current_odds
-
-        if not matched:
-            if cross_book_matched:
-                best_row = None
-                best_quality = None
-                for row in cross_book_matched:
-                    q = _price_quality_from_american(row.get("odds_american"))
-                    if q is None:
-                        continue
-                    if best_quality is None or q > best_quality:
-                        best_quality = q
-                        best_row = row
-
-                side_out["scanner_duplicate_state"] = "logged_elsewhere"
-                side_out["best_logged_odds_american"] = best_row.get("odds_american") if best_row else None
-                side_out["matched_pending_bet_id"] = (
-                    best_row.get("id") if best_row is not None else cross_book_matched[0].get("id")
-                )
-                annotated.append(side_out)
-                continue
-            side_out["scanner_duplicate_state"] = "new"
-            side_out["best_logged_odds_american"] = None
-            side_out["matched_pending_bet_id"] = None
-            annotated.append(side_out)
-            continue
-
-        best_row = None
-        best_quality = None
-        for row in matched:
-            q = _price_quality_from_american(row.get("odds_american"))
-            if q is None:
-                continue
-            if best_quality is None or q > best_quality:
-                best_quality = q
-                best_row = row
-
-        if best_row is None:
-            side_out["scanner_duplicate_state"] = "already_logged"
-            side_out["best_logged_odds_american"] = None
-            side_out["matched_pending_bet_id"] = matched[0].get("id") if matched else None
-            annotated.append(side_out)
-            continue
-
-        side_out["best_logged_odds_american"] = best_row.get("odds_american")
-        side_out["matched_pending_bet_id"] = best_row.get("id")
-        if current_quality is not None and best_quality is not None and current_quality > best_quality:
-            side_out["scanner_duplicate_state"] = "better_now"
-        else:
-            side_out["scanner_duplicate_state"] = "already_logged"
-        annotated.append(side_out)
-
-    return annotated
+    return _annotate(db, user_id, sides)
 
 
 def annotate_sides_with_duplicate_state(db, user_id: str, sides: list[dict]) -> list[dict]:
@@ -1352,10 +1265,25 @@ async def _run_scheduled_board_drop_job():
         fresh_prop_sides = [
             side for side in (result.get("fresh_prop_sides") or []) if isinstance(side, dict)
         ]
+        fresh_sides = [*fresh_straight_sides, *fresh_prop_sides]
 
-        candidates_seen = len(fresh_straight_sides) + len(fresh_prop_sides)
+        # Keep scheduled board-drop CLV refresh best-effort so publishing the
+        # canonical board never fails just because CLV snapshotting does.
+        if fresh_sides:
+            try:
+                await _piggyback_clv(fresh_sides)
+            except Exception as exc:
+                _log_event(
+                    "scheduler.board_drop.clv_piggyback_failed",
+                    level="warning",
+                    run_id=run_id,
+                    error_class=type(exc).__name__,
+                    error=str(exc),
+                )
+
+        candidates_seen = len(fresh_sides)
         if scan_alert_mode == DISCORD_SCAN_ALERT_MODE_EDGE_LIVE:
-            alerts_scheduled += schedule_alerts([*fresh_straight_sides, *fresh_prop_sides])
+            alerts_scheduled += schedule_alerts(fresh_sides)
             schedule_stats = get_last_schedule_stats()
             alert_skip_totals["skipped_memory_dedupe"] += int(schedule_stats.get("skipped_memory_dedupe") or 0)
             alert_skip_totals["skipped_shared_dedupe"] += int(schedule_stats.get("skipped_shared_dedupe") or 0)

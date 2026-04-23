@@ -11,6 +11,9 @@ Version labels use pre-release suffixes until the app is ready for outside users
 
 ### Changed
 
+- **Scanner duplicate-state badges**
+  - Applied duplicate-state tagging consistently across straight-bet and player-prop scanner cards, including `Already Placed`, `Placed Elsewhere`, and `Better Now` badges.
+  - Extended straight-bet duplicate matching to support spread/total selection identity while preserving legacy moneyline matching.
 - **MLB prop market scope**
   - Removed `batter_home_runs`, `batter_strikeouts`, and `batter_strikeouts_alternate` from the supported/shared MLB prop scan registry.
   - Kept historical labels and settlement support intact for existing logged bets while narrowing active scan coverage to the remaining MLB prop set.
