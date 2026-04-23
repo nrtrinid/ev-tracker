@@ -78,6 +78,7 @@ Operational hardening adds:
 ### External APIs
 
 - **The Odds API** (`api.the-odds-api.com/v4`) — live odds for +EV scanning.
+- **ESPN scoreboard + game summary endpoints** — live NBA game state and player-stat progress for compact open-bet snapshots.
 
 ---
 
@@ -120,6 +121,7 @@ ev-betting-tracker/
 | GET | `/health` | Health check |
 | GET | `/ready` | Readiness check (env, DB, scheduler freshness) |
 | GET | `/bets` | List bets (filters: sport, sportsbook, result) |
+| GET | `/bets/live` | Compact live snapshots for active pending bets |
 | POST | `/bets` | Create bet |
 | GET | `/bets/{id}` | Get bet |
 | PATCH | `/bets/{id}` | Update bet |
@@ -169,6 +171,7 @@ ev-betting-tracker/
 | **Router ownership** | `backend/routes/*.py` — APIRouter endpoint registration by domain |
 | **Shared dependencies** | `backend/dependencies.py` — current-user, scan-rate-limit, ops-token checks |
 | **Odds / scanner** | `backend/services/odds_api.py` — `fetch_odds`, `devig_pinnacle`, `calculate_edge`, `scan_for_ev`, `scan_all_sides`, `get_cached_or_scan` |
+| **Live bet snapshots** | `backend/services/bet_live_tracking.py` + `backend/services/espn_live.py` — pending-bet candidate matching, provider lookup, and compact live score/stat payloads |
 | **Odds API activity** | `backend/services/odds_api.py` — `_append_odds_api_activity`, `get_odds_api_activity_snapshot` |
 | **Automation/scheduler health** | `backend/main.py` — scheduler jobs, heartbeats, readiness freshness, ops status |
 | **Auth** | `backend/auth.py` — `get_current_user`; `frontend/src/lib/auth-context.tsx`; `frontend/src/middleware.ts` |
@@ -276,6 +279,8 @@ ev-betting-tracker/
 | `ENABLE_SCHEDULER` | `1` to run APScheduler jobs in this process; use `0` for `APP_ROLE=api` and `1` for `APP_ROLE=scheduler` in split-role deploys |
 | `TESTING` | `1` disables scheduler startup for tests |
 | `CRON_TOKEN` | Shared secret for backend cron/ops protected endpoints |
+| `LIVE_TRACKING_ENABLED` | Toggle for `/bets/live` snapshots (`1` enabled by default) |
+| `LIVE_TRACKING_PROVIDER_ORDER` | Optional provider priority list for live tracking lookups |
 | `DISCORD_WEBHOOK_URL` | Optional webhook for scan/settle alerts |
 | `DISCORD_ALERT_WEBHOOK_URL` | Optional dedicated webhook for user-facing board-drop alerts |
 | `DISCORD_DEBUG_WEBHOOK_URL` | Optional dedicated webhook for debug/test/heartbeat messages |

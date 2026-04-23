@@ -125,6 +125,74 @@ export interface BetUpdate {
   event_date?: string | null;
 }
 
+export type LiveGameStatus =
+  | "scheduled"
+  | "live"
+  | "final"
+  | "postponed"
+  | "delayed"
+  | "cancelled"
+  | "unknown"
+  | "unavailable";
+
+export interface LiveTeamScore {
+  name: string;
+  short_name: string | null;
+  score: number | null;
+  home_away: "home" | "away";
+}
+
+export interface LiveEventSnapshot {
+  provider: string;
+  provider_event_id: string;
+  sport_key: string;
+  status: LiveGameStatus;
+  status_detail: string | null;
+  period_label: string | null;
+  clock: string | null;
+  start_time: string | null;
+  last_updated: string;
+  home: LiveTeamScore;
+  away: LiveTeamScore;
+}
+
+export interface LivePlayerStatSnapshot {
+  participant_name: string;
+  stat_key: string;
+  stat_label: string;
+  value: number;
+  line_value: number | null;
+  selection_side: string | null;
+  progress_ratio: number | null;
+  match_kind: "exact" | "fuzzy" | "none";
+}
+
+export interface LiveProviderMeta {
+  primary_provider: string | null;
+  source: string | null;
+  cache_hit: boolean;
+  stale: boolean;
+  last_updated: string | null;
+  unavailable_reason: string | null;
+  confidence: string | null;
+}
+
+export interface BetLiveSnapshot {
+  bet_id: string;
+  sport_key: string | null;
+  status: LiveGameStatus;
+  event: LiveEventSnapshot | null;
+  player_stat: LivePlayerStatSnapshot | null;
+  provider: LiveProviderMeta;
+}
+
+export interface BetLiveSnapshotResponse {
+  generated_at: string;
+  ttl_seconds: number;
+  active_bet_count: number;
+  snapshots_by_bet_id: Record<string, BetLiveSnapshot>;
+}
+
 export interface Settings {
   k_factor: number;
   default_stake: number | null;

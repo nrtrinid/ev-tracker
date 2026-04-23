@@ -1,6 +1,7 @@
 import type {
   Bet,
   BetCreate,
+  BetLiveSnapshotResponse,
   BetUpdate,
   BetResult,
   Settings,
@@ -221,6 +222,10 @@ export async function getAllBetsForStats(): Promise<Bet[]> {
 
 export async function getBet(id: string): Promise<Bet> {
   return fetchAPI<Bet>(`/bets/${id}`);
+}
+
+export async function getBetLiveSnapshots(): Promise<BetLiveSnapshotResponse> {
+  return fetchAPI<BetLiveSnapshotResponse>("/bets/live");
 }
 
 export async function createBet(bet: BetCreate): Promise<Bet> {

@@ -52,7 +52,7 @@ When you set `BETA_INVITE_CODE`, prefer a short spoken phrase like `Daily Drop`.
 
 Before a trusted-beta release, confirm production has:
 
-- all numbered migrations through `database/migration_021_theme_preference.sql`
+- all numbered migrations through `database/migration_022_live_tracking_indexes.sql`
 - no outstanding schema changes that exist only under `backend/sql/`
 
 Numbered migrations in `database/` are the canonical schema history. This repo still uses your current Supabase apply workflow, so apply any pending numbered files in order before calling the release ready.
@@ -145,6 +145,7 @@ Backend / VPS:
 - `CRON_TOKEN`
 - `BETA_INVITE_CODE`
 - `OPS_ADMIN_EMAILS`
+- `LIVE_TRACKING_ENABLED` (default `1`; set `0` to suppress `/bets/live` snapshots)
 - `DISCORD_ENABLE_ALERT_ROUTE` (default `1`)
 - `DISCORD_WEBHOOK_URL`
 - `DISCORD_DEBUG_WEBHOOK_URL`
@@ -154,6 +155,7 @@ Backend / VPS:
 Optional when alert-path delivery is intentionally enabled:
 
 - `DISCORD_ALERT_WEBHOOK_URL`
+- `LIVE_TRACKING_PROVIDER_ORDER` (defaults to `espn,api_sports,odds_scores`)
 
 Frontend / Vercel:
 

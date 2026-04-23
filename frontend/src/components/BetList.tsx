@@ -22,7 +22,7 @@ import {
   SheetTitle,
   SheetClose,
 } from "@/components/ui/sheet";
-import { useBets, useUpdateBetResult, useDeleteBet, useCreateBet, useBalances } from "@/lib/hooks";
+import { useBets, useUpdateBetResult, useDeleteBet, useCreateBet, useBalances, useBetLiveSnapshots } from "@/lib/hooks";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EditBetModal } from "@/components/EditBetModal";
 import {
@@ -30,8 +30,10 @@ import {
   SingleSelectFilterPills,
 } from "@/components/shared/FilterControls";
 import { FolderTabs } from "@/components/shared/FolderTabs";
-import type { Bet, BetResult, TutorialPracticeBet } from "@/lib/types";
+import type { Bet, BetLiveSnapshot, BetResult, TutorialPracticeBet } from "@/lib/types";
 import { PROMO_TYPE_CONFIG } from "@/lib/types";
+import { BetLiveChip } from "@/components/BetLiveChip";
+import { buildBetLiveChipState } from "@/lib/bet-live-state";
 import { getTrackerSourceLabel } from "@/lib/tracker-source";
 import {
   buildTrackerViewQuery,
@@ -238,9 +240,10 @@ interface BetCardBaseProps {
   headerRight: React.ReactNode;
   footer: React.ReactNode;
   mode: "pending" | "settled";
+  liveSnapshot?: BetLiveSnapshot | null;
 }
 
-function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
+function BetCardBase({ bet, headerRight, footer, mode, liveSnapshot }: BetCardBaseProps) {
   const [expanded, setExpanded] = useState(false);
   const borderColor = SPORTSBOOK_BADGE_COLORS[bet.sportsbook] || "bg-gray-400";
   const textColor = SPORTSBOOK_TEXT_COLORS[bet.sportsbook] || "text-gray-600";
@@ -264,7 +267,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
   );
   const resolvedGameTime = resolveBetGameTime(bet, parlayLegs);
   const openBetEventTime =
-    mode === "pending" && resolvedGameTime
+    mode === "pending" && resolvedGameTime && !buildBetLiveChipState(liveSnapshot)
       ? formatOpenBetEventTimeCompact(resolvedGameTime.toISOString())
       : "";
   
@@ -300,6 +303,7 @@ function BetCardBase({ bet, headerRight, footer, mode }: BetCardBaseProps) {
                 {bet.sport} • {bet.market}
                 {openBetEventTime ? ` • ${openBetEventTime}` : ""}
               </span>
+              {mode === "pending" && <BetLiveChip snapshot={liveSnapshot} />}
               {/* CLV badge — raw market CLV for all bets with a Pinnacle snapshot */}
               {bet.clv_ev_percent !== null && (
                 <span className={cn(
@@ -642,9 +646,10 @@ interface PendingCardProps {
   onEdit: (bet: Bet) => void;
   onResultChange: (bet: Bet, result: BetResult, previousResult: BetResult) => void;
   onDelete: (bet: Bet) => void;
+  liveSnapshot?: BetLiveSnapshot | null;
 }
 
-function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps) {
+function PendingCard({ bet, onEdit, onResultChange, onDelete, liveSnapshot }: PendingCardProps) {
   const settlementState = getTrackerSettlementState(bet);
   const [manualControlsOpen, setManualControlsOpen] = useState(
     settlementState.showManualControlsByDefault,
@@ -804,7 +809,7 @@ function PendingCard({ bet, onEdit, onResultChange, onDelete }: PendingCardProps
     </div>
   );
 
-  return <BetCardBase bet={bet} headerRight={headerRight} footer={footer} mode="pending" />;
+  return <BetCardBase bet={bet} headerRight={headerRight} footer={footer} mode="pending" liveSnapshot={liveSnapshot} />;
 }
 
 // ============ HISTORY CARD ============
@@ -993,6 +998,14 @@ export function BetList({
     });
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
   }, [tutorialPracticeBet, activeTab, pathname, router, searchQuery, selectedBook, sourceFilter]);
+
+  const hasAnyPendingBets = useMemo(
+    () => Boolean(bets?.some((bet) => bet.result === "pending")),
+    [bets],
+  );
+  const liveSnapshots = useBetLiveSnapshots({
+    enabled: activeTab === "pending" && hasAnyPendingBets,
+  });
   
   // Count active filters for badge
   const activeFilterCount = [
@@ -1571,6 +1584,7 @@ export function BetList({
                       onEdit={setEditingBet}
                       onResultChange={handleResultChange}
                       onDelete={handleDeleteWithUndo}
+                      liveSnapshot={liveSnapshots.data?.snapshots_by_bet_id[bet.id] ?? null}
                     />
                   </div>
                 ))

@@ -21,6 +21,7 @@ This document is the short runbook for the friends-only trusted beta.
   - `Game Lines` can include moneylines, spreads, and totals
   - `Player Props` includes curated sportsbook props plus the Pick'em board
 - CLV is tracked when closes are captured successfully, but some bets may still show no CLV if the close could not be recovered.
+- Open Bets can show compact live chips for supported pending bets (MVP currently targets NBA game state and supported NBA props).
 
 ## Feedback Flow
 

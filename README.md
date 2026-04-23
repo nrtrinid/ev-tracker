@@ -6,7 +6,7 @@
 
 EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. It uses live odds from [The Odds API](https://the-odds-api.com) and Pinnacle as a sharp-line reference to surface positive expected value (+EV) opportunities across DraftKings, FanDuel, BetMGM, Caesars, and ESPN Bet — then gives you the math to size them.
 
-> **Status:** Trusted beta (`v2.2.0-beta.1`). `main` is the stable branch for invited testers, with active iteration continuing on `dev`.
+> **Status:** Trusted beta (`v2.2.0-beta.2`). `main` is the stable branch for invited testers, with active iteration continuing on `dev`.
 
 ---
 
@@ -63,6 +63,7 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 ### Bet Logging
 - Log bets with full promo context (standard, boost %, bonus bet, no-sweat, qualifier)
 - Supports winnings cap for boosted bets
+- Open Bets can show compact backend-fetched live state (currently NBA score/clock and supported NBA prop progress) without expanding card height by default
 - Settle bets (win/loss/push/void) and see real P&L vs. expected
 
 ### Parlay Builder
@@ -169,6 +170,10 @@ DISCORD_ENABLE_ALERT_ROUTE=1
 DISCORD_ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...
 DISCORD_DEBUG_WEBHOOK_URL=https://discord.com/api/webhooks/...
 DISCORD_TEST_ALERT_MESSAGE_TYPE=test
+# Optional: disable/enable live snapshots endpoint output (default: 1)
+LIVE_TRACKING_ENABLED=1
+# Optional: provider priority list (currently ESPN-backed MVP)
+LIVE_TRACKING_PROVIDER_ORDER=espn,api_sports,odds_scores
 # Optional: shared state backend for multi-instance rate-limit/cache coordination
 # REDIS_URL=redis://localhost:6379/0
 ALERT_DEDUPE_TTL_SECONDS=21600

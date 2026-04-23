@@ -29,6 +29,7 @@ import type {
 export const queryKeys = {
   bets: ["bets"] as const,
   bet: (id: string) => ["bets", id] as const,
+  betLiveSnapshots: ["bets", "live"] as const,
   summary: ["summary"] as const,
   backendReadiness: ["backend-readiness"] as const,
   operatorStatus: ["operator-status"] as const,
@@ -71,6 +72,7 @@ export const queryKeys = {
 
 function invalidateBetDerivedQueries(queryClient: QueryClient, betId?: string) {
   queryClient.invalidateQueries({ queryKey: queryKeys.bets });
+  queryClient.invalidateQueries({ queryKey: queryKeys.betLiveSnapshots });
   if (betId) {
     queryClient.invalidateQueries({ queryKey: queryKeys.bet(betId) });
   }
@@ -101,6 +103,17 @@ export function useBet(id: string) {
     queryKey: queryKeys.bet(id),
     queryFn: () => api.getBet(id),
     enabled: !!id,
+  });
+}
+
+export function useBetLiveSnapshots(options?: {
+  enabled?: boolean;
+}) {
+  return useQuery({
+    queryKey: queryKeys.betLiveSnapshots,
+    queryFn: () => api.getBetLiveSnapshots(),
+    enabled: options?.enabled ?? true,
+    refetchInterval: 60_000,
   });
 }
 

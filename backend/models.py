@@ -160,6 +160,88 @@ class BetResponse(BaseModel):
     selection_meta: dict[str, Any] | None = None
 
 
+LiveGameStatus = Literal[
+    "scheduled",
+    "live",
+    "final",
+    "postponed",
+    "delayed",
+    "cancelled",
+    "unknown",
+    "unavailable",
+]
+
+
+class LiveTeamScore(BaseModel):
+    """Normalized team score for compact in-card live tracking."""
+
+    name: str
+    short_name: str | None = None
+    score: float | None = None
+    home_away: Literal["home", "away"]
+
+
+class LiveEventSnapshot(BaseModel):
+    """Provider-neutral live event state."""
+
+    provider: str
+    provider_event_id: str
+    sport_key: str
+    status: LiveGameStatus
+    status_detail: str | None = None
+    period_label: str | None = None
+    clock: str | None = None
+    start_time: datetime | None = None
+    last_updated: datetime
+    home: LiveTeamScore
+    away: LiveTeamScore
+
+
+class LivePlayerStatSnapshot(BaseModel):
+    """Provider-neutral player stat progress for a tracked prop."""
+
+    participant_name: str
+    stat_key: str
+    stat_label: str
+    value: float
+    line_value: float | None = None
+    selection_side: str | None = None
+    progress_ratio: float | None = None
+    match_kind: Literal["exact", "fuzzy", "none"] = "none"
+
+
+class LiveProviderMeta(BaseModel):
+    """Debuggable provenance for a live snapshot without exposing raw provider data."""
+
+    primary_provider: str | None = None
+    source: str | None = None
+    cache_hit: bool = False
+    stale: bool = False
+    last_updated: datetime | None = None
+    unavailable_reason: str | None = None
+    confidence: str | None = None
+
+
+class BetLiveSnapshot(BaseModel):
+    """Live state keyed to one logged bet."""
+
+    bet_id: str
+    sport_key: str | None = None
+    status: LiveGameStatus = "unavailable"
+    event: LiveEventSnapshot | None = None
+    player_stat: LivePlayerStatSnapshot | None = None
+    provider: LiveProviderMeta = Field(default_factory=LiveProviderMeta)
+
+
+class BetLiveSnapshotResponse(BaseModel):
+    """Live snapshot payload consumed by the Bets page."""
+
+    generated_at: datetime
+    ttl_seconds: int
+    active_bet_count: int
+    snapshots_by_bet_id: dict[str, BetLiveSnapshot] = Field(default_factory=dict)
+
+
 class SettingsUpdate(BaseModel):
     """User settings."""
 

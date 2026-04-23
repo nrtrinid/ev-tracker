@@ -28,6 +28,7 @@ From `backend/`:
 
 - `pytest tests/test_scheduler.py -v`
 - `pytest tests/test_scan_ops_contracts.py -v`
+- `pytest tests/test_bet_live_routes.py tests/test_bet_live_tracking_services.py -v`
 
 These cover:
 
@@ -35,6 +36,8 @@ These cover:
 - protected ops payloads
 - Discord routing and failure diagnostics
 - scanner / ops contract-shape drift
+- `/bets/live` auth + response contract behavior
+- live provider normalization, unsupported-sport fallback, and compact stat snapshot shaping
 
 Quick local readiness smoke (optional):
 
@@ -76,6 +79,7 @@ From `frontend/`:
 From `frontend/`:
 
 - `npm run test:e2e`
+- `npx playwright test tests/bet-live-state.spec.ts`
 - `npm run test:ops-utils`
 - `npm run test:ops-access`
 - `npm run test:route-timeouts`

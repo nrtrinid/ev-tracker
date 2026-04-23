@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 from models import (
     BetCreate, BetUpdate, BetResponse, BetResult, PromoType,
+    BetLiveSnapshotResponse,
     SettingsUpdate, SettingsResponse, SummaryResponse,
     TransactionCreate, TransactionResponse, BalanceResponse,
     ScanResponse, FullScanResponse,
@@ -2188,6 +2189,14 @@ def get_bets(
     response = _retry_supabase(lambda: query.execute())
 
     return [build_bet_response(row, settings["k_factor"]) for row in response.data]
+
+
+@app.get("/bets/live", response_model=BetLiveSnapshotResponse)
+async def get_bet_live_snapshots(user: dict = Depends(get_current_user)):
+    """Get compact live state for the current user's pending bets."""
+    from services.bet_live_tracking import get_bet_live_snapshots_impl
+
+    return await get_bet_live_snapshots_impl(get_db(), user)
 
 
 @app.get("/bets/{bet_id}", response_model=BetResponse)

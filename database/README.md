@@ -8,6 +8,7 @@ The canonical schema history for this repo is the numbered migration chain in th
 - `migration_019_analytics_events.sql`
 - `migration_020_beta_invite_code_access.sql`
 - `migration_021_theme_preference.sql`
+- `migration_022_live_tracking_indexes.sql`
 
 ## Source Of Truth
 

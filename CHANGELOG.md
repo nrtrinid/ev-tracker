@@ -9,6 +9,15 @@ Version labels use pre-release suffixes until the app is ready for outside users
 
 ## [Unreleased]
 
+### Added
+
+- **Live bet tracking MVP**
+  - Added backend-owned `/bets/live` snapshots for compact Bets-page live status, score, and supported NBA player-prop progress.
+  - Added ESPN-backed live provider normalization with shared cache/stale fallback behavior and a provider abstraction for future documented backups.
+  - Added a fixed-height live chip to Open Bets cards so live state appears inline without adding a default card row.
+  - Added migration `database/migration_022_live_tracking_indexes.sql` for pending-bet live-window lookup performance.
+  - Added focused backend and frontend tests for live snapshot contracts, provider normalization, and chip-state formatting.
+
 ### Changed
 
 - **Scanner duplicate-state badges**
