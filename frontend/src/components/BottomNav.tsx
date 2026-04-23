@@ -45,7 +45,7 @@ export function BottomNav() {
   return (
     <>
       {/* Top header — slim logo + status strip */}
-      <header className="sticky top-0 z-20 border-b border-border bg-card/95 backdrop-blur-sm">
+      <header className="safe-area-pt sticky top-0 z-20 border-b border-border bg-card/98 backdrop-blur-md">
         <div className="container mx-auto px-4 py-2.5 flex items-center justify-between max-w-2xl">
           <Link href="/" className="flex items-center gap-2 group">
             {/* Logo mark — foreground on background creates clear contrast in both modes */}
@@ -79,7 +79,7 @@ export function BottomNav() {
       </header>
 
       {/* Bottom tab bar */}
-      <nav className="fixed bottom-0 left-0 right-0 z-30 border-t border-border bg-card/95 backdrop-blur-sm safe-area-pb">
+      <nav className="fixed bottom-0 left-0 right-0 z-30 border-t border-border bg-card/98 backdrop-blur-md safe-area-pb">
         <div className="container mx-auto max-w-2xl">
           <div className="flex items-stretch">
             {tabs.map((tab) => {

@@ -21,6 +21,8 @@ Version labels use pre-release suffixes until the app is ready for outside users
 
 ### Changed
 
+- **Mobile Safari chrome polish**
+  - Matched iPhone Safari browser chrome to the app shell and made mobile sticky offsets safe-area aware so the top header and bottom nav feel anchored instead of floating against Safari's bars.
 - **Beta analytics trust hardening**
   - Canonicalized analytics metadata and dedupe handling so key events carry stable source attribution (`origin_surface`, `book`, `market`, `edge_bucket`, `opportunity_id` when available).
   - Defaulted ops beta analytics summary/user drilldown to external tester signal while exposing excluded internal/test counts and quality warnings.

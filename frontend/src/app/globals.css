@@ -73,6 +73,12 @@
     --duration-slow:       250ms;
     --easing-standard:     cubic-bezier(0.4, 0, 0.2, 1);
 
+    /* Shared mobile chrome layout */
+    --safe-area-top: env(safe-area-inset-top, 0px);
+    --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+    --mobile-header-height: 49px;
+    --mobile-header-offset: calc(var(--mobile-header-height) + var(--safe-area-top));
+
     /* ── Legacy aliases (deprecated, use color-* tokens) ── */
     --profit: var(--color-profit);
     --loss: var(--color-loss);
@@ -266,7 +272,19 @@
 
   /* Safe area bottom padding for notched devices (iOS home indicator) */
   .safe-area-pb {
-    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-bottom: var(--safe-area-bottom);
+  }
+
+  .safe-area-pt {
+    padding-top: var(--safe-area-top);
+  }
+
+  .app-shell-main {
+    padding-bottom: calc(5rem + var(--safe-area-bottom));
+  }
+
+  .app-mobile-header-offset {
+    top: var(--mobile-header-offset);
   }
   
   /* Open book binding shadow - for main layout container only */
