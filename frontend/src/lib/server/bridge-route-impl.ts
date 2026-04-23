@@ -55,6 +55,14 @@ export type TriggerAutoSettleRouteDeps = {
   timeoutMs?: number;
 };
 
+export type AnalyticsBridgeRouteDeps = {
+  assertAccess?: () => Promise<AdminAccessResult>;
+  backendBaseUrl?: string;
+  cronToken?: string;
+  fetchFn?: typeof fetch;
+  timeoutMs?: number;
+};
+
 function resolveTimeoutMs(value: number | undefined, fallback: number): number {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
     return Math.trunc(value);
@@ -267,6 +275,109 @@ export async function getOpsStatusRouteImpl(deps: OpsStatusRouteDeps = {}) {
       { status: 502, headers: { "Cache-Control": "no-store" } }
     );
   }
+}
+
+async function getAnalyticsBridgeRouteImpl(
+  request: Request,
+  endpointPath: "/api/ops/analytics/summary" | "/api/ops/analytics/users",
+  timeoutMessage: string,
+  failureMessage: string,
+  deps: AnalyticsBridgeRouteDeps = {},
+) {
+  const access = await resolveAdminAccess(deps.assertAccess);
+  if (!access.ok) {
+    if (access.error === "allowlist_not_configured") {
+      return NextResponse.json(
+        { error: "OPS_ADMIN_EMAILS is not configured" },
+        { status: 503, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+    return NextResponse.json(
+      { error: "Forbidden" },
+      { status: access.error === "unauthenticated" ? 401 : 403, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+
+  const backendBaseUrl = deps.backendBaseUrl ?? process.env.BACKEND_BASE_URL;
+  const cronToken = deps.cronToken ?? process.env.CRON_TOKEN ?? process.env.CRON_SECRET;
+
+  if (!backendBaseUrl) {
+    return NextResponse.json(
+      { error: "BACKEND_BASE_URL not configured" },
+      { status: 500, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+  if (!cronToken) {
+    return NextResponse.json(
+      { error: "CRON_TOKEN/CRON_SECRET not configured" },
+      { status: 500, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+
+  try {
+    const url = new URL(request.url);
+    const qs = url.searchParams.toString();
+    const endpoint = `${backendBaseUrl.replace(/\/$/, "")}${endpointPath}${qs ? `?${qs}` : ""}`;
+    const fetchFn = deps.fetchFn ?? fetch;
+    const timeoutMs = resolveTimeoutMs(deps.timeoutMs, opsBridgeTimeoutMs());
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const resp = await fetchFn(endpoint, {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        accept: "application/json",
+        "x-ops-token": cronToken,
+      },
+      signal: controller.signal,
+    }).finally(() => {
+      clearTimeout(timeout);
+    });
+
+    const data = await resp.json().catch(() => ({ error: "Invalid backend response" }));
+    return NextResponse.json(data, {
+      status: resp.status,
+      headers: { "Cache-Control": "no-store" },
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      return NextResponse.json(
+        { error: timeoutMessage },
+        { status: 504, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+    console.error("Analytics bridge error:", error);
+    return NextResponse.json(
+      { error: failureMessage },
+      { status: 502, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+}
+
+export async function getAnalyticsSummaryRouteImpl(
+  request: Request,
+  deps: AnalyticsBridgeRouteDeps = {},
+) {
+  return getAnalyticsBridgeRouteImpl(
+    request,
+    "/api/ops/analytics/summary",
+    "Analytics summary request timed out",
+    "Failed to fetch analytics summary",
+    deps,
+  );
+}
+
+export async function getAnalyticsUsersRouteImpl(
+  request: Request,
+  deps: AnalyticsBridgeRouteDeps = {},
+) {
+  return getAnalyticsBridgeRouteImpl(
+    request,
+    "/api/ops/analytics/users",
+    "Analytics users request timed out",
+    "Failed to fetch analytics users drilldown",
+    deps,
+  );
 }
 
 export async function postAdminRefreshMarketsRouteImpl(deps: RefreshMarketsRouteDeps = {}) {

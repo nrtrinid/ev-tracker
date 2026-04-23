@@ -32,6 +32,7 @@ import type {
   PickEmResearchSummary,
   OpsTriggerScanResponse,
   OpsTriggerAutoSettleResponse,
+  AnalyticsAudience,
   AnalyticsSummary,
   AnalyticsUserDrilldown,
   AltPitcherKLookupResponse,
@@ -672,21 +673,27 @@ export async function getPickEmResearchSummary(): Promise<PickEmResearchSummary>
   return fetchInternalAPI<PickEmResearchSummary>("/api/ops/pickem-research/summary");
 }
 
-export async function getAnalyticsSummary(windowDays: number = 7): Promise<AnalyticsSummary> {
+export async function getAnalyticsSummary(
+  windowDays: number = 7,
+  audience: AnalyticsAudience = "external",
+): Promise<AnalyticsSummary> {
   const safeWindowDays = Math.max(1, Math.min(30, Math.trunc(windowDays || 7)));
-  return fetchInternalAPI<AnalyticsSummary>(`/api/ops/analytics/summary?window_days=${safeWindowDays}`);
+  return fetchInternalAPI<AnalyticsSummary>(
+    `/api/ops/analytics/summary?window_days=${safeWindowDays}&audience=${encodeURIComponent(audience)}`
+  );
 }
 
 export async function getAnalyticsUserDrilldown(
   windowDays: number = 7,
   maxUsers: number = 25,
   timelineLimit: number = 12,
+  audience: AnalyticsAudience = "external",
 ): Promise<AnalyticsUserDrilldown> {
   const safeWindowDays = Math.max(1, Math.min(30, Math.trunc(windowDays || 7)));
   const safeMaxUsers = Math.max(1, Math.min(100, Math.trunc(maxUsers || 25)));
   const safeTimelineLimit = Math.max(1, Math.min(30, Math.trunc(timelineLimit || 12)));
   return fetchInternalAPI<AnalyticsUserDrilldown>(
-    `/api/ops/analytics/users?window_days=${safeWindowDays}&max_users=${safeMaxUsers}&timeline_limit=${safeTimelineLimit}`
+    `/api/ops/analytics/users?window_days=${safeWindowDays}&max_users=${safeMaxUsers}&timeline_limit=${safeTimelineLimit}&audience=${encodeURIComponent(audience)}`
   );
 }
 

@@ -1028,10 +1028,12 @@ export default function MarketsPage() {
       route: "/",
       appArea: "markets",
       properties: {
+        origin_surface: "board",
         snapshot_id: snapshotId,
         scanned_at: boardMeta?.scanned_at ?? null,
       },
       dedupeKey: `board-viewed:${snapshotId}`,
+      dedupeScope: "user_or_session",
     });
   }, [boardMeta?.snapshot_id, boardMeta?.scanned_at]);
 
@@ -1670,6 +1672,13 @@ export default function MarketsPage() {
           surface: actionSide.surface,
           drawer_mode: tutorialBoardActive ? "tutorial_practice" : "standard",
           tutorial_mode: tutorialBoardActive,
+          sport: actionSide.sport,
+          sportsbook: actionSide.sportsbook,
+          market_key: actionSide.market_key,
+          selection_key: actionSide.selection_key,
+          selection_side: actionSide.selection_side,
+          line_value: actionSide.line_value,
+          ev_percentage: actionSide.ev_percentage,
         },
       });
       setDrawerInitialValues(betData);
@@ -1703,6 +1712,12 @@ export default function MarketsPage() {
         drawer_mode: tutorialBoardActive ? "tutorial_practice" : "standard",
         tutorial_mode: tutorialBoardActive,
         source: "saved_candidate",
+        sport: scannerReviewCandidate.bet.sport,
+        sportsbook: scannerReviewCandidate.bet.sportsbook,
+        source_market_key: scannerReviewCandidate.bet.source_market_key,
+        source_selection_key: scannerReviewCandidate.bet.source_selection_key,
+        selection_side: scannerReviewCandidate.bet.selection_side,
+        line_value: scannerReviewCandidate.bet.line_value,
       },
     });
     setDrawerInitialValues(scannerReviewCandidate.bet);
@@ -1763,6 +1778,13 @@ export default function MarketsPage() {
           drawer_mode: tutorialBoardActive ? "tutorial_practice" : "standard",
           tutorial_mode: tutorialBoardActive,
           source: "place_flow",
+          sport: side.sport,
+          sportsbook: side.sportsbook,
+          market_key: side.market_key,
+          selection_key: side.selection_key,
+          selection_side: side.selection_side,
+          line_value: side.line_value,
+          ev_percentage: side.ev_percentage,
         },
       });
 

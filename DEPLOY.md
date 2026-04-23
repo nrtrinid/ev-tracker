@@ -125,12 +125,10 @@ curl -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/status
 Expected results:
 
 - `test-discord` returns `ok: true` with a `run_id`
-- `test-discord-alert` returns `ok: true` with a `run_id` and defaults to debug/test routing
+- `test-discord-alert` returns `ok: true` with a `run_id` and stays on debug/test routing
 - ops scan response includes `alerts_scheduled` and `alert_skip_totals`
 - ops status runtime includes `discord.alert_delivery`, `discord.test_delivery`, and `discord.last_schedule_stats`
 - backend logs include `[Discord] Webhook response: 2xx` and no repeated `DISCORD_WEBHOOK_URL not set` warning
-
-To intentionally validate alert-path wiring with the test-alert endpoint, set `DISCORD_TEST_ALERT_MESSAGE_TYPE=alert` for that run.
 
 ## Beta Env Checklist
 
@@ -149,8 +147,6 @@ Backend / VPS:
 - `DISCORD_ENABLE_ALERT_ROUTE` (default `1`)
 - `DISCORD_WEBHOOK_URL`
 - `DISCORD_DEBUG_WEBHOOK_URL`
-
-- `DISCORD_TEST_ALERT_MESSAGE_TYPE` (default `test`)
 
 Optional when alert-path delivery is intentionally enabled:
 

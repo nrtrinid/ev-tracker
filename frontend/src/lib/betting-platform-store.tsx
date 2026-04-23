@@ -173,6 +173,7 @@ export function BettingPlatformProvider({ children }: { children: React.ReactNod
         surface: state.tutorialSession?.surface ?? "straight_bets",
       },
       dedupeKey: `tutorial-started:${startedAt}`,
+      dedupeScope: "user_or_session",
     });
   }, [isHydrated, state.tutorialSession?.started_at, state.tutorialSession?.surface]);
 
@@ -488,6 +489,5 @@ export function useBettingPlatformStore() {
   }
   return context;
 }
-
 
 

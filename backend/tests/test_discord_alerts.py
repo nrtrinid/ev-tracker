@@ -415,6 +415,28 @@ def test_get_webhook_and_role_heartbeat_fallback_to_primary_when_opted_in(monkey
     assert role == "primary-role"
 
 
+def test_get_webhook_and_role_test_does_not_fallback_to_primary(monkeypatch):
+    """Test messages must stay on the debug route even when heartbeat fallback is enabled."""
+    mod = _reload_discord_alerts()
+
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://primary-webhook")
+    monkeypatch.setenv("DISCORD_MENTION_ROLE_ID", "primary-role")
+    monkeypatch.setenv("DISCORD_ALLOW_DEBUG_FALLBACK_TO_PRIMARY", "1")
+    monkeypatch.delenv("DISCORD_DEBUG_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("DISCORD_DEBUG_MENTION_ROLE_ID", raising=False)
+    monkeypatch.delenv("DISCORD_ALERT_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("DISCORD_ALERT_MENTION_ROLE_ID", raising=False)
+
+    webhook, role = mod._get_webhook_and_role("test")
+    assert webhook is None
+    assert role is None
+
+    target = mod.describe_discord_delivery_target("test")
+    assert target["webhook_configured"] is False
+    assert target["webhook_source"] is None
+    assert target["route_kind"] == "test_unconfigured"
+
+
 def test_get_webhook_and_role_unknown_type_fallback(monkeypatch):
     """Test that unknown message types fall back to primary webhook."""
     mod = _reload_discord_alerts()
@@ -501,4 +523,3 @@ def test_schedule_alerts_logs_background_failures(monkeypatch, capsys):
     scheduled = mod.schedule_alerts([side])
     assert scheduled == 1
     assert "Background alert delivery failed" in capsys.readouterr().out
-

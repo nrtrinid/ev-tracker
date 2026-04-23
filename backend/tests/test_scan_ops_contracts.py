@@ -1538,7 +1538,7 @@ def test_ops_trigger_test_discord_alert_contract_shape(auth_client, monkeypatch)
     import services.discord_alerts as discord_alerts
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
-    monkeypatch.delenv("DISCORD_TEST_ALERT_MESSAGE_TYPE", raising=False)
+    monkeypatch.setenv("DISCORD_TEST_ALERT_MESSAGE_TYPE", "alert")
     seen_message_types: list[str] = []
 
     async def _fake_send_discord_webhook(_payload, message_type="alert"):
@@ -1563,7 +1563,7 @@ def test_ops_trigger_test_discord_alert_returns_config_diagnostics_when_unconfig
     import services.discord_alerts as discord_alerts
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
-    monkeypatch.delenv("DISCORD_TEST_ALERT_MESSAGE_TYPE", raising=False)
+    monkeypatch.setenv("DISCORD_TEST_ALERT_MESSAGE_TYPE", "alert")
 
     async def _fake_send_discord_webhook(_payload, message_type="alert"):
         return {

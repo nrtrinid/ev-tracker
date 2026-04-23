@@ -3225,20 +3225,11 @@ async def ops_trigger_test_discord(
     return {"ok": True, "scheduled": True, "run_id": run_id}
 
 
-def _discord_test_alert_message_type() -> str:
-    raw = (os.getenv("DISCORD_TEST_ALERT_MESSAGE_TYPE") or "test").strip().lower()
-    if raw in {"alert", "test"}:
-        return raw
-    return "test"
-
-
 async def ops_trigger_test_discord_alert(
     x_ops_token: str | None = None, x_cron_token: str | None = None
 ) -> dict[str, bool | str]:
     """
-    Trigger a test message for Discord alert diagnostics.
-    Uses debug/test routing by default to avoid alert-channel noise.
-    Set DISCORD_TEST_ALERT_MESSAGE_TYPE=alert to hit the alert webhook path directly.
+    Trigger an alert-style test message on the Discord debug/test route.
     Security: requires X-Ops-Token header matching CRON_TOKEN.
     """
     _require_ops_token(x_ops_token, x_cron_token)
@@ -3246,7 +3237,6 @@ async def ops_trigger_test_discord_alert(
     run_id = _new_run_id("ops_discord_alert_test")
     started_at = time.monotonic()
     _log_event("ops.trigger.discord_alert_test.started", run_id=run_id)
-    test_alert_message_type = _discord_test_alert_message_type()
 
     from services.discord_alerts import send_discord_webhook
 
@@ -3255,8 +3245,8 @@ async def ops_trigger_test_discord_alert(
             {
                 "title": "Alert Webhook Test",
                 "description": (
-                    "If you can read this, the Discord test route is working. "
-                    "Set DISCORD_TEST_ALERT_MESSAGE_TYPE=alert to test the alert webhook path directly."
+                    "If you can read this, the Discord debug/test route is working "
+                    "for alert-style validation without touching the live alert path."
                 ),
                 "fields": [
                     {"name": "Server time (UTC)", "value": _utc_now_iso(), "inline": False},
@@ -3266,7 +3256,7 @@ async def ops_trigger_test_discord_alert(
     }
 
     # Awaited directly so any Discord error surfaces in logs/response.
-    await send_discord_webhook(payload, message_type=test_alert_message_type)
+    await send_discord_webhook(payload, message_type="test")
     _log_event(
         "ops.trigger.discord_alert_test.completed",
         run_id=run_id,
@@ -3276,7 +3266,7 @@ async def ops_trigger_test_discord_alert(
         "ok": True,
         "scheduled": True,
         "run_id": run_id,
-        "message_type": test_alert_message_type,
+        "message_type": "test",
     }
 
 

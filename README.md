@@ -63,7 +63,7 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 ### Bet Logging
 - Log bets with full promo context (standard, boost %, bonus bet, no-sweat, qualifier)
 - Supports winnings cap for boosted bets
-- Open Bets can show compact backend-fetched live state (currently NBA score/clock and supported NBA prop progress) without expanding card height by default
+- Open Bets can show compact backend-fetched live state (currently NBA and MLB game status/score plus supported NBA/MLB prop progress) without expanding card height by default
 - Settle bets (win/loss/push/void) and see real P&L vs. expected
 
 ### Parlay Builder
@@ -76,6 +76,7 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 - Total P&L, EV earned, edge vs. actual
 - Balance tracking per sportsbook
 - EV per dollar by promo type
+- Internal beta analytics defaults to external tester signal and tracks excluded internal/test activity separately for ops visibility
 
 ### Settings
 - Configure Kelly multiplier (10%, 25%, 50%, full)
@@ -86,6 +87,7 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 ### Internal Ops Console
 - Route: `/admin/ops` (allowlisted operators only)
 - Scheduler-first **Automation Health** panel, with cron run details as fallback visibility
+- **Beta Analytics** cards default to external tester signal while reporting excluded internal/test counts and quality warnings
 - **Odds API Activity** panel:
     - Calls/errors in the last hour
     - Last success/error timestamps
@@ -165,15 +167,16 @@ LOG_LEVEL=INFO
 CRON_TOKEN=your-random-cron-token
 BETA_INVITE_CODE="Daily Drop"
 OPS_ADMIN_EMAILS=ops@example.com
+# Optional: exclude known test accounts from default beta analytics views
+ANALYTICS_TEST_EMAILS=tester@example.com
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 DISCORD_ENABLE_ALERT_ROUTE=1
 DISCORD_ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...
 DISCORD_DEBUG_WEBHOOK_URL=https://discord.com/api/webhooks/...
-DISCORD_TEST_ALERT_MESSAGE_TYPE=test
 # Optional: disable/enable live snapshots endpoint output (default: 1)
 LIVE_TRACKING_ENABLED=1
-# Optional: provider priority list (currently ESPN-backed MVP)
-LIVE_TRACKING_PROVIDER_ORDER=espn,api_sports,odds_scores
+# Optional: provider priority list (current MVP defaults to ESPN NBA + MLB StatsAPI)
+LIVE_TRACKING_PROVIDER_ORDER=espn,mlb,api_sports,odds_scores
 # Optional: shared state backend for multi-instance rate-limit/cache coordination
 # REDIS_URL=redis://localhost:6379/0
 ALERT_DEDUPE_TTL_SECONDS=21600
@@ -185,7 +188,7 @@ If you want external wake/trigger automation, use a scheduler (cron-job.org, Git
 - `POST /api/ops/trigger/scan` (warms scanner cache; alert-path Discord sends run only when `DISCORD_ENABLE_ALERT_ROUTE=1`)
 - `POST /api/ops/trigger/auto-settle` (grades eligible pending ML bets)
 - `POST /api/ops/trigger/test-discord` (sends a test Discord message through the debug/test route)
-- `POST /api/ops/trigger/test-discord-alert` (routes through debug/test by default to avoid alert-channel noise; set `DISCORD_TEST_ALERT_MESSAGE_TYPE=alert` to explicitly test alert-path wiring)
+- `POST /api/ops/trigger/test-discord-alert` (sends an alert-style validation message through the debug/test route without touching the live alert path)
 
 All operator endpoints require the header `X-Ops-Token` matching `CRON_TOKEN`.
 

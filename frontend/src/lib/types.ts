@@ -18,6 +18,7 @@ export type BetResult = "pending" | "win" | "loss" | "push" | "void";
 export type ScannerSurface = "straight_bets" | "player_props";
 export type BetSurface = ScannerSurface | "parlay";
 export type ThemePreference = "dark" | "light";
+export type AnalyticsAudience = "external" | "all";
 
 export interface Bet {
   id: string;
@@ -1082,10 +1083,33 @@ export interface AnalyticsSummaryDailyRow {
   counts: Record<string, number>;
 }
 
+export interface AnalyticsAudienceBreakdown {
+  requested_audience: AnalyticsAudience;
+  raw_events: number;
+  included_events: number;
+  excluded_events: number;
+  raw_sessions?: number;
+  included_sessions?: number;
+  raw_users?: number;
+  included_users?: number;
+  raw_tracked_users?: number;
+  included_tracked_users?: number;
+  excluded_tracked_users?: number;
+  excluded_internal_events?: number;
+  excluded_test_events?: number;
+  excluded_internal_users?: number;
+  excluded_test_users?: number;
+  classified_event_counts: Record<string, number>;
+  classified_actor_counts?: Record<string, number>;
+}
+
 export interface AnalyticsSummary {
   window_days: number;
   generated_at: string;
   since: string;
+  audience: AnalyticsAudience;
+  audience_breakdown: AnalyticsAudienceBreakdown;
+  quality_warnings: string[];
   totals: {
     events: number;
     sessions: number;
@@ -1160,6 +1184,9 @@ export interface AnalyticsUserDrilldown {
   window_days: number;
   generated_at: string;
   since: string;
+  audience: AnalyticsAudience;
+  audience_breakdown: AnalyticsAudienceBreakdown;
+  quality_warnings: string[];
   totals: {
     tracked_users: number;
     identified_users: number;

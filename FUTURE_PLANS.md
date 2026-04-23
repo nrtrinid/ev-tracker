@@ -1,6 +1,6 @@
 # FUTURE_PLANS
 
-Last updated: 2026-04-21
+Last updated: 2026-04-22
 Source: Pass 2 roadmap revision (trusted beta hardening + recent beta analytics review)
 Planning mode: trusted beta hardening before wider beta expansion
 
@@ -45,11 +45,12 @@ Focus: trust/reliability fixes only.
   - Follow-up: Extend the same normalization pattern to any remaining active beta book/market shapes that still diverge from the standard paired-line representation.
   - Codex fit: Extremely high.
 
-- [ ] Canonicalize beta telemetry, attribution, and event dedupe. [Owner: Frontend/Backend] [Target week: 2026-W17]
+- [x] Canonicalize beta telemetry, attribution, and event dedupe. [Owner: Frontend/Backend] [Completed: 2026-04-22]
   - Why: Current beta analytics can show dropped funnels (`tutorial_completed=Unknown`, `board_viewed=Unknown`), impossible conversion math, and likely duplicate firing on `bet_logged`. Without canonical event definitions, idempotency, and source attribution, beta product decisions are noisy.
   - User impact: Low direct, critical for product direction and operator trust.
   - Engineering risk: Low to medium.
-  - Next step: Define a canonical event schema, add idempotency keys, flag internal/test accounts, and attach source metadata (`origin_surface`, `book`, `market`, `edge_bucket`, `opportunity_id` when available), then add invariants/tests for funnel math.
+  - Completed work: Canonicalized analytics property enrichment and session/user-safe dedupe handling, flagged internal/test accounts via allowlists, and defaulted ops analytics summary/user drilldown to external tester signal with explicit excluded-count and quality-warning context.
+  - Regression coverage: Added backend analytics service/reporting coverage for canonicalization, audience filtering, and funnel ordering invariants, plus frontend analytics bridge timeout/access coverage for summary/users routes.
   - Codex fit: High.
 
 - [ ] Expand board route contract coverage for latest modes, surface endpoint, and scoped refresh behavior. [Owner: Backend] [Target week: 2026-W18]
@@ -84,11 +85,11 @@ Focus: trust/reliability fixes only.
   - Follow-up: Keep the existing JIT CLV scheduler path unchanged as the safety-net close-line refresher.
   - Codex fit: High.
 
-- [ ] Resolve release/docs/runtime parity drift across status docs. [Owner: Docs] [Target week: 2026-W17]
+- [x] Resolve release/docs/runtime parity drift across status docs. [Owner: Docs] [Completed: 2026-04-22]
   - Why: Inconsistent release metadata causes operator confusion and weakens launch discipline.
   - User impact: Medium (operator-facing, but impacts release confidence).
   - Engineering risk: Low.
-  - Next step: Align README/runbook/handoff release baseline and add a lightweight parity checklist to release flow.
+  - Completed work: Aligned README, PROJECT env reference, HANDOFF, CHANGELOG, and this roadmap with the current trusted-beta baseline and telemetry hardening status.
   - Codex fit: High.
 
 ## Should ship soon after

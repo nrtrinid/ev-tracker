@@ -17,9 +17,14 @@ Version labels use pre-release suffixes until the app is ready for outside users
   - Added a fixed-height live chip to Open Bets cards so live state appears inline without adding a default card row.
   - Added migration `database/migration_022_live_tracking_indexes.sql` for pending-bet live-window lookup performance.
   - Added focused backend and frontend tests for live snapshot contracts, provider normalization, and chip-state formatting.
+  - Expanded live tracking to MLB via StatsAPI-backed game matching, inning-aware live state, and compact progress counters for the safe MLB prop set (`pitcher_strikeouts`, `pitcher_strikeouts_alternate`, `batter_total_bases`, `batter_total_bases_alternate`, `batter_hits`, `batter_hits_alternate`, `batter_hits_runs_rbis`).
 
 ### Changed
 
+- **Beta analytics trust hardening**
+  - Canonicalized analytics metadata and dedupe handling so key events carry stable source attribution (`origin_surface`, `book`, `market`, `edge_bucket`, `opportunity_id` when available).
+  - Defaulted ops beta analytics summary/user drilldown to external tester signal while exposing excluded internal/test counts and quality warnings.
+  - Added backend analytics service/reporting tests plus frontend analytics bridge timeout/access coverage.
 - **Scanner duplicate-state badges**
   - Applied duplicate-state tagging consistently across straight-bet and player-prop scanner cards, including `Already Placed`, `Placed Elsewhere`, and `Better Now` badges.
   - Extended straight-bet duplicate matching to support spread/total selection identity while preserving legacy moneyline matching.
@@ -30,6 +35,8 @@ Version labels use pre-release suffixes until the app is ready for outside users
   - Promoted `batter_total_bases_alternate` into the default MLB prop scan set and scanner market filters.
   - Added canonical `2+ -> over 1.5` threshold handling so one-sided alternate total-base ladders can surface as sportsbook targets while fair odds still come from paired reference books.
   - Collapsed same-book canonical-equivalent `TB`/`TB ALT` offers so redundant cards no longer survive when a sportsbook publishes both versions at the same effective line.
+- **Release/docs parity**
+  - Refreshed README, PROJECT env reference, HANDOFF, and FUTURE_PLANS so roadmap status and current release context match the implemented beta hardening work.
 
 ## [2.2.0-beta.2] - 2026-04-17
 

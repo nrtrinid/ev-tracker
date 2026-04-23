@@ -58,6 +58,7 @@ async def require_scan_rate_limit(
                 get_db(),
                 event_name="rate_limit_hit",
                 user_id=str(uid),
+                user_email=str(user.get("email") or ""),
                 session_id=x_session_id,
                 properties={
                     "route": "/api/scan-markets",

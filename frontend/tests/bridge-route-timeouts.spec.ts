@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 
 import {
+  getAnalyticsSummaryRouteImpl,
+  getAnalyticsUsersRouteImpl,
   getOpsStatusRouteImpl,
   postAdminRefreshMarketsRouteImpl,
   postAdminTriggerAutoSettleRouteImpl,
@@ -26,6 +28,12 @@ const timeoutFetch: typeof fetch = async () => {
 const allowAccess = async (): Promise<AdminAccessResult> => ({
   ok: true,
   email: "ops@example.com",
+});
+
+const denyAccess = async (): Promise<AdminAccessResult> => ({
+  ok: false,
+  email: null,
+  error: "unauthenticated",
 });
 
 test.describe("bridge route timeout handling", () => {
@@ -55,6 +63,92 @@ test.describe("bridge route timeout handling", () => {
 
     expect(response.status).toBe(504);
     await expect(response.json()).resolves.toMatchObject({ error: "Operator status request timed out" });
+  });
+
+  test("analytics summary bridge returns 504 on timeout", async () => {
+    const response = await getAnalyticsSummaryRouteImpl(
+      new Request("https://frontend.example/api/ops/analytics/summary?window_days=7"),
+      {
+        assertAccess: allowAccess,
+        backendBaseUrl: "http://backend.internal",
+        cronToken: "ops-token",
+        fetchFn: timeoutFetch,
+        timeoutMs: 10,
+      }
+    );
+
+    expect(response.status).toBe(504);
+    await expect(response.json()).resolves.toMatchObject({ error: "Analytics summary request timed out" });
+  });
+
+  test("analytics users bridge returns 504 on timeout", async () => {
+    const response = await getAnalyticsUsersRouteImpl(
+      new Request("https://frontend.example/api/ops/analytics/users?window_days=7"),
+      {
+        assertAccess: allowAccess,
+        backendBaseUrl: "http://backend.internal",
+        cronToken: "ops-token",
+        fetchFn: timeoutFetch,
+        timeoutMs: 10,
+      }
+    );
+
+    expect(response.status).toBe(504);
+    await expect(response.json()).resolves.toMatchObject({ error: "Analytics users request timed out" });
+  });
+
+  test("analytics summary bridge rejects unauthenticated access before calling backend", async () => {
+    const response = await getAnalyticsSummaryRouteImpl(
+      new Request("https://frontend.example/api/ops/analytics/summary?window_days=7"),
+      {
+        assertAccess: denyAccess,
+        backendBaseUrl: "http://backend.internal",
+        cronToken: "ops-token",
+        fetchFn: async () => {
+          throw new Error("backend should not be called");
+        },
+      }
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({ error: "Forbidden" });
+  });
+
+  test("analytics users bridge returns 500 when backend base url is missing", async () => {
+    const response = await getAnalyticsUsersRouteImpl(
+      new Request("https://frontend.example/api/ops/analytics/users?window_days=7"),
+      {
+        assertAccess: allowAccess,
+        cronToken: "ops-token",
+      }
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({ error: "BACKEND_BASE_URL not configured" });
+  });
+
+  test("analytics summary bridge forwards query string and backend error payload", async () => {
+    const calls: string[] = [];
+    const response = await getAnalyticsSummaryRouteImpl(
+      new Request("https://frontend.example/api/ops/analytics/summary?window_days=7&audience=all"),
+      {
+        assertAccess: allowAccess,
+        backendBaseUrl: "http://backend.internal",
+        cronToken: "ops-token",
+        fetchFn: async (input) => {
+          calls.push(String(input));
+          return new Response(
+            JSON.stringify({ error: "Upstream summary unavailable" }),
+            { status: 502, headers: { "content-type": "application/json" } },
+          );
+        },
+        timeoutMs: 10,
+      }
+    );
+
+    expect(calls).toEqual(["http://backend.internal/api/ops/analytics/summary?window_days=7&audience=all"]);
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({ error: "Upstream summary unavailable" });
   });
 
   test("admin refresh bridge returns 504 on timeout", async () => {

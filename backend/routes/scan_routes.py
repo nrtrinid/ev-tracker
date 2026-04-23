@@ -233,6 +233,7 @@ async def scan_markets_impl(
             db,
             event_name="scanner_failed",
             user_id=str(user.get("id") or ""),
+            user_email=str(user.get("email") or ""),
             session_id=session_id,
             properties={
                 "route": "/api/scan-markets",

@@ -196,6 +196,7 @@ def apply_onboarding_event_impl(
                 db,
                 event_name=analytics_event_name,
                 user_id=str(user.get("id") or ""),
+                user_email=str(user.get("email") or ""),
                 session_id=session_id,
                 properties={
                     "route": "/onboarding/events",

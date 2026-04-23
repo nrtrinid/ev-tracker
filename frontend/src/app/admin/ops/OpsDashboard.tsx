@@ -1349,6 +1349,19 @@ export function OpsDashboard() {
                 </p>
               ) : (
                 <>
+                  <div className="rounded border border-border/60 bg-muted/15 px-2.5 py-2 text-[11px] text-muted-foreground">
+                    <p>
+                      Audience: <span className="font-semibold text-foreground">{analytics?.audience === "all" ? "All activity" : "External tester signal"}</span>
+                      {" • "}
+                      Excluded events: {scalarOrUnknown(analytics?.audience_breakdown?.excluded_events)}
+                      {" ("}internal={scalarOrUnknown(analytics?.audience_breakdown?.excluded_internal_events)} | test={scalarOrUnknown(analytics?.audience_breakdown?.excluded_test_events)})
+                    </p>
+                    {analytics?.quality_warnings?.length ? (
+                      <p className="mt-1">
+                        Warnings: {analytics.quality_warnings.join(" | ")}
+                      </p>
+                    ) : null}
+                  </div>
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Aggregate Counts</p>
                   <div className="grid grid-cols-2 gap-2">
                     <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
@@ -1431,6 +1444,19 @@ export function OpsDashboard() {
                 </p>
               ) : (
                 <>
+                  <div className="rounded border border-border/60 bg-muted/15 px-2.5 py-2 text-[11px] text-muted-foreground">
+                    <p>
+                      Audience: <span className="font-semibold text-foreground">{analyticsUsers?.audience === "all" ? "All activity" : "External tester signal"}</span>
+                      {" • "}
+                      Excluded users: {scalarOrUnknown(analyticsUsers?.audience_breakdown?.excluded_tracked_users)}
+                      {" ("}internal={scalarOrUnknown(analyticsUsers?.audience_breakdown?.excluded_internal_users)} | test={scalarOrUnknown(analyticsUsers?.audience_breakdown?.excluded_test_users)})
+                    </p>
+                    {analyticsUsers?.quality_warnings?.length ? (
+                      <p className="mt-1">
+                        Warnings: {analyticsUsers.quality_warnings.join(" | ")}
+                      </p>
+                    ) : null}
+                  </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                     <div className="rounded border border-border/70 bg-muted/20 px-2.5 py-2">
                       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Tracked users</p>

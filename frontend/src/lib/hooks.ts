@@ -23,6 +23,7 @@ import type {
   Settings,
   ScannerSurface,
   TransactionCreate,
+  AnalyticsAudience,
 } from "@/lib/types";
 
 // Query keys
@@ -40,9 +41,14 @@ export const queryKeys = {
     line_value: number;
     game_date?: string | null;
   }) => ["alt-pitcher-k-lookup", params] as const,
-  analyticsSummary: (windowDays: number) => ["analytics-summary", windowDays] as const,
-  analyticsUserDrilldown: (windowDays: number, maxUsers: number, timelineLimit: number) =>
-    ["analytics-user-drilldown", windowDays, maxUsers, timelineLimit] as const,
+  analyticsSummary: (windowDays: number, audience: AnalyticsAudience) =>
+    ["analytics-summary", windowDays, audience] as const,
+  analyticsUserDrilldown: (
+    windowDays: number,
+    maxUsers: number,
+    timelineLimit: number,
+    audience: AnalyticsAudience,
+  ) => ["analytics-user-drilldown", windowDays, maxUsers, timelineLimit, audience] as const,
   researchOpportunitySummary: (scope: "all" | "board_default") => ["research-opportunity-summary", scope] as const,
   modelCalibrationSummary: ["model-calibration-summary"] as const,
   pickEmResearchSummary: ["pickem-research-summary"] as const,
@@ -130,9 +136,15 @@ export function useCreateBet() {
         route,
         appArea: "tracker",
         properties: {
+          surface: createdBet?.surface,
           sport: createdBet?.sport,
           market: createdBet?.market,
           sportsbook: createdBet?.sportsbook,
+          source_market_key: createdBet?.source_market_key,
+          source_selection_key: createdBet?.source_selection_key,
+          selection_side: createdBet?.selection_side,
+          line_value: createdBet?.line_value,
+          scan_ev_percent_at_log: createdBet?.scan_ev_percent_at_log,
         },
         ...(betId ? { dedupeKey: `bet-logged:${betId}` } : {}),
       });
@@ -257,10 +269,13 @@ export function useAltPitcherKLookup(
   });
 }
 
-export function useAnalyticsSummary(windowDays: number = 7) {
+export function useAnalyticsSummary(
+  windowDays: number = 7,
+  audience: AnalyticsAudience = "external",
+) {
   return useQuery({
-    queryKey: queryKeys.analyticsSummary(windowDays),
-    queryFn: () => api.getAnalyticsSummary(windowDays),
+    queryKey: queryKeys.analyticsSummary(windowDays, audience),
+    queryFn: () => api.getAnalyticsSummary(windowDays, audience),
     refetchInterval: 60_000,
     staleTime: 30_000,
     retry: 1,
@@ -271,10 +286,11 @@ export function useAnalyticsUserDrilldown(
   windowDays: number = 7,
   maxUsers: number = 25,
   timelineLimit: number = 12,
+  audience: AnalyticsAudience = "external",
 ) {
   return useQuery({
-    queryKey: queryKeys.analyticsUserDrilldown(windowDays, maxUsers, timelineLimit),
-    queryFn: () => api.getAnalyticsUserDrilldown(windowDays, maxUsers, timelineLimit),
+    queryKey: queryKeys.analyticsUserDrilldown(windowDays, maxUsers, timelineLimit, audience),
+    queryFn: () => api.getAnalyticsUserDrilldown(windowDays, maxUsers, timelineLimit, audience),
     refetchInterval: 60_000,
     staleTime: 30_000,
     retry: 1,

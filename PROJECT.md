@@ -79,6 +79,7 @@ Operational hardening adds:
 
 - **The Odds API** (`api.the-odds-api.com/v4`) — live odds for +EV scanning.
 - **ESPN scoreboard + game summary endpoints** — live NBA game state and player-stat progress for compact open-bet snapshots.
+- **MLB StatsAPI schedule / linescore / boxscore endpoints** — live MLB game state plus the safe prop-progress set for compact open-bet snapshots.
 
 ---
 
@@ -157,7 +158,7 @@ ev-betting-tracker/
 | POST | `/api/ops/trigger/scan` | Operator-triggered cache warm + alert scheduling |
 | POST | `/api/ops/trigger/auto-settle` | Operator-triggered auto-settle run |
 | POST | `/api/ops/trigger/test-discord` | Test Discord message |
-| POST | `/api/ops/trigger/test-discord-alert` | Test Discord alert path |
+| POST | `/api/ops/trigger/test-discord-alert` | Test alert-style Discord payloads on the debug route |
 | GET | `/api/ops/status` | Protected operator status payload |
 
 ---
@@ -279,8 +280,9 @@ ev-betting-tracker/
 | `ENABLE_SCHEDULER` | `1` to run APScheduler jobs in this process; use `0` for `APP_ROLE=api` and `1` for `APP_ROLE=scheduler` in split-role deploys |
 | `TESTING` | `1` disables scheduler startup for tests |
 | `CRON_TOKEN` | Shared secret for backend cron/ops protected endpoints |
+| `ANALYTICS_TEST_EMAILS` | Optional comma-separated emails excluded from default beta analytics as test accounts |
 | `LIVE_TRACKING_ENABLED` | Toggle for `/bets/live` snapshots (`1` enabled by default) |
-| `LIVE_TRACKING_PROVIDER_ORDER` | Optional provider priority list for live tracking lookups |
+| `LIVE_TRACKING_PROVIDER_ORDER` | Optional provider priority list for live tracking lookups (default MVP order: `espn,mlb,api_sports,odds_scores`) |
 | `DISCORD_WEBHOOK_URL` | Optional webhook for scan/settle alerts |
 | `DISCORD_ALERT_WEBHOOK_URL` | Optional dedicated webhook for user-facing board-drop alerts |
 | `DISCORD_DEBUG_WEBHOOK_URL` | Optional dedicated webhook for debug/test/heartbeat messages |

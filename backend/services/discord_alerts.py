@@ -76,21 +76,23 @@ def _resolve_route_config(message_type: str = "alert") -> dict[str, Any]:
         route_prefix = "alert"
         webhook_env = "DISCORD_ALERT_WEBHOOK_URL"
         role_env = "DISCORD_ALERT_MENTION_ROLE_ID"
-    elif normalized in ("heartbeat", "test"):
+        allow_primary_fallback = True
+    elif normalized == "heartbeat":
         route_prefix = normalized
         webhook_env = "DISCORD_DEBUG_WEBHOOK_URL"
         role_env = "DISCORD_DEBUG_MENTION_ROLE_ID"
+        allow_primary_fallback = os.getenv("DISCORD_ALLOW_DEBUG_FALLBACK_TO_PRIMARY") == "1"
+    elif normalized == "test":
+        route_prefix = normalized
+        webhook_env = "DISCORD_DEBUG_WEBHOOK_URL"
+        role_env = "DISCORD_DEBUG_MENTION_ROLE_ID"
+        # Keep validation traffic isolated to the debug route.
+        allow_primary_fallback = False
     else:
         route_prefix = "unknown"
         webhook_env = None
         role_env = None
-
-    # Keep alert fallback enabled (when alert routing is enabled), but require
-    # explicit opt-in before routing heartbeat/test traffic to the primary webhook.
-    allow_primary_fallback = (
-        normalized not in {"heartbeat", "test"}
-        or os.getenv("DISCORD_ALLOW_DEBUG_FALLBACK_TO_PRIMARY") == "1"
-    )
+        allow_primary_fallback = True
 
     webhook_url = None
     webhook_source = None
@@ -389,4 +391,3 @@ def schedule_alerts(sides: list[dict[str, Any]]) -> int:
     _LAST_SCHEDULE_STATS = stats
     print(f"[Discord] schedule_alerts stats: {json.dumps(stats, sort_keys=True)}")
     return stats["scheduled"]
-

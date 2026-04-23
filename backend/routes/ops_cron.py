@@ -22,24 +22,12 @@ from services.shared_state import allow_fixed_window_rate_limit
 router = APIRouter()
 DISCORD_SCAN_ALERT_MODE_TIMED_PING = "timed_ping"
 DISCORD_SCAN_ALERT_MODE_EDGE_LIVE = "edge_live"
-DISCORD_TEST_ALERT_MESSAGE_TYPE_ENV = "DISCORD_TEST_ALERT_MESSAGE_TYPE"
-DISCORD_TEST_ALERT_MESSAGE_TYPE_DEFAULT = "test"
 ALT_PITCHER_K_LOOKUP_RATE_WINDOW_SECONDS = 5 * 60
 ALT_PITCHER_K_LOOKUP_RATE_MAX_REQUESTS = 30
 
 
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
-
-
-def _discord_test_alert_message_type() -> str:
-    raw = (
-        os.getenv(DISCORD_TEST_ALERT_MESSAGE_TYPE_ENV)
-        or DISCORD_TEST_ALERT_MESSAGE_TYPE_DEFAULT
-    ).strip().lower()
-    if raw in {"alert", "test"}:
-        return raw
-    return DISCORD_TEST_ALERT_MESSAGE_TYPE_DEFAULT
 
 
 def _raise_if_delivery_disabled(delivery: Any, *, run_id: str, fallback_message_type: str) -> None:
@@ -894,12 +882,14 @@ def ops_analytics_summary_impl(
     get_summary: Callable[..., dict[str, Any]],
     retry_supabase: Callable[[Callable[[], Any]], Any] | None,
     window_days: int,
+    audience: str,
 ) -> dict[str, Any]:
     """Protected analytics summary implementation used by the API route wrapper."""
     require_valid_cron_token(x_cron_token)
     return get_summary(
         db=get_db(),
         window_days=window_days,
+        audience=audience,
         retry_supabase=retry_supabase,
     )
 
@@ -914,6 +904,7 @@ def ops_analytics_users_impl(
     window_days: int,
     max_users: int,
     timeline_limit: int,
+    audience: str,
 ) -> dict[str, Any]:
     """Protected analytics per-user drilldown implementation used by the API route wrapper."""
     require_valid_cron_token(x_cron_token)
@@ -922,6 +913,7 @@ def ops_analytics_users_impl(
         window_days=window_days,
         max_users=max_users,
         timeline_limit=timeline_limit,
+        audience=audience,
         retry_supabase=retry_supabase,
     )
 
@@ -1283,13 +1275,12 @@ async def cron_test_discord_alert_impl(
     run_id_prefix: str = "cron_discord_alert_test",
     log_prefix: str = "cron.discord_alert_test",
 ) -> dict[str, Any]:
-    """Send a test message for alert validation without spamming alert channels by default."""
+    """Send an alert-style test message through the debug/test Discord route."""
     require_valid_cron_token(x_cron_token)
 
     run_id = new_run_id(run_id_prefix)
     started_at = time.monotonic()
     log_event(f"{log_prefix}.started", run_id=run_id)
-    test_alert_message_type = _discord_test_alert_message_type()
 
     from services.discord_alerts import send_discord_webhook
 
@@ -1298,8 +1289,8 @@ async def cron_test_discord_alert_impl(
             {
                 "title": "Alert Webhook Test",
                 "description": (
-                    "If you can read this, the Discord test route is working. "
-                    "Set DISCORD_TEST_ALERT_MESSAGE_TYPE=alert to test the alert webhook path directly."
+                    "If you can read this, the Discord debug/test route is working "
+                    "for alert-style validation without touching the live alert path."
                 ),
                 "fields": [
                     {"name": "Server time (UTC)", "value": datetime.now(UTC).isoformat() + "Z", "inline": False},
@@ -1309,11 +1300,11 @@ async def cron_test_discord_alert_impl(
     }
 
     try:
-        delivery = await send_discord_webhook(payload, message_type=test_alert_message_type)
+        delivery = await send_discord_webhook(payload, message_type="test")
         _raise_if_delivery_disabled(
             delivery,
             run_id=run_id,
-            fallback_message_type=test_alert_message_type,
+            fallback_message_type="test",
         )
     except TypeError as exc:
         if "message_type" not in str(exc):
@@ -1322,7 +1313,7 @@ async def cron_test_discord_alert_impl(
         _raise_if_delivery_disabled(
             delivery,
             run_id=run_id,
-            fallback_message_type=test_alert_message_type,
+            fallback_message_type="test",
         )
     except HTTPException:
         raise
@@ -1347,7 +1338,7 @@ async def cron_test_discord_alert_impl(
             detail={
                 "ok": False,
                 "error": "discord_delivery_failed",
-                "message_type": test_alert_message_type,
+                "message_type": "test",
                 "message": str(exc),
                 "run_id": run_id,
             },
@@ -1361,7 +1352,7 @@ async def cron_test_discord_alert_impl(
         "ok": True,
         "scheduled": True,
         "run_id": run_id,
-        "message_type": test_alert_message_type,
+        "message_type": "test",
         "delivery_status": delivery.get("delivery_status") if isinstance(delivery, dict) else None,
     }
 
@@ -1584,6 +1575,7 @@ async def ops_trigger_clv_replay(
 @router.get("/api/ops/analytics/summary")
 def ops_analytics_summary(
     window_days: int = Query(default=7, ge=1, le=30),
+    audience: str = Query(default="external"),
     x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
     _auth: None = Depends(require_ops_token),
@@ -1598,6 +1590,7 @@ def ops_analytics_summary(
         get_summary=get_weekly_analytics_summary,
         retry_supabase=main._retry_supabase,
         window_days=window_days,
+        audience=audience,
     )
 
 
@@ -1606,6 +1599,7 @@ def ops_analytics_users(
     window_days: int = Query(default=7, ge=1, le=30),
     max_users: int = Query(default=25, ge=1, le=100),
     timeline_limit: int = Query(default=12, ge=1, le=30),
+    audience: str = Query(default="external"),
     x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
     _auth: None = Depends(require_ops_token),
@@ -1622,6 +1616,7 @@ def ops_analytics_users(
         window_days=window_days,
         max_users=max_users,
         timeline_limit=timeline_limit,
+        audience=audience,
     )
 
 

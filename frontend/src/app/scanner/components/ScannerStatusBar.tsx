@@ -52,9 +52,11 @@ export function ScannerStatusBar({
       route: "/scanner",
       appArea: "scanner",
       properties: {
+        surface: "straight_bets",
         scan_age_minutes: scanAgeMinutes,
       },
       dedupeKey,
+      dedupeScope: "user_or_session",
     });
   }, [hasScanData, tutorialMode, isStale, scanCapturedAt, scanAgeMinutes]);
 

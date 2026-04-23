@@ -4,7 +4,16 @@ from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
 
-from services.analytics_events import WEEK1_ANALYTICS_EVENTS
+from services.analytics_events import (
+    ANALYTICS_AUDIENCE_EXTERNAL,
+    WEEK1_ANALYTICS_EVENTS,
+    classify_analytics_row,
+    extract_analytics_email,
+    get_internal_analytics_emails,
+    get_test_analytics_emails,
+    is_excluded_from_external_analytics,
+    normalize_analytics_audience,
+)
 
 
 _DECISION_EVENTS: tuple[str, ...] = (
@@ -41,6 +50,14 @@ _FAILURE_EVENTS: frozenset[str] = frozenset(
     }
 )
 
+_ACCOUNT_CLASS_ORDER = {
+    "internal": 0,
+    "test": 1,
+    "tester": 2,
+    "anonymous": 3,
+    "unknown": 4,
+}
+
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
@@ -72,56 +89,165 @@ def _pct(numerator: int, denominator: int) -> float | None:
     return round((numerator / denominator) * 100.0, 2)
 
 
+def _trimmed_str(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized if normalized else None
+
+
+def _empty_account_class_counts() -> dict[str, int]:
+    return {
+        "tester": 0,
+        "internal": 0,
+        "test": 0,
+        "anonymous": 0,
+        "unknown": 0,
+    }
+
+
+def _preferred_account_class(current: str | None, candidate: str) -> str:
+    if current is None:
+        return candidate
+    if _ACCOUNT_CLASS_ORDER.get(candidate, 99) < _ACCOUNT_CLASS_ORDER.get(current, 99):
+        return candidate
+    return current
+
+
+def _actor_key(user_id: str | None, session_id: str | None) -> str | None:
+    if user_id:
+        return f"user:{user_id}"
+    if session_id:
+        return f"anon:{session_id}"
+    return None
+
+
+def _compact_id(value: str, keep: int = 6) -> str:
+    if len(value) <= keep * 2 + 1:
+        return value
+    return f"{value[:keep]}...{value[-keep:]}"
+
+
 def summarize_analytics_rows(
     rows: list[dict[str, Any]],
     *,
     now_utc: datetime,
     window_days: int,
+    audience: str = ANALYTICS_AUDIENCE_EXTERNAL,
+    internal_emails: frozenset[str] | None = None,
+    test_emails: frozenset[str] | None = None,
 ) -> dict[str, Any]:
+    safe_audience = normalize_analytics_audience(audience)
+    resolved_internal_emails = internal_emails if internal_emails is not None else get_internal_analytics_emails()
+    resolved_test_emails = test_emails if test_emails is not None else get_test_analytics_emails()
+
     event_counts: dict[str, int] = {event: 0 for event in _DECISION_EVENTS}
     by_day: dict[str, dict[str, int]] = {}
     unique_sessions: set[str] = set()
     unique_users: set[str] = set()
+    raw_unique_sessions: set[str] = set()
+    raw_unique_users: set[str] = set()
     user_sessions: dict[str, set[str]] = defaultdict(set)
-    session_events: dict[str, set[str]] = defaultdict(set)
+    session_first_events: dict[str, dict[str, datetime]] = defaultdict(dict)
+    account_class_event_counts = _empty_account_class_counts()
+
+    included_events = 0
+    excluded_internal_events = 0
+    excluded_test_events = 0
+    invalid_timestamp_events = 0
+    missing_session_identity_events = 0
 
     for row in rows:
         event_name = str(row.get("event_name") or "").strip()
         if not event_name:
             continue
 
+        user_id = _trimmed_str(row.get("user_id"))
+        session_id = _trimmed_str(row.get("session_id"))
+        properties = row.get("properties") if isinstance(row.get("properties"), dict) else {}
+
+        if session_id:
+            raw_unique_sessions.add(session_id)
+        if user_id:
+            raw_unique_users.add(user_id)
+
+        account_class = classify_analytics_row(
+            user_id=user_id,
+            session_id=session_id,
+            properties=properties,
+            internal_emails=resolved_internal_emails,
+            test_emails=resolved_test_emails,
+        )
+        account_class_event_counts[account_class] = account_class_event_counts.get(account_class, 0) + 1
+
+        if safe_audience != "all" and is_excluded_from_external_analytics(account_class):
+            if account_class == "internal":
+                excluded_internal_events += 1
+            elif account_class == "test":
+                excluded_test_events += 1
+            continue
+
+        included_events += 1
         if event_name in event_counts:
             event_counts[event_name] += 1
 
-        session_id = row.get("session_id")
-        if isinstance(session_id, str) and session_id.strip():
-            normalized_session_id = session_id.strip()
-            unique_sessions.add(normalized_session_id)
-            session_events[normalized_session_id].add(event_name)
+        if session_id:
+            unique_sessions.add(session_id)
+        else:
+            missing_session_identity_events += 1
 
-        user_id = row.get("user_id")
-        if isinstance(user_id, str) and user_id.strip():
-            normalized_user_id = user_id.strip()
-            unique_users.add(normalized_user_id)
-            if isinstance(session_id, str) and session_id.strip():
-                user_sessions[normalized_user_id].add(session_id.strip())
+        if user_id:
+            unique_users.add(user_id)
+            if session_id:
+                user_sessions[user_id].add(session_id)
 
         captured_at = _parse_captured_at(row.get("captured_at"))
         if captured_at is None:
+            invalid_timestamp_events += 1
             continue
+
+        if session_id:
+            prior = session_first_events[session_id].get(event_name)
+            if prior is None or captured_at < prior:
+                session_first_events[session_id][event_name] = captured_at
+
         day_key = captured_at.date().isoformat()
         day_bucket = by_day.setdefault(day_key, {event: 0 for event in _DAILY_EVENTS})
         if event_name in day_bucket:
             day_bucket[event_name] += 1
 
-    sessions_with_board = sum(1 for events in session_events.values() if "board_viewed" in events)
-    sessions_with_log_open = sum(1 for events in session_events.values() if "log_bet_opened" in events)
-    sessions_with_bet_logged = sum(1 for events in session_events.values() if "bet_logged" in events)
+    sessions_with_board = 0
+    sessions_with_log_open = 0
+    sessions_with_bet_logged = 0
+    sessions_with_unordered_log_open = 0
+    sessions_with_unordered_bet_logged = 0
+
+    for events in session_first_events.values():
+        board_at = events.get("board_viewed")
+        log_open_at = events.get("log_bet_opened")
+        bet_logged_at = events.get("bet_logged")
+
+        if board_at is not None:
+            sessions_with_board += 1
+        if board_at is not None and log_open_at is not None and log_open_at >= board_at:
+            sessions_with_log_open += 1
+        elif log_open_at is not None:
+            sessions_with_unordered_log_open += 1
+
+        if (
+            board_at is not None
+            and log_open_at is not None
+            and log_open_at >= board_at
+            and bet_logged_at is not None
+            and bet_logged_at >= log_open_at
+        ):
+            sessions_with_bet_logged += 1
+        elif bet_logged_at is not None:
+            sessions_with_unordered_bet_logged += 1
 
     returning_users = sum(1 for sessions in user_sessions.values() if len(sessions) >= 2)
     known_user_count = len(user_sessions)
     known_user_sessions = sum(len(sessions) for sessions in user_sessions.values())
-
     failure_denominator = event_counts["bet_logged"] + event_counts["bet_log_failed"]
 
     daily_rows = [
@@ -132,12 +258,55 @@ def summarize_analytics_rows(
         for day_key in sorted(by_day.keys())
     ]
 
+    quality_warnings: list[str] = []
+    excluded_events = excluded_internal_events + excluded_test_events
+    if safe_audience == ANALYTICS_AUDIENCE_EXTERNAL and excluded_events > 0:
+        quality_warnings.append(
+            f"Excluded {excluded_events} internal/test events from the default external audience "
+            f"({excluded_internal_events} internal, {excluded_test_events} test)."
+        )
+    if account_class_event_counts["unknown"] > 0:
+        quality_warnings.append(
+            f"{account_class_event_counts['unknown']} events are missing both user and session identity."
+        )
+    if missing_session_identity_events > 0:
+        quality_warnings.append(
+            f"{missing_session_identity_events} included events are missing session ids and do not participate in funnel metrics."
+        )
+    if invalid_timestamp_events > 0:
+        quality_warnings.append(
+            f"{invalid_timestamp_events} included events have invalid timestamps and were skipped for ordering/daily rollups."
+        )
+    if sessions_with_unordered_log_open > 0:
+        quality_warnings.append(
+            f"{sessions_with_unordered_log_open} sessions logged bet-open events without a prior board view in the same session."
+        )
+    if sessions_with_unordered_bet_logged > 0:
+        quality_warnings.append(
+            f"{sessions_with_unordered_bet_logged} sessions logged bets without a prior ordered log-open event."
+        )
+
     return {
         "window_days": window_days,
         "generated_at": _iso_z(now_utc),
         "since": _iso_z(now_utc - timedelta(days=window_days)),
+        "audience": safe_audience,
+        "audience_breakdown": {
+            "requested_audience": safe_audience,
+            "raw_events": len(rows),
+            "included_events": included_events,
+            "excluded_events": excluded_events,
+            "raw_sessions": len(raw_unique_sessions),
+            "included_sessions": len(unique_sessions),
+            "raw_users": len(raw_unique_users),
+            "included_users": len(unique_users),
+            "excluded_internal_events": excluded_internal_events,
+            "excluded_test_events": excluded_test_events,
+            "classified_event_counts": account_class_event_counts,
+        },
+        "quality_warnings": quality_warnings,
         "totals": {
-            "events": len(rows),
+            "events": included_events,
             "sessions": len(unique_sessions),
             "users": len(unique_users),
         },
@@ -167,39 +336,6 @@ def summarize_analytics_rows(
     }
 
 
-def _trimmed_str(value: Any) -> str | None:
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip()
-    return normalized if normalized else None
-
-
-def _email_from_row(row: dict[str, Any]) -> str | None:
-    properties = row.get("properties")
-    if not isinstance(properties, dict):
-        return None
-
-    for key in ("user_email", "email", "userEmail"):
-        candidate = _trimmed_str(properties.get(key))
-        if candidate and "@" in candidate and len(candidate) <= 200:
-            return candidate
-    return None
-
-
-def _actor_key(user_id: str | None, session_id: str | None) -> str | None:
-    if user_id:
-        return f"user:{user_id}"
-    if session_id:
-        return f"anon:{session_id}"
-    return None
-
-
-def _compact_id(value: str, keep: int = 6) -> str:
-    if len(value) <= keep * 2 + 1:
-        return value
-    return f"{value[:keep]}...{value[-keep:]}"
-
-
 def summarize_analytics_user_rows(
     rows: list[dict[str, Any]],
     *,
@@ -207,25 +343,53 @@ def summarize_analytics_user_rows(
     window_days: int,
     max_users: int,
     timeline_limit: int,
+    audience: str = ANALYTICS_AUDIENCE_EXTERNAL,
+    internal_emails: frozenset[str] | None = None,
+    test_emails: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     safe_max_users = max(1, min(100, int(max_users)))
     safe_timeline_limit = max(1, min(30, int(timeline_limit)))
+    safe_audience = normalize_analytics_audience(audience)
+    resolved_internal_emails = internal_emails if internal_emails is not None else get_internal_analytics_emails()
+    resolved_test_emails = test_emails if test_emails is not None else get_test_analytics_emails()
 
     grouped: dict[str, dict[str, Any]] = {}
+    account_class_event_counts = _empty_account_class_counts()
+
+    invalid_timestamp_events = 0
+    unknown_identity_events = 0
+    skipped_without_actor_events = 0
 
     for row in rows:
         event_name = _trimmed_str(row.get("event_name"))
-        captured_at = _parse_captured_at(row.get("captured_at"))
-        if not event_name or captured_at is None:
+        if not event_name:
             continue
 
         user_id = _trimmed_str(row.get("user_id"))
-        user_email = _email_from_row(row)
         session_id = _trimmed_str(row.get("session_id"))
+        properties = row.get("properties") if isinstance(row.get("properties"), dict) else {}
+        account_class = classify_analytics_row(
+            user_id=user_id,
+            session_id=session_id,
+            properties=properties,
+            internal_emails=resolved_internal_emails,
+            test_emails=resolved_test_emails,
+        )
+        account_class_event_counts[account_class] = account_class_event_counts.get(account_class, 0) + 1
+        if account_class == "unknown":
+            unknown_identity_events += 1
+
         actor_key = _actor_key(user_id, session_id)
         if actor_key is None:
+            skipped_without_actor_events += 1
             continue
 
+        captured_at = _parse_captured_at(row.get("captured_at"))
+        if captured_at is None:
+            invalid_timestamp_events += 1
+            continue
+
+        user_email = extract_analytics_email(properties)
         bucket = grouped.setdefault(
             actor_key,
             {
@@ -233,8 +397,10 @@ def summarize_analytics_user_rows(
                 "user_id": user_id,
                 "user_email": user_email,
                 "entries": [],
+                "account_class": account_class,
             },
         )
+        bucket["account_class"] = _preferred_account_class(bucket.get("account_class"), account_class)
         if bucket.get("user_id") is None and user_id is not None:
             bucket["user_id"] = user_id
         if bucket.get("user_email") is None and user_email is not None:
@@ -250,8 +416,19 @@ def summarize_analytics_user_rows(
             }
         )
 
-    users: list[dict[str, Any]] = []
+    raw_actor_class_counts = _empty_account_class_counts()
     for bucket in grouped.values():
+        account_class = str(bucket.get("account_class") or "unknown")
+        raw_actor_class_counts[account_class] = raw_actor_class_counts.get(account_class, 0) + 1
+
+    included_buckets = [
+        bucket
+        for bucket in grouped.values()
+        if safe_audience == "all" or not is_excluded_from_external_analytics(str(bucket.get("account_class") or ""))
+    ]
+
+    users: list[dict[str, Any]] = []
+    for bucket in included_buckets:
         entries: list[dict[str, Any]] = bucket["entries"]
         entries.sort(key=lambda item: item["captured_at_dt"])
         if not entries:
@@ -292,10 +469,7 @@ def summarize_analytics_user_rows(
             tutorial_status = "not_started"
 
         days_since_last_seen = max(0.0, (now_utc - last_seen_at).total_seconds() / 86400.0)
-        has_recent_error = bool(
-            last_error
-            and (now_utc - last_error["captured_at_dt"]) <= timedelta(days=3)
-        )
+        has_recent_error = bool(last_error and (now_utc - last_error["captured_at_dt"]) <= timedelta(days=3))
 
         if days_since_last_seen > 7:
             follow_up_tag = "inactive"
@@ -394,10 +568,48 @@ def summarize_analytics_user_rows(
         and (now_utc - parsed) <= timedelta(hours=24)
     )
 
+    excluded_internal_users = raw_actor_class_counts["internal"] if safe_audience == ANALYTICS_AUDIENCE_EXTERNAL else 0
+    excluded_test_users = raw_actor_class_counts["test"] if safe_audience == ANALYTICS_AUDIENCE_EXTERNAL else 0
+    excluded_tracked_users = excluded_internal_users + excluded_test_users
+
+    quality_warnings: list[str] = []
+    if safe_audience == ANALYTICS_AUDIENCE_EXTERNAL and excluded_tracked_users > 0:
+        quality_warnings.append(
+            f"Excluded {excluded_tracked_users} internal/test users from the default external audience "
+            f"({excluded_internal_users} internal, {excluded_test_users} test)."
+        )
+    if unknown_identity_events > 0:
+        quality_warnings.append(
+            f"{unknown_identity_events} events are missing both user and session identity."
+        )
+    if skipped_without_actor_events > 0:
+        quality_warnings.append(
+            f"{skipped_without_actor_events} events were skipped from user drilldown because they had no actor key."
+        )
+    if invalid_timestamp_events > 0:
+        quality_warnings.append(
+            f"{invalid_timestamp_events} events were skipped from user drilldown because they had invalid timestamps."
+        )
+
     return {
         "window_days": window_days,
         "generated_at": _iso_z(now_utc),
         "since": _iso_z(now_utc - timedelta(days=window_days)),
+        "audience": safe_audience,
+        "audience_breakdown": {
+            "requested_audience": safe_audience,
+            "raw_events": len(rows),
+            "included_events": sum(len(bucket["entries"]) for bucket in included_buckets),
+            "excluded_events": len(rows) - sum(len(bucket["entries"]) for bucket in included_buckets),
+            "raw_tracked_users": len(grouped),
+            "included_tracked_users": len(users),
+            "excluded_tracked_users": excluded_tracked_users,
+            "excluded_internal_users": excluded_internal_users,
+            "excluded_test_users": excluded_test_users,
+            "classified_actor_counts": raw_actor_class_counts,
+            "classified_event_counts": account_class_event_counts,
+        },
+        "quality_warnings": quality_warnings,
         "totals": {
             "tracked_users": len(users),
             "identified_users": sum(1 for user in users if not user.get("is_anonymous")),
@@ -462,7 +674,10 @@ def get_weekly_analytics_summary(
     *,
     db,
     window_days: int,
+    audience: str = ANALYTICS_AUDIENCE_EXTERNAL,
     retry_supabase: Callable[[Callable[[], Any]], Any] | None = None,
+    internal_emails: frozenset[str] | None = None,
+    test_emails: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     safe_window_days = max(1, min(30, int(window_days)))
     now_utc = _utc_now()
@@ -474,7 +689,14 @@ def get_weekly_analytics_summary(
         since_iso=since_iso,
         retry_supabase=retry_supabase,
     )
-    return summarize_analytics_rows(rows, now_utc=now_utc, window_days=safe_window_days)
+    return summarize_analytics_rows(
+        rows,
+        now_utc=now_utc,
+        window_days=safe_window_days,
+        audience=audience,
+        internal_emails=internal_emails,
+        test_emails=test_emails,
+    )
 
 
 def get_weekly_analytics_user_drilldown(
@@ -483,7 +705,10 @@ def get_weekly_analytics_user_drilldown(
     window_days: int,
     max_users: int = 25,
     timeline_limit: int = 12,
+    audience: str = ANALYTICS_AUDIENCE_EXTERNAL,
     retry_supabase: Callable[[Callable[[], Any]], Any] | None = None,
+    internal_emails: frozenset[str] | None = None,
+    test_emails: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     safe_window_days = max(1, min(30, int(window_days)))
     safe_max_users = max(1, min(100, int(max_users)))
@@ -505,4 +730,7 @@ def get_weekly_analytics_user_drilldown(
         window_days=safe_window_days,
         max_users=safe_max_users,
         timeline_limit=safe_timeline_limit,
+        audience=audience,
+        internal_emails=internal_emails,
+        test_emails=test_emails,
     )

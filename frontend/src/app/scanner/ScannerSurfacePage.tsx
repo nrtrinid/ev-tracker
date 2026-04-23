@@ -576,7 +576,11 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
       bankroll,
     });
 
-  const openLogDrawer = (betData: ScannedBetData, mode: "standard" | "tutorial_practice" = "standard") => {
+  const openLogDrawer = (
+    betData: ScannedBetData,
+    mode: "standard" | "tutorial_practice" = "standard",
+    analyticsProperties?: Record<string, unknown>,
+  ) => {
     void sendAnalyticsEvent({
       eventName: "log_bet_opened",
       route: "/scanner",
@@ -585,6 +589,13 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
         surface,
         drawer_mode: mode,
         tutorial_mode: tutorialScannerActive,
+        sport: betData.sport,
+        sportsbook: betData.sportsbook,
+        source_market_key: betData.source_market_key,
+        source_selection_key: betData.source_selection_key,
+        selection_side: betData.selection_side,
+        line_value: betData.line_value,
+        ...analyticsProperties,
       },
     });
     setDrawerInitialValues(betData);
@@ -596,7 +607,7 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
   const handleLogBet = (side: MarketSide) => {
     const betData = buildReviewCandidate(side);
     if (tutorialScannerActive) {
-      openLogDrawer(betData, "tutorial_practice");
+      openLogDrawer(betData, "tutorial_practice", { ev_percentage: side.ev_percentage });
       return;
     }
     setScannerReviewCandidate({
@@ -604,18 +615,18 @@ export function ScannerSurfacePage({ surface }: { surface: ScannerSurface }) {
       bet: betData,
       createdAt: new Date().toISOString(),
     });
-    openLogDrawer(betData);
+    openLogDrawer(betData, "standard", { ev_percentage: side.ev_percentage });
   };
 
   const handleStartPlaceFlow = (side: MarketSide) => {
     const betData = buildReviewCandidate(side);
     clearScannerReviewCandidate();
-    openLogDrawer(betData);
+    openLogDrawer(betData, "standard", { source: "place_flow", ev_percentage: side.ev_percentage });
   };
 
   const handleReviewSavedCandidate = () => {
     if (!activeReviewCandidate) return;
-    openLogDrawer(activeReviewCandidate.bet);
+    openLogDrawer(activeReviewCandidate.bet, "standard", { source: "saved_candidate" });
   };
 
   const handlePracticeLogged = (bet: TutorialPracticeBet) => {

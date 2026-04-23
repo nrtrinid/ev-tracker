@@ -14,6 +14,7 @@ from services.live_provider_contracts import (
     LivePlayerStatRequest,
     LiveTrackingProvider,
 )
+from services.mlb_live import MlbLiveProvider
 
 logger = logging.getLogger("ev_tracker.live_tracking")
 
@@ -23,6 +24,7 @@ _ACTIVE_FUTURE_WINDOW = timedelta(hours=36)
 _MAX_PENDING_ROWS = 500
 _SUPPORTED_PROVIDERS: dict[str, LiveTrackingProvider] = {
     "espn": EspnLiveProvider(),
+    "mlb": MlbLiveProvider(),
 }
 
 
@@ -35,7 +37,9 @@ def _live_tracking_enabled() -> bool:
 
 
 def _provider_order() -> list[str]:
-    raw = os.getenv("LIVE_TRACKING_PROVIDER_ORDER") or "espn,api_sports,odds_scores"
+    raw = os.getenv("LIVE_TRACKING_PROVIDER_ORDER")
+    if raw is None:
+        raw = "espn,mlb,api_sports,odds_scores"
     return [part.strip().lower() for part in raw.split(",") if part.strip()]
 
 
