@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
+import type { ReactElement } from "react";
 
+import { BetLiveChip } from "@/components/BetLiveChip";
 import { buildBetLiveChipState } from "@/lib/bet-live-state";
 import type { BetLiveSnapshot } from "@/lib/types";
 
@@ -74,6 +76,8 @@ test.describe("bet live chip state", () => {
     expect(state?.label).toBe("Q3 4:22 • LAL 68-72 GSW");
     expect(state?.tone).toBe("live");
     expect(state?.progressRatio).toBeNull();
+    expect(state?.kind).toBe("game");
+    expect(state?.showInCollapsed).toBe(true);
   });
 
   test("prefers supported player stat progress when present", async () => {
@@ -95,6 +99,8 @@ test.describe("bet live chip state", () => {
     expect(state?.label).toBe("2 / 4 AST");
     expect(state?.title).toBe("LeBron James: 2 / 4 AST");
     expect(state?.progressRatio).toBe(0.5);
+    expect(state?.kind).toBe("prop");
+    expect(state?.showInCollapsed).toBe(true);
   });
 
   test("hides unavailable snapshots by default", async () => {
@@ -117,6 +123,31 @@ test.describe("bet live chip state", () => {
     expect(state).toBeNull();
   });
 
+  test("keeps scheduled snapshots out of the collapsed chip lane", async () => {
+    const state = buildBetLiveChipState(
+      snapshot({
+        status: "scheduled",
+        event: {
+          provider: "espn",
+          provider_event_id: "401",
+          sport_key: "basketball_nba",
+          status: "scheduled",
+          status_detail: "7:10 PM ET",
+          period_label: null,
+          clock: null,
+          start_time: "2026-04-22T23:10:00Z",
+          last_updated: "2026-04-22T21:15:00Z",
+          away: { name: "Los Angeles Lakers", short_name: "LAL", score: null, home_away: "away" },
+          home: { name: "Golden State Warriors", short_name: "GSW", score: null, home_away: "home" },
+        },
+      }),
+    );
+
+    expect(state?.showInCollapsed).toBe(false);
+    expect(state?.kind).toBe("scheduled");
+    expect(state?.label).toContain("Sched");
+  });
+
   test("formats compact MLB inning labels with the live score", async () => {
     const state = buildBetLiveChipState(mlbSnapshot());
 
@@ -125,6 +156,7 @@ test.describe("bet live chip state", () => {
     expect(state?.title).toBe("Bottom 7th");
     expect(state?.tone).toBe("live");
     expect(state?.progressRatio).toBeNull();
+    expect(state?.showInCollapsed).toBe(true);
   });
 
   test("uses compact status labels for non-live MLB game states", async () => {
@@ -147,9 +179,102 @@ test.describe("bet live chip state", () => {
       }),
     );
 
-    expect(state?.label).toBe("Delayed");
+    expect(state?.label).toBe("Rain Delay");
     expect(state?.title).toBe("Rain Delay");
     expect(state?.tone).toBe("warning");
+    expect(state?.kind).toBe("exception");
+    expect(state?.showInCollapsed).toBe(true);
+  });
+
+  test("keeps stale live chips short and communicates staleness through tone", async () => {
+    const state = buildBetLiveChipState(
+      snapshot({
+        provider: {
+          primary_provider: "espn",
+          source: "live_tracking",
+          cache_hit: true,
+          stale: true,
+          last_updated: "2026-04-22T03:10:00Z",
+          unavailable_reason: null,
+          confidence: "matchup_plus_time",
+        },
+      }),
+    );
+
+    expect(state?.label).toBe("Q3 4:22 • LAL 68-72 GSW");
+    expect(state?.tone).toBe("stale");
+    expect(state?.label.startsWith("Stale")).toBe(false);
+  });
+
+  test("shows final pending snapshots in the collapsed state lane", async () => {
+    const state = buildBetLiveChipState(
+      snapshot({
+        status: "final",
+        event: {
+          provider: "espn",
+          provider_event_id: "401",
+          sport_key: "basketball_nba",
+          status: "final",
+          status_detail: "Final",
+          period_label: null,
+          clock: null,
+          start_time: "2026-04-22T02:00:00Z",
+          last_updated: "2026-04-22T04:35:00Z",
+          away: { name: "Los Angeles Lakers", short_name: "LAL", score: 105, home_away: "away" },
+          home: { name: "Golden State Warriors", short_name: "GSW", score: 99, home_away: "home" },
+        },
+      }),
+    );
+
+    expect(state?.label).toBe("Final • LAL 105-99 GSW");
+    expect(state?.tone).toBe("final");
+    expect(state?.kind).toBe("exception");
+    expect(state?.showInCollapsed).toBe(true);
+  });
+
+  test("does not render collapsed chip markup for scheduled snapshots", async () => {
+    const rendered = BetLiveChip({
+      snapshot: snapshot({
+        status: "scheduled",
+        event: {
+          provider: "espn",
+          provider_event_id: "401",
+          sport_key: "basketball_nba",
+          status: "scheduled",
+          status_detail: "7:10 PM ET",
+          period_label: null,
+          clock: null,
+          start_time: "2026-04-22T23:10:00Z",
+          last_updated: "2026-04-22T21:15:00Z",
+          away: { name: "Los Angeles Lakers", short_name: "LAL", score: null, home_away: "away" },
+          home: { name: "Golden State Warriors", short_name: "GSW", score: null, home_away: "home" },
+        },
+      }),
+    });
+
+    expect(rendered).toBeNull();
+  });
+
+  test("renders compact prop chip markup without adding a new row", async () => {
+    const rendered = BetLiveChip({
+      snapshot: mlbSnapshot({
+        player_stat: {
+          participant_name: "Aaron Judge",
+          stat_key: "B_TB",
+          stat_label: "B_TB",
+          value: 3,
+          line_value: 4,
+          selection_side: "over",
+          progress_ratio: 0.75,
+          match_kind: "exact",
+        },
+      }),
+    }) as ReactElement;
+
+    expect(rendered.props.className).toContain("inline-flex");
+    expect(rendered.props.className).toContain("max-w-[9.5rem]");
+    expect(rendered.props.title).toBe("Aaron Judge: 3 / 4 TB");
+    expect(rendered.props["aria-label"]).toBe("Live status: Aaron Judge: 3 / 4 TB");
   });
 
   for (const [statKey, statLabel, value, lineValue, expectedLabel] of [
@@ -178,6 +303,7 @@ test.describe("bet live chip state", () => {
       expect(state?.title).toBe(`Aaron Judge: ${expectedLabel}`);
       expect(state?.progressRatio).toBe(value / lineValue);
       expect(state?.tone).toBe("live");
+      expect(state?.kind).toBe("prop");
     });
   }
 });

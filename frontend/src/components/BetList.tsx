@@ -33,7 +33,7 @@ import { FolderTabs } from "@/components/shared/FolderTabs";
 import type { Bet, BetLiveSnapshot, BetResult, TutorialPracticeBet } from "@/lib/types";
 import { PROMO_TYPE_CONFIG } from "@/lib/types";
 import { BetLiveChip } from "@/components/BetLiveChip";
-import { buildBetLiveChipState } from "@/lib/bet-live-state";
+import { buildBetLiveChipState, formatBetLiveProgressLabel, type BetLiveChipState } from "@/lib/bet-live-state";
 import { getTrackerSourceLabel } from "@/lib/tracker-source";
 import {
   buildTrackerViewQuery,
@@ -233,6 +233,99 @@ function formatParlayLegSportLabel(sport: string): string {
   return normalized;
 }
 
+function formatLiveProviderLabel(provider: string | null | undefined): string | null {
+  if (!provider) return null;
+  if (provider === "espn") return "ESPN";
+  if (provider === "mlb_statsapi") return "MLB StatsAPI";
+  return provider
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatLiveUnavailableReason(reason: string | null | undefined): string {
+  switch (reason) {
+    case "unsupported_sport_or_provider":
+      return "Live tracking is not supported for this bet yet.";
+    case "ambiguous_provider_event_match":
+      return "We found multiple possible live events for this bet, so the tracker is waiting instead of guessing.";
+    case "provider_event_unavailable":
+    case "no_provider_event_match":
+      return "We could not find a matching live event right now.";
+    case "kickoff_drift_exceeded":
+      return "The stored event time did not line up cleanly with a live provider event.";
+    case "missing_live_identity":
+    case "missing_team_mapping":
+      return "This bet does not have enough event detail for live tracking.";
+    case "missing_prop_identity":
+      return "This prop is missing the player or market details needed for live tracking.";
+    case "player_stat_not_found":
+      return "We found the game, but could not confidently match the player in the live feed.";
+    case "prop_stat_missing":
+      return "The live feed does not expose this stat reliably enough right now.";
+    case "unsupported_prop_market":
+      return "This market is not in the live prop-tracking set yet.";
+    case "outside_live_window":
+      return "This bet is outside the active live-tracking window.";
+    default:
+      return "Live tracking is unavailable for this bet right now.";
+  }
+}
+
+function buildLiveStatusDetail(
+  snapshot: BetLiveSnapshot | null | undefined,
+  state: BetLiveChipState | null,
+): {
+  heading: string;
+  body: string | null;
+  meta: string[];
+} | null {
+  if (!snapshot) return null;
+
+  if (snapshot.status === "unavailable") {
+    return {
+      heading: "Live tracking unavailable",
+      body: formatLiveUnavailableReason(snapshot.provider.unavailable_reason),
+      meta: [],
+    };
+  }
+
+  const meta: string[] = [];
+  const updatedAt = snapshot.provider.last_updated ?? snapshot.event?.last_updated ?? null;
+  if (updatedAt) {
+    meta.push(snapshot.provider.stale ? `Stale ${formatRelativeTime(updatedAt)}` : `Updated ${formatRelativeTime(updatedAt)}`);
+  }
+
+  const showProvider = snapshot.provider.stale || snapshot.status === "final" || snapshot.player_stat?.match_kind === "fuzzy";
+  const providerLabel = showProvider ? formatLiveProviderLabel(snapshot.provider.primary_provider) : null;
+  if (providerLabel) {
+    meta.push(`Source ${providerLabel}`);
+  }
+  if (snapshot.player_stat?.match_kind === "fuzzy") {
+    meta.push("Player match fuzzy");
+  }
+
+  if (snapshot.player_stat) {
+    const progressLabel = formatBetLiveProgressLabel(snapshot.player_stat);
+    const gameContext = snapshot.event?.status_detail || state?.label || null;
+    return {
+      heading: `${snapshot.player_stat.participant_name} • ${progressLabel}`,
+      body: gameContext ? `Game state: ${gameContext}` : null,
+      meta,
+    };
+  }
+
+  return {
+    heading: state?.label || snapshot.event?.status_detail || "Live status",
+    body:
+      snapshot.event?.status_detail && snapshot.event.status_detail !== state?.label
+        ? snapshot.event.status_detail
+        : null,
+    meta,
+  };
+}
+
 // ============ SHARED BET CARD BASE ============
 // Compact layout with context-aware data row
 interface BetCardBaseProps {
@@ -250,6 +343,7 @@ function BetCardBase({ bet, headerRight, footer, mode, liveSnapshot }: BetCardBa
   const promoConfig = PROMO_TYPE_CONFIG[bet.promo_type] || PROMO_TYPE_CONFIG.standard;
   const parlayLegs = parseParlayLegsFromBet(bet);
   const displayTitle = buildTrackedBetCardTitle(bet);
+  const liveChipState = buildBetLiveChipState(liveSnapshot);
   
   // Short promo label (BB, 30%, etc.)
   const promoLabel = bet.promo_type === "boost_custom" && bet.boost_percent 
@@ -267,9 +361,10 @@ function BetCardBase({ bet, headerRight, footer, mode, liveSnapshot }: BetCardBa
   );
   const resolvedGameTime = resolveBetGameTime(bet, parlayLegs);
   const openBetEventTime =
-    mode === "pending" && resolvedGameTime && !buildBetLiveChipState(liveSnapshot)
+    mode === "pending" && resolvedGameTime && !liveChipState?.showInCollapsed
       ? formatOpenBetEventTimeCompact(resolvedGameTime.toISOString())
       : "";
+  const liveStatusDetail = mode === "pending" ? buildLiveStatusDetail(liveSnapshot, liveChipState) : null;
   
 
 
@@ -285,41 +380,45 @@ function BetCardBase({ bet, headerRight, footer, mode, liveSnapshot }: BetCardBa
           <div className="flex-1 min-w-0">
             {/* Primary: Event name */}
             <p className="font-bold text-sm leading-tight text-foreground">{displayTitle}</p>
-            {/* Secondary: Sportsbook [Badge] Sport Market */}
-            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-              <span className={cn("w-2 h-2 rounded-full shrink-0", borderColor)} />
-              <span className={cn("font-semibold text-xs", textColor)}>{bet.sportsbook}</span>
-              {showPromoBadge && (
-                <span className={cn(
-                  "px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none",
-                  promoConfig.selectedBg,
-                  promoConfig.selectedText,
-                  promoConfig.ring
-                )}>
-                  {promoLabel}
+            {/* Secondary: left identity cluster, right state cluster */}
+            <div className="mt-1 flex min-w-0 items-start justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
+                <span className={cn("h-2 w-2 rounded-full shrink-0", borderColor)} />
+                <span className={cn("shrink-0 font-semibold text-xs", textColor)}>{bet.sportsbook}</span>
+                {showPromoBadge && (
+                  <span className={cn(
+                    "shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none",
+                    promoConfig.selectedBg,
+                    promoConfig.selectedText,
+                    promoConfig.ring
+                  )}>
+                    {promoLabel}
+                  </span>
+                )}
+                <span className="min-w-0 truncate text-xs text-muted-foreground">
+                  {bet.sport} • {bet.market}
+                  {openBetEventTime ? ` • ${openBetEventTime}` : ""}
                 </span>
-              )}
-              <span className="text-xs text-muted-foreground">
-                {bet.sport} • {bet.market}
-                {openBetEventTime ? ` • ${openBetEventTime}` : ""}
-              </span>
-              {mode === "pending" && <BetLiveChip snapshot={liveSnapshot} />}
-              {/* CLV badge — raw market CLV for all bets with a Pinnacle snapshot */}
-              {bet.clv_ev_percent !== null && (
-                <span className={cn(
-                  "px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none",
-                  bet.beat_close
-                    ? "bg-color-profit-subtle text-color-profit-fg"
-                    : "bg-color-loss-subtle text-color-loss-fg"
-                )}>
-                  CLV {bet.clv_ev_percent >= 0 ? "+" : ""}{bet.clv_ev_percent.toFixed(1)}%
-                </span>
-              )}
-              {bet.pinnacle_odds_at_entry !== null && bet.clv_ev_percent === null && (
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-medium leading-none bg-muted text-muted-foreground">
-                  CLV pending
-                </span>
-              )}
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5 pl-1">
+                {mode === "pending" && <BetLiveChip snapshot={liveSnapshot} state={liveChipState} />}
+                {/* CLV badge — raw market CLV for all bets with a Pinnacle snapshot */}
+                {bet.clv_ev_percent !== null && (
+                  <span className={cn(
+                    "shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none",
+                    bet.beat_close
+                      ? "bg-color-profit-subtle text-color-profit-fg"
+                      : "bg-color-loss-subtle text-color-loss-fg"
+                  )}>
+                    CLV {bet.clv_ev_percent >= 0 ? "+" : ""}{bet.clv_ev_percent.toFixed(1)}%
+                  </span>
+                )}
+                {bet.pinnacle_odds_at_entry !== null && bet.clv_ev_percent === null && (
+                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium leading-none bg-muted text-muted-foreground">
+                    CLV pending
+                  </span>
+                )}
+              </div>
             </div>
           </div>
           {headerRight}
@@ -401,6 +500,24 @@ function BetCardBase({ bet, headerRight, footer, mode, liveSnapshot }: BetCardBa
 
         {expanded && (
           <div className="pt-3 border-t border-border space-y-4 animate-fade-in">
+            {mode === "pending" && liveStatusDetail && (
+              <div>
+                <p className="text-muted-foreground text-[11px] font-medium">Live status</p>
+                <div className="mt-1.5 rounded-md border border-border/70 bg-muted/20 px-3 py-2 space-y-1.5">
+                  <p className="text-sm font-medium text-foreground">{liveStatusDetail.heading}</p>
+                  {liveStatusDetail.body && (
+                    <p className="text-xs leading-5 text-muted-foreground">{liveStatusDetail.body}</p>
+                  )}
+                  {liveStatusDetail.meta.length > 0 && (
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground/70">
+                      {liveStatusDetail.meta.map((item) => (
+                        <span key={item}>{item}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* ── Row 1: CLV (all bets with a Pinnacle entry snapshot) ── */}
             {bet.pinnacle_odds_at_entry != null && (

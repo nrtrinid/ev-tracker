@@ -1,12 +1,15 @@
-import type { BetLiveSnapshot, LiveGameStatus } from "@/lib/types";
+import type { BetLiveSnapshot, LiveGameStatus, LivePlayerStatSnapshot } from "@/lib/types";
 
 export type BetLiveChipTone = "live" | "scheduled" | "final" | "stale" | "warning";
+export type BetLiveChipKind = "prop" | "game" | "exception" | "scheduled";
 
 export interface BetLiveChipState {
   label: string;
   title: string;
   tone: BetLiveChipTone;
   progressRatio: number | null;
+  kind: BetLiveChipKind;
+  showInCollapsed: boolean;
 }
 
 const STAT_LABELS: Record<string, string> = {
@@ -29,6 +32,13 @@ function formatCompactNumber(value: number | null | undefined): string {
   return value.toFixed(1).replace(/\.0$/, "");
 }
 
+export function formatBetLiveProgressLabel(stat: LivePlayerStatSnapshot): string {
+  const value = formatCompactNumber(stat.value);
+  const line = formatCompactNumber(stat.line_value);
+  const label = STAT_LABELS[stat.stat_key] || stat.stat_label || stat.stat_key;
+  return line ? `${value} / ${line} ${label}` : `${value} ${label}`;
+}
+
 function formatStartTime(value: string | null): string {
   if (!value) return "scheduled";
   const date = new Date(value);
@@ -44,50 +54,86 @@ function toneForStatus(status: LiveGameStatus, stale: boolean): BetLiveChipTone 
   return "scheduled";
 }
 
-function formatGameLabel(snapshot: BetLiveSnapshot): string | null {
+function formatMatchup(snapshot: BetLiveSnapshot): string | null {
+  const event = snapshot.event;
+  if (!event) return null;
+  const away = event.away.short_name || event.away.name;
+  const home = event.home.short_name || event.home.name;
+  return `${away} @ ${home}`;
+}
+
+function formatScore(snapshot: BetLiveSnapshot): string | null {
   const event = snapshot.event;
   if (!event) return null;
   const away = event.away.short_name || event.away.name;
   const home = event.home.short_name || event.home.name;
   const awayScore = formatCompactNumber(event.away.score);
   const homeScore = formatCompactNumber(event.home.score);
-  const score = awayScore && homeScore ? `${away} ${awayScore}-${homeScore} ${home}` : `${away} @ ${home}`;
+  return awayScore && homeScore ? `${away} ${awayScore}-${homeScore} ${home}` : null;
+}
+
+function formatExceptionLabel(snapshot: BetLiveSnapshot): string | null {
+  const event = snapshot.event;
+  if (!event) return null;
+  const score = formatScore(snapshot);
+  const matchup = formatMatchup(snapshot);
+
+  if (event.status === "final") return score ? `Final • ${score}` : matchup ? `Final • ${matchup}` : "Final";
+  if (event.status === "delayed") return event.status_detail || "Delayed";
+  if (event.status === "postponed") return "Postponed";
+  if (event.status === "cancelled") return "Cancelled";
+  if (event.status === "unknown") return event.status_detail || "Status pending";
+  return null;
+}
+
+function formatGameLabel(snapshot: BetLiveSnapshot): string | null {
+  const event = snapshot.event;
+  if (!event) return null;
+  const score = formatScore(snapshot);
+  const matchup = formatMatchup(snapshot);
+  const display = score || matchup;
+  if (!display) return null;
 
   if (event.status === "live") {
     const clock = [event.period_label, event.clock].filter(Boolean).join(" ");
-    return clock ? `${clock} • ${score}` : `Live • ${score}`;
+    return clock ? `${clock} • ${display}` : `Live • ${display}`;
   }
-  if (event.status === "final") return `Final • ${score}`;
-  if (event.status === "postponed") return "Postponed";
-  if (event.status === "delayed") return "Delayed";
-  if (event.status === "cancelled") return "Cancelled";
   if (event.status === "scheduled") return `Sched ${formatStartTime(event.start_time)}`;
-  return event.status_detail || "Status pending";
+  return formatExceptionLabel(snapshot) || event.status_detail || "Status pending";
 }
 
 export function buildBetLiveChipState(snapshot: BetLiveSnapshot | null | undefined): BetLiveChipState | null {
   if (!snapshot || snapshot.status === "unavailable") return null;
 
-  if (snapshot.player_stat) {
+  if (snapshot.player_stat && snapshot.status !== "scheduled") {
     const stat = snapshot.player_stat;
-    const value = formatCompactNumber(stat.value);
-    const line = formatCompactNumber(stat.line_value);
-    const label = STAT_LABELS[stat.stat_key] || stat.stat_label || stat.stat_key;
-    const progressLabel = line ? `${value} / ${line} ${label}` : `${value} ${label}`;
+    const progressLabel = formatBetLiveProgressLabel(stat);
     return {
-      label: snapshot.provider.stale ? `Stale • ${progressLabel}` : progressLabel,
+      label: progressLabel,
       title: `${stat.participant_name}: ${progressLabel}`,
       tone: toneForStatus(snapshot.status, snapshot.provider.stale),
       progressRatio: stat.progress_ratio,
+      kind: "prop",
+      showInCollapsed: true,
     };
   }
 
   const gameLabel = formatGameLabel(snapshot);
   if (!gameLabel) return null;
+  const kind: BetLiveChipKind =
+    snapshot.status === "scheduled"
+      ? "scheduled"
+      : snapshot.status === "live"
+        ? "game"
+        : "exception";
+  const showInCollapsed = kind !== "scheduled";
+
   return {
-    label: snapshot.provider.stale ? `Stale • ${gameLabel}` : gameLabel,
+    label: gameLabel,
     title: snapshot.event?.status_detail || gameLabel,
     tone: toneForStatus(snapshot.status, snapshot.provider.stale),
     progressRatio: null,
+    kind,
+    showInCollapsed,
   };
 }
