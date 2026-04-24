@@ -1,7 +1,9 @@
 import asyncio
 import types
+from datetime import datetime, timezone
 
 from services.pickem_research import (
+    _pickem_auto_settle_candidate,
     capture_pickem_research_observations,
     get_pickem_research_summary,
     settle_pickem_research_observations,
@@ -137,6 +139,24 @@ def _card(
         "best_under_sportsbook": best_under_sportsbook,
         "best_under_odds": best_under_odds,
     }
+
+
+def test_pickem_auto_settle_candidate_requires_supported_complete_past_row():
+    now = datetime(2026, 4, 10, tzinfo=timezone.utc)
+    base = {
+        "sport": "basketball_nba",
+        "market_key": "player_points",
+        "team": "Los Angeles Lakers",
+        "player_name": "LeBron James",
+        "selection_side": "over",
+        "line_value": 24.5,
+        "commence_time": "2026-04-01T00:00:00Z",
+    }
+
+    assert _pickem_auto_settle_candidate(base, now=now) is True
+    assert _pickem_auto_settle_candidate({**base, "market_key": "player_blocks"}, now=now) is False
+    assert _pickem_auto_settle_candidate({**base, "team": ""}, now=now) is False
+    assert _pickem_auto_settle_candidate({**base, "commence_time": "2026-04-20T00:00:00Z"}, now=now) is False
 
 
 def test_capture_pickem_research_observations_inserts_then_updates_same_daily_key():

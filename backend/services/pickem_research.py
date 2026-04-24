@@ -75,6 +75,22 @@ def _pickem_manual_result_required(sport: Any, market_key: Any) -> bool:
     return bool(normalized) and not _pickem_auto_settle_supported(normalized, market_key)
 
 
+def _pickem_auto_settle_candidate(row: dict[str, Any], *, now: datetime) -> bool:
+    sport = _normalize_text(row.get("sport"))
+    if not sport or not _pickem_auto_settle_supported(sport, row.get("market_key")):
+        return False
+    if not row.get("team"):
+        return False
+    if not row.get("player_name"):
+        return False
+    if not row.get("selection_side"):
+        return False
+    if row.get("line_value") is None:
+        return False
+    commence = _coerce_datetime(row.get("commence_time"))
+    return commence is not None and commence < now
+
+
 def _parse_actual_result(value: Any) -> str | None:
     normalized = _normalize_text(value)
     if normalized in {"win", "loss", "push"}:
@@ -544,8 +560,11 @@ async def settle_pickem_research_observations(
 
     boxscore_summary_cache: dict[tuple[str, str], dict[str, Any]] = {}
     boxscore_resolve_cache_by_sport: dict[str, dict[tuple[str, str, str], Any]] = {}
+    provider_prefetch_rows = [
+        row for row in pending_rows if _pickem_auto_settle_candidate(row, now=current)
+    ]
     provider_events_by_sport = await fetch_boxscore_provider_events_for_rows(
-        pending_rows,
+        provider_prefetch_rows,
         sport_field="sport",
         commence_time_field="commence_time",
         now=current,

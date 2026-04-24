@@ -7,6 +7,7 @@ from services.prop_settler import (
     MLB_SPORT_KEY,
     _espn_home_away_matches_odds,
     _espn_resolve_cache_key,
+    _build_parlay_provider_prefetch_rows,
     _scores_align_odds_espn,
     _stat_label_to_key,
     build_player_stat_map,
@@ -220,6 +221,62 @@ def test_build_auto_settle_scoreboard_dates_includes_commence_window():
     assert "20260317" in dates
     assert "20260318" in dates
     assert "20260319" in dates
+
+
+def test_build_parlay_provider_prefetch_rows_only_includes_supported_past_props():
+    rows = _build_parlay_provider_prefetch_rows(
+        [
+            {
+                "selection_meta": {
+                    "legs": [
+                        {
+                            "surface": "player_props",
+                            "sport": "baseball_mlb",
+                            "team": "Los Angeles Dodgers",
+                            "marketKey": "batter_hits",
+                            "participantName": "Mookie Betts",
+                            "selectionSide": "over",
+                            "lineValue": 1.5,
+                            "commenceTime": "2026-04-01T02:00:00Z",
+                        },
+                        {
+                            "surface": "player_props",
+                            "sport": "baseball_mlb",
+                            "team": "Los Angeles Dodgers",
+                            "marketKey": "batter_hits",
+                            "participantName": "Mookie Betts",
+                            "selectionSide": "over",
+                            "lineValue": 1.5,
+                            "commenceTime": "2026-04-01T02:00:00Z",
+                        },
+                        {
+                            "surface": "player_props",
+                            "sport": "baseball_mlb",
+                            "team": "Los Angeles Dodgers",
+                            "marketKey": "batter_walks",
+                            "participantName": "Mookie Betts",
+                            "selectionSide": "over",
+                            "lineValue": 0.5,
+                            "commenceTime": "2026-04-01T03:00:00Z",
+                        },
+                        {
+                            "surface": "player_props",
+                            "sport": "baseball_mlb",
+                            "team": "Los Angeles Dodgers",
+                            "marketKey": "batter_hits",
+                            "participantName": "Mookie Betts",
+                            "selectionSide": "over",
+                            "lineValue": 1.5,
+                            "commenceTime": "2026-04-20T02:00:00Z",
+                        },
+                    ]
+                }
+            }
+        ],
+        now=datetime(2026, 4, 10, tzinfo=timezone.utc),
+    )
+
+    assert rows == [{"sport": "baseball_mlb", "commence_time": "2026-04-01T02:00:00Z"}]
 
 
 def test_build_player_stat_map_parses_mlb_boxscore_stats():

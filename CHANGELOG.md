@@ -47,6 +47,7 @@ Version labels use pre-release suffixes until the app is ready for outside users
 - **Provider-first auto-settle**
   - Switched NBA/MLB auto-settle completed-game detection to provider finals first, with a 15-minute finality delay and Odds API score fallback for unresolved or unsupported sports.
   - Added auto-settle score-source telemetry so ops runs show provider completions, fallback sports, fetch errors, and finality-delay skips.
+  - Limited provider score prefetching to auto-settle-eligible rows so old manual-only bets no longer force large ESPN/MLB scoreboard crawls during settle runs.
 
 ## [2.2.0-beta.2] - 2026-04-17
 

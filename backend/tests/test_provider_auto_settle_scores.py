@@ -164,6 +164,97 @@ def test_normalize_provider_completed_event_respects_finality_delay():
     assert reason == "finality_delay"
 
 
+def test_build_provider_score_rows_excludes_manual_backlog_and_future_parlay_legs():
+    from services.odds_api import _build_provider_score_rows
+
+    rows = _build_provider_score_rows(
+        standalone_bets=[
+            {
+                "market": "ML",
+                "surface": "straight_bets",
+                "clv_sport_key": "basketball_nba",
+                "clv_team": "Los Angeles Lakers",
+                "commence_time": "2026-04-01T00:00:00Z",
+            },
+            {
+                "market": "Spread",
+                "surface": "straight_bets",
+                "clv_sport_key": "basketball_nba",
+                "commence_time": "2026-04-01T00:00:00Z",
+            },
+            {
+                "market": "Over 0.5 Walks",
+                "surface": "player_props",
+                "clv_sport_key": "baseball_mlb",
+                "source_market_key": "batter_walks",
+                "participant_name": "Mookie Betts",
+                "selection_side": "over",
+                "line_value": 0.5,
+                "commence_time": "2026-04-01T01:00:00Z",
+            },
+            {
+                "market": "Over 1.5 Hits",
+                "surface": "player_props",
+                "clv_sport_key": "baseball_mlb",
+                "clv_team": "Los Angeles Dodgers",
+                "source_market_key": "batter_hits",
+                "participant_name": "Mookie Betts",
+                "selection_side": "over",
+                "line_value": 1.5,
+                "commence_time": "2026-04-01T02:00:00Z",
+            },
+        ],
+        parlay_bets=[
+            {
+                "selection_meta": {
+                    "legs": [
+                        {
+                            "surface": "straight_bets",
+                            "sport": "baseball_mlb",
+                            "team": "Los Angeles Dodgers",
+                            "commenceTime": "2026-04-02T00:00:00Z",
+                        },
+                        {
+                            "surface": "straight_bets",
+                            "sport": "baseball_mlb",
+                            "team": "Los Angeles Dodgers",
+                            "commenceTime": "2026-04-20T00:00:00Z",
+                        },
+                    ]
+                }
+            }
+        ],
+        pickem_pending_rows=[
+            {
+                "sport": "basketball_nba",
+                "market_key": "player_points",
+                "team": "Los Angeles Lakers",
+                "player_name": "LeBron James",
+                "selection_side": "over",
+                "line_value": 24.5,
+                "commence_time": "2026-04-03T00:00:00Z",
+            },
+            {
+                "sport": "basketball_nba",
+                "market_key": "player_blocks",
+                "team": "Los Angeles Lakers",
+                "player_name": "LeBron James",
+                "selection_side": "over",
+                "line_value": 0.5,
+                "commence_time": "2026-04-03T00:00:00Z",
+            },
+        ],
+        now=datetime(2026, 4, 10, tzinfo=timezone.utc),
+    )
+
+    assert rows == [
+        {"sport": "basketball_nba", "commence_time": "2026-04-01T00:00:00Z"},
+        {"sport": "baseball_mlb", "commence_time": "2026-04-01T02:00:00Z"},
+        {"sport": "baseball_mlb", "commence_time": "2026-04-02T00:00:00Z"},
+        {"sport": "basketball_nba", "commence_time": "2026-04-03T00:00:00Z"},
+    ]
+
+
 def test_run_auto_settler_provider_first_skips_odds_scores(monkeypatch):
     from services import odds_api
 

@@ -1612,6 +1612,53 @@ async def grade_parlay_leg(
     return None
 
 
+def _parlay_prop_leg_can_prefetch_provider_event(leg: dict[str, Any], *, now: datetime) -> bool:
+    if str(leg.get("surface") or "").strip().lower() != "player_props":
+        return False
+    sport = str(leg.get("sport") or "").strip().lower()
+    market_key = str(leg.get("marketKey") or leg.get("market_key") or "").strip()
+    if not is_auto_settle_supported_prop_market(sport, market_key):
+        return False
+    if not leg.get("team"):
+        return False
+    if not (leg.get("participantName") or leg.get("participant_name")):
+        return False
+    if not (leg.get("selectionSide") or leg.get("selection_side")):
+        return False
+    line_value = leg.get("lineValue") if leg.get("lineValue") is not None else leg.get("line_value")
+    if line_value is None:
+        return False
+    commence_time = leg.get("commenceTime") or leg.get("commence_time")
+    kickoff = _parse_utc_iso(str(commence_time) if commence_time else None)
+    return kickoff is not None and kickoff <= now
+
+
+def _build_parlay_provider_prefetch_rows(
+    parlay_bets: list[dict[str, Any]],
+    *,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for bet in parlay_bets:
+        meta = bet.get("selection_meta")
+        if not isinstance(meta, dict):
+            continue
+        for leg in meta.get("legs") or []:
+            if not isinstance(leg, dict):
+                continue
+            if not _parlay_prop_leg_can_prefetch_provider_event(leg, now=now):
+                continue
+            sport = str(leg.get("sport") or "").strip()
+            commence_time = leg.get("commenceTime") or leg.get("commence_time")
+            key = (sport.lower(), str(commence_time or "").strip())
+            if not sport or key in seen:
+                continue
+            seen.add(key)
+            rows.append({"sport": sport, "commence_time": commence_time})
+    return rows
+
+
 def _nba_scoreboard_date_union_prop_bets(
     prop_bets: list[dict[str, Any]],
     *,
@@ -1809,23 +1856,7 @@ async def settle_parlays(
     settled = 0
     boxscore_summary_cache: dict[tuple[str, str], dict[str, Any]] = {}
     boxscore_resolve_cache_by_sport: dict[str, dict[tuple[str, str, str], Any]] = {}
-    provider_prefetch_rows: list[dict[str, Any]] = []
-    for bet in parlay_bets:
-        meta = bet.get("selection_meta")
-        if not isinstance(meta, dict):
-            continue
-        for leg in meta.get("legs") or []:
-            if not isinstance(leg, dict):
-                continue
-            if str(leg.get("surface") or "").strip().lower() != "player_props":
-                continue
-            provider_prefetch_rows.append(
-                {
-                    "sport": leg.get("sport"),
-                    "commence_time": leg.get("commenceTime") or leg.get("commence_time"),
-                }
-            )
-
+    provider_prefetch_rows = _build_parlay_provider_prefetch_rows(parlay_bets, now=now)
     provider_events_by_sport = await fetch_boxscore_provider_events_for_rows(
         provider_prefetch_rows,
         sport_field="sport",

@@ -2613,9 +2613,30 @@ def _build_provider_score_rows(
     standalone_bets: list[dict[str, Any]],
     parlay_bets: list[dict[str, Any]],
     pickem_pending_rows: list[dict[str, Any]],
+    now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+
+    def _ready(commence_time: Any) -> bool:
+        commence_dt = _parse_utc_iso(str(commence_time) if commence_time else None)
+        if commence_dt is None:
+            return False
+        return now is None or commence_dt <= now
+
     for bet in standalone_bets:
+        market = str(bet.get("market") or "").strip().upper()
+        has_team = bool(bet.get("clv_team"))
+        is_ml = market == "ML" and has_team
+        is_supported_prop = _is_auto_settle_supported_prop_selection(
+            sport_key=bet.get("clv_sport_key"),
+            market_key=bet.get("source_market_key"),
+            participant_name=bet.get("participant_name"),
+            selection_side=bet.get("selection_side"),
+            line_value=bet.get("line_value"),
+            commence_time=bet.get("commence_time"),
+        ) and has_team
+        if (not is_ml and not is_supported_prop) or not _ready(bet.get("commence_time")):
+            continue
         rows.append(
             {
                 "sport": bet.get("clv_sport_key"),
@@ -2633,14 +2654,40 @@ def _build_provider_score_rows(
         for leg in legs:
             if not isinstance(leg, dict):
                 continue
+            surface = _normalize_surface_token(leg.get("surface"))
+            commence_time = leg.get("commenceTime") or leg.get("commence_time")
+            is_straight = surface == "straight_bets" and bool(leg.get("team"))
+            is_supported_prop = surface == "player_props" and _is_auto_settle_supported_prop_selection(
+                sport_key=leg.get("sport"),
+                market_key=leg.get("marketKey") or leg.get("market_key"),
+                participant_name=leg.get("participantName") or leg.get("participant_name") or leg.get("display"),
+                selection_side=leg.get("selectionSide") or leg.get("selection_side"),
+                line_value=leg.get("lineValue") if leg.get("lineValue") is not None else leg.get("line_value"),
+                commence_time=commence_time,
+            ) and bool(leg.get("team"))
+            if (not is_straight and not is_supported_prop) or not _ready(commence_time):
+                continue
             rows.append(
                 {
                     "sport": leg.get("sport"),
-                    "commence_time": leg.get("commenceTime") or leg.get("commence_time"),
+                    "commence_time": commence_time,
                 }
             )
 
     for row in pickem_pending_rows:
+        if not _is_auto_settle_supported_prop_selection(
+            sport_key=row.get("sport"),
+            market_key=row.get("market_key"),
+            participant_name=row.get("player_name"),
+            selection_side=row.get("selection_side"),
+            line_value=row.get("line_value"),
+            commence_time=row.get("commence_time"),
+        ):
+            continue
+        if not row.get("team"):
+            continue
+        if not _ready(row.get("commence_time")):
+            continue
         rows.append(
             {
                 "sport": row.get("sport"),
@@ -2648,11 +2695,18 @@ def _build_provider_score_rows(
             }
         )
 
-    return [
-        row
-        for row in rows
-        if str(row.get("sport") or "").strip()
-    ]
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        sport = str(row.get("sport") or "").strip()
+        if not sport:
+            continue
+        key = (sport.lower(), str(row.get("commence_time") or "").strip())
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
 
 
 async def run_auto_settler(db, source: str = "auto_settle") -> int:
@@ -2665,7 +2719,6 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
     from datetime import datetime, timezone
 
     from services.prop_settler import (
-        collect_sport_keys_from_parlays,
         create_prop_settle_telemetry,
         is_standalone_prop_bet,
         settle_parlays,
@@ -2729,7 +2782,7 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
     try:
         pickem_result = (
             db.table("pickem_research_observations")
-            .select("sport,commence_time,actual_result,market_key,player_name,selection_side,line_value")
+            .select("sport,commence_time,actual_result,market_key,player_name,team,selection_side,line_value")
             .execute()
         )
         pickem_pending_rows = [
@@ -2754,16 +2807,11 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
         now=now,
     )
 
-    sport_keys: set[str] = set()
-    for bet in standalone_bets:
-        sk = bet.get("clv_sport_key")
-        if sk:
-            sport_keys.add(str(sk))
-    sport_keys.update(collect_sport_keys_from_parlays(parlay_bets))
-    sport_keys.update(
-        str(row.get("sport") or "").strip()
-        for row in pickem_pending_rows
-        if str(row.get("sport") or "").strip()
+    score_rows = _build_provider_score_rows(
+        standalone_bets=standalone_bets,
+        parlay_bets=parlay_bets,
+        pickem_pending_rows=pickem_pending_rows,
+        now=now,
     )
 
     completed_by_sport: dict[str, list[dict]] = {}
@@ -2783,26 +2831,30 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
     }
 
     if score_source == SCORE_SOURCE_PROVIDER_FIRST:
-        provider_rows = _build_provider_score_rows(
-            standalone_bets=standalone_bets,
-            parlay_bets=parlay_bets,
-            pickem_pending_rows=pickem_pending_rows,
-        )
         provider_result = await fetch_provider_completed_events_for_auto_settle(
-            provider_rows,
-            sport_keys={str(sport_key).strip().lower() for sport_key in sport_keys if str(sport_key).strip()},
+            score_rows,
+            sport_keys={
+                str(row.get("sport") or "").strip().lower()
+                for row in score_rows
+                if str(row.get("sport") or "").strip()
+            },
             now=now,
         )
         completed_by_sport.update(provider_result.completed_by_sport)
         provider_score_telemetry = provider_result.telemetry
 
+    score_sport_keys = {
+        str(row.get("sport") or "").strip()
+        for row in score_rows
+        if str(row.get("sport") or "").strip()
+    }
     provider_error_sports = {
         str(row.get("sport_key") or "").strip().lower()
         for row in provider_score_telemetry.get("provider_score_fetch_errors", [])
         if isinstance(row, dict)
     }
     fallback_to_odds = auto_settle_provider_fallback_to_odds()
-    for sport_key in sorted(sport_keys):
+    for sport_key in sorted(score_sport_keys):
         normalized_sport = str(sport_key or "").strip().lower()
         provider_supported = (
             score_source == SCORE_SOURCE_PROVIDER_FIRST
