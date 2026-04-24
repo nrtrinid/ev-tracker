@@ -190,7 +190,7 @@ ALERT_DEDUPE_TTL_SECONDS=21600
 ### Operator-triggered automation
 If you want external wake/trigger automation, use a scheduler (cron-job.org, GitHub Actions, etc.) to hit these endpoints:
 
-- `POST /api/ops/trigger/scan` (warms scanner cache; manual ops-triggered notifications use the debug/heartbeat route while scheduled board-drop windows use the alert route)
+- `POST /api/ops/trigger/board-refresh` (refreshes the ops board/scanner cache; manual ops-triggered notifications use the debug/heartbeat route while scheduled board-drop windows use the alert route)
 - `POST /api/ops/trigger/auto-settle` (grades eligible pending ML bets, supported NBA/MLB props, parlays, and pick'em research rows)
 - `POST /api/ops/trigger/test-discord` (sends a test Discord message through the debug/test route)
 - `POST /api/ops/trigger/test-discord-alert` (sends an alert-style validation message through the debug/test route without touching the live alert path)
@@ -200,9 +200,9 @@ All operator endpoints require the header `X-Ops-Token` matching `CRON_TOKEN`.
 Frontend bridge routes (for serverless schedulers that should not hold backend secrets directly):
 
 - `GET /api/cron/wakeup` (requires `Authorization: Bearer ${CRON_SECRET}`)
-- `GET /api/cron/trigger-backend?target=scan|auto-settle|test-discord` (same auth)
+- `GET /api/cron/trigger-backend?target=board-refresh|auto-settle|test-discord` (same auth)
 
-`target=settle` is accepted and mapped to `auto-settle` for compatibility.
+`target=settle` remains a compatibility alias for `auto-settle`; the old scan target has been removed. Use `target=board-refresh`.
 
 Health endpoints:
 - `GET /health` for liveness (process is up)
@@ -324,6 +324,10 @@ A small but meaningful test suite protects EV math, settlement/profit logic, sch
 | [AGENTS.md](./AGENTS.md) | Agent-facing repo conventions, guardrails, and fast validation commands |
 | [HANDOFF.md](./HANDOFF.md) | Current focus, recent changes, open risks, and next concrete tasks |
 | [FUTURE_PLANS.md](./FUTURE_PLANS.md) | Living launch roadmap with must-ship, should-ship, and later priorities |
+
+Canonical live-owner map:
+- Bets, summary, balances, auth/ops policy, and ops board refresh: [PROJECT.md](./PROJECT.md#live-owner-map)
+- Migrations and schema parity: [database/README.md](./database/README.md)
 
 ---
 

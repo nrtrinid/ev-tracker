@@ -52,10 +52,10 @@ When you set `BETA_INVITE_CODE`, prefer a short spoken phrase like `Daily Drop`.
 
 Before a trusted-beta release, confirm production has:
 
-- all numbered migrations through `database/migration_022_live_tracking_indexes.sql`
-- no outstanding schema changes that exist only under `backend/sql/`
+- all numbered migrations through `database/migration_023_player_prop_model_candidate_observations.sql`
+- no outstanding schema changes that exist only in reference-only locations such as `database/schema.sql` or `backend/sql/`
 
-Numbered migrations in `database/` are the canonical schema history. This repo still uses your current Supabase apply workflow, so apply any pending numbered files in order before calling the release ready.
+Numbered migrations in `database/` are the canonical schema history. `database/schema.sql` and `backend/sql/` are legacy/reference-only and should not be used as deploy parity sources. This repo still uses your current Supabase apply workflow, so apply any pending numbered files in order before calling the release ready.
 
 ## Env Var Change
 
@@ -118,7 +118,7 @@ This is the canonical production verification sequence for health-sensitive rele
 ```bash
 curl -X POST -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/trigger/test-discord
 curl -X POST -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/trigger/test-discord-alert
-curl -X POST -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/trigger/scan
+curl -X POST -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/trigger/board-refresh
 curl -H "X-Ops-Token: $CRON_TOKEN" http://5.78.192.196/api/ops/status
 ```
 
@@ -126,7 +126,7 @@ Expected results:
 
 - `test-discord` returns `ok: true` with a `run_id`
 - `test-discord-alert` returns `ok: true` with a `run_id` and stays on debug/test routing
-- ops scan response includes `alerts_scheduled` and `alert_skip_totals`
+- ops board-refresh response includes `alerts_scheduled` and `alert_skip_totals`
 - ops status runtime includes `discord.alert_delivery`, `discord.test_delivery`, and `discord.last_schedule_stats`
 - backend logs include `[Discord] Webhook response: 2xx` and no repeated alert/debug webhook missing warnings
 

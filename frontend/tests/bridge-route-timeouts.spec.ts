@@ -199,11 +199,11 @@ test.describe("bridge route timeout handling", () => {
     await expect(response.json()).resolves.toMatchObject({ accepted: true, pending: true, run_id: "run-123" });
   });
 
-  test("admin refresh bridge falls back to sync trigger when async route is unavailable", async () => {
+  test("admin refresh bridge falls back to canonical sync trigger when async route is unavailable", async () => {
     const calls: string[] = [];
     const fetchFn: typeof fetch = async (input) => {
       calls.push(String(input));
-      if (calls.length < 4) {
+      if (calls.length < 2) {
         return new Response(
           JSON.stringify({ detail: "Not Found" }),
           { status: 404, headers: { "content-type": "application/json" } },
@@ -235,9 +235,7 @@ test.describe("bridge route timeout handling", () => {
 
     expect(calls).toEqual([
       "http://backend.internal/api/ops/trigger/board-refresh/async",
-      "http://backend.internal/api/ops/trigger/scan/async",
       "http://backend.internal/api/ops/trigger/board-refresh",
-      "http://backend.internal/api/ops/trigger/scan",
     ]);
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ run_id: "run-sync", total_sides: 42 });

@@ -30,7 +30,8 @@ from calculations import (
     compute_blend_weight, estimate_bonus_retention,
 )
 from auth import get_current_user
-from services.shared_state import allow_fixed_window_rate_limit, is_redis_enabled
+from dependencies import require_scan_rate_limit, validate_ops_token
+from services.shared_state import is_redis_enabled
 from services.scan_cache import persist_latest_full_scan as persist_latest_full_scan_service
 from services.settings_response import build_settings_response as build_settings_response_service
 
@@ -1040,18 +1041,6 @@ def _persist_ops_job_run(**kwargs) -> None:
     )
 
 
-def _require_ops_token(x_ops_token: str | None, x_cron_token: str | None = None) -> None:
-    expected = os.getenv("CRON_TOKEN")
-    ops_token = x_ops_token if isinstance(x_ops_token, str) else None
-    cron_token = x_cron_token if isinstance(x_cron_token, str) else None
-    provided = ops_token or cron_token
-    if not provided:
-        raise HTTPException(status_code=401, detail="Invalid ops token")
-    if not expected:
-        raise HTTPException(status_code=503, detail="CRON_TOKEN not configured on server")
-    if provided != expected:
-        raise HTTPException(status_code=401, detail="Invalid ops token")
-
 PHOENIX_TZ = None
 try:
     PHOENIX_TZ = ZoneInfo("America/Phoenix")
@@ -1743,6 +1732,8 @@ app.add_middleware(
 from database import get_db
 
 # Route modules (APIRouter)
+from routes.bet_routes import router as bet_router
+from routes.dashboard_routes import router as dashboard_router
 from routes.scan_routes import router as scan_router
 from routes.board_routes import router as board_router
 from routes.ops_cron import router as ops_router
@@ -1754,6 +1745,8 @@ from routes.admin_routes import router as admin_router
 from routes.analytics_routes import router as analytics_router
 from routes.beta_access_routes import router as beta_access_router
 
+app.include_router(bet_router)
+app.include_router(dashboard_router)
 app.include_router(scan_router)
 app.include_router(board_router, prefix="/api")
 app.include_router(ops_router)
@@ -1764,28 +1757,6 @@ app.include_router(utility_router)
 app.include_router(admin_router)
 app.include_router(analytics_router)
 app.include_router(beta_access_router)
-
-# ---------- Scan rate limit ----------
-# 12 full scans per 15 minutes per user; uses shared state when REDIS_URL is configured.
-_scan_rate_window_sec = 15 * 60
-_scan_rate_max = 12
-
-
-async def require_scan_rate_limit(user: dict = Depends(get_current_user)) -> dict:
-    """Allow at most _scan_rate_max scan requests per user per _scan_rate_window_sec."""
-    uid = user["id"]
-    allowed = allow_fixed_window_rate_limit(
-        bucket_key=f"scan:{uid}",
-        max_requests=_scan_rate_max,
-        window_seconds=_scan_rate_window_sec,
-    )
-    if not allowed:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many scan requests. Please try again in a few minutes.",
-        )
-    return user
-
 
 def _retry_supabase(f, retries=2):
     """Retry a Supabase/PostgREST request on transient 'Server disconnected' errors."""
@@ -2180,219 +2151,6 @@ def _lock_ev_for_row(db, bet_id: str, user_id: str, row: dict, settings: dict) -
         logger.warning("ev_lock.write_failed bet_id=%s err=%s", bet_id, e)
 
 
-# ============ Bets CRUD ============
-
-@app.post("/bets", response_model=BetResponse, status_code=201)
-def create_bet(
-    bet: BetCreate,
-    user: dict = Depends(get_current_user),
-    x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
-):
-    """Create a new bet."""
-    from services.bet_crud import create_bet_impl
-
-    return create_bet_impl(get_db(), user, bet, session_id=x_session_id)
-
-
-@app.get("/bets", response_model=list[BetResponse])
-def get_bets(
-    sport: str | None = None,
-    sportsbook: str | None = None,
-    result: BetResult | None = None,
-    limit: int = 1000,
-    offset: int = 0,
-    user: dict = Depends(get_current_user),
-):
-    """Get all bets with optional filters."""
-    db = get_db()
-    settings = get_user_settings(db, user["id"])
-
-    query = (
-        db.table("bets")
-        .select("*")
-        .eq("user_id", user["id"])
-        .order("created_at", desc=True)
-    )
-
-    if sport:
-        query = query.eq("sport", sport)
-    if sportsbook:
-        query = query.eq("sportsbook", sportsbook)
-    if result:
-        query = query.eq("result", result.value)
-
-    query = query.range(offset, offset + limit - 1)
-
-    response = _retry_supabase(lambda: query.execute())
-
-    return [build_bet_response(row, settings["k_factor"]) for row in response.data]
-
-
-@app.get("/bets/live", response_model=BetLiveSnapshotResponse)
-async def get_bet_live_snapshots(user: dict = Depends(get_current_user)):
-    """Get compact live state for the current user's pending bets."""
-    from services.bet_live_tracking import get_bet_live_snapshots_impl
-
-    return await get_bet_live_snapshots_impl(get_db(), user)
-
-
-@app.get("/bets/{bet_id}", response_model=BetResponse)
-def get_bet(bet_id: str, user: dict = Depends(get_current_user)):
-    """Get a single bet by ID."""
-    db = get_db()
-    settings = get_user_settings(db, user["id"])
-
-    result = (
-        db.table("bets")
-        .select("*")
-        .eq("id", bet_id)
-        .eq("user_id", user["id"])
-        .execute()
-    )
-
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Bet not found")
-
-    return build_bet_response(result.data[0], settings["k_factor"])
-
-
-@app.patch("/bets/{bet_id}", response_model=BetResponse)
-def update_bet(bet_id: str, bet: BetUpdate, user: dict = Depends(get_current_user)):
-    """Update an existing bet."""
-    db = get_db()
-    settings = get_user_settings(db, user["id"])
-
-    # Build update data, excluding None values
-    data = {}
-    if bet.sport is not None:
-        data["sport"] = bet.sport
-    if bet.event is not None:
-        data["event"] = bet.event
-    if bet.market is not None:
-        data["market"] = bet.market
-    if bet.surface is not None:
-        data["surface"] = bet.surface
-    if bet.sportsbook is not None:
-        data["sportsbook"] = bet.sportsbook
-    if bet.promo_type is not None:
-        data["promo_type"] = bet.promo_type.value
-    if bet.odds_american is not None:
-        data["odds_american"] = bet.odds_american
-    if bet.stake is not None:
-        data["stake"] = bet.stake
-    if bet.boost_percent is not None:
-        data["boost_percent"] = bet.boost_percent
-    if bet.winnings_cap is not None:
-        data["winnings_cap"] = bet.winnings_cap
-    if bet.notes is not None:
-        data["notes"] = bet.notes
-    if bet.result is not None:
-        data["result"] = bet.result.value
-        # Auto-set settled_at when result changes from pending
-        current = (
-            db.table("bets")
-            .select("result")
-            .eq("id", bet_id)
-            .eq("user_id", user["id"])
-            .execute()
-        )
-        if current.data and current.data[0]["result"] == "pending" and bet.result.value != "pending":
-            data["settled_at"] = datetime.now(UTC).isoformat()
-    if bet.payout_override is not None:
-        data["payout_override"] = bet.payout_override
-    if bet.opposing_odds is not None:
-        data["opposing_odds"] = bet.opposing_odds
-    if bet.event_date is not None:
-        data["event_date"] = bet.event_date.isoformat()
-
-    # If any EV-relevant field changed, clear the lock so it gets recomputed
-    EV_RELEVANT = {"odds_american", "stake", "promo_type", "boost_percent",
-                   "winnings_cap", "payout_override", "opposing_odds"}
-    if data.keys() & EV_RELEVANT:
-        data["ev_per_dollar_locked"] = None
-        data["ev_total_locked"] = None
-        data["win_payout_locked"] = None
-        data["ev_locked_at"] = None
-
-    if not data:
-        raise HTTPException(status_code=400, detail="No fields to update")
-
-    result = (
-        db.table("bets")
-        .update(data)
-        .eq("id", bet_id)
-        .eq("user_id", user["id"])
-        .execute()
-    )
-
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Bet not found")
-
-    row = result.data[0]
-    _lock_ev_for_row(db, bet_id, user["id"], row, settings)
-    fresh = db.table("bets").select("*").eq("id", bet_id).execute()
-    return build_bet_response(fresh.data[0] if fresh.data else row, settings["k_factor"])
-
-
-@app.patch("/bets/{bet_id}/result")
-def update_bet_result(
-    bet_id: str,
-    result: BetResult,
-    user: dict = Depends(get_current_user),
-):
-    """Quick endpoint to just update bet result (win/loss)."""
-    db = get_db()
-    settings = get_user_settings(db, user["id"])
-
-    # Build update data
-    update_data = {"result": result.value}
-
-    # Auto-set settled_at when changing from pending to settled
-    current = (
-        db.table("bets")
-        .select("result")
-        .eq("id", bet_id)
-        .eq("user_id", user["id"])
-        .execute()
-    )
-    if not current.data:
-        raise HTTPException(status_code=404, detail="Bet not found")
-    if current.data[0]["result"] == "pending" and result.value != "pending":
-        update_data["settled_at"] = datetime.now(UTC).isoformat()
-
-    response = (
-        db.table("bets")
-        .update(update_data)
-        .eq("id", bet_id)
-        .eq("user_id", user["id"])
-        .execute()
-    )
-
-    if not response.data:
-        raise HTTPException(status_code=404, detail="Bet not found")
-
-    return build_bet_response(response.data[0], settings["k_factor"])
-
-
-@app.delete("/bets/{bet_id}")
-def delete_bet(bet_id: str, user: dict = Depends(get_current_user)):
-    """Delete a bet."""
-    db = get_db()
-
-    result = (
-        db.table("bets")
-        .delete()
-        .eq("id", bet_id)
-        .eq("user_id", user["id"])
-        .execute()
-    )
-
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Bet not found")
-
-    return {"deleted": True, "id": bet_id}
-
-
 def backfill_ev_locks(user: dict = Depends(get_current_user)):
     """
     One-off endpoint: freeze EV on all existing promo bets that don't yet have
@@ -2419,87 +2177,6 @@ def backfill_ev_locks(user: dict = Depends(get_current_user)):
         except Exception as e:
             logger.warning("backfill_ev_lock.failed bet_id=%s err=%s", row["id"], e)
     return {"backfilled": locked, "total_eligible": len(rows)}
-
-
-# ============ Summary / Dashboard ============
-
-@app.get("/summary", response_model=SummaryResponse)
-def get_summary(user: dict = Depends(get_current_user)):
-    """Get dashboard summary statistics."""
-    db = get_db()
-    settings = get_user_settings(db, user["id"])
-    k_factor = settings["k_factor"]
-
-    result = _retry_supabase(lambda: db.table("bets").select("*").eq("user_id", user["id"]).execute())
-    bets = result.data
-
-    if not bets:
-        return SummaryResponse(
-            total_bets=0,
-            pending_bets=0,
-            total_ev=0.0,
-            total_real_profit=0.0,
-            variance=0.0,
-            win_count=0,
-            loss_count=0,
-            win_rate=None,
-            ev_by_sportsbook={},
-            profit_by_sportsbook={},
-            ev_by_sport={},
-        )
-
-    total_ev = 0.0
-    total_real_profit = 0.0
-    win_count = 0
-    loss_count = 0
-    pending_count = 0
-
-    ev_by_sportsbook: dict[str, float] = {}
-    profit_by_sportsbook: dict[str, float] = {}
-    ev_by_sport: dict[str, float] = {}
-
-    for row in bets:
-        bet_response = build_bet_response(row, k_factor)
-
-        # Totals
-        total_ev += bet_response.ev_total
-        if bet_response.real_profit is not None:
-            total_real_profit += bet_response.real_profit
-
-        # Counts
-        if bet_response.result == BetResult.WIN:
-            win_count += 1
-        elif bet_response.result == BetResult.LOSS:
-            loss_count += 1
-        elif bet_response.result == BetResult.PENDING:
-            pending_count += 1
-
-        # By sportsbook
-        book = bet_response.sportsbook
-        ev_by_sportsbook[book] = ev_by_sportsbook.get(book, 0) + bet_response.ev_total
-        if bet_response.real_profit is not None:
-            profit_by_sportsbook[book] = profit_by_sportsbook.get(book, 0) + bet_response.real_profit
-
-        # By sport
-        sport = bet_response.sport
-        ev_by_sport[sport] = ev_by_sport.get(sport, 0) + bet_response.ev_total
-
-    settled_count = win_count + loss_count
-    win_rate = (win_count / settled_count) if settled_count > 0 else None
-
-    return SummaryResponse(
-        total_bets=len(bets),
-        pending_bets=pending_count,
-        total_ev=round(total_ev, 2),
-        total_real_profit=round(total_real_profit, 2),
-        variance=round(total_real_profit - total_ev, 2),
-        win_count=win_count,
-        loss_count=loss_count,
-        win_rate=round(win_rate, 4) if win_rate else None,
-        ev_by_sportsbook={k: round(v, 2) for k, v in ev_by_sportsbook.items()},
-        profit_by_sportsbook={k: round(v, 2) for k, v in profit_by_sportsbook.items()},
-        ev_by_sport={k: round(v, 2) for k, v in ev_by_sport.items()},
-    )
 
 
 # ============ Transactions ============
@@ -2592,74 +2269,6 @@ def delete_transaction(
         raise HTTPException(status_code=404, detail="Transaction not found")
 
     return {"deleted": True, "id": transaction_id}
-
-
-@app.get("/balances", response_model=list[BalanceResponse])
-def get_balances(user: dict = Depends(get_current_user)):
-    """Get computed balance for each sportsbook."""
-    db = get_db()
-    settings = get_user_settings(db, user["id"])
-    k_factor = settings["k_factor"]
-
-    # Get all transactions for this user
-    tx_result = _retry_supabase(lambda: (
-        db.table("transactions")
-        .select("*")
-        .eq("user_id", user["id"])
-        .execute()
-    ))
-    transactions = tx_result.data or []
-
-    # Get all bets for profit calculation
-    bets_result = _retry_supabase(lambda: db.table("bets").select("*").eq("user_id", user["id"]).execute())
-    bets = bets_result.data or []
-
-    # Aggregate by sportsbook
-    sportsbook_data = {}
-
-    # Process transactions
-    for tx in transactions:
-        book = tx["sportsbook"]
-        if book not in sportsbook_data:
-            sportsbook_data[book] = {"deposits": 0, "withdrawals": 0, "profit": 0, "pending": 0}
-
-        if tx["type"] == "deposit":
-            sportsbook_data[book]["deposits"] += float(tx["amount"])
-        else:
-            sportsbook_data[book]["withdrawals"] += float(tx["amount"])
-
-    # Process bets for profit and pending
-    for row in bets:
-        book = row["sportsbook"]
-        if book not in sportsbook_data:
-            sportsbook_data[book] = {"deposits": 0, "withdrawals": 0, "profit": 0, "pending": 0}
-
-        bet = build_bet_response(row, k_factor)
-
-        if bet.result == BetResult.PENDING:
-            # Pending cash exposure: bonus bet stake is not real cash.
-            if bet.promo_type != "bonus_bet":
-                sportsbook_data[book]["pending"] += bet.stake
-        elif bet.real_profit is not None:
-            sportsbook_data[book]["profit"] += bet.real_profit
-
-    # Build response
-    balances = []
-    for book, data in sorted(sportsbook_data.items()):
-        net_deposits = data["deposits"] - data["withdrawals"]
-        balance = net_deposits + data["profit"] - data["pending"]
-
-        balances.append(BalanceResponse(
-            sportsbook=book,
-            deposits=round(data["deposits"], 2),
-            withdrawals=round(data["withdrawals"], 2),
-            net_deposits=round(net_deposits, 2),
-            profit=round(data["profit"], 2),
-            pending=round(data["pending"], 2),
-            balance=round(balance, 2),
-        ))
-
-    return balances
 
 
 # ============ Settings ============
@@ -2912,7 +2521,7 @@ async def ops_trigger_scan(
 
     Security: requires X-Ops-Token header matching CRON_TOKEN.
     """
-    _require_ops_token(x_ops_token, x_cron_token)
+    validate_ops_token(x_ops_token, x_cron_token)
 
     run_id = _new_run_id("ops_scan")
     started_clock = time.monotonic()
@@ -3077,7 +2686,7 @@ async def ops_trigger_auto_settle(
 
     Security: requires X-Ops-Token header matching CRON_TOKEN.
     """
-    _require_ops_token(x_ops_token, x_cron_token)
+    validate_ops_token(x_ops_token, x_cron_token)
 
     run_id = _new_run_id("ops_auto_settle")
     started_clock = time.monotonic()
@@ -3185,7 +2794,7 @@ def ops_status(
 
     Uses CRON_TOKEN auth (via X-Ops-Token) to avoid exposing internals publicly.
     """
-    _require_ops_token(x_ops_token, x_cron_token)
+    validate_ops_token(x_ops_token, x_cron_token)
 
     runtime = _runtime_state()
     db_ok, db_error = _check_db_ready()
@@ -3227,7 +2836,7 @@ async def ops_trigger_test_discord(
 
     Security: requires X-Ops-Token header matching CRON_TOKEN.
     """
-    _require_ops_token(x_ops_token, x_cron_token)
+    validate_ops_token(x_ops_token, x_cron_token)
 
     run_id = _new_run_id("ops_discord_test")
     started_at = time.monotonic()
@@ -3263,7 +2872,7 @@ async def ops_trigger_test_discord_alert(
     Trigger an alert-style test message on the Discord debug/test route.
     Security: requires X-Ops-Token header matching CRON_TOKEN.
     """
-    _require_ops_token(x_ops_token, x_cron_token)
+    validate_ops_token(x_ops_token, x_cron_token)
 
     run_id = _new_run_id("ops_discord_alert_test")
     started_at = time.monotonic()

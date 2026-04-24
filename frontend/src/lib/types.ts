@@ -1051,7 +1051,7 @@ export interface AdminMarketRefreshResponse {
   results: AdminMarketRefreshSurfaceSummary[];
 }
 
-/** Response from POST /api/ops/trigger/board-refresh (or legacy /scan alias). */
+/** Response from POST /api/ops/trigger/board-refresh. */
 export interface OpsTriggerBoardRefreshResponse {
   ok: boolean;
   accepted?: boolean;

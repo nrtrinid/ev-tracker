@@ -115,8 +115,8 @@ def test_ops_endpoints_require_ops_token(public_client):
     ).status_code == 401
     assert public_client.post("/api/ops/trigger/board-refresh").status_code == 401
     assert public_client.post("/api/ops/trigger/board-refresh/async").status_code == 401
-    assert public_client.post("/api/ops/trigger/scan").status_code == 401
-    assert public_client.post("/api/ops/trigger/scan/async").status_code == 401
+    assert public_client.post("/api/ops/trigger/scan").status_code == 404
+    assert public_client.post("/api/ops/trigger/scan/async").status_code == 404
     assert public_client.post("/api/ops/trigger/auto-settle").status_code == 401
     assert public_client.post("/api/ops/trigger/test-discord").status_code == 401
 
@@ -1085,7 +1085,7 @@ def test_ops_status_contract_shape_degraded(monkeypatch, auth_client):
 
 
 @pytest.mark.integration
-def test_ops_trigger_board_refresh_contract_shape(auth_client, monkeypatch):
+def test_ops_trigger_board_refresh_runs_manual_board_refresh_contract(auth_client, monkeypatch):
     import main
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
@@ -1116,7 +1116,7 @@ def test_ops_trigger_board_refresh_contract_shape(auth_client, monkeypatch):
 
 
 @pytest.mark.integration
-def test_ops_trigger_scan_contract_shape(auth_client, monkeypatch):
+def test_ops_trigger_board_refresh_contract_shape(auth_client, monkeypatch):
     import main
     import services.daily_board as daily_board
     import services.discord_alerts as discord_alerts
@@ -1157,7 +1157,7 @@ def test_ops_trigger_scan_contract_shape(auth_client, monkeypatch):
     monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_run_daily_board_drop, raising=True)
     monkeypatch.setattr(discord_alerts, "schedule_alerts", _fake_schedule_alerts, raising=True)
 
-    resp = auth_client.post("/api/ops/trigger/scan", headers={"X-Ops-Token": "ops-secret"})
+    resp = auth_client.post("/api/ops/trigger/board-refresh", headers={"X-Ops-Token": "ops-secret"})
     assert resp.status_code == 200
 
     body = resp.json()
@@ -1174,7 +1174,7 @@ def test_ops_trigger_scan_contract_shape(auth_client, monkeypatch):
 
 
 @pytest.mark.integration
-def test_ops_trigger_scan_timed_ping_routes_manual_board_refresh_to_heartbeat(auth_client, monkeypatch):
+def test_ops_trigger_board_refresh_timed_ping_routes_manual_board_refresh_to_heartbeat(auth_client, monkeypatch):
     import main
     import services.daily_board as daily_board
     import services.discord_alerts as discord_alerts
@@ -1212,14 +1212,14 @@ def test_ops_trigger_scan_timed_ping_routes_manual_board_refresh_to_heartbeat(au
     monkeypatch.setattr(discord_alerts, "schedule_alerts", _fail_if_edge_alerts_called, raising=True)
     monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
 
-    resp = auth_client.post("/api/ops/trigger/scan", headers={"X-Ops-Token": "ops-secret"})
+    resp = auth_client.post("/api/ops/trigger/board-refresh", headers={"X-Ops-Token": "ops-secret"})
     assert resp.status_code == 200
     assert resp.json()["board_drop"] is True
     assert sent == ["heartbeat"]
 
 
 @pytest.mark.integration
-def test_ops_trigger_scan_piggybacks_clv_with_fresh_sides(auth_client, monkeypatch):
+def test_ops_trigger_board_refresh_piggybacks_clv_with_fresh_sides(auth_client, monkeypatch):
     import main
     import services.daily_board as daily_board
     import services.discord_alerts as discord_alerts
@@ -1255,13 +1255,13 @@ def test_ops_trigger_scan_piggybacks_clv_with_fresh_sides(auth_client, monkeypat
     )
     monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
 
-    resp = auth_client.post("/api/ops/trigger/scan", headers={"X-Ops-Token": "ops-secret"})
+    resp = auth_client.post("/api/ops/trigger/board-refresh", headers={"X-Ops-Token": "ops-secret"})
     assert resp.status_code == 200
     assert captured_sides == [[*fresh_straight, *fresh_props]]
 
 
 @pytest.mark.integration
-def test_ops_trigger_scan_skips_clv_piggyback_with_no_fresh_sides(auth_client, monkeypatch):
+def test_ops_trigger_board_refresh_skips_clv_piggyback_with_no_fresh_sides(auth_client, monkeypatch):
     import main
     import services.daily_board as daily_board
     import services.discord_alerts as discord_alerts
@@ -1293,13 +1293,13 @@ def test_ops_trigger_scan_skips_clv_piggyback_with_no_fresh_sides(auth_client, m
     )
     monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
 
-    resp = auth_client.post("/api/ops/trigger/scan", headers={"X-Ops-Token": "ops-secret"})
+    resp = auth_client.post("/api/ops/trigger/board-refresh", headers={"X-Ops-Token": "ops-secret"})
     assert resp.status_code == 200
     assert piggyback_calls == 0
 
 
 @pytest.mark.integration
-def test_ops_trigger_scan_clv_piggyback_failure_does_not_fail_route(auth_client, monkeypatch):
+def test_ops_trigger_board_refresh_clv_piggyback_failure_does_not_fail_route(auth_client, monkeypatch):
     import main
     import services.daily_board as daily_board
     import services.discord_alerts as discord_alerts
@@ -1337,14 +1337,14 @@ def test_ops_trigger_scan_clv_piggyback_failure_does_not_fail_route(auth_client,
     monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
     monkeypatch.setattr("routes.ops_cron.asyncio.create_task", _tracking_create_task, raising=True)
 
-    resp = auth_client.post("/api/ops/trigger/scan", headers={"X-Ops-Token": "ops-secret"})
+    resp = auth_client.post("/api/ops/trigger/board-refresh", headers={"X-Ops-Token": "ops-secret"})
     assert resp.status_code == 200
     assert resp.json()["board_drop"] is True
     assert created_tasks >= 1
 
 
 @pytest.mark.integration
-def test_ops_trigger_scan_async_background_runner_wires_clv_piggyback(monkeypatch):
+def test_ops_trigger_board_refresh_async_background_runner_wires_clv_piggyback(monkeypatch):
     import main
     import routes.ops_cron as ops_cron
 
@@ -1381,39 +1381,6 @@ def test_ops_trigger_board_refresh_async_contract_shape(auth_client, monkeypatch
     monkeypatch.setattr("routes.ops_cron._run_ops_board_drop_background", _fake_background_runner, raising=True)
 
     resp = auth_client.post("/api/ops/trigger/board-refresh/async", headers={"X-Ops-Token": "ops-secret"})
-    assert resp.status_code == 202
-
-    body = resp.json()
-    assert body.get("ok") is True
-    assert body.get("accepted") is True
-    assert body.get("pending") is True
-    assert body.get("board_drop") is True
-    assert isinstance(body.get("run_id"), str)
-    assert main.app.state.ops_status["last_board_refresh"]["status"] == "queued"
-    assert main.app.state.ops_status["last_board_refresh"]["kind"] == "board_drop"
-
-
-@pytest.mark.integration
-def test_ops_trigger_scan_async_contract_shape(auth_client, monkeypatch):
-    import main
-
-    monkeypatch.setenv("CRON_TOKEN", "ops-secret")
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
-
-    async def _fake_background_runner(*, main_module, run_id: str):
-        main_module._set_ops_status(
-            "last_ops_trigger_scan",
-            {
-                "run_id": run_id,
-                "captured_at": "2026-03-20T18:00:00Z",
-                "board_drop": True,
-                "pending": False,
-            },
-        )
-
-    monkeypatch.setattr("routes.ops_cron._run_ops_board_drop_background", _fake_background_runner, raising=True)
-
-    resp = auth_client.post("/api/ops/trigger/scan/async", headers={"X-Ops-Token": "ops-secret"})
     assert resp.status_code == 202
 
     body = resp.json()

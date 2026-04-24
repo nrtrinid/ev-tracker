@@ -33,10 +33,10 @@ Operational hardening adds:
 
 1. **Auth**: Supabase Auth → JWT → `api.ts` adds `Authorization` header → local dev calls FastAPI directly, while Vercel production calls same-origin `/api/backend/*` → `auth.get_current_user` validates JWT.
 2. **Bets**: `LogBetDrawer` / `EditBetModal` → `api.createBet` / `api.updateBet` → FastAPI → Supabase `bets`.
-3. **EV**: `calculate_ev` in `calculations.py` → `build_bet_response` in `main.py` → frontend.
+3. **EV**: `calculate_ev` in `calculations.py` → `build_bet_response` in `services/bet_crud.py` → frontend.
 4. **Scanner**: Frontend `scanMarkets()` → `/api/scan-markets` → `services/odds_api.get_cached_or_scan` → The Odds API → de-vig Pinnacle → compare to target books.
 5. **Operator status**: `/admin/ops` → protected frontend bridge `/api/ops/status` → backend `/api/ops/status` (server-side ops token).
-6. **Automation fallback**: scheduler or external trigger → `/api/ops/trigger/scan` and `/api/ops/trigger/auto-settle`.
+6. **Automation fallback**: scheduler or external trigger → `/api/ops/trigger/board-refresh` and `/api/ops/trigger/auto-settle`.
 
 ### Multi-Tenancy
 
@@ -115,6 +115,28 @@ ev-betting-tracker/
 
 ---
 
+## Live Owner Map
+
+Use these files as the live implementation owners when tracing behavior:
+
+| Concern | Live owner |
+|---------|------------|
+| **Bets** | `backend/routes/bet_routes.py` for HTTP handlers; `backend/services/bet_crud.py` for CRUD and response assembly; `frontend/src/lib/api.ts`, `frontend/src/lib/hooks.ts`, `frontend/src/components/LogBetDrawer.tsx`, `frontend/src/components/EditBetModal.tsx`, and `frontend/src/components/BetList.tsx` for client flows |
+| **Summary** | `backend/routes/dashboard_routes.py` `GET /summary` handler; `backend/services/summary_stats.py` for aggregation; `backend/models.py` summary schemas; `frontend/src/lib/api.ts` and `frontend/src/lib/hooks.ts` for fetch/query ownership |
+| **Balances** | `backend/routes/dashboard_routes.py` `GET /balances` handler; `backend/services/balance_stats.py` for sportsbook balance calculation; transaction/bet mutation handlers for invalidation inputs; `frontend/src/lib/api.ts`, `frontend/src/lib/hooks.ts`, and settings/bankroll UI consumers |
+| **Auth and ops policy** | `backend/auth.py`, `backend/dependencies.py`, `frontend/src/lib/auth-context.tsx`, `frontend/src/middleware.ts`, `frontend/src/lib/server/admin-access.ts`, and protected bridge routes under `frontend/src/app/api/ops/` |
+| **Migrations and schema parity** | Numbered files under `database/migration_*.sql`, with policy in `database/README.md` |
+| **Ops board refresh** | `backend/routes/ops_cron.py` canonical `/api/ops/trigger/board-refresh` and `/api/ops/trigger/board-refresh/async` handlers; `backend/main.py` scheduled board-drop helpers/status payloads; `frontend/src/lib/server/bridge-route-impl.ts`, `frontend/src/app/api/cron/trigger-backend/route.ts`, and `frontend/src/app/admin/ops/OpsDashboard.tsx` |
+
+Reference-only legacy fences:
+
+- `database/schema.sql` is a legacy snapshot, not the current schema owner.
+- `backend/sql/` is legacy/manual SQL reference, not deploy parity or bootstrap history.
+- Dormant scheduler service copies under `backend/services/scheduler_*.py` are reference-only unless a later change deliberately migrates runtime ownership out of `backend/main.py`.
+- Dormant paper-autolog service copies under `backend/services/paper_autolog_*.py` are reference-only unless a later change deliberately migrates runtime ownership out of `backend/main.py`.
+
+---
+
 ## API Layout
 
 | Method | Endpoint | Description |
@@ -155,7 +177,7 @@ ev-betting-tracker/
 | DELETE | `/parlay-slips/{slip_id}` | Delete parlay slip |
 | POST | `/parlay-slips/{slip_id}/log` | Log parlay slip into bets |
 | POST | `/beta/access/grant` | Grant trusted-beta access by invite code |
-| POST | `/api/ops/trigger/scan` | Operator-triggered cache warm + debug/heartbeat notifications |
+| POST | `/api/ops/trigger/board-refresh` | Operator-triggered board/cache refresh + debug/heartbeat notifications |
 | POST | `/api/ops/trigger/auto-settle` | Operator-triggered auto-settle run |
 | POST | `/api/ops/trigger/test-discord` | Test Discord message |
 | POST | `/api/ops/trigger/test-discord-alert` | Test alert-style Discord payloads on the debug route |
@@ -168,13 +190,14 @@ ev-betting-tracker/
 | Concern | Location |
 |---------|----------|
 | **EV calculations** | `backend/calculations.py` — `calculate_ev`, `american_to_decimal`, `kelly_fraction`, `calculate_real_profit`, `calculate_hold_from_odds` |
-| **Bet CRUD + response building** | `backend/main.py` — `build_bet_response`, `get_user_settings`, handler implementations |
+| **Bet CRUD + response building** | `backend/routes/bet_routes.py` + `backend/services/bet_crud.py` — handlers, `build_bet_response`, `get_user_settings`, CRUD implementations |
+| **Summary and balances** | `backend/routes/dashboard_routes.py` + `backend/services/summary_stats.py` + `backend/services/balance_stats.py` |
 | **Router ownership** | `backend/routes/*.py` — APIRouter endpoint registration by domain |
 | **Shared dependencies** | `backend/dependencies.py` — current-user, scan-rate-limit, ops-token checks |
 | **Odds / scanner** | `backend/services/odds_api.py` — `fetch_odds`, `devig_pinnacle`, `calculate_edge`, `scan_for_ev`, `scan_all_sides`, `get_cached_or_scan` |
 | **Live bet snapshots** | `backend/services/bet_live_tracking.py` + `backend/services/espn_live.py` — pending-bet candidate matching, provider lookup, and compact live score/stat payloads |
 | **Odds API activity** | `backend/services/odds_api.py` — `_append_odds_api_activity`, `get_odds_api_activity_snapshot` |
-| **Automation/scheduler health** | `backend/main.py` — scheduler jobs, heartbeats, readiness freshness, ops status |
+| **Automation/scheduler health** | `backend/main.py` — live scheduler jobs, heartbeats, readiness freshness, ops status |
 | **Auth** | `backend/auth.py` — `get_current_user`; `frontend/src/lib/auth-context.tsx`; `frontend/src/middleware.ts` |
 | **Frontend API** | `frontend/src/lib/api.ts` — `fetchAPI`, all API wrappers |
 | **React Query hooks** | `frontend/src/lib/hooks.ts` — `useBets`, `useCreateBet`, `useSummary`, etc. |
@@ -242,7 +265,7 @@ ev-betting-tracker/
 ### Operational Hardening
 
 - **Scheduler-first posture**: readiness and operator dashboards evaluate scheduler health/freshness first.
-- **Cron fallback paths**: external schedulers can trigger scan/settle safely through token-protected cron endpoints.
+- **Cron fallback paths**: external schedulers can trigger board-refresh/settle safely through token-protected cron endpoints.
 - **Operator endpoint protection**: backend `/api/ops/status` is protected by `X-Ops-Token`; frontend exposes data only through allowlisted, authenticated bridge routes.
 - **Observability**: odds/scores calls are tracked in-memory with bounded recent history and one-hour summary counters.
 

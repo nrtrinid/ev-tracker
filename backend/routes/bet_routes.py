@@ -9,6 +9,8 @@ from fastapi import APIRouter, Depends, Header
 from auth import get_current_user
 from database import get_db
 from models import BetCreate, BetResult, BetResponse, BetUpdate
+from models import BetLiveSnapshotResponse
+from services import bet_live_tracking
 from services.bet_crud import (
     create_bet_impl,
     delete_bet_impl,
@@ -42,6 +44,12 @@ def get_bets(
 ):
     """Get all bets with optional filters."""
     return get_bets_impl(get_db(), user, sport, sportsbook, result, limit, offset)
+
+
+@router.get("/bets/live", response_model=BetLiveSnapshotResponse)
+async def get_bet_live_snapshots(user: dict = Depends(get_current_user)):
+    """Get compact live state for the current user's pending bets."""
+    return await bet_live_tracking.get_bet_live_snapshots_impl(get_db(), user)
 
 
 @router.get("/bets/{bet_id}", response_model=BetResponse)

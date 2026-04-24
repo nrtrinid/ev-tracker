@@ -238,6 +238,7 @@ def log_parlay_slip(
     user: dict = Depends(require_current_user),
 ):
     import main
+    from services.bet_crud import create_bet_impl
 
     return log_parlay_slip_impl(
         slip_id=slip_id,
@@ -245,6 +246,6 @@ def log_parlay_slip(
         user=user,
         get_db=main.get_db,
         build_logged_bet_payload_fn=build_parlay_logged_bet_payload,
-        create_bet_fn=main.create_bet,
+        create_bet_fn=lambda bet, logged_user: create_bet_impl(main.get_db(), logged_user, bet),
         utc_now_iso=main._utc_now_iso,
     )

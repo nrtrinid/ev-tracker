@@ -19,10 +19,10 @@ def test_bets_live_returns_live_snapshot_contract(auth_client, monkeypatch):
         )
 
     import services.bet_live_tracking as bet_live_tracking
-    import main as app_main
+    import routes.bet_routes as bet_routes
 
     monkeypatch.setattr(bet_live_tracking, "get_bet_live_snapshots_impl", _fake_live_snapshots)
-    monkeypatch.setattr(app_main, "get_db", lambda: object())
+    monkeypatch.setattr(bet_routes, "get_db", lambda: object())
 
     response = auth_client.get("/bets/live")
 
@@ -31,4 +31,3 @@ def test_bets_live_returns_live_snapshot_contract(auth_client, monkeypatch):
     assert payload["ttl_seconds"] == 60
     assert payload["active_bet_count"] == 0
     assert payload["snapshots_by_bet_id"] == {}
-

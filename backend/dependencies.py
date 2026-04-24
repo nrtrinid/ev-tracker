@@ -3,7 +3,7 @@ import time
 
 from fastapi import Depends, Header, HTTPException
 
-from auth import get_current_user
+from auth import admin_allowlist, get_current_user, is_admin_email
 from database import get_db
 from services.analytics_events import capture_backend_event
 from services.shared_state import allow_fixed_window_rate_limit
@@ -20,22 +20,11 @@ async def require_current_user(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
-def _normalize_email(value: str | None) -> str:
-    return (value or "").strip().lower()
-
-
-def _admin_allowlist() -> list[str]:
-    raw = os.getenv("OPS_ADMIN_EMAILS", "")
-    return [email for email in (_normalize_email(item) for item in raw.split(",")) if email]
-
-
 async def require_admin_user(user: dict = Depends(get_current_user)) -> dict:
-    allowlist = _admin_allowlist()
-    if not allowlist:
+    if not admin_allowlist():
         raise HTTPException(status_code=503, detail="OPS_ADMIN_EMAILS not configured")
 
-    email = _normalize_email(user.get("email"))
-    if not email or email not in allowlist:
+    if not is_admin_email(user.get("email")):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     return user
@@ -78,15 +67,21 @@ async def require_scan_rate_limit(
     return user
 
 
-def require_ops_token(
-    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
-    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
-) -> None:
+def validate_ops_token(provided_token: str | None, fallback_token: str | None = None) -> None:
     expected = os.getenv("CRON_TOKEN")
-    provided = x_ops_token or x_cron_token
+    provided = (provided_token if isinstance(provided_token, str) else None) or (
+        fallback_token if isinstance(fallback_token, str) else None
+    )
     if not provided:
         raise HTTPException(status_code=401, detail="Invalid ops token")
     if not expected:
         raise HTTPException(status_code=503, detail="CRON_TOKEN not configured on server")
     if provided != expected:
         raise HTTPException(status_code=401, detail="Invalid ops token")
+
+
+def require_ops_token(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+) -> None:
+    validate_ops_token(x_ops_token, x_cron_token)

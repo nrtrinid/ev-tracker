@@ -31,12 +31,10 @@ export async function GET(request: Request) {
   const target =
     targetParam === 'settle'
       ? 'auto-settle'
-      : targetParam === 'scan'
-        ? 'board-refresh'
-        : targetParam;
+      : targetParam;
 
   // Only allow known ops targets so this route can't be used as a generic backend proxy.
-  const allowedTargets = new Set(['board-refresh', 'scan', 'auto-settle', 'test-discord']);
+  const allowedTargets = new Set(['board-refresh', 'auto-settle', 'test-discord']);
   if (!allowedTargets.has(target)) {
     return NextResponse.json({ error: 'Invalid target' }, { status: 400 });
   }
@@ -46,10 +44,6 @@ export async function GET(request: Request) {
   const backendCronToken = process.env.CRON_TOKEN ?? cronSecret;
 
   const endpoint = `${backendBaseUrl.replace(/\/$/, '')}/api/ops/trigger/${target}`;
-  const legacyEndpoint =
-    target === 'board-refresh'
-      ? `${backendBaseUrl.replace(/\/$/, '')}/api/ops/trigger/scan`
-      : null;
 
   try {
     const requestInit = {
@@ -62,10 +56,7 @@ export async function GET(request: Request) {
       body: JSON.stringify({}),
     } satisfies RequestInit;
 
-    let resp = await fetch(endpoint, requestInit);
-    if (resp.status === 404 && legacyEndpoint) {
-      resp = await fetch(legacyEndpoint, requestInit);
-    }
+    const resp = await fetch(endpoint, requestInit);
 
     let data: unknown = null;
     const contentType = resp.headers.get('content-type') || '';

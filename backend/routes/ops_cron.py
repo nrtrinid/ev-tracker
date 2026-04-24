@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 
-from dependencies import require_ops_token
+from dependencies import require_ops_token, validate_ops_token
 from models import (
     AltPitcherKLookupResponse,
     ModelCalibrationSummaryResponse,
@@ -1221,7 +1221,7 @@ async def _ops_trigger_board_refresh_async(
     import main
 
     # Keep explicit token validation parity with the sync trigger endpoint.
-    main._require_ops_token(x_ops_token, x_cron_token)
+    validate_ops_token(x_ops_token, x_cron_token)
 
     started_at = _utc_now_iso()
     run_id = main._new_run_id("ops_board_drop")
@@ -1283,15 +1283,6 @@ async def _ops_trigger_board_refresh_async(
 
 @router.post("/api/ops/trigger/board-refresh/async", status_code=202)
 async def ops_trigger_board_refresh_async(
-    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
-    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
-    _auth: None = Depends(require_ops_token),
-):
-    return await _ops_trigger_board_refresh_async(x_ops_token=x_ops_token, x_cron_token=x_cron_token, _auth=_auth)
-
-
-@router.post("/api/ops/trigger/scan/async", status_code=202)
-async def ops_trigger_scan_async(
     x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
     _auth: None = Depends(require_ops_token),
@@ -1390,7 +1381,7 @@ async def _ops_trigger_board_refresh(
 
     return await cron_run_board_drop_impl(
         x_cron_token=x_ops_token or x_cron_token,
-        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        require_valid_cron_token=validate_ops_token,
         new_run_id=main._new_run_id,
         log_event=main._log_event,
         set_ops_status=main._set_ops_status,
@@ -1415,15 +1406,6 @@ async def ops_trigger_board_refresh(
     return await _ops_trigger_board_refresh(x_ops_token=x_ops_token, x_cron_token=x_cron_token, _auth=_auth)
 
 
-@router.post("/api/ops/trigger/scan")
-async def ops_trigger_scan(
-    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
-    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
-    _auth: None = Depends(require_ops_token),
-):
-    return await _ops_trigger_board_refresh(x_ops_token=x_ops_token, x_cron_token=x_cron_token, _auth=_auth)
-
-
 @router.post("/api/ops/trigger/auto-settle")
 async def ops_trigger_auto_settle(
     x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
@@ -1434,7 +1416,7 @@ async def ops_trigger_auto_settle(
 
     return await cron_run_auto_settle_impl(
         x_cron_token=x_ops_token or x_cron_token,
-        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        require_valid_cron_token=validate_ops_token,
         new_run_id=main._new_run_id,
         log_event=main._log_event,
         set_ops_status=main._set_ops_status,
@@ -1457,7 +1439,7 @@ def ops_status(
 
     return ops_status_impl(
         x_cron_token=x_ops_token or x_cron_token,
-        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        require_valid_cron_token=validate_ops_token,
         runtime_state=main._runtime_state,
         check_db_ready=main._check_db_ready,
         check_scheduler_freshness=main._check_scheduler_freshness,
@@ -1481,7 +1463,7 @@ def ops_research_opportunities_summary(
 
     return ops_research_opportunities_summary_impl(
         x_cron_token=x_ops_token or x_cron_token,
-        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        require_valid_cron_token=validate_ops_token,
         get_db=main.get_db,
         get_summary=get_research_opportunities_summary,
         scope=scope,
@@ -1499,7 +1481,7 @@ def ops_model_calibration_summary(
 
     return ops_model_calibration_summary_impl(
         x_cron_token=x_ops_token or x_cron_token,
-        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        require_valid_cron_token=validate_ops_token,
         get_db=main.get_db,
         get_summary=get_model_calibration_summary,
     )
@@ -1516,7 +1498,7 @@ def ops_pickem_research_summary(
 
     return ops_pickem_research_summary_impl(
         x_cron_token=x_ops_token or x_cron_token,
-        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        require_valid_cron_token=validate_ops_token,
         get_db=main.get_db,
         get_summary=get_pickem_research_summary,
     )
@@ -1537,7 +1519,7 @@ async def ops_alt_pitcher_k_lookup(
 
     return await ops_alt_pitcher_k_lookup_impl(
         x_cron_token=x_ops_token or x_cron_token,
-        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        require_valid_cron_token=validate_ops_token,
         player_name=player_name,
         team=team,
         opponent=opponent,
@@ -1558,7 +1540,7 @@ def ops_clv_debug(
 
     return ops_clv_debug_impl(
         x_cron_token=x_ops_token or x_cron_token,
-        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        require_valid_cron_token=validate_ops_token,
         get_db=main.get_db,
         retry_supabase=main._retry_supabase,
         load_snapshot=build_clv_audit_snapshot,
@@ -1578,7 +1560,7 @@ async def ops_trigger_clv_daily(
 
     return await cron_run_clv_daily_impl(
         x_cron_token=x_ops_token or x_cron_token,
-        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        require_valid_cron_token=validate_ops_token,
         new_run_id=main._new_run_id,
         log_event=main._log_event,
         set_ops_status=main._set_ops_status,
@@ -1602,7 +1584,7 @@ async def ops_trigger_clv_replay(
 
     return await ops_replay_recent_clv_impl(
         x_cron_token=x_ops_token or x_cron_token,
-        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        require_valid_cron_token=validate_ops_token,
         new_run_id=main._new_run_id,
         log_event=main._log_event,
         set_ops_status=main._set_ops_status,
@@ -1626,7 +1608,7 @@ def ops_analytics_summary(
 
     return ops_analytics_summary_impl(
         x_cron_token=x_ops_token or x_cron_token,
-        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        require_valid_cron_token=validate_ops_token,
         get_db=main.get_db,
         get_summary=get_weekly_analytics_summary,
         retry_supabase=main._retry_supabase,
@@ -1650,7 +1632,7 @@ def ops_analytics_users(
 
     return ops_analytics_users_impl(
         x_cron_token=x_ops_token or x_cron_token,
-        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        require_valid_cron_token=validate_ops_token,
         get_db=main.get_db,
         get_summary=get_weekly_analytics_user_drilldown,
         retry_supabase=main._retry_supabase,
@@ -1671,7 +1653,7 @@ async def ops_trigger_test_discord(
 
     return await cron_test_discord_impl(
         x_cron_token=x_ops_token or x_cron_token,
-        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        require_valid_cron_token=validate_ops_token,
         new_run_id=main._new_run_id,
         log_event=main._log_event,
         run_id_prefix="ops_discord_test",
@@ -1689,7 +1671,7 @@ async def ops_trigger_test_discord_alert(
 
     return await cron_test_discord_alert_impl(
         x_cron_token=x_ops_token or x_cron_token,
-        require_valid_cron_token=lambda token: main._require_ops_token(token, None),
+        require_valid_cron_token=validate_ops_token,
         new_run_id=main._new_run_id,
         log_event=main._log_event,
         run_id_prefix="ops_discord_alert_test",

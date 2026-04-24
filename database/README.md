@@ -11,11 +11,13 @@ The canonical schema history for this repo is the numbered migration chain in th
 - `migration_022_live_tracking_indexes.sql`
 - `migration_023_player_prop_model_candidate_observations.sql`
 
+Current deploy parity is through `migration_023_player_prop_model_candidate_observations.sql`.
+
 ## Source Of Truth
 
 - Use `database/migration_*.sql` as the only authoritative schema history.
 - Apply pending numbered migrations in order through your current Supabase workflow.
-- Do not treat `backend/sql/` as part of normal bootstrap or deploy parity.
+- Do not treat `database/schema.sql` or `backend/sql/` as part of normal bootstrap or deploy parity.
 
 ## Current State
 
