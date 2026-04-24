@@ -1,10 +1,8 @@
 import pytest
-from .test_utils import import_main_for_tests
+from services.bet_crud import build_bet_response
 
 
 def test_payout_override_recomputes_entry_ev_for_standard(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
-
     row = {
         "id": "bet1",
         "created_at": "2026-03-17T00:00:00Z",
@@ -32,11 +30,10 @@ def test_payout_override_recomputes_entry_ev_for_standard(monkeypatch):
         "true_prob_at_entry": 0.50,
     }
 
-    bet = main.build_bet_response(row, k_factor=0.78)
+    bet = build_bet_response(row, k_factor=0.78)
 
     # With true_prob=0.5 and effective decimal=2.5:
     # EV per $ = 0.5*2.5 - 1 = 0.25
     assert bet.ev_per_dollar == pytest.approx(0.25, abs=1e-6)
     assert bet.ev_total == pytest.approx(25.0, abs=0.01)
     assert bet.win_payout == pytest.approx(250.0, abs=0.01)
-

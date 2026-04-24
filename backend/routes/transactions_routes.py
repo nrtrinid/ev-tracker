@@ -3,6 +3,7 @@ from typing import Any, Callable
 from fastapi import HTTPException
 from fastapi import APIRouter, Depends
 
+from database import get_db
 from dependencies import require_current_user
 from models import TransactionCreate, TransactionResponse
 
@@ -83,12 +84,10 @@ def create_transaction(
     transaction: TransactionCreate,
     user: dict = Depends(require_current_user),
 ):
-    import main
-
     return create_transaction_impl(
         transaction=transaction,
         user=user,
-        get_db=main.get_db,
+        get_db=get_db,
         build_insert_payload=lambda *, user_id, transaction: {
             "user_id": user_id,
             "sportsbook": transaction.sportsbook,
@@ -118,12 +117,10 @@ def list_transactions(
     sportsbook: str | None = None,
     user: dict = Depends(require_current_user),
 ):
-    import main
-
     return list_transactions_impl(
         sportsbook=sportsbook,
         user=user,
-        get_db=main.get_db,
+        get_db=get_db,
         map_rows_to_response_payloads=lambda rows: [
             {
                 "id": row["id"],
@@ -144,10 +141,8 @@ def delete_transaction(
     transaction_id: str,
     user: dict = Depends(require_current_user),
 ):
-    import main
-
     return delete_transaction_impl(
         transaction_id=transaction_id,
         user=user,
-        get_db=main.get_db,
+        get_db=get_db,
     )

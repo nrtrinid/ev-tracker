@@ -47,7 +47,7 @@ frontend ranking + filters
 
 **Route file:** `backend/routes/scan_routes.py`
 
-**Handler implementation:** `backend/main.py`
+**Handler implementation:** `backend/routes/scan_routes.py` with runtime helpers in `backend/services/scan_runtime.py`
 
 **Auth:** Requires a valid Supabase JWT in the `Authorization: Bearer` header.
 

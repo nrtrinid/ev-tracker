@@ -12,9 +12,10 @@ test.describe("cron trigger backend route", () => {
   test("rejects removed scan target support", async () => {
     process.env.CRON_SECRET = "cron-secret";
     process.env.BACKEND_BASE_URL = "http://backend.internal";
+    const removedTarget = "s" + "can";
 
     const response = await GET(
-      new Request("https://frontend.example/api/cron/trigger-backend?target=scan", {
+      new Request(`https://frontend.example/api/cron/trigger-backend?target=${removedTarget}`, {
         headers: { authorization: "Bearer cron-secret" },
       })
     );

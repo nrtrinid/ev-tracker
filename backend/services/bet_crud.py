@@ -1,6 +1,6 @@
 """Bet CRUD business logic and shared helpers.
 
-Extracted from main.py to reduce monolith size.
+Extracted from the former app monolith to reduce composition-file size.
 """
 
 import json

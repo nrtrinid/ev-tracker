@@ -3,9 +3,12 @@ import time
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
 
+from database import get_db
 from dependencies import require_scan_rate_limit
 from models import FullScanResponse, ScanResponse
 from services.analytics_events import capture_backend_event
+from services.ops_runtime import persist_ops_job_run, set_ops_status
+from services.runtime_support import log_event, new_run_id, retry_supabase, utc_now_iso
 from services.scan_cache import (
     DEFAULT_SURFACE,
     resolve_scan_latest_response,
@@ -16,6 +19,21 @@ from services.scan_markets import (
     run_all_sports_manual_scan,
     run_single_sport_manual_scan,
     scan_exception_to_http_exception,
+)
+from services.scan_runtime import (
+    annotate_sides_with_duplicate_state,
+    append_scan_activity,
+    build_full_scan_response,
+    build_scan_response,
+    capture_model_candidate_observations,
+    capture_research_opportunities,
+    get_cached_or_scan_for_surface,
+    get_environment,
+    persist_latest_full_scan,
+    piggyback_clv,
+    scan_for_ev_surface,
+    scanner_supported_sports,
+    sync_pickem_research_from_props_payload,
 )
 from utils.request_context import get_request_id
 
@@ -297,14 +315,12 @@ async def scan_bets(
     sport: str = "basketball_nba",
     user: dict = Depends(require_scan_rate_limit),
 ):
-    import main
-
     return await scan_impl(
         sport=sport,
-        supported_sports=main._scanner_supported_sports(DEFAULT_SURFACE),
-        scan_for_ev=main._scan_for_ev_surface,
+        supported_sports=scanner_supported_sports(DEFAULT_SURFACE),
+        scan_for_ev=scan_for_ev_surface,
         map_error=scan_exception_to_http_exception,
-        build_scan_response=lambda result: main._build_scan_response(sport=sport, result=result),
+        build_scan_response=lambda result: build_scan_response(sport=sport, result=result),
     )
 
 
@@ -315,32 +331,31 @@ async def scan_markets(
     user: dict = Depends(require_scan_rate_limit),
     session_id: str | None = Header(default=None, alias="X-Session-ID"),
 ):
-    import main
-
     return await scan_markets_impl(
         surface=surface,
         sport=sport,
         user=user,
         session_id=session_id,
-        get_db=main.get_db,
-        supported_sports=main._scanner_supported_sports(surface),
-        get_cached_or_scan=lambda sport_key, source="manual_scan": main._get_cached_or_scan_for_surface(surface, sport_key, source=source),
+        get_db=get_db,
+        supported_sports=scanner_supported_sports(surface),
+        get_cached_or_scan=lambda sport_key, source="manual_scan": get_cached_or_scan_for_surface(surface, sport_key, source=source),
         apply_manual_scan_bundle_fn=apply_manual_scan_bundle,
-        set_ops_status=main._set_ops_status,
-        utc_now_iso=main._utc_now_iso,
-        piggyback_clv=main._piggyback_clv,
-        capture_research_opportunities=main._capture_research_opportunities,
-        persist_latest_full_scan=main._persist_latest_full_scan,
-        retry_supabase=main._retry_supabase,
-        log_event=main._log_event,
-        annotate_sides=main._annotate_sides_with_duplicate_state,
-        append_scan_activity=main._append_scan_activity,
-        persist_ops_job_run=main._persist_ops_job_run,
-        new_run_id=main._new_run_id,
-        sync_pickem_research_from_props_payload=main._sync_pickem_research_from_props_payload,
+        set_ops_status=set_ops_status,
+        utc_now_iso=utc_now_iso,
+        piggyback_clv=piggyback_clv,
+        capture_research_opportunities=capture_research_opportunities,
+        persist_latest_full_scan=persist_latest_full_scan,
+        retry_supabase=retry_supabase,
+        log_event=log_event,
+        annotate_sides=annotate_sides_with_duplicate_state,
+        append_scan_activity=append_scan_activity,
+        persist_ops_job_run=persist_ops_job_run,
+        new_run_id=new_run_id,
+        sync_pickem_research_from_props_payload=sync_pickem_research_from_props_payload,
+        capture_model_candidate_observations=capture_model_candidate_observations,
         map_error=scan_exception_to_http_exception,
-        build_full_scan_response=main._build_full_scan_response,
-        get_environment=main._get_environment,
+        build_full_scan_response=build_full_scan_response,
+        get_environment=get_environment,
     )
 
 
@@ -349,12 +364,10 @@ async def scan_latest(
     surface: str = DEFAULT_SURFACE,
     user: dict = Depends(require_scan_rate_limit),
 ):
-    import main
-
     return scan_latest_impl(
         surface=surface,
         user=user,
-        get_db=main.get_db,
-        retry_supabase=main._retry_supabase,
-        annotate_sides=main._annotate_sides_with_duplicate_state,
+        get_db=get_db,
+        retry_supabase=retry_supabase,
+        annotate_sides=annotate_sides_with_duplicate_state,
     )

@@ -27,6 +27,19 @@ def _runtime_hooks(*, sync_calls=None, status_updates=None, persisted_runs=None)
     return _log_event, "boot-test", _sync_pickem, _set_ops_status, _persist_ops_job_run
 
 
+def _install_runtime_hooks(monkeypatch, *, sync_calls=None, status_updates=None, persisted_runs=None):
+    log, boot_id, sync_pickem, set_ops_status, persist_ops_job_run = _runtime_hooks(
+        sync_calls=sync_calls,
+        status_updates=status_updates,
+        persisted_runs=persisted_runs,
+    )
+    monkeypatch.setattr(board_routes, "_log_event", log)
+    monkeypatch.setattr(board_routes, "_BOOT_ID", boot_id)
+    monkeypatch.setattr(board_routes, "_sync_pickem_research_from_props_payload", sync_pickem)
+    monkeypatch.setattr(board_routes, "_set_ops_status", set_ops_status)
+    monkeypatch.setattr(board_routes, "_persist_ops_job_run", persist_ops_job_run)
+
+
 def _board_snapshot(*, game_context=None, meta=None):
     return {
         "meta": meta
@@ -177,7 +190,7 @@ def _prizepicks_card():
 
 def test_board_latest_hardcoded_minimal_contract(auth_client, monkeypatch):
     monkeypatch.setenv("BOARD_LATEST_MODE", "hardcoded_minimal")
-    monkeypatch.setattr(board_routes, "_resolve_main_runtime_hooks", lambda: _runtime_hooks())
+    _install_runtime_hooks(monkeypatch)
 
     resp = auth_client.get("/api/board/latest")
 
@@ -193,7 +206,7 @@ def test_board_latest_hardcoded_minimal_contract(auth_client, monkeypatch):
 
 def test_board_latest_meta_only_contract(auth_client, monkeypatch):
     monkeypatch.setenv("BOARD_LATEST_MODE", "meta_only")
-    monkeypatch.setattr(board_routes, "_resolve_main_runtime_hooks", lambda: _runtime_hooks())
+    _install_runtime_hooks(monkeypatch)
     monkeypatch.setattr(board_routes, "get_db", lambda: object())
     monkeypatch.setattr(
         board_routes,
@@ -213,7 +226,7 @@ def test_board_latest_meta_only_contract(auth_client, monkeypatch):
 
 def test_board_latest_minimal_game_context_marks_degraded_when_keys_trimmed(auth_client, monkeypatch):
     monkeypatch.setenv("BOARD_LATEST_MODE", "minimal_game_context")
-    monkeypatch.setattr(board_routes, "_resolve_main_runtime_hooks", lambda: _runtime_hooks())
+    _install_runtime_hooks(monkeypatch)
     monkeypatch.setattr(board_routes, "get_db", lambda: object())
     monkeypatch.setattr(
         board_routes,
@@ -246,7 +259,7 @@ def test_board_latest_minimal_game_context_marks_degraded_when_keys_trimmed(auth
 
 def test_board_latest_invalid_mode_falls_back_to_full_contract(auth_client, monkeypatch):
     monkeypatch.setenv("BOARD_LATEST_MODE", "not-a-real-mode")
-    monkeypatch.setattr(board_routes, "_resolve_main_runtime_hooks", lambda: _runtime_hooks())
+    _install_runtime_hooks(monkeypatch)
     monkeypatch.setattr(board_routes, "get_db", lambda: object())
     monkeypatch.setattr(
         board_routes,
@@ -266,7 +279,7 @@ def test_board_latest_invalid_mode_falls_back_to_full_contract(auth_client, monk
 @pytest.mark.parametrize("raw_snapshot", [None, "not-a-dict"])
 def test_board_latest_missing_or_malformed_snapshot_returns_empty_sentinel(auth_client, monkeypatch, raw_snapshot):
     monkeypatch.setenv("BOARD_LATEST_MODE", "full")
-    monkeypatch.setattr(board_routes, "_resolve_main_runtime_hooks", lambda: _runtime_hooks())
+    _install_runtime_hooks(monkeypatch)
     monkeypatch.setattr(board_routes, "get_db", lambda: object())
     monkeypatch.setattr(board_routes, "load_board_snapshot", lambda **_kwargs: raw_snapshot)
 
@@ -283,7 +296,7 @@ def test_board_latest_missing_or_malformed_snapshot_returns_empty_sentinel(auth_
 
 def test_board_latest_db_init_failure_returns_controlled_502(auth_client, monkeypatch):
     monkeypatch.setenv("BOARD_LATEST_MODE", "full")
-    monkeypatch.setattr(board_routes, "_resolve_main_runtime_hooks", lambda: _runtime_hooks())
+    _install_runtime_hooks(monkeypatch)
     monkeypatch.setattr(board_routes, "get_db", lambda: (_ for _ in ()).throw(RuntimeError("db down")))
 
     resp = auth_client.get("/api/board/latest")
@@ -294,7 +307,7 @@ def test_board_latest_db_init_failure_returns_controlled_502(auth_client, monkey
 
 def test_board_latest_load_failure_returns_controlled_502(auth_client, monkeypatch):
     monkeypatch.setenv("BOARD_LATEST_MODE", "full")
-    monkeypatch.setattr(board_routes, "_resolve_main_runtime_hooks", lambda: _runtime_hooks())
+    _install_runtime_hooks(monkeypatch)
     monkeypatch.setattr(board_routes, "get_db", lambda: object())
     monkeypatch.setattr(
         board_routes,
@@ -310,7 +323,7 @@ def test_board_latest_load_failure_returns_controlled_502(auth_client, monkeypat
 
 def test_board_latest_memory_error_returns_controlled_503(auth_client, monkeypatch):
     monkeypatch.setenv("BOARD_LATEST_MODE", "full")
-    monkeypatch.setattr(board_routes, "_resolve_main_runtime_hooks", lambda: _runtime_hooks())
+    _install_runtime_hooks(monkeypatch)
     monkeypatch.setattr(board_routes, "get_db", lambda: object())
     monkeypatch.setattr(board_routes, "load_board_snapshot", lambda **_kwargs: _board_snapshot(game_context={"scan_label": "Drop"}))
     monkeypatch.setattr(
@@ -327,7 +340,7 @@ def test_board_latest_memory_error_returns_controlled_503(auth_client, monkeypat
 
 def test_board_latest_unexpected_runtime_error_degrades_to_empty_200(auth_client, monkeypatch):
     monkeypatch.setenv("BOARD_LATEST_MODE", "full")
-    monkeypatch.setattr(board_routes, "_resolve_main_runtime_hooks", lambda: _runtime_hooks())
+    _install_runtime_hooks(monkeypatch)
     monkeypatch.setattr(board_routes, "get_db", lambda: object())
     monkeypatch.setattr(board_routes, "load_board_snapshot", lambda **_kwargs: _board_snapshot(game_context={"scan_label": "Drop"}))
 
@@ -364,7 +377,7 @@ def test_board_latest_surface_straight_bets_success_contract(auth_client, monkey
         "scanned_at": "2026-04-22T09:30:00Z",
     }
 
-    monkeypatch.setattr(board_routes, "_resolve_main_runtime_hooks", lambda: _runtime_hooks())
+    _install_runtime_hooks(monkeypatch)
     monkeypatch.setattr(board_routes, "get_db", lambda: object())
     monkeypatch.setattr("services.scan_cache.load_latest_scan_payload", lambda **_kwargs: payload)
 
@@ -397,7 +410,7 @@ def test_board_latest_surface_player_props_success_reannotates_duplicates(auth_c
         captured["sides"] = sides
         return [{**side, "scanner_duplicate_state": "already_logged"} for side in sides]
 
-    monkeypatch.setattr(board_routes, "_resolve_main_runtime_hooks", lambda: _runtime_hooks())
+    _install_runtime_hooks(monkeypatch)
     monkeypatch.setattr(board_routes, "get_db", lambda: object())
     monkeypatch.setattr(board_routes, "load_player_prop_board_legacy_surface", lambda **_kwargs: payload)
     monkeypatch.setattr(board_routes, "annotate_sides_with_duplicate_state", _annotate)
@@ -413,7 +426,7 @@ def test_board_latest_surface_player_props_success_reannotates_duplicates(auth_c
 
 
 def test_board_latest_surface_missing_payload_returns_null(auth_client, monkeypatch):
-    monkeypatch.setattr(board_routes, "_resolve_main_runtime_hooks", lambda: _runtime_hooks())
+    _install_runtime_hooks(monkeypatch)
     monkeypatch.setattr(board_routes, "get_db", lambda: object())
     monkeypatch.setattr("services.scan_cache.load_latest_scan_payload", lambda **_kwargs: None)
 
@@ -424,7 +437,7 @@ def test_board_latest_surface_missing_payload_returns_null(auth_client, monkeypa
 
 
 def test_board_latest_surface_invalid_surface_returns_400(auth_client, monkeypatch):
-    monkeypatch.setattr(board_routes, "_resolve_main_runtime_hooks", lambda: _runtime_hooks())
+    _install_runtime_hooks(monkeypatch)
 
     resp = auth_client.get("/api/board/latest/surface?surface=not_real")
 
@@ -433,7 +446,7 @@ def test_board_latest_surface_invalid_surface_returns_400(auth_client, monkeypat
 
 
 def test_board_latest_surface_load_failure_returns_502(auth_client, monkeypatch):
-    monkeypatch.setattr(board_routes, "_resolve_main_runtime_hooks", lambda: _runtime_hooks())
+    _install_runtime_hooks(monkeypatch)
     monkeypatch.setattr(board_routes, "get_db", lambda: object())
     monkeypatch.setattr(
         "services.scan_cache.load_latest_scan_payload",
@@ -480,11 +493,7 @@ def test_board_refresh_execution_failure_records_failed_ops_status(auth_client, 
 
     monkeypatch.setattr("services.shared_state.allow_fixed_window_rate_limit", lambda **_kwargs: True)
     monkeypatch.setattr(board_routes, "get_db", lambda: object())
-    monkeypatch.setattr(
-        board_routes,
-        "_resolve_main_runtime_hooks",
-        lambda: _runtime_hooks(status_updates=status_updates, persisted_runs=persisted_runs),
-    )
+    _install_runtime_hooks(monkeypatch, status_updates=status_updates, persisted_runs=persisted_runs)
     async def _raise_refresh(**_kwargs):
         raise RuntimeError("manual_refresh exploded")
 
@@ -507,11 +516,7 @@ def test_board_refresh_invalid_refresh_payload_returns_500(auth_client, monkeypa
 
     monkeypatch.setattr("services.shared_state.allow_fixed_window_rate_limit", lambda **_kwargs: True)
     monkeypatch.setattr(board_routes, "get_db", lambda: object())
-    monkeypatch.setattr(
-        board_routes,
-        "_resolve_main_runtime_hooks",
-        lambda: _runtime_hooks(status_updates=status_updates, persisted_runs=persisted_runs),
-    )
+    _install_runtime_hooks(monkeypatch, status_updates=status_updates, persisted_runs=persisted_runs)
     async def _invalid_refresh(**_kwargs):
         return {
             "surface": "player_props",
@@ -543,14 +548,11 @@ def test_board_refresh_straight_bets_success_merges_supported_sports(auth_client
 
     monkeypatch.setattr("services.shared_state.allow_fixed_window_rate_limit", lambda **_kwargs: True)
     monkeypatch.setattr(board_routes, "get_db", lambda: object())
-    monkeypatch.setattr(
-        board_routes,
-        "_resolve_main_runtime_hooks",
-        lambda: _runtime_hooks(
-            sync_calls=sync_calls,
-            status_updates=status_updates,
-            persisted_runs=persisted_runs,
-        ),
+    _install_runtime_hooks(
+        monkeypatch,
+        sync_calls=sync_calls,
+        status_updates=status_updates,
+        persisted_runs=persisted_runs,
     )
 
     import services.odds_api as odds_api
@@ -622,14 +624,11 @@ def test_board_refresh_player_props_success_returns_optional_fields_and_syncs_wh
 
     monkeypatch.setattr("services.shared_state.allow_fixed_window_rate_limit", lambda **_kwargs: True)
     monkeypatch.setattr(board_routes, "get_db", lambda: object())
-    monkeypatch.setattr(
-        board_routes,
-        "_resolve_main_runtime_hooks",
-        lambda: _runtime_hooks(
-            sync_calls=sync_calls,
-            status_updates=status_updates,
-            persisted_runs=persisted_runs,
-        ),
+    _install_runtime_hooks(
+        monkeypatch,
+        sync_calls=sync_calls,
+        status_updates=status_updates,
+        persisted_runs=persisted_runs,
     )
     async def _successful_refresh(**_kwargs):
         return {
@@ -679,14 +678,11 @@ def test_board_refresh_player_props_cache_hit_skips_pickem_sync(auth_client, mon
 
     monkeypatch.setattr("services.shared_state.allow_fixed_window_rate_limit", lambda **_kwargs: True)
     monkeypatch.setattr(board_routes, "get_db", lambda: object())
-    monkeypatch.setattr(
-        board_routes,
-        "_resolve_main_runtime_hooks",
-        lambda: _runtime_hooks(
-            sync_calls=sync_calls,
-            status_updates=status_updates,
-            persisted_runs=persisted_runs,
-        ),
+    _install_runtime_hooks(
+        monkeypatch,
+        sync_calls=sync_calls,
+        status_updates=status_updates,
+        persisted_runs=persisted_runs,
     )
     async def _cached_refresh(**_kwargs):
         return {

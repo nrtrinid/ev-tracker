@@ -362,11 +362,12 @@ def _resolve_runtime_hooks(
         return retry_supabase, log_event
 
     try:
-        import main as main_module
+        from services.runtime_support import log_event as runtime_log_event
+        from services.runtime_support import retry_supabase as runtime_retry_supabase
 
         return (
-            retry_supabase or getattr(main_module, "_retry_supabase", None),
-            log_event or getattr(main_module, "_log_event", None),
+            retry_supabase or runtime_retry_supabase,
+            log_event or runtime_log_event,
         )
     except Exception:
         return retry_supabase, log_event

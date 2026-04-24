@@ -88,7 +88,7 @@ Operational hardening adds:
 ```
 ev-betting-tracker/
 ├── backend/                 # FastAPI Python backend
-│   ├── main.py              # App, routes, CORS, rate limiting
+|   |-- app entry             # FastAPI composition, middleware, lifespan, router registration
 │   ├── dependencies.py      # Shared auth/rate-limit/ops dependencies
 │   ├── models.py            # Pydantic schemas (Bet, Settings, Summary, etc.)
 │   ├── calculations.py      # EV, odds conversion, Kelly, vig
@@ -126,14 +126,14 @@ Use these files as the live implementation owners when tracing behavior:
 | **Balances** | `backend/routes/dashboard_routes.py` `GET /balances` handler; `backend/services/balance_stats.py` for sportsbook balance calculation; transaction/bet mutation handlers for invalidation inputs; `frontend/src/lib/api.ts`, `frontend/src/lib/hooks.ts`, and settings/bankroll UI consumers |
 | **Auth and ops policy** | `backend/auth.py`, `backend/dependencies.py`, `frontend/src/lib/auth-context.tsx`, `frontend/src/middleware.ts`, `frontend/src/lib/server/admin-access.ts`, and protected bridge routes under `frontend/src/app/api/ops/` |
 | **Migrations and schema parity** | Numbered files under `database/migration_*.sql`, with policy in `database/README.md` |
-| **Ops board refresh** | `backend/routes/ops_cron.py` canonical `/api/ops/trigger/board-refresh` and `/api/ops/trigger/board-refresh/async` handlers; `backend/main.py` scheduled board-drop helpers/status payloads; `frontend/src/lib/server/bridge-route-impl.ts`, `frontend/src/app/api/cron/trigger-backend/route.ts`, and `frontend/src/app/admin/ops/OpsDashboard.tsx` |
+| **Ops board refresh** | `backend/routes/ops_cron.py` canonical `/api/ops/trigger/board-refresh` and `/api/ops/trigger/board-refresh/async` handlers; `backend/services/scheduler_runtime.py`, `backend/services/ops_runtime.py`, and `backend/services/scan_runtime.py` scheduled board-drop helpers/status payloads; `frontend/src/lib/server/bridge-route-impl.ts`, `frontend/src/app/api/cron/trigger-backend/route.ts`, and `frontend/src/app/admin/ops/OpsDashboard.tsx` |
 
 Reference-only legacy fences:
 
 - `database/schema.sql` is a legacy snapshot, not the current schema owner.
 - `backend/sql/` is legacy/manual SQL reference, not deploy parity or bootstrap history.
-- Dormant scheduler service copies under `backend/services/scheduler_*.py` are reference-only unless a later change deliberately migrates runtime ownership out of `backend/main.py`.
-- Dormant paper-autolog service copies under `backend/services/paper_autolog_*.py` are reference-only unless a later change deliberately migrates runtime ownership out of `backend/main.py`.
+- Scheduler runtime ownership lives in `backend/services/scheduler_runtime.py`; stale scheduler service copies were removed.
+- Paper-autolog runtime ownership lives in `backend/services/paper_autolog_runner.py` plus `backend/services/paper_autolog_flow.py` and `backend/services/paper_autolog_utils.py`.
 
 ---
 
@@ -197,7 +197,7 @@ Reference-only legacy fences:
 | **Odds / scanner** | `backend/services/odds_api.py` — `fetch_odds`, `devig_pinnacle`, `calculate_edge`, `scan_for_ev`, `scan_all_sides`, `get_cached_or_scan` |
 | **Live bet snapshots** | `backend/services/bet_live_tracking.py` + `backend/services/espn_live.py` — pending-bet candidate matching, provider lookup, and compact live score/stat payloads |
 | **Odds API activity** | `backend/services/odds_api.py` — `_append_odds_api_activity`, `get_odds_api_activity_snapshot` |
-| **Automation/scheduler health** | `backend/main.py` — live scheduler jobs, heartbeats, readiness freshness, ops status |
+| **Automation/scheduler health** | `backend/services/scheduler_runtime.py` + `backend/services/ops_runtime.py` + `backend/routes/health_routes.py` - live scheduler jobs, heartbeats, readiness freshness, ops status |
 | **Auth** | `backend/auth.py` — `get_current_user`; `frontend/src/lib/auth-context.tsx`; `frontend/src/middleware.ts` |
 | **Frontend API** | `frontend/src/lib/api.ts` — `fetchAPI`, all API wrappers |
 | **React Query hooks** | `frontend/src/lib/hooks.ts` — `useBets`, `useCreateBet`, `useSummary`, etc. |
@@ -251,7 +251,7 @@ Reference-only legacy fences:
 
 - **Service role key**: Backend uses `SUPABASE_SERVICE_ROLE_KEY`; RLS protects direct anon access.
 - **JWT validation**: `supabase.auth.get_user(token)` in `auth.py`.
-- **Retries**: `_retry_supabase` in `main.py` for transient `RemoteProtocolError`.
+- **Retries**: `retry_supabase` in `backend/services/runtime_support.py` for transient Supabase/PostgREST transport errors.
 
 ### Odds Integration
 

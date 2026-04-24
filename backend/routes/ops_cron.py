@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 
+from database import get_db
 from dependencies import require_ops_token, validate_ops_token
 from models import (
     AltPitcherKLookupResponse,
@@ -16,6 +17,16 @@ from models import (
     PickEmResearchSummaryResponse,
     ResearchOpportunitySummaryResponse,
 )
+from services.ops_runtime import (
+    check_db_ready,
+    check_scheduler_freshness,
+    get_ops_status,
+    persist_ops_job_run,
+    runtime_state,
+    set_ops_status,
+)
+from services.runtime_support import log_event, new_run_id, retry_supabase, utc_now_iso
+from services.scan_runtime import piggyback_clv
 from services.shared_state import allow_fixed_window_rate_limit
 
 
@@ -27,7 +38,7 @@ ALT_PITCHER_K_LOOKUP_RATE_MAX_REQUESTS = 30
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return utc_now_iso()
 
 
 def _raise_if_delivery_disabled(delivery: Any, *, run_id: str, fallback_message_type: str) -> None:
@@ -1185,18 +1196,18 @@ def _accepted_board_drop_payload(*, run_id: str, started_at: str) -> dict[str, A
     }
 
 
-async def _run_ops_board_drop_background(*, main_module: Any, run_id: str) -> None:
+async def _run_ops_board_drop_background(*, run_id: str) -> None:
     try:
         await cron_run_board_drop_impl(
             x_cron_token=None,
             require_valid_cron_token=lambda _token: None,
             new_run_id=lambda _prefix: run_id,
-            log_event=main_module._log_event,
-            set_ops_status=main_module._set_ops_status,
-            persist_ops_job_run=main_module._persist_ops_job_run,
-            get_db=main_module.get_db,
-            retry_supabase=main_module._retry_supabase,
-            piggyback_clv=main_module._piggyback_clv,
+            log_event=log_event,
+            set_ops_status=set_ops_status,
+            persist_ops_job_run=persist_ops_job_run,
+            get_db=get_db,
+            retry_supabase=retry_supabase,
+            piggyback_clv=piggyback_clv,
             run_id_prefix="ops_board_drop",
             log_prefix="ops.trigger.board_drop",
             board_drop_source="ops_trigger_board_drop",
@@ -1204,7 +1215,7 @@ async def _run_ops_board_drop_background(*, main_module: Any, run_id: str) -> No
             scan_label="Ops Manual Board Refresh",
         )
     except Exception as exc:
-        main_module._log_event(
+        log_event(
             "ops.trigger.board_drop.background_failed",
             level="error",
             run_id=run_id,
@@ -1218,16 +1229,14 @@ async def _ops_trigger_board_refresh_async(
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
     _auth: None = Depends(require_ops_token),
 ):
-    import main
-
     # Keep explicit token validation parity with the sync trigger endpoint.
     validate_ops_token(x_ops_token, x_cron_token)
 
     started_at = _utc_now_iso()
-    run_id = main._new_run_id("ops_board_drop")
+    run_id = new_run_id("ops_board_drop")
     accepted_payload = _accepted_board_drop_payload(run_id=run_id, started_at=started_at)
 
-    main._set_ops_status(
+    set_ops_status(
         "last_ops_trigger_scan",
         {
             "run_id": run_id,
@@ -1241,7 +1250,7 @@ async def _ops_trigger_board_refresh_async(
             "result": accepted_payload.get("result"),
         },
     )
-    main._set_ops_status(
+    set_ops_status(
         "last_board_refresh",
         {
             "kind": "board_drop",
@@ -1260,7 +1269,7 @@ async def _ops_trigger_board_refresh_async(
         },
     )
 
-    main._persist_ops_job_run(
+    persist_ops_job_run(
         job_kind="ops_trigger_board_drop",
         source="ops_trigger",
         status="queued",
@@ -1277,7 +1286,7 @@ async def _ops_trigger_board_refresh_async(
         meta={"accepted": True, "pending": True},
     )
 
-    asyncio.create_task(_run_ops_board_drop_background(main_module=main, run_id=run_id))
+    asyncio.create_task(_run_ops_board_drop_background(run_id=run_id))
     return accepted_payload
 
 
@@ -1377,18 +1386,16 @@ async def _ops_trigger_board_refresh(
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
     _auth: None = Depends(require_ops_token),
 ):
-    import main
-
     return await cron_run_board_drop_impl(
         x_cron_token=x_ops_token or x_cron_token,
         require_valid_cron_token=validate_ops_token,
-        new_run_id=main._new_run_id,
-        log_event=main._log_event,
-        set_ops_status=main._set_ops_status,
-        persist_ops_job_run=main._persist_ops_job_run,
-        get_db=main.get_db,
-        retry_supabase=main._retry_supabase,
-        piggyback_clv=main._piggyback_clv,
+        new_run_id=new_run_id,
+        log_event=log_event,
+        set_ops_status=set_ops_status,
+        persist_ops_job_run=persist_ops_job_run,
+        get_db=get_db,
+        retry_supabase=retry_supabase,
+        piggyback_clv=piggyback_clv,
         run_id_prefix="ops_board_drop",
         log_prefix="ops.trigger.board_drop",
         board_drop_source="ops_trigger_board_drop",
@@ -1412,16 +1419,14 @@ async def ops_trigger_auto_settle(
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
     _auth: None = Depends(require_ops_token),
 ):
-    import main
-
     return await cron_run_auto_settle_impl(
         x_cron_token=x_ops_token or x_cron_token,
         require_valid_cron_token=validate_ops_token,
-        new_run_id=main._new_run_id,
-        log_event=main._log_event,
-        set_ops_status=main._set_ops_status,
-        persist_ops_job_run=main._persist_ops_job_run,
-        get_db=main.get_db,
+        new_run_id=new_run_id,
+        log_event=log_event,
+        set_ops_status=set_ops_status,
+        persist_ops_job_run=persist_ops_job_run,
+        get_db=get_db,
         run_id_prefix="ops_auto_settle",
         log_prefix="ops.trigger.auto_settle",
         auto_settle_source="auto_settle_ops_trigger",
@@ -1435,19 +1440,17 @@ def ops_status(
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
     _auth: None = Depends(require_ops_token),
 ):
-    import main
-
     return ops_status_impl(
         x_cron_token=x_ops_token or x_cron_token,
         require_valid_cron_token=validate_ops_token,
-        runtime_state=main._runtime_state,
-        check_db_ready=main._check_db_ready,
-        check_scheduler_freshness=main._check_scheduler_freshness,
-        utc_now_iso=main._utc_now_iso,
-        get_db=main.get_db,
-        retry_supabase=main._retry_supabase,
-        log_event=main._log_event,
-        get_ops_status=lambda: getattr(main.app.state, "ops_status", {}),
+        runtime_state=runtime_state,
+        check_db_ready=check_db_ready,
+        check_scheduler_freshness=check_scheduler_freshness,
+        utc_now_iso=utc_now_iso,
+        get_db=get_db,
+        retry_supabase=retry_supabase,
+        log_event=log_event,
+        get_ops_status=get_ops_status,
     )
 
 
@@ -1458,13 +1461,12 @@ def ops_research_opportunities_summary(
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
     _auth: None = Depends(require_ops_token),
 ):
-    import main
     from services.research_opportunities import get_research_opportunities_summary
 
     return ops_research_opportunities_summary_impl(
         x_cron_token=x_ops_token or x_cron_token,
         require_valid_cron_token=validate_ops_token,
-        get_db=main.get_db,
+        get_db=get_db,
         get_summary=get_research_opportunities_summary,
         scope=scope,
     )
@@ -1476,13 +1478,12 @@ def ops_model_calibration_summary(
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
     _auth: None = Depends(require_ops_token),
 ):
-    import main
     from services.model_calibration import get_model_calibration_summary
 
     return ops_model_calibration_summary_impl(
         x_cron_token=x_ops_token or x_cron_token,
         require_valid_cron_token=validate_ops_token,
-        get_db=main.get_db,
+        get_db=get_db,
         get_summary=get_model_calibration_summary,
     )
 
@@ -1493,13 +1494,12 @@ def ops_pickem_research_summary(
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
     _auth: None = Depends(require_ops_token),
 ):
-    import main
     from services.pickem_research import get_pickem_research_summary
 
     return ops_pickem_research_summary_impl(
         x_cron_token=x_ops_token or x_cron_token,
         require_valid_cron_token=validate_ops_token,
-        get_db=main.get_db,
+        get_db=get_db,
         get_summary=get_pickem_research_summary,
     )
 
@@ -1515,8 +1515,6 @@ async def ops_alt_pitcher_k_lookup(
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
     _auth: None = Depends(require_ops_token),
 ):
-    import main
-
     return await ops_alt_pitcher_k_lookup_impl(
         x_cron_token=x_ops_token or x_cron_token,
         require_valid_cron_token=validate_ops_token,
@@ -1534,19 +1532,18 @@ def ops_clv_debug(
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
     _auth: None = Depends(require_ops_token),
 ):
-    import main
     from services.clv_audit import build_clv_audit_snapshot
     from services.ops_history import load_recent_clv_job_runs, load_scheduler_job_snapshot
 
     return ops_clv_debug_impl(
         x_cron_token=x_ops_token or x_cron_token,
         require_valid_cron_token=validate_ops_token,
-        get_db=main.get_db,
-        retry_supabase=main._retry_supabase,
+        get_db=get_db,
+        retry_supabase=retry_supabase,
         load_snapshot=build_clv_audit_snapshot,
         load_scheduler_job_snapshot=load_scheduler_job_snapshot,
         load_recent_clv_job_runs=load_recent_clv_job_runs,
-        utc_now_iso=main._utc_now_iso,
+        utc_now_iso=utc_now_iso,
     )
 
 
@@ -1556,16 +1553,14 @@ async def ops_trigger_clv_daily(
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
     _auth: None = Depends(require_ops_token),
 ):
-    import main
-
     return await cron_run_clv_daily_impl(
         x_cron_token=x_ops_token or x_cron_token,
         require_valid_cron_token=validate_ops_token,
-        new_run_id=main._new_run_id,
-        log_event=main._log_event,
-        set_ops_status=main._set_ops_status,
-        persist_ops_job_run=main._persist_ops_job_run,
-        get_db=main.get_db,
+        new_run_id=new_run_id,
+        log_event=log_event,
+        set_ops_status=set_ops_status,
+        persist_ops_job_run=persist_ops_job_run,
+        get_db=get_db,
         run_id_prefix="ops_clv_daily",
         log_prefix="ops.trigger.clv_daily",
         ops_status_source="ops",
@@ -1579,17 +1574,16 @@ async def ops_trigger_clv_replay(
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
     _auth: None = Depends(require_ops_token),
 ):
-    import main
     from services.odds_api import replay_recent_clv_closes
 
     return await ops_replay_recent_clv_impl(
         x_cron_token=x_ops_token or x_cron_token,
         require_valid_cron_token=validate_ops_token,
-        new_run_id=main._new_run_id,
-        log_event=main._log_event,
-        set_ops_status=main._set_ops_status,
-        persist_ops_job_run=main._persist_ops_job_run,
-        get_db=main.get_db,
+        new_run_id=new_run_id,
+        log_event=log_event,
+        set_ops_status=set_ops_status,
+        persist_ops_job_run=persist_ops_job_run,
+        get_db=get_db,
         replay_recent_closes=replay_recent_clv_closes,
         lookback_hours=lookback_hours,
     )
@@ -1603,15 +1597,14 @@ def ops_analytics_summary(
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
     _auth: None = Depends(require_ops_token),
 ):
-    import main
     from services.analytics_reporting import get_weekly_analytics_summary
 
     return ops_analytics_summary_impl(
         x_cron_token=x_ops_token or x_cron_token,
         require_valid_cron_token=validate_ops_token,
-        get_db=main.get_db,
+        get_db=get_db,
         get_summary=get_weekly_analytics_summary,
-        retry_supabase=main._retry_supabase,
+        retry_supabase=retry_supabase,
         window_days=window_days,
         audience=audience,
     )
@@ -1627,15 +1620,14 @@ def ops_analytics_users(
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
     _auth: None = Depends(require_ops_token),
 ):
-    import main
     from services.analytics_reporting import get_weekly_analytics_user_drilldown
 
     return ops_analytics_users_impl(
         x_cron_token=x_ops_token or x_cron_token,
         require_valid_cron_token=validate_ops_token,
-        get_db=main.get_db,
+        get_db=get_db,
         get_summary=get_weekly_analytics_user_drilldown,
-        retry_supabase=main._retry_supabase,
+        retry_supabase=retry_supabase,
         window_days=window_days,
         max_users=max_users,
         timeline_limit=timeline_limit,
@@ -1649,13 +1641,11 @@ async def ops_trigger_test_discord(
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
     _auth: None = Depends(require_ops_token),
 ):
-    import main
-
     return await cron_test_discord_impl(
         x_cron_token=x_ops_token or x_cron_token,
         require_valid_cron_token=validate_ops_token,
-        new_run_id=main._new_run_id,
-        log_event=main._log_event,
+        new_run_id=new_run_id,
+        log_event=log_event,
         run_id_prefix="ops_discord_test",
         log_prefix="ops.trigger.discord_test",
     )
@@ -1667,13 +1657,11 @@ async def ops_trigger_test_discord_alert(
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
     _auth: None = Depends(require_ops_token),
 ):
-    import main
-
     return await cron_test_discord_alert_impl(
         x_cron_token=x_ops_token or x_cron_token,
         require_valid_cron_token=validate_ops_token,
-        new_run_id=main._new_run_id,
-        log_event=main._log_event,
+        new_run_id=new_run_id,
+        log_event=log_event,
         run_id_prefix="ops_discord_alert_test",
         log_prefix="ops.trigger.discord_alert_test",
     )

@@ -6,11 +6,13 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from database import get_db
 from services.analytics_events import (
     capture_analytics_event,
     is_supported_analytics_event,
     normalize_session_id,
 )
+from services.runtime_support import log_event, retry_supabase
 
 
 router = APIRouter()
@@ -67,9 +69,7 @@ async def _optional_user_from_authorization(authorization: str | None) -> tuple[
         return None, None
 
     try:
-        import main
-
-        supabase = main.get_db()
+        supabase = get_db()
         response = await run_in_threadpool(supabase.auth.get_user, token)
         user = response.user
     except Exception:
@@ -103,14 +103,8 @@ async def ingest_analytics_event(
         properties["user_email"] = user_email
 
     db = None
-    retry_supabase = None
-    log_event = None
     try:
-        import main
-
-        db = main.get_db()
-        retry_supabase = main._retry_supabase
-        log_event = main._log_event
+        db = get_db()
     except Exception:
         # Analytics ingestion is best-effort; route should still return ok=False-style status
         # via inserted flag rather than raising hard infra errors.

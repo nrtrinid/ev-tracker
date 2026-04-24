@@ -39,7 +39,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Invalid target' }, { status: 400 });
   }
 
-  // The backend expects X-Ops-Token (see backend/main.py). By default, reuse CRON_SECRET.
+  // The backend expects X-Ops-Token on ops routes. By default, reuse CRON_SECRET.
   // If you want separate secrets, set CRON_TOKEN on Vercel and on the backend as CRON_TOKEN.
   const backendCronToken = process.env.CRON_TOKEN ?? cronSecret;
 

@@ -2,8 +2,11 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, Depends
 
+from database import get_db
 from dependencies import require_admin_user
 from models import ResearchOpportunitySummaryResponse
+from services.bet_crud import EV_LOCK_PROMO_TYPES, _lock_ev_for_row, get_user_settings
+from services.runtime_support import logger, retry_supabase
 
 
 router = APIRouter()
@@ -53,25 +56,22 @@ def research_opportunities_summary_impl(
 
 @router.post("/admin/backfill-ev-locks")
 def backfill_ev_locks(user: dict = Depends(require_admin_user)):
-    import main
-
     return backfill_ev_locks_impl(
         user=user,
-        get_db=main.get_db,
-        get_user_settings=main.get_user_settings,
-        retry_supabase=main._retry_supabase,
-        ev_lock_promo_types=main.EV_LOCK_PROMO_TYPES,
-        lock_ev_for_row=main._lock_ev_for_row,
-        log_warning=main.logger.warning,
+        get_db=get_db,
+        get_user_settings=get_user_settings,
+        retry_supabase=retry_supabase,
+        ev_lock_promo_types=EV_LOCK_PROMO_TYPES,
+        lock_ev_for_row=_lock_ev_for_row,
+        log_warning=logger.warning,
     )
 
 
 @router.get("/admin/research-opportunities/summary", response_model=ResearchOpportunitySummaryResponse)
 def research_opportunities_summary(_user: dict = Depends(require_admin_user)):
-    import main
     from services.research_opportunities import get_research_opportunities_summary
 
     return research_opportunities_summary_impl(
-        get_db=main.get_db,
+        get_db=get_db,
         get_summary=get_research_opportunities_summary,
     )

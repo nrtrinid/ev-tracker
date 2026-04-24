@@ -20,7 +20,7 @@ async def fake_get_current_user():
     return {"id": TEST_USER_ID, "email": "test@example.com"}
 
 
-# ---------- Integration-only fixtures (lazy-import main so unit tests don't load DB) ----------
+# ---------- Integration-only fixtures (lazy-load app so unit tests don't load DB) ----------
 
 
 @pytest.fixture

@@ -97,7 +97,7 @@ Focus: trust/reliability fixes only.
   - Why: CLV pending bets can miss timely updates when only the JIT path runs; admin-triggered scans should also advance CLV snapshots.
   - User impact: Medium to high (faster CLV visibility on active bets).
   - Engineering risk: Medium.
-  - Completed work: Admin-triggered board refresh now piggybacks `main._piggyback_clv` on successful board-drop runs using only fresh sides returned by `run_daily_board_drop` (`fresh_straight_sides` + `fresh_prop_sides`), and scheduled board-drop runs now use the same fresh-side piggyback path.
+  - Completed work: Admin-triggered board refresh now piggybacks the scanner runtime CLV helper on successful board-drop runs using only fresh sides returned by `run_daily_board_drop` (`fresh_straight_sides` + `fresh_prop_sides`), and scheduled board-drop runs now use the same fresh-side piggyback path.
   - Regression coverage: Added backend ops-trigger contract coverage for sync/async piggyback wiring, empty fresh-side skip behavior, and best-effort failure isolation when piggyback execution raises, plus scheduler coverage for scheduled board-drop piggyback invocation and failure isolation.
   - Follow-up: Keep the existing JIT CLV scheduler path unchanged as the safety-net close-line refresher, but re-open verification because current placed-bet CLV pills still appear stale after board update scans in some cases even after the piggyback wiring landed.
   - Codex fit: High.

@@ -124,7 +124,7 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 - `backend/routes/scan_routes.py` — scan endpoint routing
 - `backend/routes/settings_routes.py` — settings and onboarding state endpoints
 - `backend/dependencies.py` — shared auth/rate-limit/ops-token dependencies
-- `backend/main.py` — FastAPI app bootstrap + scanner handler implementations
+- Backend app composition module - FastAPI construction only; scanner handlers live in `backend/routes/scan_routes.py` with runtime helpers in `backend/services/scan_runtime.py`
 - `frontend/src/app/scanner/[surface]/page.tsx` — scanner surface routing
 - `frontend/src/app/scanner/components/ScannerResultFilters.tsx` — scanner filter bar UI
 - `frontend/src/lib/scanner-filters.ts` — scanner result-filter helpers

@@ -8,22 +8,22 @@ import pytest
 from fastapi import HTTPException
 
 
-def _reload_main(monkeypatch, *, zoneinfo_zoneinfo_override=None):
+def _reload_runtime(monkeypatch, *, zoneinfo_zoneinfo_override=None):
     """
-    Reload backend main module with optional ZoneInfo override.
+    Reload backend runtime modules with optional ZoneInfo override.
 
-    main.py does `from zoneinfo import ZoneInfo` at import time, so to simulate
+    scheduler runtime loads `ZoneInfo` at import time, so to simulate
     missing tzdata we patch `zoneinfo.ZoneInfo` before reload.
     """
     if zoneinfo_zoneinfo_override is not None:
         import zoneinfo as _zoneinfo_mod
         monkeypatch.setattr(_zoneinfo_mod, "ZoneInfo", zoneinfo_zoneinfo_override, raising=True)
 
-    # Unit tests should not require real backend secrets just to import main.
+    # Unit tests should not require real backend secrets just to import the app module.
     monkeypatch.setenv("SUPABASE_URL", os.getenv("SUPABASE_URL") or "https://example.supabase.co")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "unit-test-key")
 
-    # Allow importing main.py even when backend deps aren't installed in the current interpreter.
+    # Allow importing app composition even when backend deps aren't installed in the current interpreter.
     # (These are unit tests; we stub the client to avoid touching the network/DB.)
     if "supabase" not in sys.modules:
         sys.modules["supabase"] = types.SimpleNamespace(
@@ -31,9 +31,135 @@ def _reload_main(monkeypatch, *, zoneinfo_zoneinfo_override=None):
             Client=object,
         )
 
-    if "main" in sys.modules:
-        return importlib.reload(sys.modules["main"])
-    return importlib.import_module("main")
+    for module_name in [
+        "services.scheduler_runtime",
+        "services.app_bootstrap",
+        "services.ops_runtime",
+        "services.scan_runtime",
+        "services.paper_autolog_runner",
+        "routes.ops_cron",
+        "routes.scan_routes",
+        "main",
+    ]:
+        if module_name in sys.modules:
+            importlib.reload(sys.modules[module_name])
+
+    app_module = importlib.import_module("main")
+    scheduler_runtime = importlib.import_module("services.scheduler_runtime")
+    app_bootstrap = importlib.import_module("services.app_bootstrap")
+    ops_runtime = importlib.import_module("services.ops_runtime")
+    scan_runtime = importlib.import_module("services.scan_runtime")
+    autolog_runtime = importlib.import_module("services.paper_autolog_runner")
+    ops_cron = importlib.import_module("routes.ops_cron")
+    scan_routes = importlib.import_module("routes.scan_routes")
+    ops_runtime.configure_app(app_module.app)
+    return _RuntimeAdapter(
+        app_module=app_module,
+        scheduler_runtime=scheduler_runtime,
+        app_bootstrap=app_bootstrap,
+        ops_runtime=ops_runtime,
+        scan_runtime=scan_runtime,
+        autolog_runtime=autolog_runtime,
+        ops_cron=ops_cron,
+        scan_routes=scan_routes,
+    )
+
+
+class _RuntimeAdapter:
+    def __init__(self, **modules):
+        object.__setattr__(self, "_modules", modules)
+
+    @property
+    def app(self):
+        return self._modules["app_module"].app
+
+    def __getattr__(self, name):
+        scheduler_runtime = self._modules["scheduler_runtime"]
+        app_bootstrap = self._modules["app_bootstrap"]
+        ops_runtime = self._modules["ops_runtime"]
+        scan_runtime = self._modules["scan_runtime"]
+        autolog_runtime = self._modules["autolog_runtime"]
+        ops_cron = self._modules["ops_cron"]
+        scan_routes = self._modules["scan_routes"]
+        mapping = {
+            "PHOENIX_TZ": lambda: scheduler_runtime.PHOENIX_TZ,
+            "LOW_EDGE_COHORT": lambda: autolog_runtime.LOW_EDGE_COHORT,
+            "HIGH_EDGE_COHORT": lambda: autolog_runtime.HIGH_EDGE_COHORT,
+            "start_scheduler": lambda: scheduler_runtime.start_scheduler,
+            "_run_scheduled_board_drop_job": lambda: scheduler_runtime.run_scheduled_board_drop_job,
+            "_run_scheduled_scan_job": lambda: scheduler_runtime.run_scheduled_scan_job,
+            "_run_early_look_scan_job": lambda: scheduler_runtime.run_early_look_scan_job,
+            "_run_auto_settler_job": lambda: scheduler_runtime.run_auto_settler_job,
+            "_scheduled_scan_window": lambda: scheduler_runtime.scheduled_scan_window,
+            "_init_scheduler_heartbeats": lambda: ops_runtime.init_scheduler_heartbeats,
+            "_check_scheduler_freshness": lambda: ops_runtime.check_scheduler_freshness,
+            "_init_ops_status": lambda: ops_runtime.init_ops_status,
+            "ops_status": lambda: (
+                lambda *, x_ops_token=None, x_cron_token=None: ops_cron.ops_status(
+                    x_ops_token=x_ops_token,
+                    x_cron_token=x_cron_token,
+                )
+            ),
+            "_app_role": lambda: self._modules["scheduler_runtime"].app_role,
+            "_is_paper_experiment_autolog_enabled": lambda: autolog_runtime.is_paper_experiment_autolog_enabled,
+            "_paper_experiment_account_user_id": lambda: autolog_runtime.paper_experiment_account_user_id,
+            "_validate_environment": lambda: app_bootstrap.validate_environment,
+            "_annotate_sides_with_duplicate_state": lambda: scan_runtime.annotate_sides_with_duplicate_state,
+            "_run_longshot_autolog_for_sides": lambda: autolog_runtime.run_longshot_autolog_for_sides,
+            "scan_markets": lambda: scan_routes.scan_markets,
+            "scan_latest": lambda: scan_routes.scan_latest,
+            "get_db": lambda: scan_routes.get_db,
+            "_retry_supabase": lambda: scan_routes.retry_supabase,
+            "_piggyback_clv": lambda: scheduler_runtime.piggyback_clv,
+            "_log_event": lambda: app_bootstrap.log_event,
+        }
+        if name in mapping:
+            return mapping[name]()
+        raise AttributeError(name)
+
+    def __setattr__(self, name, value):
+        scheduler_runtime = self._modules["scheduler_runtime"]
+        app_bootstrap = self._modules["app_bootstrap"]
+        ops_runtime = self._modules["ops_runtime"]
+        scan_runtime = self._modules["scan_runtime"]
+        autolog_runtime = self._modules["autolog_runtime"]
+        ops_cron = self._modules["ops_cron"]
+        scan_routes = self._modules["scan_routes"]
+        if name == "PHOENIX_TZ":
+            scheduler_runtime.PHOENIX_TZ = value
+            return
+        if name == "_piggyback_clv":
+            scheduler_runtime.piggyback_clv = value
+            ops_cron.piggyback_clv = value
+            scan_routes.piggyback_clv = value
+            return
+        if name == "_run_scheduled_board_drop_job":
+            scheduler_runtime.run_scheduled_board_drop_job = value
+            return
+        if name == "_scheduled_scan_window":
+            scheduler_runtime.scheduled_scan_window = value
+            return
+        if name == "_run_longshot_autolog_for_sides":
+            scheduler_runtime.run_longshot_autolog_for_sides = value
+            autolog_runtime.run_longshot_autolog_for_sides = value
+            return
+        if name == "_log_event":
+            scheduler_runtime.log_event = value
+            app_bootstrap.log_event = value
+            ops_runtime.log_event = value
+            return
+        if name == "get_db":
+            scheduler_runtime.get_db = value
+            scan_routes.get_db = value
+            ops_cron.get_db = value
+            return
+        if name == "_retry_supabase":
+            scheduler_runtime.retry_supabase = value
+            scan_routes.retry_supabase = value
+            ops_cron.retry_supabase = value
+            ops_runtime.retry_supabase = value
+            return
+        object.__setattr__(self, name, value)
 
 
 class DummyScheduler:
@@ -56,7 +182,7 @@ class DummyScheduler:
 
 def _install_apscheduler_stubs(*, scheduler_cls=DummyScheduler):
     """
-    Provide minimal apscheduler module stubs so `main.start_scheduler()` can import them
+    Provide minimal apscheduler module stubs so `scheduler_runtime.start_scheduler()` can import them
     even when apscheduler isn't installed in the current interpreter.
     """
     apscheduler_mod = types.ModuleType("apscheduler")
@@ -93,10 +219,10 @@ async def test_does_not_start_scheduler_when_enable_scheduler_not_1(monkeypatch)
     monkeypatch.setenv("TESTING", "0")
     monkeypatch.setenv("ENABLE_SCHEDULER", "0")
 
-    main = _reload_main(monkeypatch)
-    await main.start_scheduler()
+    runtime = _reload_runtime(monkeypatch)
+    await runtime.start_scheduler()
 
-    assert not hasattr(main.app.state, "scheduler")
+    assert not hasattr(runtime.app.state, "scheduler")
 
 
 @pytest.mark.asyncio
@@ -107,27 +233,27 @@ async def test_uses_america_phoenix_timezone_when_available(monkeypatch):
     class FakeTz:
         key = "America/Phoenix"
 
-    main = _reload_main(monkeypatch, zoneinfo_zoneinfo_override=lambda _name: FakeTz())
-    assert main.PHOENIX_TZ is not None
+    runtime = _reload_runtime(monkeypatch, zoneinfo_zoneinfo_override=lambda _name: FakeTz())
+    assert runtime.PHOENIX_TZ is not None
 
     _install_apscheduler_stubs(scheduler_cls=DummyScheduler)
 
-    await main.start_scheduler()
+    await runtime.start_scheduler()
 
-    scheduler = main.app.state.scheduler
+    scheduler = runtime.app.state.scheduler
     assert scheduler.started is True
 
-    scan_jobs = [j for j in scheduler.jobs if j["func"] == main._run_scheduled_board_drop_job]
+    scan_jobs = [j for j in scheduler.jobs if j["func"] == runtime._run_scheduled_board_drop_job]
     assert len(scan_jobs) == 2
     assert {(j["trigger"].hour, j["trigger"].minute) for j in scan_jobs} == {(9, 30), (15, 0)}
-    assert all(getattr(j["trigger"], "timezone", None) == main.PHOENIX_TZ for j in scan_jobs)
+    assert all(getattr(j["trigger"], "timezone", None) == runtime.PHOENIX_TZ for j in scan_jobs)
     assert all(j["kwargs"].get("misfire_grace_time") == 1800 for j in scan_jobs)
     assert all(j["kwargs"].get("coalesce") is True for j in scan_jobs)
     assert all(j["kwargs"].get("kwargs") == {"alert_delivery_allowed": True} for j in scan_jobs)
 
-    auto_settle_jobs = [j for j in scheduler.jobs if j["func"] == main._run_auto_settler_job]
+    auto_settle_jobs = [j for j in scheduler.jobs if j["func"] == runtime._run_auto_settler_job]
     assert len(auto_settle_jobs) == 1
-    assert getattr(auto_settle_jobs[0]["trigger"], "timezone", None) == main.PHOENIX_TZ
+    assert getattr(auto_settle_jobs[0]["trigger"], "timezone", None) == runtime.PHOENIX_TZ
     assert auto_settle_jobs[0]["kwargs"].get("misfire_grace_time") == 3600
     assert auto_settle_jobs[0]["kwargs"].get("coalesce") is True
 
@@ -141,13 +267,13 @@ async def test_temp_scheduled_scan_time_registers_without_alert_route(monkeypatc
     class FakeTz:
         key = "America/Phoenix"
 
-    main = _reload_main(monkeypatch, zoneinfo_zoneinfo_override=lambda _name: FakeTz())
+    runtime = _reload_runtime(monkeypatch, zoneinfo_zoneinfo_override=lambda _name: FakeTz())
     _install_apscheduler_stubs(scheduler_cls=DummyScheduler)
 
-    await main.start_scheduler()
+    await runtime.start_scheduler()
 
-    scheduler = main.app.state.scheduler
-    scan_jobs = [j for j in scheduler.jobs if j["func"] == main._run_scheduled_board_drop_job]
+    scheduler = runtime.app.state.scheduler
+    scan_jobs = [j for j in scheduler.jobs if j["func"] == runtime._run_scheduled_board_drop_job]
     temp_jobs = [j for j in scan_jobs if (j["trigger"].hour, j["trigger"].minute) == (19, 38)]
 
     assert len(scan_jobs) == 3
@@ -156,10 +282,10 @@ async def test_temp_scheduled_scan_time_registers_without_alert_route(monkeypatc
 
 
 def test_scheduled_scan_window_marks_late_runs_stale(monkeypatch):
-    main = _reload_main(monkeypatch)
-    monkeypatch.setattr(main, "PHOENIX_TZ", timezone(timedelta(hours=-7)), raising=True)
+    runtime = _reload_runtime(monkeypatch)
+    monkeypatch.setattr(runtime, "PHOENIX_TZ", timezone(timedelta(hours=-7)), raising=True)
 
-    window = main._scheduled_scan_window(datetime(2026, 4, 25, 2, 38, tzinfo=UTC))
+    window = runtime._scheduled_scan_window(datetime(2026, 4, 25, 2, 38, tzinfo=UTC))
 
     assert window["anchor_time_mst"] == "15:00"
     assert window["minutes_from_anchor"] == 278
@@ -175,15 +301,15 @@ async def test_skips_scheduled_scans_cleanly_if_phoenix_zone_cannot_load(monkeyp
     def _raise_zoneinfo(_name: str):
         raise Exception("ZoneInfo not available")
 
-    main = _reload_main(monkeypatch, zoneinfo_zoneinfo_override=_raise_zoneinfo)
-    assert main.PHOENIX_TZ is None
+    runtime = _reload_runtime(monkeypatch, zoneinfo_zoneinfo_override=_raise_zoneinfo)
+    assert runtime.PHOENIX_TZ is None
 
     _install_apscheduler_stubs(scheduler_cls=DummyScheduler)
 
-    await main.start_scheduler()
-    scheduler = main.app.state.scheduler
+    await runtime.start_scheduler()
+    scheduler = runtime.app.state.scheduler
 
-    scan_jobs = [j for j in scheduler.jobs if j["func"] == main._run_scheduled_board_drop_job]
+    scan_jobs = [j for j in scheduler.jobs if j["func"] == runtime._run_scheduled_board_drop_job]
     assert scan_jobs == []
 
     out = capsys.readouterr().out
@@ -192,7 +318,7 @@ async def test_skips_scheduled_scans_cleanly_if_phoenix_zone_cannot_load(monkeyp
 
 @pytest.mark.asyncio
 async def test_scheduled_board_drop_job_runs_daily_board_pipeline(monkeypatch):
-    main = _reload_main(monkeypatch)
+    runtime = _reload_runtime(monkeypatch)
 
     called = []
 
@@ -227,7 +353,7 @@ async def test_scheduled_board_drop_job_runs_daily_board_pipeline(monkeypatch):
 
     monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_run_daily_board_drop, raising=True)
 
-    await main._run_scheduled_board_drop_job(alert_delivery_allowed=True)
+    await runtime._run_scheduled_board_drop_job(alert_delivery_allowed=True)
 
     assert len(called) == 1
     assert called[0]["source"] == "scheduled_board_drop"
@@ -239,7 +365,7 @@ async def test_scheduled_board_drop_job_runs_daily_board_pipeline(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_scheduled_board_drop_job_piggybacks_clv_with_fresh_sides(monkeypatch):
-    main = _reload_main(monkeypatch)
+    runtime = _reload_runtime(monkeypatch)
 
     fresh_straight = [{"surface": "straight_bets", "selection_key": "straight-1"}]
     fresh_props = [{"surface": "player_props", "selection_key": "prop-1"}]
@@ -269,16 +395,16 @@ async def test_scheduled_board_drop_job_piggybacks_clv_with_fresh_sides(monkeypa
     async def _fake_piggyback_clv(sides: list[dict]):
         piggyback_calls.append(sides)
 
-    monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
+    monkeypatch.setattr(runtime, "_piggyback_clv", _fake_piggyback_clv, raising=True)
 
-    await main._run_scheduled_board_drop_job(alert_delivery_allowed=True)
+    await runtime._run_scheduled_board_drop_job(alert_delivery_allowed=True)
 
     assert piggyback_calls == [[*fresh_straight, *fresh_props]]
 
 
 @pytest.mark.asyncio
 async def test_scheduled_board_drop_job_clv_piggyback_failure_does_not_fail_publish(monkeypatch):
-    main = _reload_main(monkeypatch)
+    runtime = _reload_runtime(monkeypatch)
 
     async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
         return {
@@ -304,41 +430,41 @@ async def test_scheduled_board_drop_job_clv_piggyback_failure_does_not_fail_publ
     async def _failing_piggyback_clv(_sides: list[dict]):
         raise RuntimeError("scheduled clv piggyback exploded")
 
-    monkeypatch.setattr(main, "_piggyback_clv", _failing_piggyback_clv, raising=True)
+    monkeypatch.setattr(runtime, "_piggyback_clv", _failing_piggyback_clv, raising=True)
 
-    await main._run_scheduled_board_drop_job()
+    await runtime._run_scheduled_board_drop_job()
 
-    snapshot = main.app.state.ops_status["last_scheduler_scan"]
+    snapshot = runtime.app.state.ops_status["last_scheduler_scan"]
     assert snapshot["hard_errors"] == 0
     assert snapshot["status"] == "completed"
-    latest_refresh = main.app.state.ops_status["last_board_refresh"]
+    latest_refresh = runtime.app.state.ops_status["last_board_refresh"]
     assert latest_refresh["status"] == "completed"
     assert latest_refresh["source"] == "scheduler"
 
 
 @pytest.mark.asyncio
 async def test_scheduled_scan_aliases_use_board_drop_job(monkeypatch):
-    main = _reload_main(monkeypatch)
+    runtime = _reload_runtime(monkeypatch)
 
     calls: list[str] = []
 
     async def _fake_run_scheduled_board_drop_job():
         calls.append("scheduled_board_drop")
 
-    monkeypatch.setattr(main, "_run_scheduled_board_drop_job", _fake_run_scheduled_board_drop_job, raising=True)
+    monkeypatch.setattr(runtime, "_run_scheduled_board_drop_job", _fake_run_scheduled_board_drop_job, raising=True)
 
-    await main._run_scheduled_scan_job()
-    await main._run_early_look_scan_job()
+    await runtime._run_scheduled_scan_job()
+    await runtime._run_early_look_scan_job()
 
     assert calls == ["scheduled_board_drop", "scheduled_board_drop"]
 
 
 @pytest.mark.asyncio
 async def test_scheduled_board_drop_job_timed_ping_mode_sends_single_board_alert(monkeypatch):
-    main = _reload_main(monkeypatch)
+    runtime = _reload_runtime(monkeypatch)
     monkeypatch.setenv("DISCORD_SCAN_ALERT_MODE", "timed_ping")
     monkeypatch.setattr(
-        main,
+        runtime,
         "_scheduled_scan_window",
         lambda: {
             "label": "Final Board / Bet Placement Scan",
@@ -391,7 +517,7 @@ async def test_scheduled_board_drop_job_timed_ping_mode_sends_single_board_alert
     monkeypatch.setattr(discord_alerts, "schedule_alerts", _fail_if_edge_alerts_called, raising=True)
     monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
 
-    await main._run_scheduled_board_drop_job(alert_delivery_allowed=True)
+    await runtime._run_scheduled_board_drop_job(alert_delivery_allowed=True)
 
     assert len(sent) == 1
     payload, message_type, delivery_context = sent[0]
@@ -399,7 +525,7 @@ async def test_scheduled_board_drop_job_timed_ping_mode_sends_single_board_alert
     assert delivery_context == "scheduled_board_drop"
     assert payload["embeds"][0]["title"] == "Trusted Beta Board Live"
 
-    snapshot = main.app.state.ops_status["last_scheduler_scan"]
+    snapshot = runtime.app.state.ops_status["last_scheduler_scan"]
     assert snapshot["scan_alert_mode"] == "timed_ping"
     assert snapshot["alerts_scheduled"] == 0
     assert snapshot["straight_sides"] == 5
@@ -414,11 +540,11 @@ async def test_scheduled_board_drop_job_timed_ping_mode_sends_single_board_alert
 
 @pytest.mark.asyncio
 async def test_scheduled_board_drop_job_routes_stale_alert_to_debug(monkeypatch):
-    main = _reload_main(monkeypatch)
-    main._init_ops_status()
+    runtime = _reload_runtime(monkeypatch)
+    runtime._init_ops_status()
     monkeypatch.setenv("DISCORD_SCAN_ALERT_MODE", "timed_ping")
     monkeypatch.setattr(
-        main,
+        runtime,
         "_scheduled_scan_window",
         lambda: {
             "label": "Final Board / Bet Placement Scan",
@@ -457,9 +583,9 @@ async def test_scheduled_board_drop_job_routes_stale_alert_to_debug(monkeypatch)
 
     monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
 
-    await main._run_scheduled_board_drop_job(alert_delivery_allowed=True)
+    await runtime._run_scheduled_board_drop_job(alert_delivery_allowed=True)
 
-    snapshot = main.app.state.ops_status["last_scheduler_scan"]
+    snapshot = runtime.app.state.ops_status["last_scheduler_scan"]
     assert sent == [("heartbeat", None)]
     assert snapshot["board_alert_attempted"] is True
     assert snapshot["board_alert_delivery_status"] == "delivered"
@@ -470,11 +596,11 @@ async def test_scheduled_board_drop_job_routes_stale_alert_to_debug(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_scheduled_board_drop_job_direct_testing_invocation_uses_debug(monkeypatch):
-    main = _reload_main(monkeypatch)
-    main._init_ops_status()
+    runtime = _reload_runtime(monkeypatch)
+    runtime._init_ops_status()
     monkeypatch.setenv("DISCORD_SCAN_ALERT_MODE", "timed_ping")
     monkeypatch.setattr(
-        main,
+        runtime,
         "_scheduled_scan_window",
         lambda: {
             "label": "Final Board / Bet Placement Scan",
@@ -513,20 +639,20 @@ async def test_scheduled_board_drop_job_direct_testing_invocation_uses_debug(mon
     monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_run_daily_board_drop, raising=True)
     monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
 
-    await main._run_scheduled_board_drop_job()
+    await runtime._run_scheduled_board_drop_job()
 
     assert sent == [("heartbeat", None)]
-    snapshot = main.app.state.ops_status["last_scheduler_scan"]
+    snapshot = runtime.app.state.ops_status["last_scheduler_scan"]
     assert snapshot["board_alert"]["message_type"] == "heartbeat"
     assert snapshot["board_alert"]["alert_route_selected"] is False
 
 
 def test_scheduler_freshness_uses_startup_grace_when_no_success(monkeypatch):
-    main = _reload_main(monkeypatch)
-    main._init_scheduler_heartbeats()
-    main.app.state.scheduler_started_at = datetime.now(UTC).isoformat() + "Z"
+    runtime = _reload_runtime(monkeypatch)
+    runtime._init_scheduler_heartbeats()
+    runtime.app.state.scheduler_started_at = datetime.now(UTC).isoformat() + "Z"
 
-    fresh, details = main._check_scheduler_freshness(True)
+    fresh, details = runtime._check_scheduler_freshness(True)
 
     assert fresh is True
     for job_name, state in details["jobs"].items():
@@ -535,11 +661,11 @@ def test_scheduler_freshness_uses_startup_grace_when_no_success(monkeypatch):
 
 
 def test_scheduler_freshness_fails_if_no_success_past_stale_window(monkeypatch):
-    main = _reload_main(monkeypatch)
-    main._init_scheduler_heartbeats()
-    main.app.state.scheduler_started_at = (datetime.now(UTC) - timedelta(hours=48)).isoformat() + "Z"
+    runtime = _reload_runtime(monkeypatch)
+    runtime._init_scheduler_heartbeats()
+    runtime.app.state.scheduler_started_at = (datetime.now(UTC) - timedelta(hours=48)).isoformat() + "Z"
 
-    fresh, details = main._check_scheduler_freshness(True)
+    fresh, details = runtime._check_scheduler_freshness(True)
 
     assert fresh is False
     assert any(not state["fresh"] for state in details["jobs"].values())
@@ -547,23 +673,23 @@ def test_scheduler_freshness_fails_if_no_success_past_stale_window(monkeypatch):
 
 
 def test_ops_status_requires_valid_cron_token(monkeypatch):
-    main = _reload_main(monkeypatch)
-    main._init_ops_status()
+    runtime = _reload_runtime(monkeypatch)
+    runtime._init_ops_status()
     monkeypatch.setenv("CRON_TOKEN", "secret-token")
 
     with pytest.raises(HTTPException) as exc:
-        main.ops_status(x_cron_token="wrong")
+        runtime.ops_status(x_cron_token="wrong")
 
     assert exc.value.status_code == 401
 
 
 def test_ops_status_returns_snapshot_when_token_valid(monkeypatch):
-    main = _reload_main(monkeypatch)
-    main._init_ops_status()
+    runtime = _reload_runtime(monkeypatch)
+    runtime._init_ops_status()
     monkeypatch.setenv("CRON_TOKEN", "secret-token")
     monkeypatch.setenv("ENABLE_SCHEDULER", "0")
 
-    payload = main.ops_status(x_cron_token="secret-token")
+    payload = runtime.ops_status(x_cron_token="secret-token")
 
     assert "runtime" in payload
     assert "checks" in payload
@@ -575,38 +701,38 @@ def test_ops_status_returns_snapshot_when_token_valid(monkeypatch):
 
 
 def test_app_role_normalization(monkeypatch):
-    main = _reload_main(monkeypatch)
+    runtime = _reload_runtime(monkeypatch)
 
     monkeypatch.delenv("APP_ROLE", raising=False)
-    assert main._app_role() == "api"
+    assert runtime._app_role() == "api"
 
     monkeypatch.setenv("APP_ROLE", "scheduler")
-    assert main._app_role() == "scheduler"
+    assert runtime._app_role() == "scheduler"
 
     monkeypatch.setenv("APP_ROLE", "api")
-    assert main._app_role() == "api"
+    assert runtime._app_role() == "api"
 
     monkeypatch.setenv("APP_ROLE", "unexpected")
-    assert main._app_role() == "api"
+    assert runtime._app_role() == "api"
 
 
 def test_paper_autolog_env_variables(monkeypatch):
-    main = _reload_main(monkeypatch)
+    runtime = _reload_runtime(monkeypatch)
 
     monkeypatch.delenv("ENABLE_PAPER_EXPERIMENT_AUTOLOG", raising=False)
     monkeypatch.delenv("PAPER_EXPERIMENT_ACCOUNT_USER_ID", raising=False)
 
-    assert main._is_paper_experiment_autolog_enabled() is False
-    assert main._paper_experiment_account_user_id() == ""
+    assert runtime._is_paper_experiment_autolog_enabled() is False
+    assert runtime._paper_experiment_account_user_id() == ""
 
     monkeypatch.setenv("ENABLE_PAPER_EXPERIMENT_AUTOLOG", "1")
     monkeypatch.setenv("PAPER_EXPERIMENT_ACCOUNT_USER_ID", "user-a")
-    assert main._is_paper_experiment_autolog_enabled() is True
-    assert main._paper_experiment_account_user_id() == "user-a"
+    assert runtime._is_paper_experiment_autolog_enabled() is True
+    assert runtime._paper_experiment_account_user_id() == "user-a"
 
 
 def test_validate_environment_warns_when_autolog_enabled_without_user_id(monkeypatch):
-    main = _reload_main(monkeypatch)
+    runtime = _reload_runtime(monkeypatch)
 
     monkeypatch.setenv("ENABLE_PAPER_EXPERIMENT_AUTOLOG", "1")
     monkeypatch.delenv("PAPER_EXPERIMENT_ACCOUNT_USER_ID", raising=False)
@@ -616,16 +742,16 @@ def test_validate_environment_warns_when_autolog_enabled_without_user_id(monkeyp
     def _capture(event: str, level: str = "info", **fields):
         captured.append((event, level, fields))
 
-    monkeypatch.setattr(main, "_log_event", _capture, raising=True)
+    monkeypatch.setattr(runtime, "_log_event", _capture, raising=True)
 
-    main._validate_environment()
+    runtime._validate_environment()
 
     warning_events = [e for e, _level, _f in captured]
     assert "startup.env_paper_autolog_without_user_id" in warning_events
 
 
 def test_validate_environment_warns_when_scheduler_enabled_without_discord_alert_webhook(monkeypatch):
-    main = _reload_main(monkeypatch)
+    runtime = _reload_runtime(monkeypatch)
 
     monkeypatch.setenv("ENABLE_SCHEDULER", "1")
     monkeypatch.setenv("DISCORD_ENABLE_ALERT_ROUTE", "1")
@@ -637,16 +763,16 @@ def test_validate_environment_warns_when_scheduler_enabled_without_discord_alert
     def _capture(event: str, level: str = "info", **fields):
         captured.append((event, level, fields))
 
-    monkeypatch.setattr(main, "_log_event", _capture, raising=True)
+    monkeypatch.setattr(runtime, "_log_event", _capture, raising=True)
 
-    main._validate_environment()
+    runtime._validate_environment()
 
     warning_events = [e for e, _level, _f in captured]
     assert "startup.env_discord_alert_webhook_missing" in warning_events
 
 
 def test_annotate_sides_with_duplicate_state_uses_pending_best_price(monkeypatch):
-    main = _reload_main(monkeypatch)
+    runtime = _reload_runtime(monkeypatch)
 
     class _FakeQuery:
         def __init__(self, data):
@@ -715,7 +841,7 @@ def test_annotate_sides_with_duplicate_state_uses_pending_best_price(monkeypatch
         },
     ]
 
-    annotated = main._annotate_sides_with_duplicate_state(db, "user-1", sides)
+    annotated = runtime._annotate_sides_with_duplicate_state(db, "user-1", sides)
 
     assert annotated[0]["scanner_duplicate_state"] == "already_logged"
     assert annotated[0]["best_logged_odds_american"] == 130
@@ -730,7 +856,7 @@ def test_annotate_sides_with_duplicate_state_uses_pending_best_price(monkeypatch
 
 @pytest.mark.asyncio
 async def test_longshot_autolog_guardrails(monkeypatch):
-    main = _reload_main(monkeypatch)
+    runtime = _reload_runtime(monkeypatch)
 
     class _FakeQuery:
         def __init__(self, db):
@@ -787,13 +913,13 @@ async def test_longshot_autolog_guardrails(monkeypatch):
 
     monkeypatch.setenv("ENABLE_PAPER_EXPERIMENT_AUTOLOG", "0")
     monkeypatch.setenv("PAPER_EXPERIMENT_ACCOUNT_USER_ID", "user-a")
-    out = await main._run_longshot_autolog_for_sides(db, run_id="run-1", sides=sides)
+    out = await runtime._run_longshot_autolog_for_sides(db, run_id="run-1", sides=sides)
     assert out["enabled"] is False
     assert len(db.rows) == 0
 
     monkeypatch.setenv("ENABLE_PAPER_EXPERIMENT_AUTOLOG", "1")
     monkeypatch.delenv("PAPER_EXPERIMENT_ACCOUNT_USER_ID", raising=False)
-    out = await main._run_longshot_autolog_for_sides(db, run_id="run-2", sides=sides)
+    out = await runtime._run_longshot_autolog_for_sides(db, run_id="run-2", sides=sides)
     assert out["enabled"] is True
     assert out["configured"] is False
     assert len(db.rows) == 0
@@ -801,7 +927,7 @@ async def test_longshot_autolog_guardrails(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_longshot_autolog_caps_and_idempotency(monkeypatch):
-    main = _reload_main(monkeypatch)
+    runtime = _reload_runtime(monkeypatch)
 
     class _FakeQuery:
         def __init__(self, db):
@@ -878,24 +1004,24 @@ async def test_longshot_autolog_caps_and_idempotency(monkeypatch):
             }
         )
 
-    out = await main._run_longshot_autolog_for_sides(db, run_id="run-1", sides=sides)
+    out = await runtime._run_longshot_autolog_for_sides(db, run_id="run-1", sides=sides)
     assert out["inserted_total"] == 5
-    assert out["inserted_by_cohort"][main.LOW_EDGE_COHORT] == 2
-    assert out["inserted_by_cohort"][main.HIGH_EDGE_COHORT] == 3
+    assert out["inserted_by_cohort"][runtime.LOW_EDGE_COHORT] == 2
+    assert out["inserted_by_cohort"][runtime.HIGH_EDGE_COHORT] == 3
 
     # Re-run with same run_id and sides: idempotency avoids duplicate inserts for already-written keys,
     # but remaining eligible keys can still be inserted on later runs because of per-run caps.
-    out2 = await main._run_longshot_autolog_for_sides(db, run_id="run-1", sides=sides)
+    out2 = await runtime._run_longshot_autolog_for_sides(db, run_id="run-1", sides=sides)
     assert out2["inserted_total"] == 2
 
     # Third run should be fully exhausted for this side set.
-    out3 = await main._run_longshot_autolog_for_sides(db, run_id="run-1", sides=sides)
+    out3 = await runtime._run_longshot_autolog_for_sides(db, run_id="run-1", sides=sides)
     assert out3["inserted_total"] == 0
 
 
 @pytest.mark.asyncio
 async def test_scan_markets_returns_backend_duplicate_state_enum(monkeypatch):
-    main = _reload_main(monkeypatch)
+    runtime = _reload_runtime(monkeypatch)
 
     class _FakeQuery:
         def __init__(self, table_name, db):
@@ -952,8 +1078,8 @@ async def test_scan_markets_returns_backend_duplicate_state_enum(monkeypatch):
         ]
     )
 
-    monkeypatch.setattr(main, "get_db", lambda: db, raising=True)
-    monkeypatch.setattr(main, "_retry_supabase", lambda f, retries=2: f(), raising=True)
+    monkeypatch.setattr(runtime, "get_db", lambda: db, raising=True)
+    monkeypatch.setattr(runtime, "_retry_supabase", lambda f, retries=2: f(), raising=True)
 
     import services.odds_api as odds_api
 
@@ -996,7 +1122,7 @@ async def test_scan_markets_returns_backend_duplicate_state_enum(monkeypatch):
     monkeypatch.setattr(odds_api, "get_cached_or_scan", _fake_cached_or_scan, raising=True)
     monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)
 
-    response = await main.scan_markets(sport="basketball_nba", user={"id": "user-1"})
+    response = await runtime.scan_markets(sport="basketball_nba", user={"id": "user-1"})
 
     assert len(response.sides) == 2
     assert response.sides[0].scanner_duplicate_state == "better_now"
@@ -1007,7 +1133,7 @@ async def test_scan_markets_returns_backend_duplicate_state_enum(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_scan_latest_enriches_duplicate_state_from_cached_payload(monkeypatch):
-    main = _reload_main(monkeypatch)
+    runtime = _reload_runtime(monkeypatch)
 
     class _FakeQuery:
         def __init__(self, table_name, db):
@@ -1077,17 +1203,17 @@ async def test_scan_latest_enriches_duplicate_state_from_cached_payload(monkeypa
             return _FakeQuery(name, self)
 
     db = _FakeDB()
-    monkeypatch.setattr(main, "get_db", lambda: db, raising=True)
-    monkeypatch.setattr(main, "_retry_supabase", lambda f, retries=2: f(), raising=True)
+    monkeypatch.setattr(runtime, "get_db", lambda: db, raising=True)
+    monkeypatch.setattr(runtime, "_retry_supabase", lambda f, retries=2: f(), raising=True)
 
-    payload = await main.scan_latest(user={"id": "user-1"})
+    payload = await runtime.scan_latest(user={"id": "user-1"})
     assert payload["sides"][0]["scanner_duplicate_state"] == "better_now"
     assert payload["sides"][0]["best_logged_odds_american"] == 120
 
 
 @pytest.mark.asyncio
 async def test_scheduled_board_drop_ops_status_includes_autolog_summary(monkeypatch):
-    main = _reload_main(monkeypatch)
+    runtime = _reload_runtime(monkeypatch)
 
     async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
         return {
@@ -1116,20 +1242,20 @@ async def test_scheduled_board_drop_ops_status_includes_autolog_summary(monkeypa
             "configured": True,
             "run_id": run_id,
             "inserted_total": 0,
-            "selected_by_cohort": {main.LOW_EDGE_COHORT: 0, main.HIGH_EDGE_COHORT: 0},
+            "selected_by_cohort": {runtime.LOW_EDGE_COHORT: 0, runtime.HIGH_EDGE_COHORT: 0},
         }
 
-    monkeypatch.setattr(main, "_run_longshot_autolog_for_sides", _fake_autolog, raising=True)
+    monkeypatch.setattr(runtime, "_run_longshot_autolog_for_sides", _fake_autolog, raising=True)
 
-    await main._run_scheduled_board_drop_job()
+    await runtime._run_scheduled_board_drop_job()
 
-    snapshot = main.app.state.ops_status["last_scheduler_scan"]
+    snapshot = runtime.app.state.ops_status["last_scheduler_scan"]
     assert isinstance(snapshot, dict)
     assert "autolog_summary" in snapshot
     assert snapshot["autolog_summary"]["enabled"] is True
     assert snapshot["autolog_summary"]["configured"] is True
 
-    latest_refresh = main.app.state.ops_status["last_board_refresh"]
+    latest_refresh = runtime.app.state.ops_status["last_board_refresh"]
     assert latest_refresh["kind"] == "board_drop"
     assert latest_refresh["source"] == "scheduler"
     assert latest_refresh["canonical_board_updated"] is True

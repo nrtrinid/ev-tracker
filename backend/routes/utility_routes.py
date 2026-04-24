@@ -2,8 +2,11 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, Depends
 
+from calculations import american_to_decimal, calculate_ev
+from database import get_db
 from dependencies import require_current_user
 from models import PromoType
+from services.bet_crud import get_user_settings
 
 
 router = APIRouter()
@@ -53,8 +56,6 @@ def calculate_ev_preview(
     winnings_cap: float | None = None,
     user: dict = Depends(require_current_user),
 ):
-    import main
-
     return calculate_ev_preview_impl(
         odds_american=odds_american,
         stake=stake,
@@ -62,8 +63,8 @@ def calculate_ev_preview(
         boost_percent=boost_percent,
         winnings_cap=winnings_cap,
         user=user,
-        get_db=main.get_db,
-        get_user_settings=main.get_user_settings,
-        american_to_decimal=main.american_to_decimal,
-        calculate_ev=main.calculate_ev,
+        get_db=get_db,
+        get_user_settings=get_user_settings,
+        american_to_decimal=american_to_decimal,
+        calculate_ev=calculate_ev,
     )

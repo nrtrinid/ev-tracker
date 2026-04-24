@@ -2,14 +2,7 @@
 
 The canonical schema history for this repo is the numbered migration chain in this directory:
 
-- `migration_001_multi_tenant.sql`
-- ...
-- `migration_018_player_prop_model_weights_and_research_rls.sql`
-- `migration_019_analytics_events.sql`
-- `migration_020_beta_invite_code_access.sql`
-- `migration_021_theme_preference.sql`
-- `migration_022_live_tracking_indexes.sql`
-- `migration_023_player_prop_model_candidate_observations.sql`
+- Migrations `001` through `023`, ending at `migration_023_player_prop_model_candidate_observations.sql`
 
 Current deploy parity is through `migration_023_player_prop_model_candidate_observations.sql`.
 

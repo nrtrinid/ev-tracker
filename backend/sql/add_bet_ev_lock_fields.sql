@@ -15,4 +15,4 @@ ALTER TABLE public.bets
 -- build_bet_response falls back to computed EV — this is acceptable since
 -- we cannot retroactively know which k was in effect.
 -- If you want to truly freeze legacy rows, trigger a one-off backfill via
--- the /admin/backfill-ev-locks endpoint (see backend/main.py).
+-- the /admin/backfill-ev-locks endpoint.

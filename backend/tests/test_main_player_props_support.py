@@ -2,7 +2,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from .test_utils import import_main_for_tests
+from services.bet_crud import compute_k_user
+from services.scan_runtime import scanner_supported_sports
 
 
 class _FakeQuery:
@@ -33,16 +34,13 @@ class _FakeDB:
 
 
 def test_player_props_surface_supports_nba_and_mlb(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
-
-    assert main._scanner_supported_sports("player_props") == [
+    assert scanner_supported_sports("player_props") == [
         "basketball_nba",
         "baseball_mlb",
     ]
 
 
 def test_compute_k_user_filters_bonus_bets_in_python(monkeypatch):
-    main = import_main_for_tests(monkeypatch)
     now = datetime.now(UTC)
     db = _FakeDB(
         [
@@ -89,7 +87,7 @@ def test_compute_k_user_filters_bonus_bets_in_python(monkeypatch):
         ]
     )
 
-    out = main.compute_k_user(db, "user-1")
+    out = compute_k_user(db, "user-1")
 
     assert (
         db.query.selected_fields

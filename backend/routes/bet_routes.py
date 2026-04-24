@@ -1,6 +1,6 @@
 """Bet CRUD HTTP routes.
 
-Extracted from main.py to reduce monolith size.
+Extracted from the former app monolith to reduce composition-file size.
 All business logic lives in services/bet_crud.py.
 """
 

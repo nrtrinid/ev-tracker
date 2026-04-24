@@ -95,9 +95,9 @@ def get_player_prop_weight_overrides(db=None) -> dict[str, dict[str, float]]:
 
     if db is None:
         try:
-            import main
+            from database import get_db
 
-            db = main.get_db()
+            db = get_db()
         except Exception:
             return {}
     if db is None:

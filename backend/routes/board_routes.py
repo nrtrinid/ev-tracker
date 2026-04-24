@@ -28,7 +28,8 @@ from models import (
     ScopedRefreshResponse,
 )
 from services.board_snapshot import load_board_snapshot, persist_scoped_refresh
-from services.bet_crud import _retry_supabase
+from services.ops_runtime import persist_ops_job_run as _persist_ops_job_run
+from services.ops_runtime import set_ops_status as _set_ops_status
 from services.player_prop_board import (
     BOARD_VIEW_BROWSE,
     BOARD_VIEW_OPPORTUNITIES,
@@ -41,6 +42,10 @@ from services.player_prop_board import (
     matches_player_prop_board_item,
     matches_player_prop_board_pickem_item,
 )
+from services.runtime_support import BOOT_ID as _BOOT_ID
+from services.runtime_support import log_event as _log_event
+from services.runtime_support import retry_supabase as _retry_supabase
+from services.scan_runtime import sync_pickem_research_from_props_payload as _sync_pickem_research_from_props_payload
 from services.scanner_duplicate_detection import annotate_sides_with_duplicate_state
 from utils.telemetry import rss_mb
 from utils.time_utils import utc_now_iso_z
@@ -57,18 +62,6 @@ _EMPTY_META = BoardSnapshotMeta(
     events_scanned=0,
     total_sides=0,
 )
-
-
-def _noop_log_event(*_args, **_kwargs) -> None:
-    return None
-
-
-def _noop_set_ops_status(*_args, **_kwargs) -> None:
-    return None
-
-
-def _noop_persist_ops_job_run(**_kwargs) -> None:
-    return None
 
 
 async def _refresh_player_props_result(*, source: str) -> dict:
@@ -112,22 +105,6 @@ async def _refresh_player_props_result(*, source: str) -> dict:
     merged["scanned_at"] = scanned_at_from_fetched_timestamp(oldest_fetched)
     merged["cache_hit"] = cache_hit
     return merged
-
-
-def _resolve_main_runtime_hooks():
-    """Best-effort access to main runtime helpers without hard crashing routes."""
-    try:
-        import main as main_module
-
-        log_event = getattr(main_module, "_log_event", _noop_log_event)
-        boot_id = getattr(main_module, "_BOOT_ID", None)
-        sync_pickem = getattr(main_module, "_sync_pickem_research_from_props_payload", lambda *_args, **_kwargs: None)
-        set_ops_status = getattr(main_module, "_set_ops_status", _noop_set_ops_status)
-        persist_ops_job_run = getattr(main_module, "_persist_ops_job_run", _noop_persist_ops_job_run)
-        return log_event, boot_id, sync_pickem, set_ops_status, persist_ops_job_run
-    except Exception:
-        return _noop_log_event, None, (lambda *_args, **_kwargs: None), _noop_set_ops_status, _noop_persist_ops_job_run
-
 
 def _scoped_refresh_label(surface: str) -> str:
     return "Manual Player Props Refresh" if surface == "player_props" else "Manual Game Lines Refresh"
@@ -301,8 +278,6 @@ def get_board_latest(user: dict = Depends(get_current_user)):
     nullable surface payloads. Returns an empty sentinel if the canonical
     snapshot is missing or malformed.
     """
-    _log_event, _BOOT_ID, _, _, _ = _resolve_main_runtime_hooks()
-
     request_id = f"board_latest_{uuid4().hex[:10]}"
     rss_before = rss_mb()
     mode = (os.getenv("BOARD_LATEST_MODE") or "full").strip().lower()
@@ -543,7 +518,6 @@ def get_board_latest_surface(
     user: dict = Depends(get_current_user),
 ):
     """Load a per-surface latest payload from global_scan_cache (surface:latest)."""
-    _log_event, _boot_id, _, _, _ = _resolve_main_runtime_hooks()
     from services.scan_cache import load_latest_scan_payload
 
     request_id = f"board_surface_{uuid4().hex[:10]}"
@@ -787,7 +761,6 @@ def get_board_latest_promos(
 
     Loads per-surface latest payloads and returns a capped combined sides list.
     """
-    _log_event, _boot_id, _, _, _ = _resolve_main_runtime_hooks()
     from services.scan_cache import load_latest_scan_payload
 
     request_id = f"board_promos_{uuid4().hex[:10]}"
@@ -902,7 +875,6 @@ async def refresh_board_scope(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to initialize database client: {e}")
 
-    _log_event, _boot_id, _sync_pickem_research_from_props_payload, _set_ops_status, _persist_ops_job_run = _resolve_main_runtime_hooks()
     started_at = utc_now_iso_z()
     started_clock = time.monotonic()
     run_id = f"scoped_refresh_{uuid4().hex[:10]}"

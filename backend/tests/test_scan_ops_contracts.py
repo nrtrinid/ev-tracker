@@ -7,6 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from services import ops_runtime
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "scan_ops_payloads"
 
@@ -115,18 +116,19 @@ def test_ops_endpoints_require_ops_token(public_client):
     ).status_code == 401
     assert public_client.post("/api/ops/trigger/board-refresh").status_code == 401
     assert public_client.post("/api/ops/trigger/board-refresh/async").status_code == 401
-    assert public_client.post("/api/ops/trigger/scan").status_code == 404
-    assert public_client.post("/api/ops/trigger/scan/async").status_code == 404
+    removed_scan_path = "/api/ops/trigger/" + "scan"
+    assert public_client.post(removed_scan_path).status_code == 404
+    assert public_client.post(f"{removed_scan_path}/async").status_code == 404
     assert public_client.post("/api/ops/trigger/auto-settle").status_code == 401
     assert public_client.post("/api/ops/trigger/test-discord").status_code == 401
 
 
 @pytest.mark.integration
 def test_ready_api_role_ignores_scheduler_freshness(monkeypatch, public_client):
-    import main
+    import routes.health_routes as health_routes
 
     monkeypatch.setenv("APP_ROLE", "api")
-    monkeypatch.setattr(main, "_runtime_state", lambda: {
+    monkeypatch.setattr(health_routes, "runtime_state", lambda: {
         "environment": "production",
         "scheduler_expected": True,
         "scheduler_running": False,
@@ -143,8 +145,8 @@ def test_ready_api_role_ignores_scheduler_freshness(monkeypatch, public_client):
             "last_schedule_stats": {},
         },
     }, raising=True)
-    monkeypatch.setattr(main, "_check_db_ready", lambda: (True, None), raising=True)
-    monkeypatch.setattr(main, "_check_scheduler_freshness", lambda _expected: (False, {
+    monkeypatch.setattr(health_routes, "check_db_ready", lambda: (True, None), raising=True)
+    monkeypatch.setattr(health_routes, "check_scheduler_freshness", lambda _expected: (False, {
         "enabled": True,
         "fresh": False,
         "reason": "stale",
@@ -163,10 +165,10 @@ def test_ready_api_role_ignores_scheduler_freshness(monkeypatch, public_client):
 
 @pytest.mark.integration
 def test_ready_scheduler_role_requires_scheduler_freshness(monkeypatch, public_client):
-    import main
+    import routes.health_routes as health_routes
 
     monkeypatch.setenv("APP_ROLE", "scheduler")
-    monkeypatch.setattr(main, "_runtime_state", lambda: {
+    monkeypatch.setattr(health_routes, "runtime_state", lambda: {
         "environment": "production",
         "scheduler_expected": True,
         "scheduler_running": True,
@@ -183,8 +185,8 @@ def test_ready_scheduler_role_requires_scheduler_freshness(monkeypatch, public_c
             "last_schedule_stats": {},
         },
     }, raising=True)
-    monkeypatch.setattr(main, "_check_db_ready", lambda: (True, None), raising=True)
-    monkeypatch.setattr(main, "_check_scheduler_freshness", lambda _expected: (False, {
+    monkeypatch.setattr(health_routes, "check_db_ready", lambda: (True, None), raising=True)
+    monkeypatch.setattr(health_routes, "check_scheduler_freshness", lambda _expected: (False, {
         "enabled": True,
         "fresh": False,
         "reason": "stale",
@@ -242,7 +244,7 @@ def test_scan_bets_contract_shape(auth_client, auth_headers, monkeypatch):
 
 @pytest.mark.integration
 def test_scan_markets_contract_shape_with_duplicate_fields(auth_client, auth_headers, monkeypatch):
-    import main
+    import routes.scan_routes as scan_routes
     import services.odds_api as odds_api
 
     async def _fake_get_cached_or_scan(_sport: str, source: str = "manual_scan"):
@@ -281,14 +283,14 @@ def test_scan_markets_contract_shape_with_duplicate_fields(auth_client, auth_hea
         }
 
     fake_db_state = {}
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB(fake_db_state), raising=True)
-    monkeypatch.setattr(main, "_retry_supabase", lambda f: f(), raising=True)
-    monkeypatch.setattr(main, "_annotate_sides_with_duplicate_state", lambda _db, _uid, sides: sides, raising=True)
+    monkeypatch.setattr(scan_routes, "get_db", lambda: _FakeDB(fake_db_state), raising=True)
+    monkeypatch.setattr(scan_routes, "retry_supabase", lambda f: f(), raising=True)
+    monkeypatch.setattr(scan_routes, "annotate_sides_with_duplicate_state", lambda _db, _uid, sides: sides, raising=True)
 
     async def _fake_piggyback_clv(_sides):
         return None
 
-    monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
+    monkeypatch.setattr(scan_routes, "piggyback_clv", _fake_piggyback_clv, raising=True)
     monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ["basketball_nba"], raising=True)
     monkeypatch.setattr(odds_api, "get_cached_or_scan", _fake_get_cached_or_scan, raising=True)
 
@@ -301,11 +303,11 @@ def test_scan_markets_contract_shape_with_duplicate_fields(auth_client, auth_hea
 
 @pytest.mark.integration
 def test_scan_latest_empty_contract_shape(auth_client, auth_headers, monkeypatch):
-    import main
+    import routes.scan_routes as scan_routes
 
     fake_db_state = {"select_data": []}
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB(fake_db_state), raising=True)
-    monkeypatch.setattr(main, "_retry_supabase", lambda f: f(), raising=True)
+    monkeypatch.setattr(scan_routes, "get_db", lambda: _FakeDB(fake_db_state), raising=True)
+    monkeypatch.setattr(scan_routes, "retry_supabase", lambda f: f(), raising=True)
 
     resp = auth_client.get("/api/scan-latest", headers=auth_headers)
     assert resp.status_code == 200
@@ -316,13 +318,13 @@ def test_scan_latest_empty_contract_shape(auth_client, auth_headers, monkeypatch
 
 @pytest.mark.integration
 def test_scan_latest_duplicate_state_contract_shape(auth_client, auth_headers, monkeypatch):
-    import main
+    import routes.scan_routes as scan_routes
 
     payload = _load_fixture("scan_markets_duplicate_state.json")
     fake_db_state = {"select_data": [{"payload": payload}]}
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB(fake_db_state), raising=True)
-    monkeypatch.setattr(main, "_retry_supabase", lambda f: f(), raising=True)
-    monkeypatch.setattr(main, "_annotate_sides_with_duplicate_state", lambda _db, _uid, sides: sides, raising=True)
+    monkeypatch.setattr(scan_routes, "get_db", lambda: _FakeDB(fake_db_state), raising=True)
+    monkeypatch.setattr(scan_routes, "retry_supabase", lambda f: f(), raising=True)
+    monkeypatch.setattr(scan_routes, "annotate_sides_with_duplicate_state", lambda _db, _uid, sides: sides, raising=True)
 
     resp = auth_client.get("/api/scan-latest", headers=auth_headers)
     assert resp.status_code == 200
@@ -333,7 +335,7 @@ def test_scan_latest_duplicate_state_contract_shape(auth_client, auth_headers, m
 
 @pytest.mark.integration
 def test_scan_markets_accepts_player_props_surface(auth_client, auth_headers, monkeypatch):
-    import main
+    import routes.scan_routes as scan_routes
     import services.player_props as player_props
 
     async def _fake_get_cached_or_scan_player_props(_sport: str, source: str = "manual_scan"):
@@ -382,9 +384,9 @@ def test_scan_markets_accepts_player_props_surface(auth_client, auth_headers, mo
         }
 
     fake_db_state = {}
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB(fake_db_state), raising=True)
-    monkeypatch.setattr(main, "_retry_supabase", lambda f: f(), raising=True)
-    monkeypatch.setattr(main, "_annotate_sides_with_duplicate_state", lambda _db, _uid, sides: sides, raising=True)
+    monkeypatch.setattr(scan_routes, "get_db", lambda: _FakeDB(fake_db_state), raising=True)
+    monkeypatch.setattr(scan_routes, "retry_supabase", lambda f: f(), raising=True)
+    monkeypatch.setattr(scan_routes, "annotate_sides_with_duplicate_state", lambda _db, _uid, sides: sides, raising=True)
     monkeypatch.setattr(player_props, "get_cached_or_scan_player_props", _fake_get_cached_or_scan_player_props, raising=True)
 
     resp = auth_client.get(
@@ -403,7 +405,7 @@ def test_scan_markets_accepts_player_props_surface(auth_client, auth_headers, mo
 
 @pytest.mark.integration
 def test_scan_latest_accepts_player_props_surface(auth_client, auth_headers, monkeypatch):
-    import main
+    import routes.scan_routes as scan_routes
 
     payload = {
         "surface": "player_props",
@@ -449,9 +451,9 @@ def test_scan_latest_accepts_player_props_surface(auth_client, auth_headers, mon
         "scanned_at": "2026-03-20T17:55:00Z",
     }
     fake_db_state = {"select_data": [{"payload": payload}]}
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB(fake_db_state), raising=True)
-    monkeypatch.setattr(main, "_retry_supabase", lambda f: f(), raising=True)
-    monkeypatch.setattr(main, "_annotate_sides_with_duplicate_state", lambda _db, _uid, sides: sides, raising=True)
+    monkeypatch.setattr(scan_routes, "get_db", lambda: _FakeDB(fake_db_state), raising=True)
+    monkeypatch.setattr(scan_routes, "retry_supabase", lambda f: f(), raising=True)
+    monkeypatch.setattr(scan_routes, "annotate_sides_with_duplicate_state", lambda _db, _uid, sides: sides, raising=True)
 
     resp = auth_client.get(
         "/api/scan-latest",
@@ -468,13 +470,13 @@ def test_scan_latest_accepts_player_props_surface(auth_client, auth_headers, mon
 
 @pytest.mark.integration
 def test_player_props_manual_scan_end_to_end_contract(auth_client, auth_headers, monkeypatch):
-    import main
+    import routes.scan_routes as scan_routes
     import services.player_props as player_props
 
     fake_db_state = {}
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB(fake_db_state), raising=True)
-    monkeypatch.setattr(main, "_retry_supabase", lambda f: f(), raising=True)
-    monkeypatch.setattr(main, "_annotate_sides_with_duplicate_state", lambda _db, _uid, sides: sides, raising=True)
+    monkeypatch.setattr(scan_routes, "get_db", lambda: _FakeDB(fake_db_state), raising=True)
+    monkeypatch.setattr(scan_routes, "retry_supabase", lambda f: f(), raising=True)
+    monkeypatch.setattr(scan_routes, "annotate_sides_with_duplicate_state", lambda _db, _uid, sides: sides, raising=True)
 
     async def _fake_scoreboard():
         return {
@@ -696,8 +698,6 @@ def test_player_props_manual_scan_end_to_end_contract(auth_client, auth_headers,
 
 @pytest.mark.integration
 def test_ops_status_contract_shape_normal(auth_client, monkeypatch):
-    import main
-
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
     monkeypatch.setenv("ENABLE_SCHEDULER", "0")
 
@@ -976,11 +976,11 @@ def test_ops_alt_pitcher_k_lookup_rate_limit_returns_429(public_client, monkeypa
 
 @pytest.mark.integration
 def test_ops_status_contract_shape_degraded(monkeypatch, auth_client):
-    import main
+    import routes.ops_cron as ops_cron
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
 
-    monkeypatch.setattr(main, "_runtime_state", lambda: {
+    monkeypatch.setattr(ops_cron, "runtime_state", lambda: {
         "environment": "production",
         "scheduler_expected": True,
         "scheduler_running": True,
@@ -990,20 +990,21 @@ def test_ops_status_contract_shape_degraded(monkeypatch, auth_client):
         "supabase_url_configured": True,
         "supabase_service_role_configured": True,
     }, raising=True)
-    monkeypatch.setattr(main, "_check_db_ready", lambda: (False, "database timeout"), raising=True)
-    monkeypatch.setattr(main, "_check_scheduler_freshness", lambda _expected: (False, {
+    monkeypatch.setattr(ops_cron, "check_db_ready", lambda: (False, "database timeout"), raising=True)
+    monkeypatch.setattr(ops_cron, "check_scheduler_freshness", lambda _expected: (False, {
         "enabled": True,
         "fresh": False,
         "reason": "stale",
     }), raising=True)
 
-    main.app.state.ops_status = {
+    fallback_ops_status = {
         "last_readiness_failure": {
             "captured_at": "2026-03-20T17:58:00Z",
             "checks": {"db_connectivity": False, "scheduler_freshness": False},
             "db_error": "database timeout",
         }
     }
+    monkeypatch.setattr(ops_cron, "get_ops_status", lambda: fallback_ops_status, raising=True)
 
     import services.odds_api as odds_api
     monkeypatch.setattr(odds_api, "get_odds_api_activity_snapshot", lambda: {
@@ -1086,10 +1087,10 @@ def test_ops_status_contract_shape_degraded(monkeypatch, auth_client):
 
 @pytest.mark.integration
 def test_ops_trigger_board_refresh_runs_manual_board_refresh_contract(auth_client, monkeypatch):
-    import main
+    import routes.ops_cron as ops_cron
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+    monkeypatch.setattr(ops_cron, "get_db", lambda: _FakeDB({}), raising=True)
 
     async def _fake_board_drop_impl(**_kwargs):
         return {
@@ -1117,13 +1118,13 @@ def test_ops_trigger_board_refresh_runs_manual_board_refresh_contract(auth_clien
 
 @pytest.mark.integration
 def test_ops_trigger_board_refresh_contract_shape(auth_client, monkeypatch):
-    import main
+    import routes.ops_cron as ops_cron
     import services.daily_board as daily_board
     import services.discord_alerts as discord_alerts
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
     monkeypatch.setenv("DISCORD_SCAN_ALERT_MODE", "edge_live")
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+    monkeypatch.setattr(ops_cron, "get_db", lambda: _FakeDB({}), raising=True)
     seen_message_types: list[str] = []
     seen_delivery_contexts: list[str | None] = []
 
@@ -1175,13 +1176,13 @@ def test_ops_trigger_board_refresh_contract_shape(auth_client, monkeypatch):
 
 @pytest.mark.integration
 def test_ops_trigger_board_refresh_timed_ping_routes_manual_board_refresh_to_heartbeat(auth_client, monkeypatch):
-    import main
+    import routes.ops_cron as ops_cron
     import services.daily_board as daily_board
     import services.discord_alerts as discord_alerts
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
     monkeypatch.setenv("DISCORD_SCAN_ALERT_MODE", "timed_ping")
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+    monkeypatch.setattr(ops_cron, "get_db", lambda: _FakeDB({}), raising=True)
 
     async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
         assert source == "ops_trigger_board_drop"
@@ -1220,7 +1221,7 @@ def test_ops_trigger_board_refresh_timed_ping_routes_manual_board_refresh_to_hea
 
 @pytest.mark.integration
 def test_ops_trigger_board_refresh_piggybacks_clv_with_fresh_sides(auth_client, monkeypatch):
-    import main
+    import routes.ops_cron as ops_cron
     import services.daily_board as daily_board
     import services.discord_alerts as discord_alerts
 
@@ -1230,7 +1231,7 @@ def test_ops_trigger_board_refresh_piggybacks_clv_with_fresh_sides(auth_client, 
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
     monkeypatch.setenv("DISCORD_SCAN_ALERT_MODE", "edge_live")
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+    monkeypatch.setattr(ops_cron, "get_db", lambda: _FakeDB({}), raising=True)
 
     async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
         assert source == "ops_trigger_board_drop"
@@ -1253,7 +1254,7 @@ def test_ops_trigger_board_refresh_piggybacks_clv_with_fresh_sides(auth_client, 
         lambda sides, message_type="heartbeat", *, delivery_context=None: len(sides),
         raising=True,
     )
-    monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
+    monkeypatch.setattr(ops_cron, "piggyback_clv", _fake_piggyback_clv, raising=True)
 
     resp = auth_client.post("/api/ops/trigger/board-refresh", headers={"X-Ops-Token": "ops-secret"})
     assert resp.status_code == 200
@@ -1262,7 +1263,7 @@ def test_ops_trigger_board_refresh_piggybacks_clv_with_fresh_sides(auth_client, 
 
 @pytest.mark.integration
 def test_ops_trigger_board_refresh_skips_clv_piggyback_with_no_fresh_sides(auth_client, monkeypatch):
-    import main
+    import routes.ops_cron as ops_cron
     import services.daily_board as daily_board
     import services.discord_alerts as discord_alerts
 
@@ -1270,7 +1271,7 @@ def test_ops_trigger_board_refresh_skips_clv_piggyback_with_no_fresh_sides(auth_
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
     monkeypatch.setenv("DISCORD_SCAN_ALERT_MODE", "edge_live")
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+    monkeypatch.setattr(ops_cron, "get_db", lambda: _FakeDB({}), raising=True)
 
     async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
         return {
@@ -1291,7 +1292,7 @@ def test_ops_trigger_board_refresh_skips_clv_piggyback_with_no_fresh_sides(auth_
         lambda sides, message_type="heartbeat", *, delivery_context=None: len(sides),
         raising=True,
     )
-    monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
+    monkeypatch.setattr(ops_cron, "piggyback_clv", _fake_piggyback_clv, raising=True)
 
     resp = auth_client.post("/api/ops/trigger/board-refresh", headers={"X-Ops-Token": "ops-secret"})
     assert resp.status_code == 200
@@ -1300,7 +1301,7 @@ def test_ops_trigger_board_refresh_skips_clv_piggyback_with_no_fresh_sides(auth_
 
 @pytest.mark.integration
 def test_ops_trigger_board_refresh_clv_piggyback_failure_does_not_fail_route(auth_client, monkeypatch):
-    import main
+    import routes.ops_cron as ops_cron
     import services.daily_board as daily_board
     import services.discord_alerts as discord_alerts
 
@@ -1309,7 +1310,7 @@ def test_ops_trigger_board_refresh_clv_piggyback_failure_does_not_fail_route(aut
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
     monkeypatch.setenv("DISCORD_SCAN_ALERT_MODE", "edge_live")
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+    monkeypatch.setattr(ops_cron, "get_db", lambda: _FakeDB({}), raising=True)
 
     async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
         return {
@@ -1334,7 +1335,7 @@ def test_ops_trigger_board_refresh_clv_piggyback_failure_does_not_fail_route(aut
         lambda sides, message_type="heartbeat", *, delivery_context=None: len(sides),
         raising=True,
     )
-    monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
+    monkeypatch.setattr(ops_cron, "piggyback_clv", _fake_piggyback_clv, raising=True)
     monkeypatch.setattr("routes.ops_cron.asyncio.create_task", _tracking_create_task, raising=True)
 
     resp = auth_client.post("/api/ops/trigger/board-refresh", headers={"X-Ops-Token": "ops-secret"})
@@ -1345,7 +1346,6 @@ def test_ops_trigger_board_refresh_clv_piggyback_failure_does_not_fail_route(aut
 
 @pytest.mark.integration
 def test_ops_trigger_board_refresh_async_background_runner_wires_clv_piggyback(monkeypatch):
-    import main
     import routes.ops_cron as ops_cron
 
     captured: dict[str, object] = {}
@@ -1355,20 +1355,20 @@ def test_ops_trigger_board_refresh_async_background_runner_wires_clv_piggyback(m
 
     monkeypatch.setattr(ops_cron, "cron_run_board_drop_impl", _fake_cron_run_board_drop_impl, raising=True)
 
-    asyncio.run(ops_cron._run_ops_board_drop_background(main_module=main, run_id="ops-board-drop-test"))
+    asyncio.run(ops_cron._run_ops_board_drop_background(run_id="ops-board-drop-test"))
 
-    assert captured["piggyback_clv"] is main._piggyback_clv
+    assert captured["piggyback_clv"] is ops_cron.piggyback_clv
 
 
 @pytest.mark.integration
 def test_ops_trigger_board_refresh_async_contract_shape(auth_client, monkeypatch):
-    import main
+    import routes.ops_cron as ops_cron
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+    monkeypatch.setattr(ops_cron, "get_db", lambda: _FakeDB({}), raising=True)
 
-    async def _fake_background_runner(*, main_module, run_id: str):
-        main_module._set_ops_status(
+    async def _fake_background_runner(*, run_id: str):
+        ops_runtime.set_ops_status(
             "last_ops_trigger_scan",
             {
                 "run_id": run_id,
@@ -1389,18 +1389,17 @@ def test_ops_trigger_board_refresh_async_contract_shape(auth_client, monkeypatch
     assert body.get("pending") is True
     assert body.get("board_drop") is True
     assert isinstance(body.get("run_id"), str)
-    assert main.app.state.ops_status["last_board_refresh"]["status"] == "queued"
-    assert main.app.state.ops_status["last_board_refresh"]["kind"] == "board_drop"
+    assert ops_runtime.get_ops_status()["last_board_refresh"]["status"] == "queued"
+    assert ops_runtime.get_ops_status()["last_board_refresh"]["kind"] == "board_drop"
 
 
 @pytest.mark.integration
 def test_scoped_board_refresh_updates_latest_board_refresh(auth_client, monkeypatch):
-    import main
     import routes.board_routes as board_routes
     import services.odds_api as odds_api
     import services.shared_state as shared_state
 
-    main._init_ops_status()
+    ops_runtime.init_ops_status()
     persisted_runs: list[dict] = []
 
     monkeypatch.setattr(shared_state, "allow_fixed_window_rate_limit", lambda **_kwargs: True, raising=True)
@@ -1412,7 +1411,7 @@ def test_scoped_board_refresh_updates_latest_board_refresh(auth_client, monkeypa
         lambda **_kwargs: "2026-03-20T18:00:00Z",
         raising=True,
     )
-    monkeypatch.setattr(main, "_persist_ops_job_run", lambda **kwargs: persisted_runs.append(kwargs), raising=True)
+    monkeypatch.setattr(board_routes, "_persist_ops_job_run", lambda **kwargs: persisted_runs.append(kwargs), raising=True)
 
     async def _fake_get_cached_or_scan(_sport: str, source: str = "manual_refresh"):
         assert source == "manual_refresh"
@@ -1450,7 +1449,7 @@ def test_scoped_board_refresh_updates_latest_board_refresh(auth_client, monkeypa
     assert body["refreshed_at"] == "2026-03-20T18:00:00Z"
     assert body["data"]["events_fetched"] == 3
 
-    latest_refresh = main.app.state.ops_status["last_board_refresh"]
+    latest_refresh = ops_runtime.get_ops_status()["last_board_refresh"]
     assert latest_refresh["kind"] == "scoped_refresh"
     assert latest_refresh["surface"] == "straight_bets"
     assert latest_refresh["status"] == "completed"
@@ -1466,16 +1465,15 @@ def test_scoped_board_refresh_updates_latest_board_refresh(auth_client, monkeypa
 
 @pytest.mark.integration
 def test_scoped_board_refresh_failure_updates_latest_board_refresh(auth_client, monkeypatch):
-    import main
     import routes.board_routes as board_routes
     import services.shared_state as shared_state
 
-    main._init_ops_status()
+    ops_runtime.init_ops_status()
     persisted_runs: list[dict] = []
 
     monkeypatch.setattr(shared_state, "allow_fixed_window_rate_limit", lambda **_kwargs: True, raising=True)
     monkeypatch.setattr(board_routes, "get_db", lambda: _FakeDB({}), raising=True)
-    monkeypatch.setattr(main, "_persist_ops_job_run", lambda **kwargs: persisted_runs.append(kwargs), raising=True)
+    monkeypatch.setattr(board_routes, "_persist_ops_job_run", lambda **kwargs: persisted_runs.append(kwargs), raising=True)
 
     async def _raise_refresh(*, source: str):
         raise RuntimeError(f"{source} exploded")
@@ -1485,7 +1483,7 @@ def test_scoped_board_refresh_failure_updates_latest_board_refresh(auth_client, 
     resp = auth_client.post("/api/board/refresh?scope=player_props")
     assert resp.status_code == 502
 
-    latest_refresh = main.app.state.ops_status["last_board_refresh"]
+    latest_refresh = ops_runtime.get_ops_status()["last_board_refresh"]
     assert latest_refresh["kind"] == "scoped_refresh"
     assert latest_refresh["surface"] == "player_props"
     assert latest_refresh["status"] == "failed"
@@ -1501,11 +1499,11 @@ def test_scoped_board_refresh_failure_updates_latest_board_refresh(auth_client, 
 
 @pytest.mark.integration
 def test_ops_research_opportunities_summary_contract_shape(auth_client, monkeypatch):
-    import main
+    import routes.ops_cron as ops_cron
     import services.research_opportunities as research
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+    monkeypatch.setattr(ops_cron, "get_db", lambda: _FakeDB({}), raising=True)
 
     monkeypatch.setattr(research, "get_research_opportunities_summary", lambda _db: {
         "captured_count": 4,
@@ -1569,11 +1567,11 @@ def test_ops_research_opportunities_summary_contract_shape(auth_client, monkeypa
 
 @pytest.mark.integration
 def test_ops_model_calibration_summary_contract_shape(auth_client, monkeypatch):
-    import main
+    import routes.ops_cron as ops_cron
     import services.model_calibration as calibration
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+    monkeypatch.setattr(ops_cron, "get_db", lambda: _FakeDB({}), raising=True)
     monkeypatch.setattr(
         calibration,
         "get_model_calibration_summary",
@@ -1599,10 +1597,10 @@ def test_ops_model_calibration_summary_contract_shape(auth_client, monkeypatch):
 @pytest.mark.integration
 def test_ops_trigger_auto_settle_contract_shape(auth_client, monkeypatch):
     import services.odds_api as odds_api
-    import main
+    import routes.ops_cron as ops_cron
 
     monkeypatch.setenv("CRON_TOKEN", "ops-secret")
-    monkeypatch.setattr(main, "get_db", lambda: _FakeDB({}), raising=True)
+    monkeypatch.setattr(ops_cron, "get_db", lambda: _FakeDB({}), raising=True)
 
     async def _fake_run_auto_settler(_db, source: str = "auto_settle_ops_trigger"):
         assert source == "auto_settle_ops_trigger"

@@ -2,6 +2,7 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Header
 
+from database import get_db
 from dependencies import require_current_user
 from models import (
     OnboardingEventRequest,
@@ -10,7 +11,10 @@ from models import (
     SettingsUpdate,
 )
 from services.analytics_events import capture_backend_event
+from services.bet_crud import DEFAULT_SPORTSBOOKS, build_effective_k, compute_k_user, get_user_settings
 from utils.request_context import get_request_id
+from services.runtime_support import utc_now_iso
+from services.settings_response import build_settings_response as build_settings_response_service
 from services.onboarding_state import (
     apply_onboarding_event as apply_onboarding_event_transition,
     is_valid_onboarding_event,
@@ -20,6 +24,18 @@ from services.onboarding_state import (
 
 
 router = APIRouter()
+
+
+def build_settings_response(db, user_id: str, settings: dict[str, Any]) -> SettingsResponse:
+    return build_settings_response_service(
+        db=db,
+        user_id=user_id,
+        settings=settings,
+        default_sportsbooks=DEFAULT_SPORTSBOOKS,
+        compute_k_user=compute_k_user,
+        build_effective_k=build_effective_k,
+        settings_response_cls=SettingsResponse,
+    )
 
 
 def build_settings_update_payload(settings_update) -> dict[str, Any]:
@@ -211,14 +227,12 @@ def apply_onboarding_event_impl(
 
 @router.get("/settings", response_model=SettingsResponse)
 def get_settings(user: dict = Depends(require_current_user)):
-    import main
-
     return get_settings_impl(
         user=user,
-        get_db=main.get_db,
-        get_user_settings=main.get_user_settings,
-        build_settings_response=main._build_settings_response,
-        utc_now_iso=main._utc_now_iso,
+        get_db=get_db,
+        get_user_settings=get_user_settings,
+        build_settings_response=build_settings_response,
+        utc_now_iso=utc_now_iso,
     )
 
 
@@ -227,17 +241,15 @@ def update_settings(
     settings: SettingsUpdate,
     user: dict = Depends(require_current_user),
 ):
-    import main
-
     try:
         return update_settings_impl(
             settings_update=settings,
             user=user,
-            get_db=main.get_db,
-            get_user_settings=main.get_user_settings,
-            build_settings_response=main._build_settings_response,
+            get_db=get_db,
+            get_user_settings=get_user_settings,
+            build_settings_response=build_settings_response,
             build_update_payload=build_settings_update_payload,
-            utc_now_iso=main._utc_now_iso,
+            utc_now_iso=utc_now_iso,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -245,13 +257,11 @@ def update_settings(
 
 @router.get("/onboarding/state", response_model=OnboardingStateResponse)
 def get_onboarding_state(user: dict = Depends(require_current_user)):
-    import main
-
     return get_onboarding_state_impl(
         user=user,
-        get_db=main.get_db,
-        get_user_settings=main.get_user_settings,
-        utc_now_iso=main._utc_now_iso,
+        get_db=get_db,
+        get_user_settings=get_user_settings,
+        utc_now_iso=utc_now_iso,
     )
 
 
@@ -261,13 +271,11 @@ def apply_onboarding_event(
     user: dict = Depends(require_current_user),
     session_id: str | None = Header(default=None, alias="X-Session-ID"),
 ):
-    import main
-
     return apply_onboarding_event_impl(
         event=event,
         user=user,
         session_id=session_id,
-        get_db=main.get_db,
-        get_user_settings=main.get_user_settings,
-        utc_now_iso=main._utc_now_iso,
+        get_db=get_db,
+        get_user_settings=get_user_settings,
+        utc_now_iso=utc_now_iso,
     )

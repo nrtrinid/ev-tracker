@@ -2,8 +2,10 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from database import get_db
 from dependencies import require_current_user
 from models import BetCreate, BetResponse, ParlaySlipCreate, ParlaySlipLogRequest, ParlaySlipResponse, ParlaySlipUpdate
+from services.bet_crud import create_bet_impl
 from services.parlay_slips import (
     build_parlay_logged_bet_payload,
     build_parlay_slip_insert_payload,
@@ -11,6 +13,7 @@ from services.parlay_slips import (
     parlay_slip_row_to_response_payload,
     parlay_slip_rows_to_response_payloads,
 )
+from services.runtime_support import utc_now_iso
 
 
 router = APIRouter()
@@ -172,11 +175,9 @@ def log_parlay_slip_impl(
 
 @router.get("/parlay-slips", response_model=list[ParlaySlipResponse])
 def list_parlay_slips(user: dict = Depends(require_current_user)):
-    import main
-
     return list_parlay_slips_impl(
         user=user,
-        get_db=main.get_db,
+        get_db=get_db,
         build_response=lambda payload: ParlaySlipResponse(**payload),
     )
 
@@ -186,15 +187,13 @@ def create_parlay_slip(
     slip: ParlaySlipCreate,
     user: dict = Depends(require_current_user),
 ):
-    import main
-
     return create_parlay_slip_impl(
         slip=slip,
         user=user,
-        get_db=main.get_db,
+        get_db=get_db,
         build_insert_payload=build_parlay_slip_insert_payload,
         build_response=lambda payload: ParlaySlipResponse(**payload),
-        utc_now_iso=main._utc_now_iso,
+        utc_now_iso=utc_now_iso,
     )
 
 
@@ -204,16 +203,14 @@ def update_parlay_slip(
     slip_update: ParlaySlipUpdate,
     user: dict = Depends(require_current_user),
 ):
-    import main
-
     return update_parlay_slip_impl(
         slip_id=slip_id,
         slip_update=slip_update,
         user=user,
-        get_db=main.get_db,
+        get_db=get_db,
         build_update_payload=build_parlay_slip_update_payload,
         build_response=lambda payload: ParlaySlipResponse(**payload),
-        utc_now_iso=main._utc_now_iso,
+        utc_now_iso=utc_now_iso,
     )
 
 
@@ -222,12 +219,10 @@ def delete_parlay_slip(
     slip_id: str,
     user: dict = Depends(require_current_user),
 ):
-    import main
-
     return delete_parlay_slip_impl(
         slip_id=slip_id,
         user=user,
-        get_db=main.get_db,
+        get_db=get_db,
     )
 
 
@@ -237,15 +232,12 @@ def log_parlay_slip(
     log_request: ParlaySlipLogRequest,
     user: dict = Depends(require_current_user),
 ):
-    import main
-    from services.bet_crud import create_bet_impl
-
     return log_parlay_slip_impl(
         slip_id=slip_id,
         log_request=log_request,
         user=user,
-        get_db=main.get_db,
+        get_db=get_db,
         build_logged_bet_payload_fn=build_parlay_logged_bet_payload,
-        create_bet_fn=lambda bet, logged_user: create_bet_impl(main.get_db(), logged_user, bet),
-        utc_now_iso=main._utc_now_iso,
+        create_bet_fn=lambda bet, logged_user: create_bet_impl(get_db(), logged_user, bet),
+        utc_now_iso=utc_now_iso,
     )

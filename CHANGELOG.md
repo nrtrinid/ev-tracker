@@ -15,7 +15,7 @@ Version labels use pre-release suffixes until the app is ready for outside users
   - Added backend-owned `/bets/live` snapshots for compact Bets-page live status, score, and supported NBA player-prop progress.
   - Added ESPN-backed live provider normalization with shared cache/stale fallback behavior and a provider abstraction for future documented backups.
   - Added a fixed-height live chip to Open Bets cards so live state appears inline without adding a default card row.
-  - Added migration `database/migration_022_live_tracking_indexes.sql` for pending-bet live-window lookup performance.
+  - Added the live-tracking index migration for pending-bet live-window lookup performance.
   - Added focused backend and frontend tests for live snapshot contracts, provider normalization, and chip-state formatting.
   - Expanded live tracking to MLB via StatsAPI-backed game matching, inning-aware live state, and compact progress counters for the safe MLB prop set (`pitcher_strikeouts`, `pitcher_strikeouts_alternate`, `batter_total_bases`, `batter_total_bases_alternate`, `batter_hits`, `batter_hits_alternate`, `batter_hits_runs_rbis`).
 
@@ -163,7 +163,7 @@ Version labels use pre-release suffixes until the app is ready for outside users
 ### Changed
 
 - Scanner page now runs a two-stage client pipeline: lens ranking first, then result filters.
-- Backend app bootstrap now includes router registration while keeping core handler implementations in `main.py`.
+- Backend app bootstrap now owns router registration while core handlers live in route/service modules.
 
 ### Docs
 
