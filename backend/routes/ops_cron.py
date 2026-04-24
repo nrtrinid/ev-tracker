@@ -139,7 +139,11 @@ async def cron_run_scan_impl(
                     )
                 except (TypeError, ValueError):
                     min_remaining = str(remaining)
-            alerts_scheduled += schedule_alerts(sides)
+            alerts_scheduled += schedule_alerts(
+                sides,
+                message_type="alert",
+                delivery_context="scheduled_scan",
+            )
             schedule_stats = get_last_schedule_stats()
             alert_skip_totals["skipped_memory_dedupe"] += int(schedule_stats.get("skipped_memory_dedupe") or 0)
             alert_skip_totals["skipped_shared_dedupe"] += int(schedule_stats.get("skipped_shared_dedupe") or 0)
@@ -328,6 +332,8 @@ async def cron_run_board_drop_impl(
     board_drop_source: str = "ops_trigger_board_drop",
     ops_status_key: str = "last_ops_trigger_scan",
     scan_label: str = "Ops Manual Board Refresh",
+    notification_message_type: str = "heartbeat",
+    notification_delivery_context: str | None = None,
 ) -> dict[str, Any]:
     require_valid_cron_token(x_cron_token)
 
@@ -335,8 +341,6 @@ async def cron_run_board_drop_impl(
     started_clock = time.monotonic()
     started = _utc_now_iso()
     log_event(f"{log_prefix}.started", run_id=run_id, started_at=started, scan_label=scan_label)
-    notification_message_type = "heartbeat" if ops_status_key == "last_ops_trigger_scan" else "alert"
-
     from services.daily_board import run_daily_board_drop
     from services.discord_alerts import (
         DiscordDeliveryError,
@@ -430,7 +434,11 @@ async def cron_run_board_drop_impl(
 
         scan_alert_mode = (os.getenv("DISCORD_SCAN_ALERT_MODE") or DISCORD_SCAN_ALERT_MODE_TIMED_PING).strip().lower()
         if scan_alert_mode == DISCORD_SCAN_ALERT_MODE_EDGE_LIVE:
-            alerts_scheduled += schedule_alerts(fresh_sides, message_type=notification_message_type)
+            alerts_scheduled += schedule_alerts(
+                fresh_sides,
+                message_type=notification_message_type,
+                delivery_context=notification_delivery_context,
+            )
             schedule_stats = get_last_schedule_stats()
             alert_skip_totals["skipped_memory_dedupe"] += int(schedule_stats.get("skipped_memory_dedupe") or 0)
             alert_skip_totals["skipped_shared_dedupe"] += int(schedule_stats.get("skipped_shared_dedupe") or 0)
@@ -441,6 +449,7 @@ async def cron_run_board_drop_impl(
                 discord_alert_schedule=schedule_stats,
                 scan_alert_mode=scan_alert_mode,
                 message_type=notification_message_type,
+                delivery_context=notification_delivery_context,
             )
         else:
             board_alert_payload = build_board_drop_alert_payload(
@@ -453,7 +462,11 @@ async def cron_run_board_drop_impl(
                 },
             )
             try:
-                delivery = await send_discord_webhook(board_alert_payload, message_type=notification_message_type)
+                delivery = await send_discord_webhook(
+                    board_alert_payload,
+                    message_type=notification_message_type,
+                    delivery_context=notification_delivery_context,
+                )
                 _raise_if_delivery_disabled(
                     delivery,
                     run_id=run_id,
@@ -490,6 +503,7 @@ async def cron_run_board_drop_impl(
                 run_id=run_id,
                 scan_alert_mode=scan_alert_mode,
                 message_type=notification_message_type,
+                delivery_context=notification_delivery_context,
                 delivery_status=board_alert.get("delivery_status"),
                 status_code=board_alert.get("status_code"),
                 route_kind=board_alert.get("route_kind"),
@@ -1099,7 +1113,7 @@ async def cron_test_discord_impl(
         "embeds": [
             {
                 "title": "Webhook test",
-                "description": "If you can read this, DISCORD_WEBHOOK_URL is working.",
+                "description": "If you can read this, DISCORD_DEBUG_WEBHOOK_URL is working.",
                 "fields": [
                     {"name": "Server time (UTC)", "value": datetime.now(UTC).isoformat() + "Z", "inline": False},
                 ],
@@ -1109,11 +1123,6 @@ async def cron_test_discord_impl(
 
     try:
         delivery = await send_discord_webhook(payload, message_type="test")
-        _raise_if_delivery_disabled(delivery, run_id=run_id, fallback_message_type="test")
-    except TypeError as exc:
-        if "message_type" not in str(exc):
-            raise
-        delivery = await send_discord_webhook(payload)
         _raise_if_delivery_disabled(delivery, run_id=run_id, fallback_message_type="test")
     except HTTPException:
         raise
@@ -1204,8 +1213,7 @@ async def _run_ops_board_drop_background(*, main_module: Any, run_id: str) -> No
         )
 
 
-@router.post("/api/ops/trigger/scan/async", status_code=202)
-async def ops_trigger_scan_async(
+async def _ops_trigger_board_refresh_async(
     x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
     _auth: None = Depends(require_ops_token),
@@ -1273,6 +1281,24 @@ async def ops_trigger_scan_async(
     return accepted_payload
 
 
+@router.post("/api/ops/trigger/board-refresh/async", status_code=202)
+async def ops_trigger_board_refresh_async(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    return await _ops_trigger_board_refresh_async(x_ops_token=x_ops_token, x_cron_token=x_cron_token, _auth=_auth)
+
+
+@router.post("/api/ops/trigger/scan/async", status_code=202)
+async def ops_trigger_scan_async(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    return await _ops_trigger_board_refresh_async(x_ops_token=x_ops_token, x_cron_token=x_cron_token, _auth=_auth)
+
+
 async def cron_test_discord_alert_impl(
     x_cron_token: str | None,
     *,
@@ -1308,15 +1334,6 @@ async def cron_test_discord_alert_impl(
 
     try:
         delivery = await send_discord_webhook(payload, message_type="test")
-        _raise_if_delivery_disabled(
-            delivery,
-            run_id=run_id,
-            fallback_message_type="test",
-        )
-    except TypeError as exc:
-        if "message_type" not in str(exc):
-            raise
-        delivery = await send_discord_webhook(payload)
         _raise_if_delivery_disabled(
             delivery,
             run_id=run_id,
@@ -1364,8 +1381,7 @@ async def cron_test_discord_alert_impl(
     }
 
 
-@router.post("/api/ops/trigger/scan")
-async def ops_trigger_scan(
+async def _ops_trigger_board_refresh(
     x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
     x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
     _auth: None = Depends(require_ops_token),
@@ -1388,6 +1404,24 @@ async def ops_trigger_scan(
         ops_status_key="last_ops_trigger_scan",
         scan_label="Ops Manual Board Refresh",
     )
+
+
+@router.post("/api/ops/trigger/board-refresh")
+async def ops_trigger_board_refresh(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    return await _ops_trigger_board_refresh(x_ops_token=x_ops_token, x_cron_token=x_cron_token, _auth=_auth)
+
+
+@router.post("/api/ops/trigger/scan")
+async def ops_trigger_scan(
+    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
+    x_cron_token: str | None = Header(default=None, alias="X-Cron-Token"),
+    _auth: None = Depends(require_ops_token),
+):
+    return await _ops_trigger_board_refresh(x_ops_token=x_ops_token, x_cron_token=x_cron_token, _auth=_auth)
 
 
 @router.post("/api/ops/trigger/auto-settle")

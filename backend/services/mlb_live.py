@@ -322,6 +322,16 @@ def _candidate_team_pair(candidate: LiveBetCandidate) -> tuple[str, str]:
     )
 
 
+def _candidate_team_pairs(candidate: LiveBetCandidate) -> list[tuple[str, str]]:
+    away_key, home_key = _candidate_team_pair(candidate)
+    if not away_key or not home_key:
+        return []
+    pairs = [(away_key, home_key)]
+    if candidate.surface == "player_props" and away_key != home_key:
+        pairs.append((home_key, away_key))
+    return pairs
+
+
 def _score_from_linescore(linescore: dict[str, Any], side: str) -> float | None:
     teams = linescore.get("teams") or {}
     if not isinstance(teams, dict):
@@ -401,13 +411,13 @@ def _match_event_for_candidate(
         if event.provider_event_id in provider_ids:
             return event, "provider_event_id", None
 
-    away_key, home_key = _candidate_team_pair(candidate)
-    if not away_key or not home_key:
+    candidate_pairs = _candidate_team_pairs(candidate)
+    if not candidate_pairs:
         return None, "unresolved", "missing_team_mapping"
 
     pair_matches = [
         event for event in events
-        if _event_team_pair(event) == (away_key, home_key)
+        if _event_team_pair(event) in candidate_pairs
     ]
     if not pair_matches:
         return None, "unresolved", "no_provider_event_match"

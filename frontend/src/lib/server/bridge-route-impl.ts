@@ -412,8 +412,10 @@ export async function postAdminRefreshMarketsRouteImpl(deps: RefreshMarketsRoute
   }
 
   try {
-    const asyncEndpoint = `${backendBaseUrl}/api/ops/trigger/scan/async`;
-    const fallbackEndpoint = `${backendBaseUrl}/api/ops/trigger/scan`;
+    const asyncEndpoint = `${backendBaseUrl}/api/ops/trigger/board-refresh/async`;
+    const fallbackEndpoint = `${backendBaseUrl}/api/ops/trigger/board-refresh`;
+    const legacyAsyncEndpoint = `${backendBaseUrl}/api/ops/trigger/scan/async`;
+    const legacyFallbackEndpoint = `${backendBaseUrl}/api/ops/trigger/scan`;
     const fetchFn = deps.fetchFn ?? fetch;
     const timeoutMs = resolveTimeoutMs(deps.timeoutMs, adminScanBridgeTimeoutMs());
     const controller = new AbortController();
@@ -433,8 +435,14 @@ export async function postAdminRefreshMarketsRouteImpl(deps: RefreshMarketsRoute
     try {
       resp = await fetchFn(asyncEndpoint, requestInit);
       if (resp.status === 404) {
+        resp = await fetchFn(legacyAsyncEndpoint, requestInit);
+      }
+      if (resp.status === 404) {
         // Backward compatibility: older backend deployments only expose the sync endpoint.
         resp = await fetchFn(fallbackEndpoint, requestInit);
+      }
+      if (resp.status === 404) {
+        resp = await fetchFn(legacyFallbackEndpoint, requestInit);
       }
     } finally {
       clearTimeout(timeout);
@@ -454,7 +462,7 @@ export async function postAdminRefreshMarketsRouteImpl(deps: RefreshMarketsRoute
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       return NextResponse.json(
-        { detail: "Backend scan trigger timed out" },
+        { detail: "Backend board refresh trigger timed out" },
         { status: 504, headers: { "Cache-Control": "no-store" } }
       );
     }

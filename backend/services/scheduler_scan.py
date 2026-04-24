@@ -10,7 +10,7 @@ async def run_scheduled_scan_sports(
     run_id: str,
     supported_sports: Iterable[str],
     get_cached_or_scan: Callable[[str], Awaitable[dict[str, Any]]],
-    schedule_alerts: Callable[[list[dict[str, Any]]], int],
+    schedule_alerts: Callable[..., int],
     log_event: Callable[..., None],
 ) -> dict[str, Any]:
     total_sides = 0
@@ -46,7 +46,11 @@ async def run_scheduled_scan_sports(
             if ft is not None:
                 oldest_fetched = ft if oldest_fetched is None else min(oldest_fetched, ft)
 
-            alerts_scheduled += schedule_alerts(sides)
+            alerts_scheduled += schedule_alerts(
+                sides,
+                message_type="alert",
+                delivery_context="scheduled_scan",
+            )
             log_event(
                 "scheduler.scan.sport_completed",
                 run_id=run_id,
@@ -125,7 +129,7 @@ def maybe_send_scheduled_scan_no_alert_heartbeat(
     finished: str,
     total_sides: int,
     alerts_scheduled: int,
-    send_discord_webhook: Callable[[dict[str, Any]], Awaitable[Any]],
+    send_discord_webhook: Callable[..., Awaitable[Any]],
     create_task: Callable[[Any], Any],
 ) -> None:
     if not heartbeat_enabled or alerts_scheduled != 0:

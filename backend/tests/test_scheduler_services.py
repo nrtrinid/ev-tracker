@@ -148,7 +148,7 @@ async def test_run_scheduled_scan_sports_continues_after_404_and_error():
         run_id="r1",
         supported_sports=["ok", "missing", "broken"],
         get_cached_or_scan=_get_cached_or_scan,
-        schedule_alerts=lambda sides: len(sides),
+        schedule_alerts=lambda sides, message_type="heartbeat", *, delivery_context=None: len(sides),
         log_event=lambda event, **fields: logs.append((event, fields)),
     )
 

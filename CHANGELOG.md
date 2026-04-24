@@ -39,6 +39,13 @@ Version labels use pre-release suffixes until the app is ready for outside users
   - Collapsed same-book canonical-equivalent `TB`/`TB ALT` offers so redundant cards no longer survive when a sportsbook publishes both versions at the same effective line.
 - **Release/docs parity**
   - Refreshed README, PROJECT env reference, HANDOFF, and FUTURE_PLANS so roadmap status and current release context match the implemented beta hardening work.
+- **Ops visibility and Discord routing**
+  - Tightened Discord route isolation so debug/test/heartbeat traffic cannot fall back onto the alert webhook path.
+  - Restricted alert-path Discord delivery to scheduler-owned board-drop contexts and removed the legacy generic webhook fallback from active routing/docs.
+  - Updated ops status freshness selection so live scheduler board-drop state can beat stale durable history on the ops page.
+- **Provider-first auto-settle**
+  - Switched NBA/MLB auto-settle completed-game detection to provider finals first, with a 15-minute finality delay and Odds API score fallback for unresolved or unsupported sports.
+  - Added auto-settle score-source telemetry so ops runs show provider completions, fallback sports, fetch errors, and finality-delay skips.
 
 ## [2.2.0-beta.2] - 2026-04-17
 

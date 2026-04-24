@@ -103,6 +103,26 @@ def _parse_event_teams(event_name: str | None) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _selection_meta(row: dict[str, Any]) -> dict[str, Any]:
+    meta = row.get("selection_meta")
+    return meta if isinstance(meta, dict) else {}
+
+
+def _prop_event_teams(row: dict[str, Any]) -> tuple[str | None, str | None]:
+    meta = _selection_meta(row)
+
+    away, home = _parse_event_teams(_pick_str(meta, "event", "game", "matchup"))
+    if away and home:
+        return away, home
+
+    team = _pick_str(row, "clv_team") or _pick_str(meta, "team")
+    opponent = _pick_str(meta, "opponent", "opponent_team")
+    if team and opponent:
+        return team, opponent
+
+    return _parse_event_teams(_pick_str(row, "event"))
+
+
 def _line_from_meta(value: Any) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
@@ -118,7 +138,7 @@ def _candidate_from_row(row: dict[str, Any], *, now: datetime) -> LiveBetCandida
     sport_key = _pick_str(row, "clv_sport_key")
     surface = _pick_str(row, "surface") or "straight_bets"
     if surface == "parlay":
-        meta = row.get("selection_meta")
+        meta = _selection_meta(row)
         if isinstance(meta, dict):
             legs = meta.get("legs")
             if isinstance(legs, list):
@@ -130,7 +150,10 @@ def _candidate_from_row(row: dict[str, Any], *, now: datetime) -> LiveBetCandida
                         return candidate
         return None
 
-    away, home = _parse_event_teams(_pick_str(row, "event"))
+    if surface == "player_props":
+        away, home = _prop_event_teams(row)
+    else:
+        away, home = _parse_event_teams(_pick_str(row, "event"))
     commence_time = _pick_str(row, "commence_time")
     return LiveBetCandidate(
         bet_id=str(row.get("id") or ""),
@@ -222,7 +245,7 @@ def _fetch_pending_live_rows(db, user_id: str) -> list[dict[str, Any]]:
             .select(
                 "id,surface,event,result,clv_sport_key,clv_event_id,source_event_id,"
                 "source_market_key,participant_name,participant_id,selection_side,line_value,"
-                "commence_time,selection_meta"
+                "commence_time,clv_team,selection_meta"
             )
             .eq("user_id", user_id)
             .eq("result", "pending")

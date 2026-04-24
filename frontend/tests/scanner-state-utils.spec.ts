@@ -145,6 +145,11 @@ test.describe("scanner state utils", () => {
     expect(out.participant_name).toBe("Nikola Jokic");
     expect(out.source_market_key).toBe("player_points");
     expect(out.source_selection_key).toBe("evt-2|player_points|jokic|over|24.5");
+    expect(out.selection_meta).toMatchObject({
+      event: "Nuggets @ Suns",
+      team: "Nuggets",
+      opponent: "Suns",
+    });
   });
 
   test("buildParlayCartLeg builds stable ids for props", async () => {

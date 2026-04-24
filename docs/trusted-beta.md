@@ -22,6 +22,7 @@ This document is the short runbook for the friends-only trusted beta.
   - `Player Props` includes curated sportsbook props plus the Pick'em board
 - CLV is tracked when closes are captured successfully, but some bets may still show no CLV if the close could not be recovered.
 - Open Bets can show compact live chips for supported pending bets (MVP currently targets NBA game state and supported NBA props).
+- Auto-settle uses provider finals first for NBA/MLB, waits 15 minutes after finality, and keeps Odds API score fallback for unsupported or unresolved sports.
 
 ## Feedback Flow
 
@@ -36,8 +37,7 @@ Suggested structure:
 Recommended routing:
 
 - `DISCORD_ALERT_WEBHOOK_URL` -> alert/beta-alerts channel for the `09:30` and `15:00` board drops
-- `DISCORD_DEBUG_WEBHOOK_URL` -> debug/ops channel
-- `DISCORD_WEBHOOK_URL` -> fallback only
+- `DISCORD_DEBUG_WEBHOOK_URL` -> debug/ops channel for manual refreshes, test messages, and heartbeats
 
 The app can expose the invite link through `NEXT_PUBLIC_DISCORD_INVITE_URL`.
 

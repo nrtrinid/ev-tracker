@@ -2361,6 +2361,22 @@ def _commence_times_match(event_commence_time: str | None, bet_commence_time: st
     return abs((event_dt - bet_dt).total_seconds()) <= 90
 
 
+def _event_commence_times_match(event: dict, bet_commence_time: str | None) -> bool:
+    if _commence_times_match(event.get("commence_time"), bet_commence_time):
+        return True
+
+    source_provider = str(event.get("source_provider") or "").strip().lower()
+    if source_provider not in {"espn", "mlb_statsapi"}:
+        return False
+
+    event_dt = _parse_utc_iso(event.get("commence_time"))
+    bet_dt = _parse_utc_iso(bet_commence_time)
+    if event_dt is None or bet_dt is None:
+        return False
+
+    return abs((event_dt - bet_dt).total_seconds()) <= 18 * 60 * 60
+
+
 def _select_completed_event_for_bet(bet: dict, completed_events: list[dict]) -> tuple[dict | None, str]:
     """
     Deterministic settlement match to prevent accidental auto-grading.
@@ -2394,7 +2410,7 @@ def _select_completed_event_for_bet(bet: dict, completed_events: list[dict]) -> 
     target_team = _canonical_team_name(clv_team, sport_key=sport_key)
     candidates: list[dict] = []
     for event in completed_events:
-        if not _commence_times_match(event.get("commence_time"), commence_time):
+        if not _event_commence_times_match(event, commence_time):
             continue
 
         home = _canonical_team_name(event.get("home_team"), sport_key=sport_key)
@@ -2592,6 +2608,53 @@ def _summarize_manual_settlement_pending(
     return summary
 
 
+def _build_provider_score_rows(
+    *,
+    standalone_bets: list[dict[str, Any]],
+    parlay_bets: list[dict[str, Any]],
+    pickem_pending_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for bet in standalone_bets:
+        rows.append(
+            {
+                "sport": bet.get("clv_sport_key"),
+                "commence_time": bet.get("commence_time"),
+            }
+        )
+
+    for bet in parlay_bets:
+        meta = bet.get("selection_meta")
+        if not isinstance(meta, dict):
+            continue
+        legs = meta.get("legs") or []
+        if not isinstance(legs, list):
+            continue
+        for leg in legs:
+            if not isinstance(leg, dict):
+                continue
+            rows.append(
+                {
+                    "sport": leg.get("sport"),
+                    "commence_time": leg.get("commenceTime") or leg.get("commence_time"),
+                }
+            )
+
+    for row in pickem_pending_rows:
+        rows.append(
+            {
+                "sport": row.get("sport"),
+                "commence_time": row.get("commence_time"),
+            }
+        )
+
+    return [
+        row
+        for row in rows
+        if str(row.get("sport") or "").strip()
+    ]
+
+
 async def run_auto_settler(db, source: str = "auto_settle") -> int:
     """
     Auto-Settler — runs once daily (APScheduler) or via ops trigger.
@@ -2611,6 +2674,13 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
     from services.pickem_research import (
         is_missing_pickem_research_observations_error,
         settle_pickem_research_observations,
+    )
+    from services.provider_scores import (
+        SCORE_SOURCE_PROVIDER_FIRST,
+        SUPPORTED_PROVIDER_SCORE_SPORTS,
+        auto_settle_provider_fallback_to_odds,
+        auto_settle_score_source,
+        fetch_provider_completed_events_for_auto_settle,
     )
 
     now = datetime.now(timezone.utc)
@@ -2698,10 +2768,69 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
 
     completed_by_sport: dict[str, list[dict]] = {}
     fetch_errors: list[dict] = []
+    score_source = auto_settle_score_source()
+    provider_score_telemetry: dict[str, Any] = {
+        "score_source": score_source,
+        "provider_score_supported_sports": [],
+        "provider_score_fetch_errors": [],
+        "provider_completed_events": {},
+        "provider_completed_event_count": 0,
+        "provider_finality_delay_skipped": {},
+        "provider_skipped_events": {},
+        "provider_fallback_sports": [],
+        "odds_api_score_sports": [],
+        "odds_api_completed_events": {},
+    }
+
+    if score_source == SCORE_SOURCE_PROVIDER_FIRST:
+        provider_rows = _build_provider_score_rows(
+            standalone_bets=standalone_bets,
+            parlay_bets=parlay_bets,
+            pickem_pending_rows=pickem_pending_rows,
+        )
+        provider_result = await fetch_provider_completed_events_for_auto_settle(
+            provider_rows,
+            sport_keys={str(sport_key).strip().lower() for sport_key in sport_keys if str(sport_key).strip()},
+            now=now,
+        )
+        completed_by_sport.update(provider_result.completed_by_sport)
+        provider_score_telemetry = provider_result.telemetry
+
+    provider_error_sports = {
+        str(row.get("sport_key") or "").strip().lower()
+        for row in provider_score_telemetry.get("provider_score_fetch_errors", [])
+        if isinstance(row, dict)
+    }
+    fallback_to_odds = auto_settle_provider_fallback_to_odds()
     for sport_key in sorted(sport_keys):
+        normalized_sport = str(sport_key or "").strip().lower()
+        provider_supported = (
+            score_source == SCORE_SOURCE_PROVIDER_FIRST
+            and normalized_sport in SUPPORTED_PROVIDER_SCORE_SPORTS
+        )
+        should_fetch_odds = not provider_supported
+        if provider_supported and fallback_to_odds:
+            provider_completed_count = len(completed_by_sport.get(normalized_sport) or completed_by_sport.get(sport_key) or [])
+            finality_delay_count = int(
+                (provider_score_telemetry.get("provider_finality_delay_skipped") or {}).get(normalized_sport)
+                or 0
+            )
+            if normalized_sport in provider_error_sports or (
+                provider_completed_count == 0 and finality_delay_count == 0
+            ):
+                should_fetch_odds = True
+                fallback_sports = provider_score_telemetry.setdefault("provider_fallback_sports", [])
+                if normalized_sport not in fallback_sports:
+                    fallback_sports.append(normalized_sport)
+
+        if not should_fetch_odds:
+            continue
+
         try:
             events = await fetch_scores(sport_key, source=source)
             completed_by_sport[sport_key] = [event for event in events if event.get("completed")]
+            provider_score_telemetry.setdefault("odds_api_score_sports", []).append(sport_key)
+            provider_score_telemetry.setdefault("odds_api_completed_events", {})[sport_key] = len(completed_by_sport[sport_key])
         except Exception as e:
             print(f"[Auto-Settler] Error fetching scores for '{sport_key}': {e}")
             completed_by_sport[sport_key] = []
@@ -2863,6 +2992,7 @@ async def run_auto_settler(db, source: str = "auto_settle") -> int:
         "parlay_skipped": parlay_skipped,
         "pickem_research_skipped": pickem_research_skipped,
         "score_fetch_errors": fetch_errors,
+        "score_source_telemetry": provider_score_telemetry,
         "prop_settle_telemetry": prop_telemetry,
         "manual_settlement_pending": manual_settlement_pending,
     }

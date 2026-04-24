@@ -505,6 +505,27 @@ async def run_daily_board_drop(
                 error=str(exc),
             )
 
+    if db is not None:
+        try:
+            from services.player_prop_candidate_observations import (
+                PLAYER_PROP_MODEL_CANDIDATE_SETS_KEY,
+                capture_player_prop_model_candidate_observations,
+            )
+
+            capture_player_prop_model_candidate_observations(
+                db,
+                candidate_sets=props_result.get(PLAYER_PROP_MODEL_CANDIDATE_SETS_KEY),
+                source=source,
+                captured_at=scanned_at,
+            )
+        except Exception as exc:
+            log_event(
+                "daily_board.player_prop_model_candidate_capture_failed",
+                level="warning",
+                error_class=type(exc).__name__,
+                error=str(exc),
+            )
+
     # Build payload dicts manually to avoid Pydantic model_dump() copying large sides arrays.
     straight_payload: dict[str, Any] = {
         "surface": "straight_bets",
@@ -955,4 +976,3 @@ async def run_daily_board_drop(
         "fresh_prop_sides": props_sides if isinstance(props_sides, list) else [],
         "summary": board_summary,
     }
-

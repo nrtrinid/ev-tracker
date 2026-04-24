@@ -1051,8 +1051,8 @@ export interface AdminMarketRefreshResponse {
   results: AdminMarketRefreshSurfaceSummary[];
 }
 
-/** Response from POST /api/ops/trigger/scan (proxied via admin manual scan button). */
-export interface OpsTriggerScanResponse {
+/** Response from POST /api/ops/trigger/board-refresh (or legacy /scan alias). */
+export interface OpsTriggerBoardRefreshResponse {
   ok: boolean;
   accepted?: boolean;
   pending?: boolean;
@@ -1067,6 +1067,8 @@ export interface OpsTriggerScanResponse {
   errors: Array<Record<string, unknown>>;
   result?: BoardDropResultSummary | null;
 }
+
+export type OpsTriggerScanResponse = OpsTriggerBoardRefreshResponse;
 
 /** Response from POST /api/ops/trigger/auto-settle (proxied via admin). */
 export interface OpsTriggerAutoSettleResponse {
@@ -1294,6 +1296,45 @@ export interface ModelCalibrationRecentComparisonRow {
   candidate_clv_ev_percent: number | null;
 }
 
+export interface PlayerPropModelWeightStatus {
+  override_count: number;
+  markets_covered: number;
+  latest_updated_at: string | null;
+  stale_after_hours: number;
+  default_only: boolean;
+  stale: boolean;
+  available: boolean;
+}
+
+export interface PlayerPropShadowCandidateSummary {
+  latest_candidate_set_key: string | null;
+  latest_source: string | null;
+  latest_captured_at: string | null;
+  rolling_candidate_set_count: number;
+  v1_count: number;
+  v2_count: number;
+  both_count: number;
+  v1_only_count: number;
+  v2_only_count: number;
+  overlap_pct: number | null;
+  rolling_both_count: number;
+  rolling_v1_only_count: number;
+  rolling_v2_only_count: number;
+  rolling_overlap_pct: number | null;
+  rolling_v2_only_displayed_count: number;
+  top_25_overlap_pct: number | null;
+  top_50_overlap_pct: number | null;
+  avg_ev_delta_pct_points: number | null;
+  avg_rank_delta: number | null;
+  v2_only_displayed_count: number;
+  v2_only_valid_close_count: number;
+  v2_only_avg_clv_percent: number | null;
+  v2_only_beat_close_pct: number | null;
+  v2_only_avg_brier_score: number | null;
+  v2_only_avg_log_loss: number | null;
+  weight_status: PlayerPropModelWeightStatus;
+}
+
 export interface ModelCalibrationReleaseGate {
   candidate_model_key: string;
   baseline_model_key: string;
@@ -1307,6 +1348,32 @@ export interface ModelCalibrationReleaseGate {
   baseline_avg_clv_percent: number | null;
   candidate_beat_close_pct: number | null;
   baseline_beat_close_pct: number | null;
+  brier_delta: number | null;
+  log_loss_delta: number | null;
+  avg_clv_delta_pct_points: number | null;
+  beat_close_delta_pct_points: number | null;
+  avg_true_prob_delta_pct_points: number | null;
+  avg_abs_true_prob_delta_pct_points: number | null;
+  max_abs_true_prob_delta_pct_points: number | null;
+  identical_true_prob_count: number;
+  identical_true_prob_pct: number | null;
+  avg_ev_delta_pct_points: number | null;
+  avg_abs_ev_delta_pct_points: number | null;
+  max_abs_ev_delta_pct_points: number | null;
+  identical_ev_count: number;
+  identical_ev_pct: number | null;
+  brier_candidate_better_count: number;
+  brier_baseline_better_count: number;
+  brier_tie_count: number;
+  log_loss_candidate_better_count: number;
+  log_loss_baseline_better_count: number;
+  log_loss_tie_count: number;
+  verdict: "not_enough_sample" | "hold_neutral" | "fail" | "promote";
+  deadband_brier: number;
+  deadband_log_loss: number;
+  deadband_clv_pct_points: number;
+  deadband_beat_close_pct_points: number;
+  neutral_within_deadband: boolean;
   eligible: boolean;
   passes: boolean;
   reasons: string[];
@@ -1324,6 +1391,7 @@ export interface ModelCalibrationSummary {
   by_interpolation_mode: ModelCalibrationBreakdownItem[];
   cohort_trend: ModelCalibrationCohortTrendRow[];
   recent_comparisons: ModelCalibrationRecentComparisonRow[];
+  shadow_candidate_set: PlayerPropShadowCandidateSummary;
   release_gate: ModelCalibrationReleaseGate;
 }
 

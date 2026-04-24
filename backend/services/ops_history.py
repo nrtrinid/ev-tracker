@@ -301,6 +301,34 @@ def _parse_timestamp(value: str | None) -> float | None:
         return None
 
 
+def _status_timestamp(value: dict[str, Any] | None) -> float | None:
+    if not isinstance(value, dict):
+        return None
+    for key in ("captured_at", "refreshed_at", "finished_at", "started_at"):
+        parsed = _parse_timestamp(value.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _prefer_fresher_status(
+    existing: dict[str, Any] | None,
+    candidate: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(candidate, dict):
+        return existing
+    if not isinstance(existing, dict):
+        return candidate
+
+    candidate_timestamp = _status_timestamp(candidate)
+    existing_timestamp = _status_timestamp(existing)
+    if candidate_timestamp is None:
+        return existing if existing_timestamp is not None else candidate
+    if existing_timestamp is None or candidate_timestamp >= existing_timestamp:
+        return candidate
+    return existing
+
+
 def _is_activity_error(row: dict[str, Any]) -> bool:
     status_code = row.get("status_code")
     return bool(row.get("error_type")) or (isinstance(status_code, int) and status_code >= 400)
@@ -961,11 +989,20 @@ def load_ops_status_snapshot(
     if clv_replay:
         ops["last_clv_replay"] = _map_last_jit_clv(clv_replay)
     if scheduler:
-        ops["last_scheduler_scan"] = _map_scan_run(scheduler)
+        ops["last_scheduler_scan"] = _prefer_fresher_status(
+            ops.get("last_scheduler_scan"),
+            _map_scan_run(scheduler),
+        )
     if ops_trigger:
-        ops["last_ops_trigger_scan"] = _map_scan_run(ops_trigger)
+        ops["last_ops_trigger_scan"] = _prefer_fresher_status(
+            ops.get("last_ops_trigger_scan"),
+            _map_scan_run(ops_trigger),
+        )
     if board_refresh:
-        ops["last_board_refresh"] = _map_board_refresh_run(board_refresh)
+        ops["last_board_refresh"] = _prefer_fresher_status(
+            ops.get("last_board_refresh"),
+            _map_board_refresh_run(board_refresh),
+        )
     if auto_settle:
         ops["last_auto_settle"] = _map_last_auto_settle(auto_settle)
         ops["last_auto_settle_summary"] = _map_last_auto_settle_summary(auto_settle)

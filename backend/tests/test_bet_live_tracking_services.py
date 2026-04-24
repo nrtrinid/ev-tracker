@@ -4,6 +4,8 @@ import pytest
 
 from models import LiveEventSnapshot, LivePlayerStatSnapshot, LiveTeamScore
 from services.bet_live_tracking import build_live_snapshots_for_rows
+from services.espn_live import EspnLiveProvider
+from services.espn_live import _match_event_for_candidate as _match_espn_event_for_candidate
 from services.espn_live import normalize_espn_nba_event
 from services.live_provider_contracts import (
     LiveBetCandidate,
@@ -86,6 +88,15 @@ class FakeLiveProvider:
             )
             for request in requests
         }
+
+
+class CapturingLiveProvider(FakeLiveProvider):
+    def __init__(self) -> None:
+        self.candidates: list[LiveBetCandidate] = []
+
+    async def lookup_events(self, candidates: list[LiveBetCandidate], *, now=None):
+        self.candidates = list(candidates)
+        return await super().lookup_events(candidates, now=now)
 
 
 class FakeMlbLiveProvider:
@@ -198,6 +209,130 @@ def test_normalize_espn_nba_event_extracts_live_score_and_clock():
     assert out.home.short_name == "GSW"
 
 
+def test_espn_match_event_accepts_unordered_player_prop_team_metadata():
+    candidate = LiveBetCandidate(
+        bet_id="bet-prop-reversed",
+        sport_key="basketball_nba",
+        event_name="LeBron James Over 4.5 AST",
+        commence_time="2026-04-22T02:00:00Z",
+        source_event_id=None,
+        clv_event_id=None,
+        away_team="Golden State Warriors",
+        home_team="Los Angeles Lakers",
+        market_key="player_assists",
+        participant_name="LeBron James",
+        participant_id=None,
+        selection_side="over",
+        line_value=4.5,
+        surface="player_props",
+    )
+
+    event, confidence, reason = _match_espn_event_for_candidate(candidate, [_nba_event()])
+
+    assert event is not None
+    assert event.provider_event_id == "espn-1"
+    assert confidence == "matchup_plus_time"
+    assert reason is None
+
+
+@pytest.mark.asyncio
+async def test_espn_lookup_falls_back_to_player_summary_when_legacy_prop_has_no_teams(monkeypatch):
+    async def _fake_scoreboard_date(_date_value: str):
+        return (
+            [
+                {
+                    "id": "espn-legacy",
+                    "date": "2026-04-22T02:00:00Z",
+                    "competitions": [
+                        {
+                            "status": {
+                                "period": 2,
+                                "displayClock": "6:12",
+                                "type": {"state": "in", "name": "STATUS_IN_PROGRESS"},
+                            },
+                            "competitors": [
+                                {
+                                    "homeAway": "away",
+                                    "score": "42",
+                                    "team": {"displayName": "Denver Nuggets", "abbreviation": "DEN"},
+                                },
+                                {
+                                    "homeAway": "home",
+                                    "score": "46",
+                                    "team": {"displayName": "Phoenix Suns", "abbreviation": "PHX"},
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+            False,
+            False,
+        )
+
+    async def _fake_summary(_event_id: str):
+        return (
+            {
+                "boxscore": {
+                    "players": [
+                        {
+                            "statistics": [
+                                {
+                                    "names": ["MIN", "PTS", "REB", "AST"],
+                                    "athletes": [
+                                        {
+                                            "athlete": {"displayName": "Nikola Jokic"},
+                                            "stats": ["12", "8", "5", "3"],
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    ]
+                }
+            },
+            False,
+            False,
+        )
+
+    monkeypatch.setattr("services.espn_live._fetch_cached_scoreboard_date", _fake_scoreboard_date)
+    monkeypatch.setattr("services.espn_live._fetch_cached_summary", _fake_summary)
+
+    rows = [
+        {
+            "id": "bet-legacy-prop",
+            "surface": "player_props",
+            "event": "Nikola Jokic Over 4.5 REB",
+            "result": "pending",
+            "clv_sport_key": "basketball_nba",
+            "clv_team": "Nikola Jokic",
+            "source_event_id": "odds-api-event",
+            "clv_event_id": "odds-api-event",
+            "source_market_key": "player_rebounds",
+            "participant_name": "Nikola Jokic",
+            "selection_side": "over",
+            "line_value": 4.5,
+            "commence_time": "2026-04-22T02:00:00Z",
+            "selection_meta": {},
+        }
+    ]
+
+    out = await build_live_snapshots_for_rows(
+        rows,
+        now=datetime(2026, 4, 22, 3, 15, tzinfo=timezone.utc),
+        providers={"espn": EspnLiveProvider()},
+    )
+
+    snapshot = out.snapshots_by_bet_id["bet-legacy-prop"]
+    assert snapshot.status == "live"
+    assert snapshot.event is not None
+    assert snapshot.provider.confidence == "player_summary"
+    assert snapshot.provider.unavailable_reason is None
+    assert snapshot.player_stat is not None
+    assert snapshot.player_stat.stat_key == "REB"
+    assert snapshot.player_stat.value == 5
+
+
 @pytest.mark.asyncio
 async def test_build_live_snapshots_returns_game_and_supported_prop_progress():
     rows = [
@@ -230,6 +365,39 @@ async def test_build_live_snapshots_returns_game_and_supported_prop_progress():
     assert snapshot.player_stat.stat_key == "AST"
     assert snapshot.player_stat.value == 2
     assert snapshot.provider.cache_hit is True
+
+
+@pytest.mark.asyncio
+async def test_build_live_snapshots_uses_prop_team_metadata_when_event_is_display_label():
+    provider = CapturingLiveProvider()
+    rows = [
+        {
+            "id": "bet-prop-meta",
+            "surface": "player_props",
+            "event": "Nikola Jokic Over 24.5 PTS",
+            "result": "pending",
+            "clv_sport_key": "basketball_nba",
+            "clv_team": "Nuggets",
+            "source_market_key": "player_points",
+            "participant_name": "Nikola Jokic",
+            "selection_side": "over",
+            "line_value": 24.5,
+            "commence_time": "2026-04-22T02:00:00Z",
+            "selection_meta": {"opponent": "Suns"},
+        }
+    ]
+
+    out = await build_live_snapshots_for_rows(
+        rows,
+        now=datetime(2026, 4, 22, 3, 15, tzinfo=timezone.utc),
+        providers={"fake": provider},
+    )
+
+    assert provider.candidates[0].away_team == "Nuggets"
+    assert provider.candidates[0].home_team == "Suns"
+    snapshot = out.snapshots_by_bet_id["bet-prop-meta"]
+    assert snapshot.status == "live"
+    assert snapshot.player_stat is not None
 
 
 @pytest.mark.asyncio

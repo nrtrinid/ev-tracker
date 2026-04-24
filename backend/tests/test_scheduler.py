@@ -326,10 +326,10 @@ async def test_scheduled_board_drop_job_timed_ping_mode_sends_single_board_alert
     def _fail_if_edge_alerts_called(_sides):
         raise AssertionError("schedule_alerts should not run in timed_ping mode")
 
-    sent: list[tuple[dict, str]] = []
+    sent: list[tuple[dict, str, str | None]] = []
 
-    async def _fake_send_discord_webhook(payload, message_type="alert"):
-        sent.append((payload, message_type))
+    async def _fake_send_discord_webhook(payload, message_type="heartbeat", *, delivery_context=None):
+        sent.append((payload, message_type, delivery_context))
         return {
             "delivery_status": "delivered",
             "status_code": 204,
@@ -343,8 +343,9 @@ async def test_scheduled_board_drop_job_timed_ping_mode_sends_single_board_alert
     await main._run_scheduled_board_drop_job()
 
     assert len(sent) == 1
-    payload, message_type = sent[0]
+    payload, message_type, delivery_context = sent[0]
     assert message_type == "alert"
+    assert delivery_context == "scheduled_board_drop"
     assert payload["embeds"][0]["title"] == "Trusted Beta Board Live"
 
     snapshot = main.app.state.ops_status["last_scheduler_scan"]

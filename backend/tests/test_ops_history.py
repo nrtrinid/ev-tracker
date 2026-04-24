@@ -405,6 +405,166 @@ def test_load_ops_status_snapshot_prefers_durable_rows_and_rebuilds_activity():
     assert snapshot["odds_api_activity"]["recent_calls"][0]["endpoint"] == "/sports/basketball_nba/odds"
 
 
+def test_load_ops_status_snapshot_prefers_fresh_live_board_status_over_stale_durable_rows():
+    ensure_supabase_stub()
+    mod = reload_service_module("ops_history")
+
+    db = _FakeDB(
+        {
+            "ops_job_runs": [
+                {
+                    "job_kind": "scheduled_board_drop",
+                    "source": "scheduler",
+                    "status": "completed",
+                    "run_id": "durable-scheduled-old",
+                    "captured_at": _iso(minutes_ago=20),
+                    "started_at": _iso(minutes_ago=21),
+                    "finished_at": _iso(minutes_ago=20),
+                    "surface": "board_drop",
+                    "total_sides": 10,
+                    "meta": {"result_summary": {"scan_label": "Old scheduled board"}},
+                },
+                {
+                    "job_kind": "ops_trigger_board_drop",
+                    "source": "ops_trigger",
+                    "status": "completed",
+                    "run_id": "durable-ops-old",
+                    "captured_at": _iso(minutes_ago=19),
+                    "started_at": _iso(minutes_ago=20),
+                    "finished_at": _iso(minutes_ago=19),
+                    "surface": "board_drop",
+                    "total_sides": 8,
+                    "meta": {"result_summary": {"scan_label": "Old ops board"}},
+                },
+                {
+                    "job_kind": "board_scoped_refresh",
+                    "source": "manual_refresh",
+                    "status": "completed",
+                    "run_id": "durable-refresh-old",
+                    "captured_at": _iso(minutes_ago=18),
+                    "started_at": _iso(minutes_ago=19),
+                    "finished_at": _iso(minutes_ago=18),
+                    "surface": "player_props",
+                    "meta": {
+                        "canonical_board_updated": False,
+                        "result_summary": {"scan_label": "Old scoped refresh"},
+                    },
+                },
+            ],
+            "odds_api_activity_events": [],
+        }
+    )
+    fallback_ops = {
+        "last_scheduler_scan": {
+            "run_id": "live-scheduled-new",
+            "captured_at": _iso(minutes_ago=3),
+            "finished_at": _iso(minutes_ago=3),
+            "board_drop": True,
+            "result": {"scan_label": "Fresh live scheduled board"},
+        },
+        "last_ops_trigger_scan": {
+            "run_id": "live-ops-new",
+            "captured_at": _iso(minutes_ago=2),
+            "finished_at": _iso(minutes_ago=2),
+            "board_drop": True,
+            "result": {"scan_label": "Fresh live ops board"},
+        },
+        "last_board_refresh": {
+            "kind": "board_drop",
+            "source": "scheduler",
+            "run_id": "live-refresh-new",
+            "captured_at": _iso(minutes_ago=1),
+            "finished_at": _iso(minutes_ago=1),
+            "board_drop": True,
+            "canonical_board_updated": True,
+            "result": {"scan_label": "Fresh live board refresh"},
+        },
+    }
+
+    snapshot = mod.load_ops_status_snapshot(
+        db=db,
+        retry_supabase=lambda f: f(),
+        log_event=None,
+        fallback_ops_status=fallback_ops,
+        fallback_odds_api_activity=mod.build_empty_odds_api_activity_snapshot(),
+    )
+
+    assert snapshot["last_scheduler_scan"]["run_id"] == "live-scheduled-new"
+    assert snapshot["last_ops_trigger_scan"]["run_id"] == "live-ops-new"
+    assert snapshot["last_board_refresh"]["run_id"] == "live-refresh-new"
+    assert snapshot["last_board_refresh"]["result"]["scan_label"] == "Fresh live board refresh"
+
+
+def test_load_ops_status_snapshot_prefers_newer_durable_board_status_over_live_fallback():
+    ensure_supabase_stub()
+    mod = reload_service_module("ops_history")
+
+    db = _FakeDB(
+        {
+            "ops_job_runs": [
+                {
+                    "job_kind": "scheduled_board_drop",
+                    "source": "scheduler",
+                    "status": "completed",
+                    "run_id": "durable-scheduled-new",
+                    "captured_at": _iso(minutes_ago=1),
+                    "started_at": _iso(minutes_ago=2),
+                    "finished_at": _iso(minutes_ago=1),
+                    "surface": "board_drop",
+                    "total_sides": 22,
+                    "meta": {"result_summary": {"scan_label": "Fresh durable scheduled board"}},
+                },
+                {
+                    "job_kind": "ops_trigger_board_drop",
+                    "source": "ops_trigger",
+                    "status": "completed",
+                    "run_id": "durable-ops-new",
+                    "captured_at": _iso(minutes_ago=2),
+                    "started_at": _iso(minutes_ago=3),
+                    "finished_at": _iso(minutes_ago=2),
+                    "surface": "board_drop",
+                    "total_sides": 16,
+                    "meta": {"result_summary": {"scan_label": "Fresh durable ops board"}},
+                },
+            ],
+            "odds_api_activity_events": [],
+        }
+    )
+    fallback_ops = {
+        "last_scheduler_scan": {
+            "run_id": "live-scheduled-old",
+            "captured_at": _iso(minutes_ago=30),
+            "finished_at": _iso(minutes_ago=30),
+        },
+        "last_ops_trigger_scan": {
+            "run_id": "live-ops-old",
+            "captured_at": _iso(minutes_ago=29),
+            "finished_at": _iso(minutes_ago=29),
+        },
+        "last_board_refresh": {
+            "kind": "board_drop",
+            "source": "scheduler",
+            "run_id": "live-refresh-old",
+            "captured_at": _iso(minutes_ago=28),
+            "finished_at": _iso(minutes_ago=28),
+            "canonical_board_updated": True,
+        },
+    }
+
+    snapshot = mod.load_ops_status_snapshot(
+        db=db,
+        retry_supabase=lambda f: f(),
+        log_event=None,
+        fallback_ops_status=fallback_ops,
+        fallback_odds_api_activity=mod.build_empty_ops_status().get("odds_api_activity"),
+    )
+
+    assert snapshot["last_scheduler_scan"]["run_id"] == "durable-scheduled-new"
+    assert snapshot["last_ops_trigger_scan"]["run_id"] == "durable-ops-new"
+    assert snapshot["last_board_refresh"]["run_id"] == "durable-scheduled-new"
+    assert snapshot["last_board_refresh"]["kind"] == "board_drop"
+
+
 def test_load_ops_status_snapshot_falls_back_cleanly_on_query_failure():
     ensure_supabase_stub()
     mod = reload_service_module("ops_history")

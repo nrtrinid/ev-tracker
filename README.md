@@ -169,7 +169,7 @@ BETA_INVITE_CODE="Daily Drop"
 OPS_ADMIN_EMAILS=ops@example.com
 # Optional: exclude known test accounts from default beta analytics views
 ANALYTICS_TEST_EMAILS=tester@example.com
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+# Scheduled board-drop alerts use the alert route; ops/test/heartbeat traffic uses debug.
 DISCORD_ENABLE_ALERT_ROUTE=1
 DISCORD_ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...
 DISCORD_DEBUG_WEBHOOK_URL=https://discord.com/api/webhooks/...
@@ -177,6 +177,11 @@ DISCORD_DEBUG_WEBHOOK_URL=https://discord.com/api/webhooks/...
 LIVE_TRACKING_ENABLED=1
 # Optional: provider priority list (current MVP defaults to ESPN NBA + MLB StatsAPI)
 LIVE_TRACKING_PROVIDER_ORDER=espn,mlb,api_sports,odds_scores
+# Optional: auto-settle score source (default: provider-first NBA/MLB finals,
+# with Odds API scores as fallback)
+AUTO_SETTLE_SCORE_SOURCE=provider_first
+AUTO_SETTLE_PROVIDER_FALLBACK_TO_ODDS=1
+AUTO_SETTLE_PROVIDER_FINALITY_DELAY_MINUTES=15
 # Optional: shared state backend for multi-instance rate-limit/cache coordination
 # REDIS_URL=redis://localhost:6379/0
 ALERT_DEDUPE_TTL_SECONDS=21600
@@ -186,7 +191,7 @@ ALERT_DEDUPE_TTL_SECONDS=21600
 If you want external wake/trigger automation, use a scheduler (cron-job.org, GitHub Actions, etc.) to hit these endpoints:
 
 - `POST /api/ops/trigger/scan` (warms scanner cache; manual ops-triggered notifications use the debug/heartbeat route while scheduled board-drop windows use the alert route)
-- `POST /api/ops/trigger/auto-settle` (grades eligible pending ML bets)
+- `POST /api/ops/trigger/auto-settle` (grades eligible pending ML bets, supported NBA/MLB props, parlays, and pick'em research rows)
 - `POST /api/ops/trigger/test-discord` (sends a test Discord message through the debug/test route)
 - `POST /api/ops/trigger/test-discord-alert` (sends an alert-style validation message through the debug/test route without touching the live alert path)
 

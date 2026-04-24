@@ -1,7 +1,7 @@
 """
 Auto-settlement for player props and parlays whose legs are ML + props.
 
-Uses The Odds API completed events for game matching plus sport-specific
+Uses provider-first completed events for game matching plus sport-specific
 boxscore providers:
 - NBA: ESPN scoreboard + game summary
 - MLB: MLB StatsAPI schedule + boxscore
@@ -1480,6 +1480,7 @@ def grade_parlay_ml_leg(
         or None,
         "clv_team": team,
         "commence_time": leg.get("commenceTime") or leg.get("commence_time"),
+        "clv_sport_key": sport,
     }
     if synthetic["clv_event_id"] == "":
         synthetic["clv_event_id"] = None
@@ -1493,6 +1494,7 @@ def grade_parlay_ml_leg(
         str(event.get("home_team", "")),
         str(event.get("away_team", "")),
         event.get("scores") or [],
+        sport_key=sport,
     )
 
 
@@ -1533,6 +1535,7 @@ async def grade_parlay_prop_leg(
         or None,
         "clv_team": leg.get("team"),
         "commence_time": leg.get("commenceTime") or leg.get("commence_time"),
+        "clv_sport_key": sport,
     }
     if synthetic["clv_event_id"] == "":
         synthetic["clv_event_id"] = None

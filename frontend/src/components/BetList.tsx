@@ -198,7 +198,7 @@ function formatOpenBetEventTimeCompact(isoString: string): string {
   const dayDiff = Math.floor((startOfTarget.getTime() - startOfToday.getTime()) / (1000 * 60 * 60 * 24));
 
   if (dayDiff === 0) {
-    return `Today · ${formatTimeOnly(date)}`;
+    return formatTimeOnly(date);
   }
 
   if (dayDiff > 0 && dayDiff < 7) {
@@ -374,7 +374,7 @@ function BetCardBase({ bet, headerRight, footer, mode, liveSnapshot }: BetCardBa
       {/* Colored left border for sportsbook branding */}
       <div className={cn("w-1 shrink-0 transition-all duration-200", borderColor)} />
       
-      <div className="flex-1 p-4 space-y-3">
+      <div className="min-w-0 flex-1 p-4 space-y-3">
         {/* Header: Event name as title + actions */}
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">

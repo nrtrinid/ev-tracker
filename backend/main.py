@@ -477,7 +477,10 @@ def _validate_environment() -> None:
     try:
         from services.discord_alerts import describe_discord_delivery_target
 
-        discord_alert_target = describe_discord_delivery_target("alert")
+        discord_alert_target = describe_discord_delivery_target(
+            "alert",
+            delivery_context="scheduled_board_drop",
+        )
         discord_test_target = describe_discord_delivery_target("test")
     except Exception:
         pass
@@ -537,18 +540,6 @@ def _validate_environment() -> None:
             level="warning",
             route_kind=discord_alert_target.get("route_kind"),
             message="ENABLE_SCHEDULER=1 but no alert Discord webhook is configured; alert delivery is disabled.",
-        )
-
-    if (
-        scheduler_enabled
-        and bool(discord_alert_target.get("webhook_configured"))
-        and discord_alert_target.get("route_kind") == "alert_primary_fallback"
-    ):
-        _log_event(
-            "startup.env_discord_alert_webhook_fallback",
-            level="warning",
-            route_kind=discord_alert_target.get("route_kind"),
-            message="DISCORD_ALERT_WEBHOOK_URL not set; alerts will use DISCORD_WEBHOOK_URL fallback.",
         )
 
     if heartbeat_enabled and not bool(discord_test_target.get("webhook_configured")):
@@ -624,6 +615,35 @@ def _capture_research_opportunities(sides: list[dict], *, source: str) -> None:
     except Exception as e:
         _log_event(
             "research.capture.failed",
+            level="warning",
+            source=source,
+            error_class=type(e).__name__,
+            error=str(e),
+        )
+
+
+def _capture_model_candidate_observations(
+    candidate_sets: dict[str, list[dict]],
+    *,
+    source: str,
+    captured_at: str | None = None,
+) -> None:
+    """Persist ops-only player-prop model candidate sets for shadow diagnostics."""
+    if not candidate_sets:
+        return
+
+    from services.player_prop_candidate_observations import capture_player_prop_model_candidate_observations
+
+    try:
+        capture_player_prop_model_candidate_observations(
+            get_db(),
+            candidate_sets=candidate_sets,
+            source=source,
+            captured_at=captured_at or _utc_now_iso(),
+        )
+    except Exception as e:
+        _log_event(
+            "player_props.model_candidate_observations.capture_failed",
             level="warning",
             source=source,
             error_class=type(e).__name__,
@@ -922,6 +942,9 @@ def _runtime_state() -> dict:
         "scan_alert_mode": _scan_alert_mode(),
         "alert_delivery": {
             "message_type": "alert",
+            "requested_message_type": "alert",
+            "delivery_context": "scheduled_board_drop",
+            "alert_route_guarded": False,
             "route_kind": "alert_unconfigured",
             "webhook_configured": False,
             "webhook_source": None,
@@ -932,6 +955,9 @@ def _runtime_state() -> dict:
         },
         "test_delivery": {
             "message_type": "test",
+            "requested_message_type": "test",
+            "delivery_context": None,
+            "alert_route_guarded": False,
             "route_kind": "test_unconfigured",
             "webhook_configured": False,
             "webhook_source": None,
@@ -946,7 +972,10 @@ def _runtime_state() -> dict:
     try:
         from services.discord_alerts import describe_discord_delivery_target, get_last_schedule_stats
 
-        discord_runtime["alert_delivery"] = describe_discord_delivery_target("alert")
+        discord_runtime["alert_delivery"] = describe_discord_delivery_target(
+            "alert",
+            delivery_context="scheduled_board_drop",
+        )
         discord_runtime["test_delivery"] = describe_discord_delivery_target("test")
         discord_runtime["last_schedule_stats"] = get_last_schedule_stats()
     except Exception:
@@ -1284,7 +1313,11 @@ async def _run_scheduled_board_drop_job():
 
         candidates_seen = len(fresh_sides)
         if scan_alert_mode == DISCORD_SCAN_ALERT_MODE_EDGE_LIVE:
-            alerts_scheduled += schedule_alerts(fresh_sides)
+            alerts_scheduled += schedule_alerts(
+                fresh_sides,
+                message_type="alert",
+                delivery_context="scheduled_board_drop",
+            )
             schedule_stats = get_last_schedule_stats()
             alert_skip_totals["skipped_memory_dedupe"] += int(schedule_stats.get("skipped_memory_dedupe") or 0)
             alert_skip_totals["skipped_shared_dedupe"] += int(schedule_stats.get("skipped_shared_dedupe") or 0)
@@ -1354,7 +1387,11 @@ async def _run_scheduled_board_drop_job():
                 },
             )
             try:
-                delivery = await send_discord_webhook(board_alert_payload, message_type="alert")
+                delivery = await send_discord_webhook(
+                    board_alert_payload,
+                    message_type="alert",
+                    delivery_context="scheduled_board_drop",
+                )
                 board_alert = {
                     "attempted": True,
                     "delivery_status": delivery.get("delivery_status") if isinstance(delivery, dict) else "delivered",
@@ -2788,6 +2825,7 @@ async def scan_markets(
         persist_ops_job_run=_persist_ops_job_run,
         new_run_id=_new_run_id,
         sync_pickem_research_from_props_payload=_sync_pickem_research_from_props_payload,
+        capture_model_candidate_observations=_capture_model_candidate_observations,
         map_error=scan_exception_to_http_exception,
         build_full_scan_response=_build_full_scan_response,
         get_environment=_get_environment,
@@ -2908,7 +2946,7 @@ async def ops_trigger_scan(
                 }
             )
             total_sides += len(sides)
-            alerts_scheduled += schedule_alerts(sides)
+            alerts_scheduled += schedule_alerts(sides, message_type="heartbeat")
             schedule_stats = get_last_schedule_stats()
             alert_skip_totals["skipped_memory_dedupe"] += int(schedule_stats.get("skipped_memory_dedupe") or 0)
             alert_skip_totals["skipped_shared_dedupe"] += int(schedule_stats.get("skipped_shared_dedupe") or 0)
@@ -3201,7 +3239,7 @@ async def ops_trigger_test_discord(
         "embeds": [
             {
                 "title": "Webhook test",
-                "description": "If you can read this, DISCORD_WEBHOOK_URL is working.",
+                "description": "If you can read this, DISCORD_DEBUG_WEBHOOK_URL is working.",
                 "fields": [
                     {"name": "Server time (UTC)", "value": _utc_now_iso(), "inline": False},
                 ],
@@ -3209,14 +3247,7 @@ async def ops_trigger_test_discord(
         ]
     }
 
-    # Keep the explicit test routing in production, but fall back for simple
-    # monkeypatched stubs that only accept the payload argument in contract tests.
-    try:
-        await send_discord_webhook(payload, message_type="test")
-    except TypeError as exc:
-        if "message_type" not in str(exc):
-            raise
-        await send_discord_webhook(payload)
+    await send_discord_webhook(payload, message_type="test")
     _log_event(
         "ops.trigger.discord_test.completed",
         run_id=run_id,

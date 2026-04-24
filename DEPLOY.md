@@ -128,7 +128,7 @@ Expected results:
 - `test-discord-alert` returns `ok: true` with a `run_id` and stays on debug/test routing
 - ops scan response includes `alerts_scheduled` and `alert_skip_totals`
 - ops status runtime includes `discord.alert_delivery`, `discord.test_delivery`, and `discord.last_schedule_stats`
-- backend logs include `[Discord] Webhook response: 2xx` and no repeated `DISCORD_WEBHOOK_URL not set` warning
+- backend logs include `[Discord] Webhook response: 2xx` and no repeated alert/debug webhook missing warnings
 
 ## Beta Env Checklist
 
@@ -144,13 +144,15 @@ Backend / VPS:
 - `BETA_INVITE_CODE`
 - `OPS_ADMIN_EMAILS`
 - `LIVE_TRACKING_ENABLED` (default `1`; set `0` to suppress `/bets/live` snapshots)
+- `AUTO_SETTLE_SCORE_SOURCE` (default `provider_first`; set `odds_api` to force legacy score gating)
+- `AUTO_SETTLE_PROVIDER_FALLBACK_TO_ODDS` (default `1`)
+- `AUTO_SETTLE_PROVIDER_FINALITY_DELAY_MINUTES` (default `15`)
 - `DISCORD_ENABLE_ALERT_ROUTE` (default `1`)
-- `DISCORD_WEBHOOK_URL`
+- `DISCORD_ALERT_WEBHOOK_URL` (scheduled board-drop alerts only)
 - `DISCORD_DEBUG_WEBHOOK_URL`
 
 Optional when alert-path delivery is intentionally enabled:
 
-- `DISCORD_ALERT_WEBHOOK_URL`
 - `LIVE_TRACKING_PROVIDER_ORDER` (defaults to `espn,api_sports,odds_scores`)
 
 Frontend / Vercel:

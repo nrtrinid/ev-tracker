@@ -10,10 +10,13 @@ from services.match_keys import alert_key_from_side
 
 ALERTED_KEYS: set[str] = set()
 _warned_missing_webhook = False
+_warned_missing_webhook_routes: set[str] = set()
 _warned_alert_route_disabled = False
 ALERT_DEDUPE_TTL_SECONDS = int(os.getenv("ALERT_DEDUPE_TTL_SECONDS", "21600"))
 
 FRONTEND_BASE_URL = "https://ev-tracker-gamma.vercel.app"
+DEFAULT_DISCORD_MESSAGE_TYPE = "heartbeat"
+ALERT_DELIVERY_CONTEXTS = {"scheduled_board_drop", "scheduled_scan"}
 
 
 class DiscordDeliveryError(RuntimeError):
@@ -59,14 +62,33 @@ def _is_alert_route_enabled() -> bool:
     }
 
 
-def _resolve_route_config(message_type: str = "alert") -> dict[str, Any]:
-    normalized = (message_type or "alert").strip().lower() or "alert"
+def _normalize_message_type(message_type: str | None) -> str:
+    return (message_type or DEFAULT_DISCORD_MESSAGE_TYPE).strip().lower() or DEFAULT_DISCORD_MESSAGE_TYPE
+
+
+def _is_alert_delivery_context(delivery_context: str | None) -> bool:
+    return (delivery_context or "").strip().lower() in ALERT_DELIVERY_CONTEXTS
+
+
+def _resolve_route_config(
+    message_type: str = DEFAULT_DISCORD_MESSAGE_TYPE,
+    *,
+    delivery_context: str | None = None,
+) -> dict[str, Any]:
+    requested = _normalize_message_type(message_type)
+    normalized = requested
+    alert_route_guarded = requested == "alert" and not _is_alert_delivery_context(delivery_context)
+    if alert_route_guarded:
+        normalized = DEFAULT_DISCORD_MESSAGE_TYPE
 
     if normalized == "alert":
-        # Default-safe behavior: alert-path Discord delivery is opt-in.
+        # Alert-path Discord delivery is restricted to scheduler-owned jobs.
         if not _is_alert_route_enabled():
             return {
                 "message_type": normalized,
+                "requested_message_type": requested,
+                "delivery_context": delivery_context,
+                "alert_route_guarded": alert_route_guarded,
                 "route_kind": "alert_disabled",
                 "webhook_url": None,
                 "webhook_source": None,
@@ -76,23 +98,18 @@ def _resolve_route_config(message_type: str = "alert") -> dict[str, Any]:
         route_prefix = "alert"
         webhook_env = "DISCORD_ALERT_WEBHOOK_URL"
         role_env = "DISCORD_ALERT_MENTION_ROLE_ID"
-        allow_primary_fallback = True
     elif normalized == "heartbeat":
         route_prefix = normalized
         webhook_env = "DISCORD_DEBUG_WEBHOOK_URL"
         role_env = "DISCORD_DEBUG_MENTION_ROLE_ID"
-        allow_primary_fallback = os.getenv("DISCORD_ALLOW_DEBUG_FALLBACK_TO_PRIMARY") == "1"
     elif normalized == "test":
         route_prefix = normalized
         webhook_env = "DISCORD_DEBUG_WEBHOOK_URL"
         role_env = "DISCORD_DEBUG_MENTION_ROLE_ID"
-        # Keep validation traffic isolated to the debug route.
-        allow_primary_fallback = False
     else:
         route_prefix = "unknown"
-        webhook_env = None
-        role_env = None
-        allow_primary_fallback = True
+        webhook_env = "DISCORD_DEBUG_WEBHOOK_URL"
+        role_env = "DISCORD_DEBUG_MENTION_ROLE_ID"
 
     webhook_url = None
     webhook_source = None
@@ -100,10 +117,6 @@ def _resolve_route_config(message_type: str = "alert") -> dict[str, Any]:
         webhook_url = os.getenv(webhook_env)
         webhook_source = webhook_env
         route_kind = f"{route_prefix}_dedicated"
-    elif allow_primary_fallback and os.getenv("DISCORD_WEBHOOK_URL"):
-        webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
-        webhook_source = "DISCORD_WEBHOOK_URL"
-        route_kind = f"{route_prefix}_primary_fallback"
     else:
         route_kind = f"{route_prefix}_unconfigured"
 
@@ -112,24 +125,33 @@ def _resolve_route_config(message_type: str = "alert") -> dict[str, Any]:
     if role_env and os.getenv(role_env):
         role_id = os.getenv(role_env)
         role_source = role_env
-    elif allow_primary_fallback and os.getenv("DISCORD_MENTION_ROLE_ID"):
-        role_id = os.getenv("DISCORD_MENTION_ROLE_ID")
-        role_source = "DISCORD_MENTION_ROLE_ID"
 
     return {
         "message_type": normalized,
+        "requested_message_type": requested,
+        "delivery_context": delivery_context,
+        "alert_route_guarded": alert_route_guarded,
         "route_kind": route_kind,
+        "webhook_env": webhook_env,
         "webhook_url": webhook_url,
         "webhook_source": webhook_source,
+        "role_env": role_env,
         "mention_role_id": role_id,
         "role_source": role_source,
     }
 
 
-def describe_discord_delivery_target(message_type: str = "alert") -> dict[str, Any]:
-    config = _resolve_route_config(message_type)
+def describe_discord_delivery_target(
+    message_type: str = DEFAULT_DISCORD_MESSAGE_TYPE,
+    *,
+    delivery_context: str | None = None,
+) -> dict[str, Any]:
+    config = _resolve_route_config(message_type, delivery_context=delivery_context)
     return {
         "message_type": config["message_type"],
+        "requested_message_type": config["requested_message_type"],
+        "delivery_context": config["delivery_context"],
+        "alert_route_guarded": config["alert_route_guarded"],
         "route_kind": config["route_kind"],
         "webhook_configured": bool(config["webhook_url"]),
         "webhook_source": config["webhook_source"],
@@ -144,17 +166,22 @@ def get_last_schedule_stats() -> dict[str, int]:
     return dict(_LAST_SCHEDULE_STATS)
 
 
-def _get_webhook_and_role(message_type: str = "alert") -> tuple[str | None, str | None]:
+def _get_webhook_and_role(
+    message_type: str = DEFAULT_DISCORD_MESSAGE_TYPE,
+    *,
+    delivery_context: str | None = None,
+) -> tuple[str | None, str | None]:
     """
     Route to appropriate webhook and role mention based on message type.
     
     Args:
-        message_type: "alert" (bet alerts), "heartbeat" (debug/operational), or "test" (webhook validation)
+        message_type: "alert" (scheduler-owned alerts), "heartbeat" (debug/operational), or "test" (webhook validation)
+        delivery_context: required scheduler context for alert-path routing.
     
     Returns:
-        Tuple of (webhook_url, mention_role_id) with fallback to primary webhook if secondary not set.
+        Tuple of (webhook_url, mention_role_id) for the resolved route.
     """
-    config = _resolve_route_config(message_type)
+    config = _resolve_route_config(message_type, delivery_context=delivery_context)
     webhook = config["webhook_url"]
     role = config["mention_role_id"]
 
@@ -163,13 +190,9 @@ def _get_webhook_and_role(message_type: str = "alert") -> tuple[str | None, str 
 
 def _with_role_mention(payload: dict[str, Any], role_id: str | None = None) -> dict[str, Any]:
     """
-    If role_id is provided (or DISCORD_MENTION_ROLE_ID fallback is set), 
-    prepend a role mention to the message content.
+    If role_id is provided, prepend a role mention to the message content.
     This will only notify users if the role is mentionable and the channel allows role mentions.
     """
-    if role_id is None:
-        role_id = os.getenv("DISCORD_MENTION_ROLE_ID")
-    
     if not role_id:
         return payload
 
@@ -274,11 +297,17 @@ def build_board_drop_alert_payload(
     }
 
 
-async def send_discord_webhook(payload: dict[str, Any], message_type: str = "alert") -> dict[str, Any]:
+async def send_discord_webhook(
+    payload: dict[str, Any],
+    message_type: str = DEFAULT_DISCORD_MESSAGE_TYPE,
+    *,
+    delivery_context: str | None = None,
+) -> dict[str, Any]:
     global _warned_alert_route_disabled, _warned_missing_webhook
 
-    route_config = _resolve_route_config(message_type)
-    target = describe_discord_delivery_target(message_type)
+    route_config = _resolve_route_config(message_type, delivery_context=delivery_context)
+    target = describe_discord_delivery_target(message_type, delivery_context=delivery_context)
+    resolved_message_type = route_config["message_type"]
     webhook_url = route_config["webhook_url"]
     role_id = route_config["mention_role_id"]
 
@@ -290,9 +319,14 @@ async def send_discord_webhook(payload: dict[str, Any], message_type: str = "ale
                     "[Discord] Alert route disabled (DISCORD_ENABLE_ALERT_ROUTE=0); "
                     "alert-path notifications suppressed."
                 )
-        elif not _warned_missing_webhook:
+        elif route_config["route_kind"] not in _warned_missing_webhook_routes:
             _warned_missing_webhook = True
-            print("[Discord] DISCORD_WEBHOOK_URL not set; alerts disabled.")
+            _warned_missing_webhook_routes.add(route_config["route_kind"])
+            expected_config = route_config.get("webhook_env") or "Discord webhook"
+            print(
+                f"[Discord] {expected_config} not set; "
+                f"{resolved_message_type} Discord route disabled."
+            )
         return {
             **target,
             "delivery_status": "disabled_no_webhook",
@@ -316,7 +350,7 @@ async def send_discord_webhook(payload: dict[str, Any], message_type: str = "ale
     except httpx.HTTPStatusError as exc:
         response_text = (exc.response.text or "").strip()
         message = (
-            f"Discord webhook rejected {message_type} message with status "
+            f"Discord webhook rejected {resolved_message_type} message with status "
             f"{exc.response.status_code}"
         )
         if response_text:
@@ -324,18 +358,18 @@ async def send_discord_webhook(payload: dict[str, Any], message_type: str = "ale
         print(f"[Discord] Webhook error: {message}")
         raise DiscordDeliveryError(
             message=message,
-            message_type=message_type,
+            message_type=resolved_message_type,
             status_code=exc.response.status_code,
             response_text=response_text or None,
             route_kind=target.get("route_kind"),
             webhook_source=target.get("webhook_source"),
         ) from exc
     except httpx.HTTPError as exc:
-        message = f"Discord webhook request failed for {message_type}: {exc}"
+        message = f"Discord webhook request failed for {resolved_message_type}: {exc}"
         print(f"[Discord] Webhook error: {message}")
         raise DiscordDeliveryError(
             message=message,
-            message_type=message_type,
+            message_type=resolved_message_type,
             route_kind=target.get("route_kind"),
             webhook_source=target.get("webhook_source"),
         ) from exc
@@ -344,20 +378,39 @@ async def send_discord_webhook(payload: dict[str, Any], message_type: str = "ale
         raise
 
 
-async def alert_for_side(side: dict[str, Any], message_type: str = "alert") -> None:
+async def alert_for_side(
+    side: dict[str, Any],
+    message_type: str = DEFAULT_DISCORD_MESSAGE_TYPE,
+    *,
+    delivery_context: str | None = None,
+) -> None:
     payload = build_discord_payload(side)
-    await send_discord_webhook(payload, message_type=message_type)
+    await send_discord_webhook(payload, message_type=message_type, delivery_context=delivery_context)
 
 
-async def _alert_for_side_with_logging(side: dict[str, Any], message_type: str = "alert") -> None:
+async def _alert_for_side_with_logging(
+    side: dict[str, Any],
+    message_type: str = DEFAULT_DISCORD_MESSAGE_TYPE,
+    *,
+    delivery_context: str | None = None,
+) -> None:
     try:
-        await alert_for_side(side, message_type=message_type)
+        await alert_for_side(side, message_type=message_type, delivery_context=delivery_context)
     except Exception as exc:
         key = make_alert_key(side)
-        print(f"[Discord] Background {message_type} delivery failed for {key}: {exc}")
+        resolved_message_type = _resolve_route_config(
+            message_type,
+            delivery_context=delivery_context,
+        )["message_type"]
+        print(f"[Discord] Background {resolved_message_type} delivery failed for {key}: {exc}")
 
 
-def schedule_alerts(sides: list[dict[str, Any]], message_type: str = "alert") -> int:
+def schedule_alerts(
+    sides: list[dict[str, Any]],
+    message_type: str = DEFAULT_DISCORD_MESSAGE_TYPE,
+    *,
+    delivery_context: str | None = None,
+) -> int:
     """
     Fire-and-forget scheduling of Discord notifications for qualifying sides.
     Returns the number of notifications that were scheduled (not necessarily delivered).
@@ -381,7 +434,13 @@ def schedule_alerts(sides: list[dict[str, Any]], message_type: str = "alert") ->
         # Mark as alerted immediately to prevent duplicates within the same scan batch.
         ALERTED_KEYS.add(key)
         stats["scheduled"] += 1
-        asyncio.create_task(_alert_for_side_with_logging(side, message_type=message_type))
+        asyncio.create_task(
+            _alert_for_side_with_logging(
+                side,
+                message_type=message_type,
+                delivery_context=delivery_context,
+            )
+        )
 
     stats["skipped_total"] = (
         stats["skipped_memory_dedupe"]

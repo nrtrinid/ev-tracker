@@ -534,6 +534,86 @@ def test_board_refresh_invalid_refresh_payload_returns_500(auth_client, monkeypa
     assert persisted_runs[0]["meta"]["response_status_code"] == 500
 
 
+def test_board_refresh_straight_bets_success_merges_supported_sports(auth_client, monkeypatch):
+    sync_calls = []
+    status_updates = []
+    persisted_runs = []
+    persist_calls = []
+    scan_calls = []
+
+    monkeypatch.setattr("services.shared_state.allow_fixed_window_rate_limit", lambda **_kwargs: True)
+    monkeypatch.setattr(board_routes, "get_db", lambda: object())
+    monkeypatch.setattr(
+        board_routes,
+        "_resolve_main_runtime_hooks",
+        lambda: _runtime_hooks(
+            sync_calls=sync_calls,
+            status_updates=status_updates,
+            persisted_runs=persisted_runs,
+        ),
+    )
+
+    import services.odds_api as odds_api
+
+    monkeypatch.setattr(odds_api, "SUPPORTED_SPORTS", ("basketball_nba", "baseball_mlb"), raising=True)
+
+    async def _cached_or_scan(sport_key, source="manual_refresh"):
+        scan_calls.append({"sport_key": sport_key, "source": source})
+        if sport_key == "basketball_nba":
+            return {
+                "sides": [_straight_side(sport="basketball_nba", selection_key="evt-1|h2h|lakers")],
+                "events_fetched": 2,
+                "events_with_both_books": 1,
+                "api_requests_remaining": "88",
+                "scanned_at": "2026-04-22T09:30:00Z",
+            }
+        return {
+            "sides": [_straight_side(sport="baseball_mlb", selection_key="evt-2|h2h|dbacks", team="D-backs")],
+            "events_fetched": 3,
+            "events_with_both_books": 2,
+            "api_requests_remaining": "77",
+            "scanned_at": "2026-04-22T09:31:00Z",
+        }
+
+    monkeypatch.setattr(odds_api, "get_cached_or_scan", _cached_or_scan, raising=True)
+
+    def _persist_scoped_refresh(**kwargs):
+        persist_calls.append(kwargs)
+        return "2026-04-22T09:32:00Z"
+
+    monkeypatch.setattr(board_routes, "persist_scoped_refresh", _persist_scoped_refresh)
+
+    resp = auth_client.post("/api/board/refresh?scope=straight_bets")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["surface"] == "straight_bets"
+    assert body["refreshed_at"] == "2026-04-22T09:32:00Z"
+    assert body["data"]["surface"] == "straight_bets"
+    assert body["data"]["sport"] == "all"
+    assert body["data"]["events_fetched"] == 5
+    assert body["data"]["events_with_both_books"] == 3
+    assert body["data"]["api_requests_remaining"] == "77"
+    assert [call["sport_key"] for call in scan_calls] == ["basketball_nba", "baseball_mlb"]
+    assert all(call["source"] == "manual_refresh" for call in scan_calls)
+    assert sync_calls == []
+    assert status_updates[0]["payload"]["kind"] == "scoped_refresh"
+    assert status_updates[0]["payload"]["surface"] == "straight_bets"
+    assert status_updates[0]["payload"]["canonical_board_updated"] is False
+    assert status_updates[0]["payload"]["result"]["scan_label"] == "Manual Game Lines Refresh"
+    assert status_updates[0]["payload"]["result"]["straight_sides"] == 2
+    assert status_updates[0]["payload"]["result"]["game_line_sports_scanned"] == [
+        "baseball_mlb",
+        "basketball_nba",
+    ]
+    assert persisted_runs[0]["job_kind"] == "board_scoped_refresh"
+    assert persisted_runs[0]["surface"] == "straight_bets"
+    assert persisted_runs[0]["total_sides"] == 2
+    assert persisted_runs[0]["meta"]["canonical_board_updated"] is False
+    assert persist_calls[0]["surface"] == "straight_bets"
+    assert persist_calls[0]["scan_payload"]["surface"] == "straight_bets"
+
+
 def test_board_refresh_player_props_success_returns_optional_fields_and_syncs_when_fresh(auth_client, monkeypatch):
     sync_calls = []
     status_updates = []

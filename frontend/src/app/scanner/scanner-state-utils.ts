@@ -110,6 +110,8 @@ export function buildScannerLogBetInitialValues(params: {
       selection_side: side.selection_side,
       line_value: side.line_value ?? undefined,
       selection_meta: {
+        event: side.event,
+        team: side.team,
         market: side.market,
         opponent: side.opponent,
         display_name: side.display_name,

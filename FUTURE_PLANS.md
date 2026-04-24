@@ -42,7 +42,7 @@ Focus: trust/reliability fixes only.
   - User impact: High.
   - Engineering risk: High.
   - Completed work: Added canonical alternate-line normalization for MLB batter total bases so ladder offers like `2+` can price against the equivalent `over 1.5` threshold, while keeping one-sided ladder books as target offers and preserving paired-reference fair-odds math.
-  - Follow-up: Extend the same normalization pattern to any remaining active beta book/market shapes that still diverge from the standard paired-line representation.
+  - Follow-up: Extend the same normalization pattern to any remaining active beta book/market shapes that still diverge from the standard paired-line representation, especially alternate markets like pitcher strikeouts that still need the same ladder-to-paired-line matching support total bases now has.
   - Codex fit: Extremely high.
 
 - [x] Canonicalize beta telemetry, attribution, and event dedupe. [Owner: Frontend/Backend] [Completed: 2026-04-22]
@@ -53,11 +53,12 @@ Focus: trust/reliability fixes only.
   - Regression coverage: Added backend analytics service/reporting coverage for canonicalization, audience filtering, and funnel ordering invariants, plus frontend analytics bridge timeout/access coverage for summary/users routes.
   - Codex fit: High.
 
-- [ ] Expand board route contract coverage for latest modes, surface endpoint, and scoped refresh behavior. [Owner: Backend] [Target week: 2026-W18]
+- [x] Expand board route contract coverage for latest modes, surface endpoint, and scoped refresh behavior. [Owner: Backend] [Completed: 2026-04-24]
   - Why: Board routes are complex and central to first impression reliability.
   - User impact: High.
   - Engineering risk: Medium.
-  - Next step: Add route-level tests for mode handling, rate-limit/error branches, and scoped refresh contracts.
+  - Completed work: Confirmed existing route-level coverage for latest-board modes, surface endpoint success/error branches, rate limits, invalid scopes, scoped refresh failures, and player-prop scoped refresh success.
+  - Regression coverage: Added straight-bets scoped refresh success coverage proving supported sports are merged, scoped cache persistence is used, pick'em sync is skipped, and `last_board_refresh` remains scoped/non-canonical.
   - Codex fit: High.
 
 - [x] Ensure daily-board pipeline card reflects the latest ops manual refresh state (no stale board status after manual refresh). [Owner: Backend/Frontend] [Completed: 2026-04-21]
@@ -66,7 +67,7 @@ Focus: trust/reliability fixes only.
   - Engineering risk: Medium.
   - Completed work: Added normalized `last_board_refresh` ops status across board-drop and scoped-refresh paths, persisted scoped refreshes into durable ops history without republishing canonical `board:latest`, and updated the ops dashboard to poll short-term after async refresh acceptance so the cards settle without waiting for the next background refetch window.
   - Regression coverage: Added backend tests for scoped-refresh success/failure status persistence plus ops-history selection of the freshest board-affecting refresh, and updated scheduler/ops-trigger status assertions.
-  - Follow-up: Keep the broader board route contract expansion item below open for more exhaustive mode/rate-limit/scoped-refresh route coverage.
+  - Follow-up: Resolved follow-up coverage and scheduled board-drop recency verification on 2026-04-24.
   - Codex fit: High.
 
 - [ ] Audit deeplink reliability and fallback behavior by sportsbook/platform. [Owner: Frontend/Product/Ops] [Target week: 2026-W18]
@@ -75,6 +76,22 @@ Focus: trust/reliability fixes only.
   - Engineering risk: Medium.
   - Next step: Build a per-book matrix across desktop/mobile/app, verify expected fallback behavior, and add per-book UI hints or graceful fallback copy where direct reachability is weak.
   - Codex fit: Good for the matrix and fallback implementation; final QA needs human validation.
+
+- [x] Fix Discord notification route separation so heartbeat/test traffic does not keep falling back onto the alert webhook path. [Owner: Backend/Ops] [Completed: 2026-04-24]
+  - Why: The intended Discord notification path split still does not appear to be working in production behavior; notifications are still arriving through the alert path, which weakens signal separation and makes ops routing harder to trust.
+  - User impact: Medium for operators, indirect but important for reliability monitoring.
+  - Engineering risk: Medium.
+  - Completed work: Enforced strict Discord route separation so only scheduler-owned alert contexts may use the alert path; heartbeat, test, manual refresh, and unknown traffic now require the debug webhook or return unconfigured diagnostics.
+  - Regression coverage: Added Discord service and ops trigger coverage proving the legacy fallback env no longer routes heartbeat/test/manual traffic to the alert webhook, while scheduled board-drop alert delivery remains supported.
+  - Codex fit: High.
+
+- [x] Fix scheduled board drop recency on the ops page so the card reflects actual successful runs. [Owner: Backend/Frontend/Ops] [Completed: 2026-04-24]
+  - Why: The scheduled board drop appears to still be running twice daily, but the ops page can show a stale last-run timestamp from days ago. That creates false alarm fatigue and makes it hard to trust the scheduler health view.
+  - User impact: Medium for operators, high for trust in operational visibility.
+  - Engineering risk: Medium.
+  - Completed work: Reconciled durable ops history with live in-memory ops status so the fresher scheduler, ops-trigger, or board-refresh timestamp wins instead of stale durable rows always overwriting live state.
+  - Regression coverage: Added ops-history tests proving fresh live board status wins over stale durable rows and newer durable rows still win over older live fallback state.
+  - Codex fit: High.
 
 - [x] Re-add CLV piggyback on admin-triggered scans for currently placed bets with CLV pending (not only JIT scheduler job coverage). [Owner: Backend] [Completed: 2026-04-21]
   - Why: CLV pending bets can miss timely updates when only the JIT path runs; admin-triggered scans should also advance CLV snapshots.
@@ -98,6 +115,25 @@ Focus: trust/reliability fixes only.
   - Engineering risk: Medium.
   - Next step: Audit the current auto-settle market/result matching path for spread bets, implement the missing line/outcome handling, and add targeted regression tests so spread wagers settle with the same reliability expectations as moneylines/totals where supported.
   - Codex fit: High.
+
+- [ ] Design a sportsbook settlement reconciliation layer to make bankroll tracking penny-perfect, starting with DraftKings and FanDuel. [Owner: Backend/Ops] [Target week: 2026-W18]
+  - Why: We are still seeing small bankroll mismatches versus real sportsbook balances. FanDuel exposed missing-settlement/state gaps, while DraftKings appears to have cents-level payout-rounding differences. This is trust-critical because even small bankroll drift makes users question every downstream balance, EV, and P&L number.
+  - User impact: High.
+  - Engineering risk: Medium to high.
+  - Scope guardrails: Treat this as a deterministic reconciliation and rule-inference problem, not an RL problem. Use integer cents plus `Decimal`, keep the system auditable, and prefer a narrow reconciliation layer over a broad settlement-system rewrite.
+  - Planning target: Produce a repo-grounded implementation plan first, covering current bankroll calculation paths, settlement fields/models, any external bet-id support, profit/payout helpers, admin/manual logging flows, and existing tests/scripts related to bankroll or settlement.
+  - Required design shape:
+    - Trust actual sportsbook payout amounts as the top-priority source of truth when available.
+    - When actual payout is unavailable, infer sportsbook-specific settlement rules from historical settled bets.
+    - If a case is weird or low-confidence (promo edge case, early payout, unsupported settlement pattern, partial/manual ambiguity), flag it for manual reconciliation instead of pretending certainty.
+  - Required deliverables:
+    - A concrete implementation plan for a rounding-rule inference harness and reconciliation workflow.
+    - Candidate-rule evaluation across sportsbook/promo/odds-sign segments, scored by exact-match rate and total cents error.
+    - A script/CLI plan to ingest historical settled bets with actual sportsbook payout amounts, test candidate formulas, discover best-fit rules, and export mismatches for audit.
+    - Data-model recommendations for fields like `sportsbook_settlement_amount_cents`, `sportsbook_balance_after_cents`, `sportsbook_txn_id`, `settlement_confidence`, and `settlement_source` (`actual_book`, `inferred_rule`, `manual`).
+    - A rollout plan that starts with the smallest safe slice and keeps manual logging plus unsupported markets auditable.
+  - Next step: Do a repo inspection and write the detailed implementation plan only; do not implement production reconciliation logic until the plan is reviewed.
+  - Codex fit: High for repo audit, deterministic rule-harness design, script/test planning, and phased rollout proposal.
 
 - [x] Resolve release/docs/runtime parity drift across status docs. [Owner: Docs] [Completed: 2026-04-22]
   - Why: Inconsistent release metadata causes operator confusion and weakens launch discipline.
@@ -151,6 +187,13 @@ Focus: reliability polish and operational confidence after must-ship items land.
   - User impact: Medium.
   - Engineering risk: Medium.
   - Next step: Surface a small internal support matrix or reason code (`unsupported`, `not_yet_populated`, `one_sided_only`, `parse_failed`) for key book/market paths.
+  - Codex fit: High.
+
+- [ ] Extend alt-line equivalency matching beyond total bases to other supported markets such as pitcher strikeouts. [Owner: Backend] [Target week: 2026-W19]
+  - Why: We already solved this for total bases, but other alt markets still risk missing edges or failing fair-odds comparisons when books express the same threshold as ladder-style `2+`, `3+`, etc. instead of paired over/under lines.
+  - User impact: Medium to high.
+  - Engineering risk: Medium.
+  - Next step: Reuse the total-bases canonicalization pattern for pitcher strikeouts and other active alt markets, then add focused parsing/comparison regression tests for mixed ladder vs paired-line books.
   - Codex fit: High.
 
 - [ ] Add explicit frontend bridge tests for ops analytics summary/users routes. [Owner: Frontend] [Target week: 2026-W19]

@@ -854,6 +854,49 @@ class ModelCalibrationRecentComparisonRow(BaseModel):
     candidate_clv_ev_percent: float | None = None
 
 
+class PlayerPropModelWeightStatus(BaseModel):
+    """Status of learned v2 player-prop model weights."""
+
+    override_count: int = 0
+    markets_covered: int = 0
+    latest_updated_at: datetime | None = None
+    stale_after_hours: int = 72
+    default_only: bool = True
+    stale: bool = False
+    available: bool = True
+
+
+class PlayerPropShadowCandidateSummary(BaseModel):
+    """Ops-only v2 shadow candidate-set comparison against live v1."""
+
+    latest_candidate_set_key: str | None = None
+    latest_source: str | None = None
+    latest_captured_at: datetime | None = None
+    rolling_candidate_set_count: int = 0
+    v1_count: int = 0
+    v2_count: int = 0
+    both_count: int = 0
+    v1_only_count: int = 0
+    v2_only_count: int = 0
+    overlap_pct: float | None = None
+    rolling_both_count: int = 0
+    rolling_v1_only_count: int = 0
+    rolling_v2_only_count: int = 0
+    rolling_overlap_pct: float | None = None
+    rolling_v2_only_displayed_count: int = 0
+    top_25_overlap_pct: float | None = None
+    top_50_overlap_pct: float | None = None
+    avg_ev_delta_pct_points: float | None = None
+    avg_rank_delta: float | None = None
+    v2_only_displayed_count: int = 0
+    v2_only_valid_close_count: int = 0
+    v2_only_avg_clv_percent: float | None = None
+    v2_only_beat_close_pct: float | None = None
+    v2_only_avg_brier_score: float | None = None
+    v2_only_avg_log_loss: float | None = None
+    weight_status: PlayerPropModelWeightStatus = Field(default_factory=PlayerPropModelWeightStatus)
+
+
 class ModelCalibrationReleaseGate(BaseModel):
     """Release-gate verdict comparing candidate against baseline model."""
 
@@ -869,6 +912,32 @@ class ModelCalibrationReleaseGate(BaseModel):
     baseline_avg_clv_percent: float | None = None
     candidate_beat_close_pct: float | None = None
     baseline_beat_close_pct: float | None = None
+    brier_delta: float | None = None
+    log_loss_delta: float | None = None
+    avg_clv_delta_pct_points: float | None = None
+    beat_close_delta_pct_points: float | None = None
+    avg_true_prob_delta_pct_points: float | None = None
+    avg_abs_true_prob_delta_pct_points: float | None = None
+    max_abs_true_prob_delta_pct_points: float | None = None
+    identical_true_prob_count: int = 0
+    identical_true_prob_pct: float | None = None
+    avg_ev_delta_pct_points: float | None = None
+    avg_abs_ev_delta_pct_points: float | None = None
+    max_abs_ev_delta_pct_points: float | None = None
+    identical_ev_count: int = 0
+    identical_ev_pct: float | None = None
+    brier_candidate_better_count: int = 0
+    brier_baseline_better_count: int = 0
+    brier_tie_count: int = 0
+    log_loss_candidate_better_count: int = 0
+    log_loss_baseline_better_count: int = 0
+    log_loss_tie_count: int = 0
+    verdict: Literal["not_enough_sample", "hold_neutral", "fail", "promote"] = "not_enough_sample"
+    deadband_brier: float = 0.00001
+    deadband_log_loss: float = 0.00001
+    deadband_clv_pct_points: float = 0.10
+    deadband_beat_close_pct_points: float = 1.0
+    neutral_within_deadband: bool = False
     eligible: bool
     passes: bool
     reasons: list[str]
@@ -888,6 +957,7 @@ class ModelCalibrationSummaryResponse(BaseModel):
     by_interpolation_mode: list[ModelCalibrationBreakdownItem]
     cohort_trend: list[ModelCalibrationCohortTrendRow]
     recent_comparisons: list[ModelCalibrationRecentComparisonRow]
+    shadow_candidate_set: PlayerPropShadowCandidateSummary
     release_gate: ModelCalibrationReleaseGate
 
 

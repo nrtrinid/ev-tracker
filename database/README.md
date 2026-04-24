@@ -9,6 +9,7 @@ The canonical schema history for this repo is the numbered migration chain in th
 - `migration_020_beta_invite_code_access.sql`
 - `migration_021_theme_preference.sql`
 - `migration_022_live_tracking_indexes.sql`
+- `migration_023_player_prop_model_candidate_observations.sql`
 
 ## Source Of Truth
 

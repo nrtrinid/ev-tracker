@@ -77,7 +77,7 @@ Operational hardening adds:
 
 ### External APIs
 
-- **The Odds API** (`api.the-odds-api.com/v4`) — live odds for +EV scanning.
+- **The Odds API** (`api.the-odds-api.com/v4`) — live odds for +EV scanning and fallback settlement scores.
 - **ESPN scoreboard + game summary endpoints** — live NBA game state and player-stat progress for compact open-bet snapshots.
 - **MLB StatsAPI schedule / linescore / boxscore endpoints** — live MLB game state plus the safe prop-progress set for compact open-bet snapshots.
 
@@ -283,10 +283,11 @@ ev-betting-tracker/
 | `ANALYTICS_TEST_EMAILS` | Optional comma-separated emails excluded from default beta analytics as test accounts |
 | `LIVE_TRACKING_ENABLED` | Toggle for `/bets/live` snapshots (`1` enabled by default) |
 | `LIVE_TRACKING_PROVIDER_ORDER` | Optional provider priority list for live tracking lookups (default MVP order: `espn,mlb,api_sports,odds_scores`) |
-| `DISCORD_WEBHOOK_URL` | Optional webhook for scan/settle alerts |
-| `DISCORD_ALERT_WEBHOOK_URL` | Optional dedicated webhook for user-facing board-drop alerts |
-| `DISCORD_DEBUG_WEBHOOK_URL` | Optional dedicated webhook for debug/test/heartbeat messages |
-| `DISCORD_ALLOW_DEBUG_FALLBACK_TO_PRIMARY` | Set `1` to let heartbeat/test messages fall back to `DISCORD_WEBHOOK_URL` |
+| `AUTO_SETTLE_SCORE_SOURCE` | Auto-settle score source (`provider_first` by default; `odds_api` restores legacy Odds API score gating) |
+| `AUTO_SETTLE_PROVIDER_FALLBACK_TO_ODDS` | `1` keeps Odds API `/scores` as fallback when provider finals are unavailable or unsupported |
+| `AUTO_SETTLE_PROVIDER_FINALITY_DELAY_MINUTES` | Minutes to wait after provider finality before auto-settle uses the final score (`15` default) |
+| `DISCORD_ALERT_WEBHOOK_URL` | Optional dedicated webhook for scheduled board-drop alerts |
+| `DISCORD_DEBUG_WEBHOOK_URL` | Optional dedicated webhook for ops, manual refresh, test, and heartbeat messages |
 | `REDIS_URL` | Optional shared state backend for rate-limit/cache coordination |
 
 ### Frontend (`.env.local`)

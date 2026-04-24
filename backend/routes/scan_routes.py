@@ -83,6 +83,7 @@ async def scan_markets_impl(
     map_error,
     build_full_scan_response,
     get_environment,
+    capture_model_candidate_observations=None,
 ):
     if surface not in SUPPORTED_SURFACES:
         raise HTTPException(status_code=400, detail=f"Unsupported surface '{surface}'")
@@ -173,15 +174,27 @@ async def scan_markets_impl(
         )
 
     def _finalize_manual_scan_bundle(bundle: dict):
+        captured_at = utc_now_iso()
         response_payload = apply_manual_scan_bundle_fn(
             bundle=bundle,
-            captured_at=utc_now_iso(),
+            captured_at=captured_at,
             set_last_manual_scan_status=lambda status: set_ops_status(
                 "last_manual_scan",
                 {**status, "scan_session_id": scan_session_id},
             ),
             schedule_piggyback=lambda sides: _invoke_scan_followup(piggyback_clv, sides),
             schedule_research_capture=lambda sides: _invoke_scan_followup(capture_research_opportunities, sides),
+            schedule_candidate_observation_capture=(
+                (
+                    lambda candidate_sets: capture_model_candidate_observations(
+                        candidate_sets,
+                        source="manual_scan",
+                        captured_at=captured_at,
+                    )
+                )
+                if capture_model_candidate_observations is not None
+                else None
+            ),
             persist_latest_scan=lambda payload: persist_latest_full_scan(
                 db=db,
                 retry_supabase=retry_supabase,
@@ -197,7 +210,7 @@ async def scan_markets_impl(
             surface=bundle["ops_status_payload"].get("surface"),
             scan_scope=scan_scope,
             requested_sport=bundle["ops_status_payload"].get("sport"),
-            captured_at=utc_now_iso(),
+            captured_at=captured_at,
             events_fetched=bundle["ops_status_payload"].get("events_fetched"),
             events_with_both_books=bundle["ops_status_payload"].get("events_with_both_books"),
             total_sides=bundle["ops_status_payload"].get("total_sides"),

@@ -6,6 +6,20 @@ from datetime import datetime, timezone
 import httpx
 from fastapi import HTTPException
 
+from services.player_prop_candidate_observations import PLAYER_PROP_MODEL_CANDIDATE_SETS_KEY
+
+
+def _merge_model_candidate_sets(
+    target: dict[str, list[dict[str, Any]]],
+    incoming: dict[str, list[dict[str, Any]]] | None,
+) -> None:
+    if not isinstance(incoming, dict):
+        return
+    for model_key, sides in incoming.items():
+        if not isinstance(sides, list):
+            continue
+        target.setdefault(str(model_key), []).extend([side for side in sides if isinstance(side, dict)])
+
 
 def manual_scan_sports_for_env(
     *,
@@ -43,6 +57,7 @@ def build_single_sport_manual_scan_outputs(
 ) -> dict[str, Any]:
     base_sides = _with_surface(surface, result["sides"])
     fresh_sides = base_sides if not result.get("cache_hit") else []
+    model_candidate_sets = result.get(PLAYER_PROP_MODEL_CANDIDATE_SETS_KEY) if not result.get("cache_hit") else {}
     response_sides = _with_surface(surface, annotate_sides(base_sides))
     response_payload = {
         "surface": surface,
@@ -77,6 +92,7 @@ def build_single_sport_manual_scan_outputs(
     return {
         "base_sides": base_sides,
         "fresh_sides": fresh_sides,
+        "model_candidate_sets": model_candidate_sets if isinstance(model_candidate_sets, dict) else {},
         "response_payload": response_payload,
         "persist_payload": persist_payload,
         "ops_status_payload": ops_status_payload,
@@ -95,6 +111,7 @@ def build_all_sports_manual_scan_outputs(
     diagnostics: dict[str, Any] | None,
     prizepicks_cards: list[dict[str, Any]] | None,
     annotate_sides: Callable[[list[dict[str, Any]]], list[dict[str, Any]]],
+    model_candidate_sets: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     normalized_sides = _with_surface(surface, all_sides)
     response_sides = _with_surface(surface, annotate_sides(normalized_sides))
@@ -130,6 +147,7 @@ def build_all_sports_manual_scan_outputs(
     }
     return {
         "fresh_sides": _with_surface(surface, fresh_sides),
+        "model_candidate_sets": model_candidate_sets if isinstance(model_candidate_sets, dict) else {},
         "response_payload": response_payload,
         "persist_payload": persist_payload,
         "ops_status_payload": ops_status_payload,
@@ -144,6 +162,7 @@ def apply_manual_scan_bundle(
     schedule_piggyback: Callable[[list[dict[str, Any]]], Any],
     schedule_research_capture: Callable[[list[dict[str, Any]]], Any],
     persist_latest_scan: Callable[[dict[str, Any]], None],
+    schedule_candidate_observation_capture: Callable[[dict[str, list[dict[str, Any]]]], Any] | None = None,
 ) -> dict[str, Any]:
     set_last_manual_scan_status(
         {
@@ -156,6 +175,11 @@ def apply_manual_scan_bundle(
     research_result = schedule_research_capture(fresh_sides)
     if inspect.isawaitable(research_result):
         asyncio.create_task(research_result)
+    candidate_sets = bundle.get("model_candidate_sets") or {}
+    if schedule_candidate_observation_capture is not None and candidate_sets:
+        candidate_result = schedule_candidate_observation_capture(candidate_sets)
+        if inspect.isawaitable(candidate_result):
+            asyncio.create_task(candidate_result)
     piggyback_result = schedule_piggyback(fresh_sides)
     if inspect.isawaitable(piggyback_result):
         asyncio.create_task(piggyback_result)
@@ -185,6 +209,7 @@ async def aggregate_manual_scan_all_sports(
     diagnostics: dict[str, Any] | None = None
     prizepicks_cards: list[dict[str, Any]] = []
     results_by_sport: list[tuple[str, dict[str, Any]]] = []
+    model_candidate_sets: dict[str, list[dict[str, Any]]] = {}
 
     for sport in sports_to_scan:
         try:
@@ -196,6 +221,7 @@ async def aggregate_manual_scan_all_sports(
 
         results_by_sport.append((sport, result))
         all_sides.extend(result["sides"])
+        _merge_model_candidate_sets(model_candidate_sets, result.get(PLAYER_PROP_MODEL_CANDIDATE_SETS_KEY))
         if not result.get("cache_hit"):
             fresh_sides.extend(result["sides"])
         total_events += int(result["events_fetched"])
@@ -242,6 +268,7 @@ async def aggregate_manual_scan_all_sports(
         "oldest_fetched": oldest_fetched,
         "diagnostics": diagnostics,
         "prizepicks_cards": prizepicks_cards or None,
+        "model_candidate_sets": model_candidate_sets,
     }
 
 
@@ -291,5 +318,6 @@ async def run_all_sports_manual_scan(
         scanned_at=scanned_at,
         diagnostics=aggregate.get("diagnostics"),
         prizepicks_cards=aggregate.get("prizepicks_cards"),
+        model_candidate_sets=aggregate.get("model_candidate_sets"),
         annotate_sides=annotate_sides,
     )

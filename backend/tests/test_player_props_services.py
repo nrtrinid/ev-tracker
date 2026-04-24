@@ -14,6 +14,7 @@ from services.player_props import (
     _aggregate_reference_estimates,
     _build_pickem_cards_from_candidates,
     _book_weight_for_model,
+    _build_model_candidate_sets,
     _build_prizepicks_comparison_cards,
     _build_prop_side_candidates,
     _compute_confidence,
@@ -2948,6 +2949,84 @@ def test_aggregate_reference_estimates_v2_filters_logit_outlier_and_marks_mixed_
     assert aggregation["filtered_reference_count"] == 3
     assert aggregation["interpolation_mode"] == "mixed"
     assert 0.51 <= aggregation["raw_true_prob"] <= 0.54
+
+
+def test_build_model_candidate_sets_projects_v2_without_mutating_live_candidate():
+    candidate = {
+        "surface": "player_props",
+        "event_id": "evt-1",
+        "sport": "basketball_nba",
+        "event": "Nuggets @ Suns",
+        "commence_time": "2026-03-21T03:00:00Z",
+        "market_key": "player_points",
+        "market": "player_points",
+        "player_name": "Nikola Jokic",
+        "selection_side": "over",
+        "line_value": 24.5,
+        "sportsbook": "FanDuel",
+        "sportsbook_key": "fanduel",
+        "book_odds": 105,
+        "book_decimal": 2.05,
+        "reference_odds": -108,
+        "reference_source": PLAYER_PROP_REFERENCE_SOURCE,
+        "reference_bookmakers": ["bovada", "betmgm"],
+        "reference_bookmaker_count": 2,
+        "true_prob": 0.52,
+        "raw_true_prob": 0.52,
+        "ev_percentage": 6.6,
+        "base_kelly_fraction": 0.02,
+        "confidence_score": 0.55,
+        "model_evaluations": [
+            {
+                "model_key": "props_v1_live",
+                "reference_source": PLAYER_PROP_REFERENCE_SOURCE,
+                "reference_odds": -108,
+                "reference_bookmakers": ["bovada", "betmgm"],
+                "reference_bookmaker_count": 2,
+                "filtered_reference_count": 2,
+                "exact_reference_count": 2,
+                "interpolated_reference_count": 0,
+                "true_prob": 0.52,
+                "raw_true_prob": 0.52,
+                "ev_percentage": 6.6,
+                "base_kelly_fraction": 0.02,
+                "book_decimal": 2.05,
+                "confidence_score": 0.55,
+                "interpolation_mode": "exact",
+            },
+            {
+                "model_key": "props_v2_shadow",
+                "reference_source": PLAYER_PROP_REFERENCE_SOURCE,
+                "reference_odds": -122,
+                "reference_bookmakers": ["betonlineag", "bovada", "betmgm"],
+                "reference_bookmaker_count": 3,
+                "filtered_reference_count": 3,
+                "exact_reference_count": 2,
+                "interpolated_reference_count": 1,
+                "true_prob": 0.57,
+                "raw_true_prob": 0.59,
+                "ev_percentage": 12.1,
+                "base_kelly_fraction": 0.05,
+                "book_decimal": 2.05,
+                "confidence_score": 0.72,
+                "interpolation_mode": "mixed",
+                "shrink_factor": 0.12,
+            },
+        ],
+    }
+
+    candidate_sets = _build_model_candidate_sets([candidate], min_reference_bookmakers=2)
+
+    assert candidate["true_prob"] == 0.52
+    assert candidate["reference_odds"] == -108
+    assert candidate_sets["props_v1_live"][0]["true_prob"] == 0.52
+    assert candidate_sets["props_v1_live"][0]["ev_percentage"] == 6.6
+    shadow = candidate_sets["props_v2_shadow"][0]
+    assert shadow["true_prob"] == 0.57
+    assert shadow["raw_true_prob"] == 0.59
+    assert shadow["reference_odds"] == -122
+    assert shadow["ev_percentage"] == 12.1
+    assert shadow["interpolation_mode"] == "mixed"
 
 
 def test_shrink_probability_toward_even_is_smaller_for_higher_confidence():

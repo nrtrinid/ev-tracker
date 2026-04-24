@@ -161,7 +161,7 @@ test.describe("bridge route timeout handling", () => {
     });
 
     expect(response.status).toBe(504);
-    await expect(response.json()).resolves.toMatchObject({ detail: "Backend scan trigger timed out" });
+    await expect(response.json()).resolves.toMatchObject({ detail: "Backend board refresh trigger timed out" });
   });
 
   test("admin refresh bridge prefers async trigger endpoint", async () => {
@@ -194,7 +194,7 @@ test.describe("bridge route timeout handling", () => {
       timeoutMs: 10,
     });
 
-    expect(calls).toEqual(["http://backend.internal/api/ops/trigger/scan/async"]);
+    expect(calls).toEqual(["http://backend.internal/api/ops/trigger/board-refresh/async"]);
     expect(response.status).toBe(202);
     await expect(response.json()).resolves.toMatchObject({ accepted: true, pending: true, run_id: "run-123" });
   });
@@ -203,7 +203,7 @@ test.describe("bridge route timeout handling", () => {
     const calls: string[] = [];
     const fetchFn: typeof fetch = async (input) => {
       calls.push(String(input));
-      if (calls.length === 1) {
+      if (calls.length < 4) {
         return new Response(
           JSON.stringify({ detail: "Not Found" }),
           { status: 404, headers: { "content-type": "application/json" } },
@@ -234,7 +234,9 @@ test.describe("bridge route timeout handling", () => {
     });
 
     expect(calls).toEqual([
+      "http://backend.internal/api/ops/trigger/board-refresh/async",
       "http://backend.internal/api/ops/trigger/scan/async",
+      "http://backend.internal/api/ops/trigger/board-refresh",
       "http://backend.internal/api/ops/trigger/scan",
     ]);
     expect(response.status).toBe(200);

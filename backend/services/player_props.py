@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from calculations import american_to_decimal, decimal_to_american, kelly_fraction
+from services.player_prop_candidate_observations import PLAYER_PROP_MODEL_CANDIDATE_SETS_KEY
 from services.player_prop_weights import get_player_prop_weight_overrides
 from services.player_prop_markets import (
     PLAYER_PROP_ALL_MARKETS,
@@ -1724,6 +1725,90 @@ def _apply_reference_quality_gate(
     return filtered
 
 
+def _project_candidate_for_model_evaluation(candidate: dict[str, Any], evaluation: dict[str, Any]) -> dict[str, Any] | None:
+    model_key = str(evaluation.get("model_key") or "").strip().lower()
+    if not model_key:
+        return None
+    reference_odds = _to_line_numeric(evaluation.get("reference_odds"))
+    true_prob = _to_line_numeric(evaluation.get("true_prob"))
+    ev_percentage = _to_line_numeric(evaluation.get("ev_percentage"))
+    if reference_odds is None or true_prob is None or ev_percentage is None:
+        return None
+
+    projected = dict(candidate)
+    projected.update(
+        {
+            "reference_odds": float(reference_odds),
+            "reference_source": str(evaluation.get("reference_source") or projected.get("reference_source") or ""),
+            "reference_bookmakers": list(evaluation.get("reference_bookmakers") or []),
+            "reference_bookmaker_count": int(evaluation.get("reference_bookmaker_count") or 0),
+            "filtered_reference_count": int(evaluation.get("filtered_reference_count") or 0),
+            "exact_reference_count": int(evaluation.get("exact_reference_count") or 0),
+            "interpolated_reference_count": int(evaluation.get("interpolated_reference_count") or 0),
+            "confidence_label": evaluation.get("confidence_label"),
+            "confidence_score": _to_line_numeric(evaluation.get("confidence_score")),
+            "prob_std": _to_line_numeric(evaluation.get("prob_std")),
+            "true_prob": round(float(true_prob), 4),
+            "raw_true_prob": _to_line_numeric(evaluation.get("raw_true_prob")),
+            "base_kelly_fraction": float(evaluation.get("base_kelly_fraction") or 0.0),
+            "book_decimal": float(evaluation.get("book_decimal") or projected.get("book_decimal") or 0.0),
+            "ev_percentage": float(ev_percentage),
+            "active_model_key": model_key,
+            "interpolation_mode": str(evaluation.get("interpolation_mode") or "exact"),
+            "reference_inputs_json": evaluation.get("reference_inputs_json"),
+            "shrink_factor": _to_line_numeric(evaluation.get("shrink_factor")) or 0.0,
+            "sportsbook_key": str(evaluation.get("sportsbook_key") or "").strip().lower()
+            or str(projected.get("sportsbook") or "").strip().lower().replace(" ", ""),
+            "model_evaluations": list(candidate.get("model_evaluations") or []),
+        }
+    )
+    return projected
+
+
+def _build_model_candidate_sets(
+    candidates: list[dict[str, Any]],
+    *,
+    min_reference_bookmakers: int,
+) -> dict[str, list[dict[str, Any]]]:
+    projected_by_model: dict[str, list[dict[str, Any]]] = {}
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        evaluations = candidate.get("model_evaluations")
+        if not isinstance(evaluations, list):
+            continue
+        for evaluation in evaluations:
+            if not isinstance(evaluation, dict):
+                continue
+            projected = _project_candidate_for_model_evaluation(candidate, evaluation)
+            if projected is None:
+                continue
+            model_key = str(evaluation.get("model_key") or "").strip().lower()
+            projected_by_model.setdefault(model_key, []).append(projected)
+
+    return {
+        model_key: _collapse_equivalent_target_candidates(
+            _apply_reference_quality_gate(
+                model_candidates,
+                min_reference_bookmakers=min_reference_bookmakers,
+            )
+        )
+        for model_key, model_candidates in projected_by_model.items()
+    }
+
+
+def _merge_model_candidate_sets(
+    target: dict[str, list[dict[str, Any]]],
+    incoming: dict[str, list[dict[str, Any]]] | None,
+) -> None:
+    if not isinstance(incoming, dict):
+        return
+    for model_key, sides in incoming.items():
+        if not isinstance(sides, list):
+            continue
+        target.setdefault(str(model_key), []).extend([side for side in sides if isinstance(side, dict)])
+
+
 def _build_pickem_cards_from_candidates(
     candidates: list[dict],
     *,
@@ -2836,6 +2921,7 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
     candidate_sides_count = 0
     quality_gate_filtered_count = 0
     pickem_candidates: list[dict] = []
+    model_candidate_sets: dict[str, list[dict[str, Any]]] = {}
     for event in events_to_scan:
         commence = str(event.get("commence_time") or "")
         if commence:
@@ -2892,6 +2978,13 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
         )
         candidate_sides_count += len(event_candidates)
         pickem_candidates.extend(event_candidates)
+        _merge_model_candidate_sets(
+            model_candidate_sets,
+            _build_model_candidate_sets(
+                event_candidates,
+                min_reference_bookmakers=min_reference_bookmakers,
+            ),
+        )
         event_sides = _collapse_equivalent_target_candidates(
             _apply_reference_quality_gate(
                 event_candidates,
@@ -2979,6 +3072,7 @@ async def scan_player_props(sport: str, source: str = "manual_scan") -> dict:
         "events_with_both_books": events_with_any_book,
         "api_requests_remaining": remaining,
         "diagnostics": diagnostics,
+        PLAYER_PROP_MODEL_CANDIDATE_SETS_KEY: model_candidate_sets,
     }
 
 
@@ -3061,6 +3155,7 @@ async def scan_player_props_for_event_ids(
     candidate_sides_count = 0
     quality_gate_filtered_count = 0
     pickem_candidates: list[dict] = []
+    model_candidate_sets: dict[str, list[dict[str, Any]]] = {}
     remaining: str | None = None
 
     for raw_event_id in event_ids:
@@ -3112,6 +3207,13 @@ async def scan_player_props_for_event_ids(
         )
         candidate_sides_count += len(event_candidates)
         pickem_candidates.extend(event_candidates)
+        _merge_model_candidate_sets(
+            model_candidate_sets,
+            _build_model_candidate_sets(
+                event_candidates,
+                min_reference_bookmakers=min_reference_bookmakers,
+            ),
+        )
         event_sides = _collapse_equivalent_target_candidates(
             _apply_reference_quality_gate(
                 event_candidates,
@@ -3169,6 +3271,7 @@ async def scan_player_props_for_event_ids(
         "events_with_both_books": events_with_any_book,
         "api_requests_remaining": remaining,
         "diagnostics": diagnostics,
+        PLAYER_PROP_MODEL_CANDIDATE_SETS_KEY: model_candidate_sets,
     }
 
 
@@ -3219,6 +3322,7 @@ def merge_player_prop_scan_results(
     remaining_values: list[str | None] = []
     provider_market_event_counts: dict[str, int] = {}
     supported_book_market_event_counts: dict[str, int] = {}
+    model_candidate_sets: dict[str, list[dict[str, Any]]] = {}
 
     for sport_key, result in results_by_sport:
         sport = str(sport_key or "").strip().lower()
@@ -3228,6 +3332,10 @@ def merge_player_prop_scan_results(
         all_sides.extend([side for side in (result.get("sides") or []) if isinstance(side, dict)])
         all_pickem_cards.extend([card for card in (result.get("pickem_cards") or []) if isinstance(card, dict)])
         all_prizepicks_cards.extend([card for card in (result.get("prizepicks_cards") or []) if isinstance(card, dict)])
+        _merge_model_candidate_sets(
+            model_candidate_sets,
+            result.get(PLAYER_PROP_MODEL_CANDIDATE_SETS_KEY),
+        )
         events_fetched += int(result.get("events_fetched") or 0)
         events_with_both_books += int(result.get("events_with_both_books") or 0)
         remaining_values.append(result.get("api_requests_remaining"))
@@ -3325,7 +3433,12 @@ def merge_player_prop_scan_results(
         "events_with_both_books": events_with_both_books,
         "api_requests_remaining": _merge_api_requests_remaining(remaining_values),
         "diagnostics": diagnostics,
+        PLAYER_PROP_MODEL_CANDIDATE_SETS_KEY: model_candidate_sets,
     }
+
+
+def _without_model_candidate_sets(payload: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in payload.items() if key != PLAYER_PROP_MODEL_CANDIDATE_SETS_KEY}
 
 
 async def get_cached_or_scan_player_props(sport: str, source: str = "unknown") -> dict:
@@ -3355,7 +3468,8 @@ async def get_cached_or_scan_player_props(sport: str, source: str = "unknown") -
                     return {**entry, "cache_hit": True}
 
         result = await scan_player_props(normalized_sport, source=source)
-        result["fetched_at"] = now
-        _props_cache[slot] = result
-        set_scan_cache(slot, result, CACHE_TTL_SECONDS)
-        return {**result, "cache_hit": False}
+        result_with_fetch = {**result, "fetched_at": now}
+        cache_payload = _without_model_candidate_sets(result_with_fetch)
+        _props_cache[slot] = cache_payload
+        set_scan_cache(slot, cache_payload, CACHE_TTL_SECONDS)
+        return {**result_with_fetch, "cache_hit": False}

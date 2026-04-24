@@ -305,6 +305,26 @@ function getBoardRefreshTimestamp(
   return refresh?.finished_at || refresh?.refreshed_at || refresh?.captured_at || refresh?.started_at || null;
 }
 
+function getScheduledBoardDropTimestamp(
+  scheduler?: BoardDropRunStatus | null,
+  refresh?: BoardRefreshStatus | null,
+): string | null {
+  const schedulerTimestamp = getBoardRunTimestamp(scheduler);
+  const refreshLooksScheduled =
+    refresh?.kind === "board_drop" &&
+    (String(refresh.source || "").trim().toLowerCase() === "scheduler" || refresh.source === undefined);
+
+  if (!refreshLooksScheduled) {
+    return schedulerTimestamp;
+  }
+
+  const refreshTimestamp = getBoardRefreshTimestamp(refresh);
+  const schedulerEpoch = parseOpsTimestamp(schedulerTimestamp)?.getTime() || 0;
+  const refreshEpoch = parseOpsTimestamp(refreshTimestamp)?.getTime() || 0;
+
+  return refreshEpoch > schedulerEpoch ? refreshTimestamp : schedulerTimestamp;
+}
+
 function getLatestBoardRun(
   scheduler?: BoardDropRunStatus | null,
   cron?: BoardDropRunStatus | null,
@@ -860,6 +880,7 @@ export function OpsDashboard() {
     query.data?.runtime?.scheduler_expected === false ? "Ops trigger refreshes" : "Scheduler automation";
   const latestBoardRun = useMemo(() => getLatestBoardRun(schedulerScan, cronScan), [schedulerScan, cronScan]);
   const latestBoardRefreshTimestamp = getBoardRefreshTimestamp(latestBoardRefresh);
+  const latestScheduledBoardDropTimestamp = getScheduledBoardDropTimestamp(schedulerScan, latestBoardRefresh);
   const noBoardRunsYet = !schedulerScan && !cronScan;
   const noSettlementRunsYet = recentAutoSettleRuns.length === 0 && !settleSummary;
   const latestRefreshErrorCount =
@@ -1033,7 +1054,7 @@ export function OpsDashboard() {
             </CardHeader>
             <CardContent className="space-y-2">
               <Row label="Primary mode" value={primaryBoardMode} />
-              <Row label="Last scheduled board drop" value={formatTime(getBoardRunTimestamp(schedulerScan))} />
+              <Row label="Last scheduled board drop" value={formatTime(latestScheduledBoardDropTimestamp)} />
               <Row label="Last ops board refresh" value={formatTime(getBoardRunTimestamp(cronScan))} />
               <Row label="Last board-affecting refresh" value={formatTime(latestBoardRefreshTimestamp)} />
               <Row label="Last manual market scan" value={formatTime(manualScan?.captured_at)} />

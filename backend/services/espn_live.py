@@ -285,6 +285,16 @@ def _candidate_team_pair(candidate: LiveBetCandidate) -> tuple[str, str]:
     )
 
 
+def _candidate_team_pairs(candidate: LiveBetCandidate) -> list[tuple[str, str]]:
+    away_key, home_key = _candidate_team_pair(candidate)
+    if not away_key or not home_key:
+        return []
+    pairs = [(away_key, home_key)]
+    if candidate.surface == "player_props" and away_key != home_key:
+        pairs.append((home_key, away_key))
+    return pairs
+
+
 def _match_event_for_candidate(
     candidate: LiveBetCandidate,
     events: list[LiveEventSnapshot],
@@ -298,13 +308,13 @@ def _match_event_for_candidate(
         if event.provider_event_id in provider_ids:
             return event, "provider_event_id", None
 
-    away_key, home_key = _candidate_team_pair(candidate)
-    if not away_key or not home_key:
+    candidate_pairs = _candidate_team_pairs(candidate)
+    if not candidate_pairs:
         return None, "unresolved", "missing_team_mapping"
 
     pair_matches = [
         event for event in events
-        if _event_team_pair(event) == (away_key, home_key)
+        if _event_team_pair(event) in candidate_pairs
     ]
     if not pair_matches:
         return None, "unresolved", "no_provider_event_match"
@@ -330,6 +340,62 @@ def _match_event_for_candidate(
     if len(pair_matches) == 1:
         return pair_matches[0], "matchup_only", None
     return None, "ambiguous", "ambiguous_provider_event_match"
+
+
+def _candidate_event_time_delta(candidate: LiveBetCandidate, event: LiveEventSnapshot) -> float | None:
+    commence = _parse_utc_iso(candidate.commence_time)
+    if commence is None or event.start_time is None:
+        return None
+    delta = abs(event.start_time - commence)
+    if delta > _MAX_MATCH_DRIFT:
+        return None
+    return delta.total_seconds()
+
+
+def _candidate_player_summary_events(
+    candidate: LiveBetCandidate,
+    events: list[LiveEventSnapshot],
+) -> list[LiveEventSnapshot]:
+    timed: list[tuple[float, LiveEventSnapshot]] = []
+    untimed: list[LiveEventSnapshot] = []
+    for event in events:
+        delta = _candidate_event_time_delta(candidate, event)
+        if delta is not None:
+            timed.append((delta, event))
+        elif _parse_utc_iso(candidate.commence_time) is None:
+            untimed.append(event)
+    timed.sort(key=lambda item: item[0])
+    return [event for _, event in timed] + untimed
+
+
+async def _match_event_by_player_summary(
+    candidate: LiveBetCandidate,
+    events: list[LiveEventSnapshot],
+) -> tuple[LiveEventSnapshot | None, str, str | None, bool, bool]:
+    participant = str(candidate.participant_name or "").strip()
+    if candidate.surface != "player_props" or not participant:
+        return None, "unresolved", "missing_team_mapping", False, False
+
+    norm = _normalize_player_name(participant)
+    matches: list[LiveEventSnapshot] = []
+    any_cache_hit = False
+    any_stale = False
+    for event in _candidate_player_summary_events(candidate, events):
+        if event.status not in {"live", "final"}:
+            continue
+        summary, cache_hit, stale = await _fetch_cached_summary(event.provider_event_id)
+        any_cache_hit = any_cache_hit or cache_hit
+        any_stale = any_stale or stale
+        stat_map = build_player_stat_map(summary, sport=NBA_SPORT_KEY)
+        player_stats, _match_kind = _match_player_stat_key(norm, participant, stat_map)
+        if player_stats is not None:
+            matches.append(event)
+
+    if len(matches) == 1:
+        return matches[0], "player_summary", None, any_cache_hit, any_stale
+    if len(matches) > 1:
+        return None, "ambiguous", "ambiguous_provider_event_match", any_cache_hit, any_stale
+    return None, "unresolved", "player_stat_not_found", any_cache_hit, any_stale
 
 
 class EspnLiveProvider:
@@ -369,13 +435,22 @@ class EspnLiveProvider:
         out: dict[str, ProviderLookupResult] = {}
         for candidate in nba_candidates:
             event, confidence, reason = _match_event_for_candidate(candidate, normalized)
+            candidate_cache_hit = any_cache_hit
+            candidate_stale = any_stale
+            if event is None and reason == "missing_team_mapping":
+                event, confidence, reason, summary_cache_hit, summary_stale = await _match_event_by_player_summary(
+                    candidate,
+                    normalized,
+                )
+                candidate_cache_hit = candidate_cache_hit or summary_cache_hit
+                candidate_stale = candidate_stale or summary_stale
             out[candidate.bet_id] = ProviderLookupResult(
                 candidate=candidate,
                 event=event,
                 confidence=confidence,
                 unavailable_reason=reason,
-                cache_hit=any_cache_hit,
-                stale=any_stale,
+                cache_hit=candidate_cache_hit,
+                stale=candidate_stale,
             )
         return out
 
@@ -448,4 +523,3 @@ class EspnLiveProvider:
                 stale=stale,
             )
         return out
-
