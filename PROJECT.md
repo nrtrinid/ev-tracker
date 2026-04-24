@@ -311,6 +311,7 @@ Reference-only legacy fences:
 | `AUTO_SETTLE_PROVIDER_FINALITY_DELAY_MINUTES` | Minutes to wait after provider finality before auto-settle uses the final score (`15` default) |
 | `DISCORD_ALERT_WEBHOOK_URL` | Optional dedicated webhook for scheduled board-drop alerts |
 | `DISCORD_DEBUG_WEBHOOK_URL` | Optional dedicated webhook for ops, manual refresh, test, and heartbeat messages |
+| `SCHEDULED_BOARD_DROP_ALERT_GRACE_MINUTES` | Optional freshness window for scheduled board-drop alert delivery (`30` by default) |
 | `REDIS_URL` | Optional shared state backend for rate-limit/cache coordination |
 
 ### Frontend (`.env.local`)

@@ -42,6 +42,7 @@ Version labels use pre-release suffixes until the app is ready for outside users
 - **Ops visibility and Discord routing**
   - Tightened Discord route isolation so debug/test/heartbeat traffic cannot fall back onto the alert webhook path.
   - Restricted alert-path Discord delivery to scheduler-owned board-drop contexts and removed the legacy generic webhook fallback from active routing/docs.
+  - Added a scheduled board-drop alert freshness guard so sleeping/paused scheduler instances cannot replay the 09:30/15:00 alert hours late.
   - Updated ops status freshness selection so live scheduler board-drop state can beat stale durable history on the ops page.
 - **Provider-first auto-settle**
   - Switched NBA/MLB auto-settle completed-game detection to provider finals first, with a 15-minute finality delay and Odds API score fallback for unresolved or unsupported sports.

@@ -150,6 +150,7 @@ Backend / VPS:
 - `DISCORD_ENABLE_ALERT_ROUTE` (default `1`)
 - `DISCORD_ALERT_WEBHOOK_URL` (scheduled board-drop alerts only)
 - `DISCORD_DEBUG_WEBHOOK_URL`
+- `SCHEDULED_BOARD_DROP_ALERT_GRACE_MINUTES` (default `30`)
 
 Optional when alert-path delivery is intentionally enabled:
 

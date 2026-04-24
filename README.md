@@ -173,6 +173,7 @@ ANALYTICS_TEST_EMAILS=tester@example.com
 DISCORD_ENABLE_ALERT_ROUTE=1
 DISCORD_ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...
 DISCORD_DEBUG_WEBHOOK_URL=https://discord.com/api/webhooks/...
+SCHEDULED_BOARD_DROP_ALERT_GRACE_MINUTES=30
 # Optional: disable/enable live snapshots endpoint output (default: 1)
 LIVE_TRACKING_ENABLED=1
 # Optional: provider priority list (current MVP defaults to ESPN NBA + MLB StatsAPI)

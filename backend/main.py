@@ -75,6 +75,8 @@ SCHEDULED_SCAN_WINDOWS_MST: list[tuple[int, int, str]] = [
     (9, 30, "Early-Look / Injury-Watch Scan"),
     (15, 0, "Final Board / Bet Placement Scan"),
 ]
+SCHEDULED_BOARD_DROP_ALERT_GRACE_MINUTES_ENV = "SCHEDULED_BOARD_DROP_ALERT_GRACE_MINUTES"
+DEFAULT_SCHEDULED_BOARD_DROP_ALERT_GRACE_MINUTES = 30
 
 
 def _is_paper_experiment_autolog_enabled() -> bool:
@@ -102,6 +104,17 @@ def _parse_hhmm(value: str | None) -> tuple[int, int] | None:
     return (hour, minute)
 
 
+def _scheduled_board_drop_alert_grace_minutes() -> int:
+    raw = (os.getenv(SCHEDULED_BOARD_DROP_ALERT_GRACE_MINUTES_ENV) or "").strip()
+    if not raw:
+        return DEFAULT_SCHEDULED_BOARD_DROP_ALERT_GRACE_MINUTES
+    try:
+        minutes = int(raw)
+    except ValueError:
+        return DEFAULT_SCHEDULED_BOARD_DROP_ALERT_GRACE_MINUTES
+    return max(1, minutes)
+
+
 def _scan_alert_mode_raw() -> str:
     return (os.getenv(DISCORD_SCAN_ALERT_MODE_ENV) or DISCORD_SCAN_ALERT_MODE_TIMED_PING).strip().lower()
 
@@ -113,7 +126,7 @@ def _scan_alert_mode() -> str:
     return DISCORD_SCAN_ALERT_MODE_TIMED_PING
 
 
-def _scheduled_scan_window(now: datetime | None = None) -> dict[str, str]:
+def _scheduled_scan_window(now: datetime | None = None) -> dict[str, Any]:
     current = now or datetime.now(UTC)
     local_now = current.astimezone(PHOENIX_TZ) if PHOENIX_TZ is not None else current
     minute_of_day = (local_now.hour * 60) + local_now.minute
@@ -122,10 +135,16 @@ def _scheduled_scan_window(now: datetime | None = None) -> dict[str, str]:
         SCHEDULED_SCAN_WINDOWS_MST,
         key=lambda window: abs(minute_of_day - ((window[0] * 60) + window[1])),
     )
+    anchor_minute_of_day = (hour * 60) + minute
+    minutes_from_anchor = minute_of_day - anchor_minute_of_day
+    alert_grace_minutes = _scheduled_board_drop_alert_grace_minutes()
     return {
         "label": label,
         "anchor_timezone": "America/Phoenix",
         "anchor_time_mst": f"{hour:02d}:{minute:02d}",
+        "minutes_from_anchor": minutes_from_anchor,
+        "alert_grace_minutes": alert_grace_minutes,
+        "alert_window_fresh": abs(minutes_from_anchor) <= alert_grace_minutes,
     }
 
 
@@ -1213,7 +1232,7 @@ async def _run_auto_settler_job():
         )
 
 
-async def _run_scheduled_board_drop_job():
+async def _run_scheduled_board_drop_job(*, alert_delivery_allowed: bool = False):
     """Run the trusted-beta board pipeline for the scheduled 9:30 and 3:00 windows."""
     from services.daily_board import run_daily_board_drop
     from services.discord_alerts import (
@@ -1228,6 +1247,8 @@ async def _run_scheduled_board_drop_job():
     started = datetime.now(UTC).isoformat()
     started_at = time.monotonic()
     scan_window = _scheduled_scan_window()
+    alert_window_fresh = bool(scan_window.get("alert_window_fresh", True))
+    use_alert_route = bool(alert_delivery_allowed and alert_window_fresh)
     scan_alert_mode = _scan_alert_mode()
     _record_scheduler_heartbeat("scheduled_scan", run_id, "started")
     _log_event(
@@ -1236,6 +1257,9 @@ async def _run_scheduled_board_drop_job():
         started_at=started + "Z",
         scan_window=scan_window,
         scan_alert_mode=scan_alert_mode,
+        alert_window_fresh=alert_window_fresh,
+        alert_delivery_allowed=alert_delivery_allowed,
+        alert_route_selected=use_alert_route,
     )
 
     alerts_scheduled = 0
@@ -1302,12 +1326,17 @@ async def _run_scheduled_board_drop_job():
 
         candidates_seen = len(fresh_sides)
         if scan_alert_mode == DISCORD_SCAN_ALERT_MODE_EDGE_LIVE:
+            notification_message_type = "alert" if use_alert_route else "heartbeat"
+            notification_delivery_context = "scheduled_board_drop" if use_alert_route else None
             alerts_scheduled += schedule_alerts(
                 fresh_sides,
-                message_type="alert",
-                delivery_context="scheduled_board_drop",
+                message_type=notification_message_type,
+                delivery_context=notification_delivery_context,
             )
             schedule_stats = get_last_schedule_stats()
+            schedule_stats["message_type"] = notification_message_type
+            schedule_stats["delivery_context"] = notification_delivery_context
+            schedule_stats["alert_route_selected"] = use_alert_route
             alert_skip_totals["skipped_memory_dedupe"] += int(schedule_stats.get("skipped_memory_dedupe") or 0)
             alert_skip_totals["skipped_shared_dedupe"] += int(schedule_stats.get("skipped_shared_dedupe") or 0)
             alert_skip_totals["skipped_threshold"] += int(schedule_stats.get("skipped_threshold") or 0)
@@ -1320,6 +1349,9 @@ async def _run_scheduled_board_drop_job():
                 "skipped_shared_dedupe": 0,
                 "skipped_threshold": candidates_seen,
                 "skipped_total": candidates_seen,
+                "message_type": "none",
+                "delivery_context": None,
+                "alert_route_selected": False,
             }
 
         _log_event(
@@ -1366,6 +1398,8 @@ async def _run_scheduled_board_drop_job():
 
     if scan_alert_mode == DISCORD_SCAN_ALERT_MODE_TIMED_PING:
         if hard_errors == 0:
+            notification_message_type = "alert" if use_alert_route else "heartbeat"
+            notification_delivery_context = "scheduled_board_drop" if use_alert_route else None
             board_alert_payload = build_board_drop_alert_payload(
                 window_label=scan_window["label"],
                 anchor_time_mst=scan_window["anchor_time_mst"],
@@ -1378,8 +1412,8 @@ async def _run_scheduled_board_drop_job():
             try:
                 delivery = await send_discord_webhook(
                     board_alert_payload,
-                    message_type="alert",
-                    delivery_context="scheduled_board_drop",
+                    message_type=notification_message_type,
+                    delivery_context=notification_delivery_context,
                 )
                 board_alert = {
                     "attempted": True,
@@ -1388,6 +1422,9 @@ async def _run_scheduled_board_drop_job():
                     "route_kind": delivery.get("route_kind") if isinstance(delivery, dict) else None,
                     "webhook_source": delivery.get("webhook_source") if isinstance(delivery, dict) else None,
                     "error": None,
+                    "message_type": notification_message_type,
+                    "delivery_context": notification_delivery_context,
+                    "alert_route_selected": use_alert_route,
                 }
             except DiscordDeliveryError as exc:
                 board_alert = {
@@ -1397,6 +1434,9 @@ async def _run_scheduled_board_drop_job():
                     "route_kind": exc.route_kind,
                     "webhook_source": exc.webhook_source,
                     "error": str(exc),
+                    "message_type": notification_message_type,
+                    "delivery_context": notification_delivery_context,
+                    "alert_route_selected": use_alert_route,
                 }
             except Exception as exc:
                 board_alert = {
@@ -1406,6 +1446,9 @@ async def _run_scheduled_board_drop_job():
                     "route_kind": None,
                     "webhook_source": None,
                     "error": f"{type(exc).__name__}: {exc}",
+                    "message_type": notification_message_type,
+                    "delivery_context": notification_delivery_context,
+                    "alert_route_selected": use_alert_route,
                 }
         else:
             board_alert = {
@@ -1415,6 +1458,9 @@ async def _run_scheduled_board_drop_job():
                 "route_kind": None,
                 "webhook_source": None,
                 "error": None,
+                "message_type": None,
+                "delivery_context": None,
+                "alert_route_selected": False,
             }
         _log_event(
             "scheduler.board_drop.alert",
@@ -1636,9 +1682,10 @@ async def start_scheduler():
         coalesce=True,
     )
     if PHOENIX_TZ is not None:
-        scheduled_scan_times: list[tuple[int, int]] = [
+        scheduled_alert_times: set[tuple[int, int]] = {
             (hour, minute) for hour, minute, _label in SCHEDULED_SCAN_WINDOWS_MST
-        ]
+        }
+        scheduled_scan_times: list[tuple[int, int]] = list(scheduled_alert_times)
         temp_scan_time = _parse_hhmm(os.getenv(SCHEDULED_SCAN_TEMP_TIME_ENV))
         if temp_scan_time is not None and temp_scan_time not in scheduled_scan_times:
             scheduled_scan_times.append(temp_scan_time)
@@ -1647,6 +1694,9 @@ async def start_scheduler():
             scheduler.add_job(
                 _run_scheduled_board_drop_job,
                 CronTrigger(hour=hour, minute=minute, timezone=PHOENIX_TZ),
+                kwargs={"alert_delivery_allowed": (hour, minute) in scheduled_alert_times},
+                misfire_grace_time=_scheduled_board_drop_alert_grace_minutes() * 60,
+                coalesce=True,
             )
     else:
         print("[Scheduler] Phoenix timezone unavailable; skipping scheduled board drop jobs.")

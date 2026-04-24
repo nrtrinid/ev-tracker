@@ -2,7 +2,7 @@ import importlib
 import os
 import sys
 import types
-from datetime import datetime, UTC, timedelta
+from datetime import datetime, UTC, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
@@ -121,12 +121,50 @@ async def test_uses_america_phoenix_timezone_when_available(monkeypatch):
     assert len(scan_jobs) == 2
     assert {(j["trigger"].hour, j["trigger"].minute) for j in scan_jobs} == {(9, 30), (15, 0)}
     assert all(getattr(j["trigger"], "timezone", None) == main.PHOENIX_TZ for j in scan_jobs)
+    assert all(j["kwargs"].get("misfire_grace_time") == 1800 for j in scan_jobs)
+    assert all(j["kwargs"].get("coalesce") is True for j in scan_jobs)
+    assert all(j["kwargs"].get("kwargs") == {"alert_delivery_allowed": True} for j in scan_jobs)
 
     auto_settle_jobs = [j for j in scheduler.jobs if j["func"] == main._run_auto_settler_job]
     assert len(auto_settle_jobs) == 1
     assert getattr(auto_settle_jobs[0]["trigger"], "timezone", None) == main.PHOENIX_TZ
     assert auto_settle_jobs[0]["kwargs"].get("misfire_grace_time") == 3600
     assert auto_settle_jobs[0]["kwargs"].get("coalesce") is True
+
+
+@pytest.mark.asyncio
+async def test_temp_scheduled_scan_time_registers_without_alert_route(monkeypatch):
+    monkeypatch.setenv("TESTING", "0")
+    monkeypatch.setenv("ENABLE_SCHEDULER", "1")
+    monkeypatch.setenv("SCHEDULED_SCAN_TEMP_TIME_PHOENIX", "19:38")
+
+    class FakeTz:
+        key = "America/Phoenix"
+
+    main = _reload_main(monkeypatch, zoneinfo_zoneinfo_override=lambda _name: FakeTz())
+    _install_apscheduler_stubs(scheduler_cls=DummyScheduler)
+
+    await main.start_scheduler()
+
+    scheduler = main.app.state.scheduler
+    scan_jobs = [j for j in scheduler.jobs if j["func"] == main._run_scheduled_board_drop_job]
+    temp_jobs = [j for j in scan_jobs if (j["trigger"].hour, j["trigger"].minute) == (19, 38)]
+
+    assert len(scan_jobs) == 3
+    assert len(temp_jobs) == 1
+    assert temp_jobs[0]["kwargs"].get("kwargs") == {"alert_delivery_allowed": False}
+
+
+def test_scheduled_scan_window_marks_late_runs_stale(monkeypatch):
+    main = _reload_main(monkeypatch)
+    monkeypatch.setattr(main, "PHOENIX_TZ", timezone(timedelta(hours=-7)), raising=True)
+
+    window = main._scheduled_scan_window(datetime(2026, 4, 25, 2, 38, tzinfo=UTC))
+
+    assert window["anchor_time_mst"] == "15:00"
+    assert window["minutes_from_anchor"] == 278
+    assert window["alert_grace_minutes"] == 30
+    assert window["alert_window_fresh"] is False
 
 
 @pytest.mark.asyncio
@@ -189,7 +227,7 @@ async def test_scheduled_board_drop_job_runs_daily_board_pipeline(monkeypatch):
 
     monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_run_daily_board_drop, raising=True)
 
-    await main._run_scheduled_board_drop_job()
+    await main._run_scheduled_board_drop_job(alert_delivery_allowed=True)
 
     assert len(called) == 1
     assert called[0]["source"] == "scheduled_board_drop"
@@ -233,7 +271,7 @@ async def test_scheduled_board_drop_job_piggybacks_clv_with_fresh_sides(monkeypa
 
     monkeypatch.setattr(main, "_piggyback_clv", _fake_piggyback_clv, raising=True)
 
-    await main._run_scheduled_board_drop_job()
+    await main._run_scheduled_board_drop_job(alert_delivery_allowed=True)
 
     assert piggyback_calls == [[*fresh_straight, *fresh_props]]
 
@@ -299,6 +337,19 @@ async def test_scheduled_scan_aliases_use_board_drop_job(monkeypatch):
 async def test_scheduled_board_drop_job_timed_ping_mode_sends_single_board_alert(monkeypatch):
     main = _reload_main(monkeypatch)
     monkeypatch.setenv("DISCORD_SCAN_ALERT_MODE", "timed_ping")
+    monkeypatch.setattr(
+        main,
+        "_scheduled_scan_window",
+        lambda: {
+            "label": "Final Board / Bet Placement Scan",
+            "anchor_timezone": "America/Phoenix",
+            "anchor_time_mst": "15:00",
+            "minutes_from_anchor": 0,
+            "alert_grace_minutes": 30,
+            "alert_window_fresh": True,
+        },
+        raising=True,
+    )
 
     async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
         return {
@@ -340,7 +391,7 @@ async def test_scheduled_board_drop_job_timed_ping_mode_sends_single_board_alert
     monkeypatch.setattr(discord_alerts, "schedule_alerts", _fail_if_edge_alerts_called, raising=True)
     monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
 
-    await main._run_scheduled_board_drop_job()
+    await main._run_scheduled_board_drop_job(alert_delivery_allowed=True)
 
     assert len(sent) == 1
     payload, message_type, delivery_context = sent[0]
@@ -356,7 +407,118 @@ async def test_scheduled_board_drop_job_timed_ping_mode_sends_single_board_alert
     assert snapshot["board_alert_attempted"] is True
     assert snapshot["board_alert_delivery_status"] == "delivered"
     assert snapshot["board_alert_http_status"] == 204
+    assert snapshot["board_alert"]["message_type"] == "alert"
+    assert snapshot["board_alert"]["alert_route_selected"] is True
     assert snapshot["scan_window"]["anchor_time_mst"] in {"09:30", "15:00"}
+
+
+@pytest.mark.asyncio
+async def test_scheduled_board_drop_job_routes_stale_alert_to_debug(monkeypatch):
+    main = _reload_main(monkeypatch)
+    main._init_ops_status()
+    monkeypatch.setenv("DISCORD_SCAN_ALERT_MODE", "timed_ping")
+    monkeypatch.setattr(
+        main,
+        "_scheduled_scan_window",
+        lambda: {
+            "label": "Final Board / Bet Placement Scan",
+            "anchor_timezone": "America/Phoenix",
+            "anchor_time_mst": "15:00",
+            "minutes_from_anchor": 278,
+            "alert_grace_minutes": 30,
+            "alert_window_fresh": False,
+        },
+        raising=True,
+    )
+
+    async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
+        return {
+            "straight_sides": 5,
+            "props_sides": 3,
+            "featured_games_count": 2,
+            "fresh_straight_sides": [],
+            "fresh_prop_sides": [],
+        }
+
+    import services.daily_board as daily_board
+    import services.discord_alerts as discord_alerts
+
+    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_run_daily_board_drop, raising=True)
+    sent: list[tuple[str, str | None]] = []
+
+    async def _fake_send_discord_webhook(_payload, message_type="heartbeat", *, delivery_context=None):
+        sent.append((message_type, delivery_context))
+        return {
+            "delivery_status": "delivered",
+            "status_code": 204,
+            "route_kind": "heartbeat_dedicated",
+            "webhook_source": "DISCORD_DEBUG_WEBHOOK_URL",
+        }
+
+    monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
+
+    await main._run_scheduled_board_drop_job(alert_delivery_allowed=True)
+
+    snapshot = main.app.state.ops_status["last_scheduler_scan"]
+    assert sent == [("heartbeat", None)]
+    assert snapshot["board_alert_attempted"] is True
+    assert snapshot["board_alert_delivery_status"] == "delivered"
+    assert snapshot["board_alert"]["message_type"] == "heartbeat"
+    assert snapshot["board_alert"]["alert_route_selected"] is False
+    assert snapshot["scan_window"]["minutes_from_anchor"] == 278
+
+
+@pytest.mark.asyncio
+async def test_scheduled_board_drop_job_direct_testing_invocation_uses_debug(monkeypatch):
+    main = _reload_main(monkeypatch)
+    main._init_ops_status()
+    monkeypatch.setenv("DISCORD_SCAN_ALERT_MODE", "timed_ping")
+    monkeypatch.setattr(
+        main,
+        "_scheduled_scan_window",
+        lambda: {
+            "label": "Final Board / Bet Placement Scan",
+            "anchor_timezone": "America/Phoenix",
+            "anchor_time_mst": "15:00",
+            "minutes_from_anchor": 0,
+            "alert_grace_minutes": 30,
+            "alert_window_fresh": True,
+        },
+        raising=True,
+    )
+
+    async def _fake_run_daily_board_drop(*, db, source, scan_label, mst_anchor_time, retry_supabase, log_event):
+        return {
+            "straight_sides": 1,
+            "props_sides": 0,
+            "featured_games_count": 1,
+            "fresh_straight_sides": [],
+            "fresh_prop_sides": [],
+        }
+
+    import services.daily_board as daily_board
+    import services.discord_alerts as discord_alerts
+
+    sent: list[tuple[str, str | None]] = []
+
+    async def _fake_send_discord_webhook(_payload, message_type="heartbeat", *, delivery_context=None):
+        sent.append((message_type, delivery_context))
+        return {
+            "delivery_status": "delivered",
+            "status_code": 204,
+            "route_kind": "heartbeat_dedicated",
+            "webhook_source": "DISCORD_DEBUG_WEBHOOK_URL",
+        }
+
+    monkeypatch.setattr(daily_board, "run_daily_board_drop", _fake_run_daily_board_drop, raising=True)
+    monkeypatch.setattr(discord_alerts, "send_discord_webhook", _fake_send_discord_webhook, raising=True)
+
+    await main._run_scheduled_board_drop_job()
+
+    assert sent == [("heartbeat", None)]
+    snapshot = main.app.state.ops_status["last_scheduler_scan"]
+    assert snapshot["board_alert"]["message_type"] == "heartbeat"
+    assert snapshot["board_alert"]["alert_route_selected"] is False
 
 
 def test_scheduler_freshness_uses_startup_grace_when_no_success(monkeypatch):
