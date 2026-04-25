@@ -70,10 +70,11 @@ Focus: trust/reliability fixes only.
   - Follow-up: Resolved follow-up coverage and scheduled board-drop recency verification on 2026-04-24.
   - Codex fit: High.
 
-- [ ] Audit deeplink reliability and fallback behavior by sportsbook/platform. [Owner: Frontend/Product/Ops] [Target week: 2026-W18]
+- [-] Audit deeplink reliability and fallback behavior by sportsbook/platform. [Owner: Frontend/Product/Ops] [Target week: 2026-W18]
   - Why: Finding an edge is not enough if the handoff to the sportsbook is unreliable. App-vs-web, geo-plugin, and platform-specific friction can make a "working" deeplink practically unusable.
   - User impact: High.
   - Engineering risk: Medium.
+  - Progress update (2026-04-24): Started the audit in `docs/deeplink-audit.md`, documented the current backend/frontend resolution path, built the initial per-book platform matrix, and captured first implementation candidates around fallback-map parity, visible destination hints, and Pick'em CTA consistency.
   - Next step: Build a per-book matrix across desktop/mobile/app, verify expected fallback behavior, and add per-book UI hints or graceful fallback copy where direct reachability is weak.
   - Codex fit: Good for the matrix and fallback implementation; final QA needs human validation.
 

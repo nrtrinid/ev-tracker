@@ -17,6 +17,8 @@ This project touches EV math, real-money-adjacent recordkeeping, background auto
 
 From `backend/` with your venv activated:
 
+- PowerShell baseline: `$env:TESTING="1"; $env:CRON_TOKEN="dev-cron-token"`
+- macOS/Linux baseline: `TESTING=1 CRON_TOKEN=dev-cron-token`
 - `pytest tests/test_calculations.py -v`
 - `pytest tests/test_odds_api_activity.py -v`
 - `pytest tests/test_discord_alerts.py -v`
@@ -82,9 +84,16 @@ From `frontend/`:
 - `npm run test:e2e`
 - `npx playwright test tests/bet-live-state.spec.ts`
 - `npm run test:ops-utils`
+- `npm run test:cron-routes`
 - `npm run test:ops-access`
 - `npm run test:route-timeouts`
 - `npm run test:quarantined`
+
+Frontend route tests use dummy secrets such as `CRON_SECRET=dev-cron-secret` and
+`CRON_TOKEN=dev-cron-token`; real deployed cron secrets are not required. For
+manual local probes, set `CRON_SECRET` and send `Authorization: Bearer
+dev-cron-secret`. External-service and login flows still need dedicated
+test/sandbox credentials when they contact Supabase or a live deployment.
 
 The ops-access flow needs real non-admin credentials. The smoke flow needs a real login.
 

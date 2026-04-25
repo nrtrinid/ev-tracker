@@ -14,8 +14,9 @@
     "test:smoke": "playwright test tests/smoke.spec.ts",
     "test:ops-utils": "playwright test tests/admin-access-utils.spec.ts tests/beta-access-utils.spec.ts tests/middleware-regression.spec.ts",
     "test:ops-access": "playwright test tests/ops-access.spec.ts",
+    "test:cron-routes": "playwright test tests/cron-trigger-backend-route.spec.ts",
     "test:route-timeouts": "playwright test tests/bridge-route-timeouts.spec.ts",
-    "test:quarantined": "playwright test tests/admin-access-utils.spec.ts tests/beta-access-utils.spec.ts tests/backend-proxy-utils.spec.ts tests/bridge-route-timeouts.spec.ts tests/betting-platform-store.spec.ts tests/parlay-slip-cache.spec.ts tests/parlay-utils.spec.ts tests/pickem-board-short-labels.spec.ts tests/scanner-contract.spec.ts tests/scanner-filters.spec.ts tests/scanner-lenses.spec.ts tests/scanner-state-utils.spec.ts tests/scanner-ui-model.spec.ts tests/stats-page.spec.ts tests/tracker-view.spec.ts"
+    "test:quarantined": "playwright test tests/admin-access-utils.spec.ts tests/beta-access-utils.spec.ts tests/backend-proxy-utils.spec.ts tests/bridge-route-timeouts.spec.ts tests/cron-trigger-backend-route.spec.ts tests/betting-platform-store.spec.ts tests/parlay-slip-cache.spec.ts tests/parlay-utils.spec.ts tests/pickem-board-short-labels.spec.ts tests/scanner-contract.spec.ts tests/scanner-filters.spec.ts tests/scanner-lenses.spec.ts tests/scanner-state-utils.spec.ts tests/scanner-ui-model.spec.ts tests/stats-page.spec.ts tests/tracker-view.spec.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.0.5",
