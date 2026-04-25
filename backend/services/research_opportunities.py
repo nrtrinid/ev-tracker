@@ -40,6 +40,10 @@ SURFACE_ORDER = ["straight_bets", "player_props"]
 DROP_TIME_FIRST_LOOK = "First Look"
 DROP_TIME_DAILY_DROP = "Daily Drop"
 DROP_TIME_BUCKET_ORDER = [DROP_TIME_FIRST_LOOK, DROP_TIME_DAILY_DROP]
+EVENT_DAY_SAME_DAY = "Same day"
+EVENT_DAY_LATER_DAY = "Later day"
+EVENT_DAY_UNKNOWN = "Unknown"
+EVENT_DAY_BUCKET_ORDER = [EVENT_DAY_SAME_DAY, EVENT_DAY_LATER_DAY, EVENT_DAY_UNKNOWN]
 
 if ZoneInfo is not None:
     try:
@@ -610,6 +614,7 @@ def empty_research_opportunities_summary() -> ResearchOpportunitySummaryResponse
         by_sportsbook=[],
         by_edge_bucket=[],
         by_drop_time=[],
+        by_event_day=[],
         by_odds_bucket=[],
         status_buckets=[],
         recent_opportunities=[],
@@ -853,6 +858,34 @@ def _aggregate_drop_time_breakdown(rows: list[dict[str, Any]]) -> list[ResearchO
     )
     grouped_by_key = {item.key: item for item in grouped}
     return [grouped_by_key.get(key, _empty_breakdown_item(key)) for key in DROP_TIME_BUCKET_ORDER]
+
+
+def _event_day_bucket_for_row(row: dict[str, Any]) -> str:
+    first_seen = _coerce_datetime(row.get("first_seen_at"))
+    commence_time = _coerce_datetime(row.get("commence_time"))
+    if first_seen is None or commence_time is None:
+        return EVENT_DAY_UNKNOWN
+
+    try:
+        scan_date = first_seen.astimezone(PHOENIX_TZ).date()
+        event_date = commence_time.astimezone(PHOENIX_TZ).date()
+    except Exception:
+        scan_date = first_seen.date()
+        event_date = commence_time.date()
+
+    if event_date > scan_date:
+        return EVENT_DAY_LATER_DAY
+    return EVENT_DAY_SAME_DAY
+
+
+def _aggregate_event_day_breakdown(rows: list[dict[str, Any]]) -> list[ResearchOpportunityBreakdownItem]:
+    grouped = _aggregate_breakdown(
+        rows,
+        key_fn=_event_day_bucket_for_row,
+        preferred_order=EVENT_DAY_BUCKET_ORDER,
+    )
+    grouped_by_key = {item.key: item for item in grouped}
+    return [grouped_by_key.get(key, _empty_breakdown_item(key)) for key in EVENT_DAY_BUCKET_ORDER]
 
 
 def get_research_opportunities_summary(
@@ -1236,6 +1269,7 @@ def get_research_opportunities_summary(
             preferred_order=EDGE_BUCKET_ORDER,
         ),
         by_drop_time=_aggregate_drop_time_breakdown(rows),
+        by_event_day=_aggregate_event_day_breakdown(rows),
         by_odds_bucket=_aggregate_breakdown(
             rows,
             key_fn=lambda row: _odds_bucket(_coerce_float(row.get("first_book_odds"))),

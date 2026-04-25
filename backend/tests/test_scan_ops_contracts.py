@@ -1518,6 +1518,7 @@ def test_ops_research_opportunities_summary_contract_shape(auth_client, monkeypa
         "by_sportsbook": [],
         "by_edge_bucket": [],
         "by_drop_time": [],
+        "by_event_day": [],
         "by_odds_bucket": [],
         "recent_opportunities": [
             {
@@ -1561,6 +1562,7 @@ def test_ops_research_opportunities_summary_contract_shape(auth_client, monkeypa
     assert isinstance(body.get("by_market"), list)
     assert isinstance(body.get("by_source"), list)
     assert isinstance(body.get("by_drop_time"), list)
+    assert isinstance(body.get("by_event_day"), list)
     assert isinstance(body.get("recent_opportunities"), list)
     assert body["recent_opportunities"][0]["surface"] == "player_props"
 

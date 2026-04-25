@@ -542,6 +542,9 @@ def test_get_research_opportunities_summary_aggregates_breakdowns_and_recent_row
     assert [item.key for item in summary.by_drop_time] == ["First Look", "Daily Drop"]
     assert summary.by_drop_time[0].captured_count == 3
     assert summary.by_drop_time[1].captured_count == 0
+    assert [item.key for item in summary.by_event_day] == ["Same day", "Later day", "Unknown"]
+    assert summary.by_event_day[0].captured_count == 3
+    assert summary.by_event_day[1].captured_count == 0
     assert [item.key for item in summary.by_odds_bucket] == ["<= +150", "+301 to +500", "+501+"]
 
     assert summary.recent_opportunities[0].opportunity_key == "opp-3"
@@ -742,6 +745,93 @@ def test_get_research_opportunities_summary_by_market_includes_straight_market_k
         "MLB | batter_strikeouts",
         "MLB | pitcher_strikeouts",
     ]
+
+
+def test_get_research_opportunities_summary_buckets_events_after_scan_day():
+    db = _DB(
+        rows=[
+            {
+                "opportunity_key": "opp-same-day",
+                "surface": "straight_bets",
+                "first_seen_at": "2026-03-23T18:05:00Z",
+                "last_seen_at": "2026-03-23T18:07:00Z",
+                "commence_time": "2026-03-24T02:00:00Z",
+                "sport": "basketball_nba",
+                "event": "Away @ Home",
+                "team": "Home",
+                "sportsbook": "DraftKings",
+                "market": "ML",
+                "source_market_key": "h2h",
+                "event_id": "evt-same",
+                "first_source": "manual_scan",
+                "last_source": "manual_scan",
+                "seen_count": 1,
+                "first_ev_percentage": 1.5,
+                "first_book_odds": 140,
+                "best_book_odds": 150,
+                "latest_reference_odds": 120,
+                "reference_odds_at_close": None,
+                "close_captured_at": None,
+                "clv_ev_percent": None,
+                "beat_close": None,
+            },
+            {
+                "opportunity_key": "opp-later-day",
+                "surface": "straight_bets",
+                "first_seen_at": "2026-03-23T18:05:00Z",
+                "last_seen_at": "2026-03-23T18:07:00Z",
+                "commence_time": "2026-03-25T02:00:00Z",
+                "sport": "basketball_nba",
+                "event": "Road @ Favorite",
+                "team": "Road",
+                "sportsbook": "FanDuel",
+                "market": "ML",
+                "source_market_key": "h2h",
+                "event_id": "evt-later",
+                "first_source": "manual_scan",
+                "last_source": "manual_scan",
+                "seen_count": 1,
+                "first_ev_percentage": 2.5,
+                "first_book_odds": 160,
+                "best_book_odds": 165,
+                "latest_reference_odds": 130,
+                "reference_odds_at_close": None,
+                "close_captured_at": None,
+                "clv_ev_percent": None,
+                "beat_close": None,
+            },
+            {
+                "opportunity_key": "opp-unknown",
+                "surface": "straight_bets",
+                "first_seen_at": None,
+                "last_seen_at": "2026-03-23T18:07:00Z",
+                "commence_time": "2026-03-25T02:00:00Z",
+                "sport": "basketball_nba",
+                "event": "Dog @ Favorite",
+                "team": "Dog",
+                "sportsbook": "Caesars",
+                "market": "ML",
+                "source_market_key": "h2h",
+                "event_id": "evt-unknown",
+                "first_source": "manual_scan",
+                "last_source": "manual_scan",
+                "seen_count": 1,
+                "first_ev_percentage": 3.5,
+                "first_book_odds": 180,
+                "best_book_odds": 185,
+                "latest_reference_odds": 150,
+                "reference_odds_at_close": None,
+                "close_captured_at": None,
+                "clv_ev_percent": None,
+                "beat_close": None,
+            },
+        ]
+    )
+
+    summary = get_research_opportunities_summary(db)
+
+    assert [item.key for item in summary.by_event_day] == ["Same day", "Later day", "Unknown"]
+    assert [item.captured_count for item in summary.by_event_day] == [1, 1, 1]
 
 
 def test_get_research_opportunities_summary_returns_empty_when_table_missing():

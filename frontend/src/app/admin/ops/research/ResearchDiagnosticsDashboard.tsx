@@ -681,6 +681,56 @@ function ResearchDropTimeBreakdown({ rows }: { rows?: ResearchOpportunityBreakdo
   );
 }
 
+function ResearchEventDayBreakdown({ rows }: { rows?: ResearchOpportunityBreakdownItem[] | null }) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  if (!safeRows.length) return null;
+
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">By event day</p>
+      <div className="rounded-md border border-border/70 bg-muted/20 px-2.5 py-2">
+        <div className="overflow-x-auto">
+          <table className="w-full table-fixed text-xs">
+            <colgroup>
+              <col className="w-[45%]" />
+              <col className="w-[15%]" />
+              <col className="w-[20%]" />
+              <col className="w-[20%]" />
+            </colgroup>
+            <thead>
+              <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                <th className="pb-1.5 text-left font-medium">Event day</th>
+                <th
+                  className="pb-1.5 text-right font-medium"
+                  title="Valid close rows / captured rows"
+                >
+                  Count
+                </th>
+                <th className="pb-1.5 text-right font-medium" title="Beat close % (better than close)">
+                  &gt;Close
+                </th>
+                <th className="pb-1.5 text-right font-medium">Avg CLV</th>
+              </tr>
+            </thead>
+            <tbody>
+              {safeRows.slice(0, 8).map((row) => (
+                <tr key={row.key} className="border-t border-border/50">
+                  <td className="py-1.5 pr-2 text-muted-foreground truncate">{row.key}</td>
+                  <td className="py-1.5 text-right font-mono tabular-nums">
+                    {formatCount(row.valid_close_count)} / {formatCount(row.captured_count)}
+                  </td>
+                  <td className="py-1.5 text-right font-mono tabular-nums">{formatPercent(row.beat_close_pct)}</td>
+                  <td className="py-1.5 text-right font-mono tabular-nums">{formatPercent(row.avg_clv_percent)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ResearchDiagnosticsDashboard() {
   const [researchScope, setResearchScope] = useState<ResearchScope>("all");
   const researchQuery = useResearchOpportunitySummary({
@@ -790,6 +840,7 @@ export function ResearchDiagnosticsDashboard() {
                   <ResearchMarketBreakdown rows={research.by_market} />
                   <ResearchEdgeBucketBreakdown rows={research.by_edge_bucket} />
                   <ResearchDropTimeBreakdown rows={research.by_drop_time} />
+                  <ResearchEventDayBreakdown rows={research.by_event_day} />
                 </>
               )}
             </CardContent>

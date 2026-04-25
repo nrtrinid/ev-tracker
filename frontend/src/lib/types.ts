@@ -1233,6 +1233,7 @@ export interface ResearchOpportunitySummary {
   by_sportsbook: ResearchOpportunityBreakdownItem[];
   by_edge_bucket: ResearchOpportunityBreakdownItem[];
   by_drop_time: ResearchOpportunityBreakdownItem[];
+  by_event_day: ResearchOpportunityBreakdownItem[];
   by_odds_bucket: ResearchOpportunityBreakdownItem[];
   status_buckets: ResearchOpportunityStatusBucket[];
   recent_opportunities: ResearchOpportunityRecentRow[];
