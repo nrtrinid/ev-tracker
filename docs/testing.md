@@ -53,9 +53,10 @@ Role-aware readiness checks (split-role deployments):
 
 Prereqs:
 
-- `backend/.env` has `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
+- `TEST_SUPABASE_URL` and `TEST_SUPABASE_SERVICE_ROLE_KEY` point at a dedicated test project
 - a real test auth user exists
 - `TESTING=1` disables scheduler startup during tests
+- the test harness refuses to initialize the known production Supabase project while `TESTING=1`; set `ALLOW_PROD_TESTS=1` only for a deliberate one-off production check
 
 Windows PowerShell:
 

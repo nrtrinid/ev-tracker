@@ -24,7 +24,7 @@ test.describe("cron trigger backend route", () => {
     await expect(response.json()).resolves.toEqual({ error: "Invalid target" });
   });
 
-  test("posts canonical board-refresh target without scan fallback", async () => {
+  test("posts canonical board-refresh target to async backend endpoint", async () => {
     process.env.CRON_SECRET = "cron-secret";
     process.env.BACKEND_BASE_URL = "http://backend.internal/";
     const originalFetch = global.fetch;
@@ -46,7 +46,39 @@ test.describe("cron trigger backend route", () => {
 
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toEqual({ ok: true });
-      expect(calls).toEqual(["http://backend.internal/api/ops/trigger/board-refresh"]);
+      expect(calls).toEqual(["http://backend.internal/api/ops/trigger/board-refresh/async"]);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  test("returns 504 when backend trigger times out", async () => {
+    process.env.CRON_SECRET = "cron-secret";
+    process.env.BACKEND_BASE_URL = "http://backend.internal/";
+    process.env.CRON_BACKEND_TIMEOUT_MS = "10";
+    const originalFetch = global.fetch;
+    global.fetch = (async (_input, init) => (
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          const error = new Error("aborted");
+          error.name = "AbortError";
+          reject(error);
+        });
+      })
+    )) as typeof fetch;
+
+    try {
+      const response = await GET(
+        new Request("https://frontend.example/api/cron/trigger-backend?target=board-refresh", {
+          headers: { authorization: "Bearer cron-secret" },
+        })
+      );
+
+      expect(response.status).toBe(504);
+      await expect(response.json()).resolves.toEqual({
+        error: "Backend trigger timed out",
+        target: "board-refresh",
+      });
     } finally {
       global.fetch = originalFetch;
     }

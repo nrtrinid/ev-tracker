@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -274,6 +277,43 @@ def runtime_state() -> dict:
 
 
 def check_db_ready() -> tuple[bool, str | None]:
+    url = (os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
+    key = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
+    if not url or not key:
+        return False, "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY"
+
+    timeout_raw = os.getenv("READINESS_DB_TIMEOUT_SECONDS", "2.5")
+    try:
+        timeout_seconds = max(0.25, float(timeout_raw))
+    except ValueError:
+        timeout_seconds = 2.5
+
+    params = urllib.parse.urlencode({"select": "user_id", "limit": "1"})
+    request = urllib.request.Request(
+        f"{url}/rest/v1/settings?{params}",
+        headers={
+            "apikey": key,
+            "authorization": f"Bearer {key}",
+            "accept": "application/json",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            if 200 <= response.status < 300:
+                response.read(256)
+                return True, None
+            return False, f"HTTP {response.status}"
+    except urllib.error.HTTPError as exc:
+        return False, f"HTTPError: {exc.code}"
+    except TimeoutError:
+        return False, f"TimeoutError: readiness DB probe exceeded {timeout_seconds:g}s"
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def check_db_ready_via_client() -> tuple[bool, str | None]:
+    """Legacy Supabase SDK probe kept for targeted tests/manual debugging."""
     try:
         db = get_db()
         db.table("settings").select("user_id").limit(1).execute()

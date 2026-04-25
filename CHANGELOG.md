@@ -23,6 +23,12 @@ Version labels use pre-release suffixes until the app is ready for outside users
 
 - **Middleware availability hotfix**
   - Prevented slow or unavailable Supabase auth lookups from timing out Vercel middleware and taking down public auth pages.
+- **Crash-prevention guardrails**
+  - Made readiness use a bounded direct Supabase probe and stop writing failure history during readiness failures.
+  - Made ops status fall back to in-memory status when DB connectivity is degraded.
+  - Routed frontend cron board-refresh triggers to the backend async endpoint and added a bridge timeout.
+  - Made Next production builds use a single worker to avoid intermittent missing-manifest failures during page-data collection.
+  - Blocked test DB initialization against production Supabase unless `ALLOW_PROD_TESTS=1` is set deliberately.
 - **Mobile Safari chrome polish**
   - Matched iPhone Safari browser chrome to the app shell and made mobile sticky offsets safe-area aware so the top header and bottom nav feel anchored instead of floating against Safari's bars.
 - **Beta analytics trust hardening**

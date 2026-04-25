@@ -53,7 +53,7 @@ def _reload_runtime(monkeypatch, *, zoneinfo_zoneinfo_override=None):
     ops_cron = importlib.import_module("routes.ops_cron")
     scan_routes = importlib.import_module("routes.scan_routes")
     ops_runtime.configure_app(app_module.app)
-    return _RuntimeAdapter(
+    adapter = _RuntimeAdapter(
         app_module=app_module,
         scheduler_runtime=scheduler_runtime,
         app_bootstrap=app_bootstrap,
@@ -63,6 +63,8 @@ def _reload_runtime(monkeypatch, *, zoneinfo_zoneinfo_override=None):
         ops_cron=ops_cron,
         scan_routes=scan_routes,
     )
+    adapter.get_db = lambda: object()
+    return adapter
 
 
 class _RuntimeAdapter:

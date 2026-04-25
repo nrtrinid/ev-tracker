@@ -3,6 +3,32 @@ import os
 import sys
 import types
 from collections.abc import Callable
+from urllib.parse import urlparse
+
+PRODUCTION_SUPABASE_PROJECT_REFS = {"xzeakifampttrqqhhibu"}
+
+
+def supabase_project_ref(raw_url: str | None) -> str | None:
+    if not raw_url:
+        return None
+    hostname = urlparse(raw_url.strip()).hostname or ""
+    if not hostname.endswith(".supabase.co"):
+        return None
+    return hostname.split(".", 1)[0]
+
+
+def require_non_production_supabase_for_tests() -> None:
+    if os.getenv("ALLOW_PROD_TESTS") == "1":
+        return
+
+    url = os.getenv("TEST_SUPABASE_URL") or os.getenv("SUPABASE_URL")
+    project_ref = supabase_project_ref(url)
+    if project_ref in PRODUCTION_SUPABASE_PROJECT_REFS:
+        raise RuntimeError(
+            "Refusing to run tests against production Supabase. Set TEST_SUPABASE_URL/"
+            "TEST_SUPABASE_SERVICE_ROLE_KEY for a dedicated test project, or set "
+            "ALLOW_PROD_TESTS=1 for a deliberate one-off production check."
+        )
 
 
 def ensure_supabase_stub() -> None:

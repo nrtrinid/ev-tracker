@@ -5,7 +5,6 @@ from fastapi import APIRouter, HTTPException
 from services.ops_runtime import (
     check_db_ready,
     check_scheduler_freshness,
-    persist_ops_job_run,
     runtime_state,
     set_ops_status,
 )
@@ -55,14 +54,6 @@ def readiness_check():
                 "checks": checks,
                 "db_error": db_error,
             },
-        )
-        persist_ops_job_run(
-            job_kind="readiness_failure",
-            source="readiness",
-            status="failed",
-            captured_at=utc_now_iso(),
-            checks=checks,
-            meta={"db_error": db_error, "runtime": runtime},
         )
 
     response = {

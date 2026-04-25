@@ -1,8 +1,13 @@
 import { NextResponse } from 'next/server';
 
+function backendTriggerTimeoutMs(): number {
+  const parsed = Number(process.env.CRON_BACKEND_TIMEOUT_MS);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 9000;
+}
+
 /**
  * Sniper route: once backend is awake, trigger specific backend ops tasks.
- * Accepts `?target=...` and POSTs to ${BACKEND_BASE_URL}/api/ops/trigger/{target}
+ * Accepts `?target=...` and POSTs to the canonical backend ops endpoint.
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -43,7 +48,11 @@ export async function GET(request: Request) {
   // If you want separate secrets, set CRON_TOKEN on Vercel and on the backend as CRON_TOKEN.
   const backendCronToken = process.env.CRON_TOKEN ?? cronSecret;
 
-  const endpoint = `${backendBaseUrl.replace(/\/$/, '')}/api/ops/trigger/${target}`;
+  const endpointTarget = target === 'board-refresh' ? 'board-refresh/async' : target;
+  const endpoint = `${backendBaseUrl.replace(/\/$/, '')}/api/ops/trigger/${endpointTarget}`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), backendTriggerTimeoutMs());
 
   try {
     const requestInit = {
@@ -54,6 +63,7 @@ export async function GET(request: Request) {
         'x-ops-token': backendCronToken,
       },
       body: JSON.stringify({}),
+      signal: controller.signal,
     } satisfies RequestInit;
 
     const resp = await fetch(endpoint, requestInit);
@@ -75,7 +85,12 @@ export async function GET(request: Request) {
 
     return NextResponse.json(data, { status: resp.status });
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return NextResponse.json({ error: 'Backend trigger timed out', target }, { status: 504 });
+    }
     console.error('Trigger backend error:', error);
     return NextResponse.json({ error: 'Failed to trigger backend', target }, { status: 502 });
+  } finally {
+    clearTimeout(timeout);
   }
 }

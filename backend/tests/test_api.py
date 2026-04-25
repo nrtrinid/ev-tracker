@@ -15,6 +15,7 @@ load_dotenv()
 
 import pytest
 from models import BetResult, TransactionType
+from .test_utils import require_non_production_supabase_for_tests
 
 # Skip entire module if integration env not configured
 if os.getenv("TESTING") != "1":
@@ -23,6 +24,10 @@ if not (os.getenv("SUPABASE_URL") or os.getenv("TEST_SUPABASE_URL")):
     pytest.skip("Integration tests require SUPABASE_URL or TEST_SUPABASE_URL", allow_module_level=True)
 if not os.getenv("TEST_USER_ID"):
     pytest.skip("Integration tests require TEST_USER_ID", allow_module_level=True)
+try:
+    require_non_production_supabase_for_tests()
+except RuntimeError as exc:
+    pytest.skip(str(exc), allow_module_level=True)
 try:
     import supabase  # noqa: F401
 except ModuleNotFoundError:

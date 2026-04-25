@@ -798,17 +798,27 @@ def ops_status_impl(
 
     fallback_ops = get_ops_status()
     odds_api_activity = get_odds_api_activity_snapshot()
-    try:
-        db = get_db()
-    except Exception:
-        db = None
-    ops = load_ops_status_snapshot(
-        db=db,
-        retry_supabase=retry_supabase,
-        log_event=log_event,
-        fallback_ops_status=fallback_ops,
-        fallback_odds_api_activity=odds_api_activity,
-    )
+    ops = {
+        **(fallback_ops if isinstance(fallback_ops, dict) else {}),
+        "odds_api_activity": odds_api_activity,
+    }
+    if db_ok:
+        try:
+            db = get_db()
+            ops = load_ops_status_snapshot(
+                db=db,
+                retry_supabase=retry_supabase,
+                log_event=log_event,
+                fallback_ops_status=fallback_ops,
+                fallback_odds_api_activity=odds_api_activity,
+            )
+        except Exception as exc:
+            log_event(
+                "ops.status.snapshot_load_failed",
+                level="warning",
+                error_class=type(exc).__name__,
+                error=str(exc),
+            )
 
     return {
         "timestamp": utc_now_iso(),

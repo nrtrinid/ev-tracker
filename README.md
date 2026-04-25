@@ -201,7 +201,7 @@ All operator endpoints require the header `X-Ops-Token` matching `CRON_TOKEN`.
 Frontend bridge routes (for serverless schedulers that should not hold backend secrets directly):
 
 - `GET /api/cron/wakeup` (requires `Authorization: Bearer ${CRON_SECRET}`)
-- `GET /api/cron/trigger-backend?target=board-refresh|auto-settle|test-discord` (same auth)
+- `GET /api/cron/trigger-backend?target=board-refresh|auto-settle|test-discord` (same auth; `board-refresh` forwards to the backend async endpoint so cron callers do not wait on the full refresh)
 
 `target=settle` remains a compatibility alias for `auto-settle`; the old scan target has been removed. Use `target=board-refresh`.
 
@@ -298,7 +298,7 @@ A small but meaningful test suite protects EV math, settlement/profit logic, sch
 
 - **Backend unit tests** (math layer): `cd backend && pytest tests/test_calculations.py -v` — or unit-only by marker: `cd backend && pytest -m "not integration" -v`
 - **Backend hardening tests** (scheduler + odds activity): `cd backend && pytest tests/test_scheduler.py tests/test_odds_api_activity.py -v`
-- **Backend integration tests** (requires test Supabase and auth user): From `backend/` with venv + full deps (`pip install -r requirements.txt`): Set `TESTING=1`, `SUPABASE_URL` (or `TEST_SUPABASE_URL`), and `TEST_USER_ID`. Then: Windows PowerShell: `$env:TESTING="1"; pytest tests/test_api.py -v` — macOS/Linux: `TESTING=1 pytest tests/test_api.py -v`. By marker: `$env:TESTING="1"; pytest -m integration -v` (Windows) or `TESTING=1 pytest -m integration -v` (macOS/Linux). Set `TEST_USER_ID` to a UUID that exists in your test project’s `auth.users`, or create a user and use its id. Optional: `TEST_SUPABASE_URL` and `TEST_SUPABASE_SERVICE_ROLE_KEY` for a separate test project.
+- **Backend integration tests** (requires test Supabase and auth user): From `backend/` with venv + full deps (`pip install -r requirements.txt`): Set `TESTING=1`, `TEST_SUPABASE_URL`, `TEST_SUPABASE_SERVICE_ROLE_KEY`, and `TEST_USER_ID`. Then: Windows PowerShell: `$env:TESTING="1"; pytest tests/test_api.py -v` — macOS/Linux: `TESTING=1 pytest tests/test_api.py -v`. By marker: `$env:TESTING="1"; pytest -m integration -v` (Windows) or `TESTING=1 pytest -m integration -v` (macOS/Linux). Tests refuse to initialize the known production Supabase project while `TESTING=1` unless `ALLOW_PROD_TESTS=1` is set deliberately for a one-off check.
 - **Frontend build + typecheck**: `cd frontend && npm run build && npm run typecheck`
 - **Playwright browser smoke** (run with frontend and backend dev servers up): From `frontend/`: `npm install`, then `npx playwright install`, then `npm run test:smoke:list`, `npm run test:smoke`, or `npm run test:e2e` for the broader browser-only set. Set `PLAYWRIGHT_TEST_EMAIL` and `PLAYWRIGHT_TEST_PASSWORD` so smoke tests can log in; otherwise they skip cleanly.
 - **Operator access tests**: `cd frontend && npm run test:ops-utils` and (with non-admin creds) `npm run test:ops-access`
