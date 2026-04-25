@@ -2,6 +2,23 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-static";
 
-export function GET(request: Request) {
-  return NextResponse.redirect(new URL("/icon.svg", request.url), 308);
+const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#4A7C59"/>
+      <stop offset="100%" stop-color="#C4A35A"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="12" fill="url(#g)"/>
+  <path d="M18 22h20M18 32h16M18 42h12" stroke="#2C2416" stroke-width="4" stroke-linecap="round"/>
+  <path d="M44 20l-8 24" stroke="#2C2416" stroke-width="4" stroke-linecap="round"/>
+</svg>`;
+
+export function GET() {
+  return new NextResponse(ICON_SVG, {
+    headers: {
+      "content-type": "image/svg+xml; charset=utf-8",
+      "cache-control": "public, max-age=86400",
+    },
+  });
 }
