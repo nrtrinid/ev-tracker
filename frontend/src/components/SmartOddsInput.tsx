@@ -3,6 +3,11 @@
 import { useState, useEffect, useRef, useImperativeHandle, forwardRef } from "react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import {
+  getInitialOddsInputSign,
+  getSignedOddsInputValue,
+  stripOddsInputSign,
+} from "@/lib/odds-input";
 
 interface SmartOddsInputProps {
   value: string;
@@ -32,15 +37,14 @@ export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>
     },
     ref
   ) {
-    const [isPositive, setIsPositive] = useState(defaultSign === "+");
+    const [isPositive, setIsPositive] = useState(() => getInitialOddsInputSign(value, defaultSign));
     const internalRef = useRef<HTMLInputElement>(null);
     const inputElementRef = inputRef || internalRef;
 
     // Expose signed value getter via ref
     useImperativeHandle(ref, () => ({
       getSignedValue: () => {
-        const num = parseFloat(value) || 0;
-        return isPositive ? Math.abs(num) : -Math.abs(num);
+        return getSignedOddsInputValue(value, isPositive);
       },
       isPositive,
     }));
@@ -62,7 +66,7 @@ export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>
       const nextIsPositive = !trimmed.startsWith("-");
       setIsPositive(nextIsPositive);
 
-      const unsigned = trimmed.replace(/[+-]/g, "");
+      const unsigned = stripOddsInputSign(trimmed);
       if (unsigned !== value) {
         onChange(unsigned);
       }
@@ -78,10 +82,10 @@ export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>
       // Smart paste: detect "-" and auto-flip sign
       if (inputValue.includes("-")) {
         setIsPositive(false);
-        inputValue = inputValue.replace(/-/g, "").replace(/\+/g, "");
+        inputValue = stripOddsInputSign(inputValue);
       } else if (inputValue.includes("+")) {
         setIsPositive(true);
-        inputValue = inputValue.replace(/\+/g, "");
+        inputValue = stripOddsInputSign(inputValue);
       }
 
       // Only allow numbers and decimal point
@@ -138,4 +142,3 @@ export const SmartOddsInput = forwardRef<SmartOddsInputRef, SmartOddsInputProps>
     );
   }
 );
-

@@ -15,7 +15,6 @@ import {
   SPORTSBOOKS,
   SPORTS,
   MARKETS,
-  PROMO_TYPES,
   PROMO_TYPE_CONFIG,
   type BetCreate,
   type PromoType,
@@ -109,6 +108,26 @@ interface BoostRowValue {
   fairPct: string | null;
 }
 
+const LOG_BET_PROMO_TYPES: { value: PromoType; label: string }[] = [
+  { value: "standard", label: "Standard" },
+  { value: "boost_custom", label: "Profit Boost" },
+  { value: "promo_qualifier", label: "Promo Qualifier" },
+  { value: "bonus_bet", label: "Bonus Bet" },
+];
+
+function getLegacyFixedBoostPercent(promoType: PromoType): number | null {
+  if (promoType === "boost_30") return 30;
+  if (promoType === "boost_50") return 50;
+  if (promoType === "boost_100") return 100;
+  return null;
+}
+
+function normalizeLogBetPromoType(promoType: PromoType): PromoType {
+  if (getLegacyFixedBoostPercent(promoType) !== null) return "boost_custom";
+  if (LOG_BET_PROMO_TYPES.some((promo) => promo.value === promoType)) return promoType;
+  return "standard";
+}
+
 // Get sticky values from localStorage
 const getStickySportsbook = (): string => {
   if (typeof window === "undefined") return "";
@@ -118,8 +137,11 @@ const getStickySportsbook = (): string => {
 const getStickyPromoType = (): PromoType => {
   if (typeof window === "undefined") return "standard";
   const stored = localStorage.getItem("ev-tracker-promo-type");
-  if (stored && PROMO_TYPES.some(p => p.value === stored)) {
+  if (stored && LOG_BET_PROMO_TYPES.some(p => p.value === stored)) {
     return stored as PromoType;
+  }
+  if (stored === "boost_30" || stored === "boost_50" || stored === "boost_100") {
+    return "boost_custom";
   }
   return "standard";
 };
@@ -154,18 +176,25 @@ function buildInitialFormState(initialValues?: ScannedBetData): FormState {
       initialValues.commence_time
         ? new Date(initialValues.commence_time).toISOString().slice(0, 10)
         : new Date().toISOString().slice(0, 10);
+    const promoType = normalizeLogBetPromoType(initialValues.promo_type);
+    const legacyBoostPercent = getLegacyFixedBoostPercent(initialValues.promo_type);
 
     return {
       sportsbook: initialValues.sportsbook,
       sport: initialValues.sport,
       market: initialValues.market,
-      promo_type: initialValues.promo_type,
+      promo_type: promoType,
       odds: String(initialValues.odds_american),
       stake: buildScannerInitialStake(initialValues),
       event: initialValues.event,
       event_date: initialEventDate,
       opposing_odds: initialValues.opposing_odds != null ? String(initialValues.opposing_odds) : "",
-      boost_percent: initialValues.boost_percent != null ? String(initialValues.boost_percent) : "",
+      boost_percent:
+        initialValues.boost_percent != null
+          ? String(initialValues.boost_percent)
+          : legacyBoostPercent != null
+            ? String(legacyBoostPercent)
+            : "",
       payout_override: "",
       notes: "",
     };
@@ -289,7 +318,7 @@ export function LogBetDrawer({
     duplicateState === "better_now";
   const isSubmitting = createBet.isPending || customSubmitPending;
   const selectedPromoLabel =
-    PROMO_TYPES.find((promo) => promo.value === formState.promo_type)?.label ?? "Standard";
+    LOG_BET_PROMO_TYPES.find((promo) => promo.value === formState.promo_type)?.label ?? "Standard";
 
   const bestLoggedOdds = initialValues?.best_logged_odds_american;
   const currentOdds = initialValues?.current_odds_american ?? initialValues?.odds_american;
@@ -647,7 +676,7 @@ export function LogBetDrawer({
                       Promo Type
                     </label>
                     <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 pt-0.5">
-                      {PROMO_TYPES.map((promo) => {
+                      {LOG_BET_PROMO_TYPES.map((promo) => {
                         const config = PROMO_TYPE_CONFIG[promo.value];
                         const isSelected = formState.promo_type === promo.value;
                         return (
@@ -679,7 +708,7 @@ export function LogBetDrawer({
 
           {/* Vig Nudge was shown here previously; EV now primarily relies on sharp fair odds when available. */}
 
-          {/* Custom Boost Percent (shows when boost_custom selected) */}
+          {/* Profit Boost Percent (shows when profit boost selected) */}
           {formState.promo_type === "boost_custom" && (
             <div className="mb-4">
               <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
@@ -722,7 +751,7 @@ export function LogBetDrawer({
                       Promo Type
                     </label>
                     <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 pt-0.5">
-                      {PROMO_TYPES.map((promo) => {
+                      {LOG_BET_PROMO_TYPES.map((promo) => {
                         const config = PROMO_TYPE_CONFIG[promo.value];
                         const isSelected = formState.promo_type === promo.value;
                         return (
