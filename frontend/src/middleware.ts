@@ -40,6 +40,52 @@ export interface MiddlewareDeps {
   createClient?: (request: NextRequest) => MiddlewareSupabaseClient;
   betaInviteCode?: string | undefined;
   opsAdminEmails?: string | undefined;
+  authTimeoutMs?: number;
+  assumeAuthCookie?: boolean;
+}
+
+class MiddlewareTimeoutError extends Error {
+  constructor(label: string, timeoutMs: number) {
+    super(`${label} timed out after ${timeoutMs}ms`);
+    this.name = "MiddlewareTimeoutError";
+  }
+}
+
+function middlewareAuthTimeoutMs(deps: MiddlewareDeps): number {
+  const raw = process.env.MIDDLEWARE_AUTH_TIMEOUT_MS;
+  const parsed = raw ? Number(raw) : NaN;
+  if (deps.authTimeoutMs != null) return deps.authTimeoutMs;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1500;
+}
+
+function hasSupabaseAuthCookie(request: NextRequest): boolean {
+  return request.cookies
+    .getAll()
+    .some((cookie) => cookie.name.startsWith("sb-") && cookie.name.includes("auth-token"));
+}
+
+async function withMiddlewareTimeout<T>(
+  operation: PromiseLike<T>,
+  label: string,
+  timeoutMs: number
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve(operation),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new MiddlewareTimeoutError(label, timeoutMs)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function redirectTo(request: NextRequest, pathname: string) {
+  const url = request.nextUrl.clone();
+  url.pathname = pathname;
+  return NextResponse.redirect(url);
 }
 
 function defaultCreateClient(request: NextRequest): MiddlewareSupabaseClient {
@@ -87,18 +133,37 @@ export async function middlewareWithDeps(
   }
 
   const supabaseResponse = NextResponse.next({ request });
+  const hasAuthCookie = deps.assumeAuthCookie ?? (deps.createClient ? true : hasSupabaseAuthCookie(request));
+
+  if (!hasAuthCookie) {
+    if (isLoginPath || isBetaAccessPath) {
+      return supabaseResponse;
+    }
+    return redirectTo(request, "/login");
+  }
+
   const supabase = (deps.createClient ?? defaultCreateClient)(request);
+  const timeoutMs = middlewareAuthTimeoutMs(deps);
 
   // Use getUser() instead of getSession() for security in middleware
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  let user: MiddlewareUser = null;
+  try {
+    const result = await withMiddlewareTimeout(
+      supabase.auth.getUser(),
+      "supabase.auth.getUser",
+      timeoutMs
+    );
+    user = result.data.user;
+  } catch {
+    if (isLoginPath || isBetaAccessPath) {
+      return supabaseResponse;
+    }
+    return redirectTo(request, "/login");
+  }
 
   // Redirect unauthenticated users to /login
   if (!user && !isLoginPath && !isBetaAccessPath) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/login";
-    return NextResponse.redirect(url);
+    return redirectTo(request, "/login");
   }
 
   if (user) {
@@ -113,18 +178,29 @@ export async function middlewareWithDeps(
 
     let hasBetaAccess = !inviteCodeEnabled || isAdmin;
     if (!hasBetaAccess) {
-      const { data } = await supabase
-        .from("settings")
-        .select("beta_access_granted")
-        .eq("user_id", user.id)
-        .maybeSingle();
+      let data: MiddlewareSettingsRow = null;
+      try {
+        const result = await withMiddlewareTimeout(
+          supabase
+            .from("settings")
+            .select("beta_access_granted")
+            .eq("user_id", user.id)
+            .maybeSingle(),
+          "supabase.settings.beta_access",
+          timeoutMs
+        );
+        data = result.data;
+      } catch {
+        if (isLoginPath || isBetaAccessPath) {
+          return supabaseResponse;
+        }
+        return redirectTo(request, "/beta-access");
+      }
       hasBetaAccess = !!data?.beta_access_granted;
     }
 
     if (!hasBetaAccess && !isBetaAccessPath) {
-      const url = request.nextUrl.clone();
-      url.pathname = "/beta-access";
-      return NextResponse.redirect(url);
+      return redirectTo(request, "/beta-access");
     }
 
     if (!hasBetaAccess) {
@@ -134,9 +210,7 @@ export async function middlewareWithDeps(
 
   // Redirect authenticated beta-approved users away from public auth pages
   if (user && (isLoginPath || isBetaAccessPath)) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/";
-    return NextResponse.redirect(url);
+    return redirectTo(request, "/");
   }
 
   return supabaseResponse;

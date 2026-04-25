@@ -21,6 +21,8 @@ Version labels use pre-release suffixes until the app is ready for outside users
 
 ### Changed
 
+- **Middleware availability hotfix**
+  - Prevented slow or unavailable Supabase auth lookups from timing out Vercel middleware and taking down public auth pages.
 - **Mobile Safari chrome polish**
   - Matched iPhone Safari browser chrome to the app shell and made mobile sticky offsets safe-area aware so the top header and bottom nav feel anchored instead of floating against Safari's bars.
 - **Beta analytics trust hardening**

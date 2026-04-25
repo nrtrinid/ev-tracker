@@ -21,24 +21,30 @@ function buildDeps(options?: {
   settingsRow?: TestSettingsRow;
   betaInviteCode?: string | undefined;
   opsAdminEmails?: string | undefined;
+  authTimeoutMs?: number;
+  getUser?: () => Promise<{ data: { user: TestUser } }>;
+  getSettings?: () => Promise<{ data: TestSettingsRow }>;
+  assumeAuthCookie?: boolean;
 }) {
   return {
     betaInviteCode: options?.betaInviteCode,
     opsAdminEmails: options?.opsAdminEmails,
+    authTimeoutMs: options?.authTimeoutMs,
+    assumeAuthCookie: options?.assumeAuthCookie,
     createClient: () => ({
       auth: {
-        getUser: async () => ({
+        getUser: options?.getUser ?? (async () => ({
           data: {
             user: options?.user ?? null,
           },
-        }),
+        })),
       },
       from: (_table: string) => ({
         select: (_columns: string) => ({
           eq: (_column: string, _value: string) => ({
-            maybeSingle: async () => ({
+            maybeSingle: options?.getSettings ?? (async () => ({
               data: options?.settingsRow ?? null,
-            }),
+            })),
           }),
         }),
       }),
@@ -53,6 +59,10 @@ async function runMiddleware(
     settingsRow?: TestSettingsRow;
     betaInviteCode?: string | undefined;
     opsAdminEmails?: string | undefined;
+    authTimeoutMs?: number;
+    getUser?: () => Promise<{ data: { user: TestUser } }>;
+    getSettings?: () => Promise<{ data: TestSettingsRow }>;
+    assumeAuthCookie?: boolean;
   }
 ) {
   return middlewareWithDeps(buildRequest(pathname), buildDeps(options));
@@ -86,6 +96,28 @@ test.describe("middleware regression coverage", () => {
     expectPassThrough(response);
   });
 
+  test("does not call Supabase for anonymous public auth pages", async () => {
+    const response = await middlewareWithDeps(buildRequest("/login"), {
+      assumeAuthCookie: false,
+      createClient: () => {
+        throw new Error("Supabase client should not be created without an auth cookie");
+      },
+    });
+
+    expectPassThrough(response);
+  });
+
+  test("redirects anonymous protected requests without waiting on Supabase", async () => {
+    const response = await middlewareWithDeps(buildRequest("/scanner"), {
+      assumeAuthCookie: false,
+      createClient: () => {
+        throw new Error("Supabase client should not be created without an auth cookie");
+      },
+    });
+
+    expectRedirect(response, "/login");
+  });
+
   test("bypasses auth redirects for cron, backend proxy, and beta-access API routes", async () => {
     await Promise.all([
       runMiddleware("/api/cron/wakeup").then(expectPassThrough),
@@ -99,6 +131,24 @@ test.describe("middleware regression coverage", () => {
       user: { id: "user-1", email: "user@example.com" },
       settingsRow: { beta_access_granted: true },
       betaInviteCode: "Daily Drop",
+    });
+
+    expectPassThrough(response);
+  });
+
+  test("fails protected requests closed when Supabase auth times out", async () => {
+    const response = await runMiddleware("/scanner", {
+      authTimeoutMs: 1,
+      getUser: () => new Promise(() => {}),
+    });
+
+    expectRedirect(response, "/login");
+  });
+
+  test("allows public auth pages when Supabase auth times out", async () => {
+    const response = await runMiddleware("/login", {
+      authTimeoutMs: 1,
+      getUser: () => new Promise(() => {}),
     });
 
     expectPassThrough(response);
@@ -119,6 +169,17 @@ test.describe("middleware regression coverage", () => {
       user: { id: "user-1", email: "user@example.com" },
       settingsRow: null,
       betaInviteCode: "Daily Drop",
+    });
+
+    expectRedirect(response, "/beta-access");
+  });
+
+  test("fails closed when beta access lookup times out", async () => {
+    const response = await runMiddleware("/scanner", {
+      user: { id: "user-1", email: "user@example.com" },
+      betaInviteCode: "Daily Drop",
+      authTimeoutMs: 1,
+      getSettings: () => new Promise(() => {}),
     });
 
     expectRedirect(response, "/beta-access");
