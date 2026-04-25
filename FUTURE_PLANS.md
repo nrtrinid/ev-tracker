@@ -1,6 +1,6 @@
 # FUTURE_PLANS
 
-Last updated: 2026-04-23
+Last updated: 2026-04-25
 Source: Pass 2 roadmap revision (trusted beta hardening + recent beta analytics review)
 Planning mode: trusted beta hardening before wider beta expansion
 
@@ -221,6 +221,14 @@ Focus: reliability polish and operational confidence after must-ship items land.
 ## Later / only after trust baseline is stable
 
 Focus: feature expansion.
+
+- [ ] Add an admin-only source/provenance debug view across customer-facing pages. [Owner: Product/Frontend/Backend] [Target week: backlog]
+  - Why later: Useful for diagnosing trust issues, but it can add UI/API complexity and should not distract from launch-critical reliability fixes.
+  - User impact: Low direct, medium to high for operator support quality when users ask why a value, edge, status, or recommendation appeared.
+  - Engineering risk: Medium.
+  - Scope guardrails: Keep it admin-only, avoid exposing secrets or private user data, and prefer page-local provenance overlays/panels over broad rewrites of customer-facing UI.
+  - Next step: Define the smallest useful metadata contract first: source endpoint/model, freshness timestamp, sportsbook/book-market inputs, cache state, fallback path, and confidence/reason codes where available.
+  - Codex fit: Good for incremental page-by-page implementation after source metadata contracts are stable.
 
 - [ ] Monetization and entitlement system (billing/subscription/paywall architecture). [Owner: Product/Backend] [Target week: backlog]
   - Why later: Not required for trusted beta stabilization, but required for broader commercial rollout.
