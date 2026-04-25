@@ -2,9 +2,9 @@
 
 The canonical schema history for this repo is the numbered migration chain in this directory:
 
-- Migrations `001` through `023`, ending at `migration_023_player_prop_model_candidate_observations.sql`
+- Migrations `001` through `024`, ending at `migration_024_bankroll_center_transactions.sql`
 
-Current deploy parity is through `migration_023_player_prop_model_candidate_observations.sql`.
+Current deploy parity is through `migration_024_bankroll_center_transactions.sql`.
 
 ## Source Of Truth
 

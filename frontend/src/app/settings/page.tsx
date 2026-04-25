@@ -5,27 +5,22 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn, formatCurrency } from "@/lib/utils";
-import { Plus, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, Target as TargetIcon, Moon, Sun } from "lucide-react";
+import { formatCurrency } from "@/lib/utils";
+import { Wallet, Target as TargetIcon, Moon, Sun } from "lucide-react";
 import { TrustedBetaCard } from "@/components/TrustedBetaCard";
+import { useBankrollDrawer } from "@/components/bankroll/BankrollProvider";
 import {
   useApplyOnboardingEvent,
-  useTransactions,
-  useCreateTransaction,
-  useDeleteTransaction,
   useBalances,
   useSettings,
   useUpdateSettings,
 } from "@/lib/hooks";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
 import { ONBOARDING_OPTIONAL_FLOW, ONBOARDING_STEPS } from "@/lib/onboarding";
-import { SPORTSBOOKS } from "@/lib/types";
-import type { Transaction, TransactionType } from "@/lib/types";
 import { useKellySettings } from "@/lib/kelly-context";
 import { useThemePreference } from "@/lib/theme-context";
 
 export default function SettingsPage() {
-  const { data: transactions } = useTransactions();
   const { data: balances } = useBalances();
   const { data: settings, isLoading: settingsLoading } = useSettings();
   const {
@@ -37,9 +32,8 @@ export default function SettingsPage() {
     setKellyMultiplier,
   } = useKellySettings();
   const { theme, setTheme } = useThemePreference();
+  const { openBankrollDrawer } = useBankrollDrawer();
   const { clearTutorialSession, clearScannerReviewCandidate, hydrateOnboarding } = useBettingPlatformStore();
-  const createTransaction = useCreateTransaction();
-  const deleteTransaction = useDeleteTransaction();
   const updateSettings = useUpdateSettings();
   const applyOnboardingEvent = useApplyOnboardingEvent();
   const completedOnboardingSteps = settings?.onboarding_state?.completed ?? [];
@@ -50,14 +44,6 @@ export default function SettingsPage() {
   const completedTutorialSteps = tutorialFlowSteps.filter((step) => resolvedOnboardingSteps.has(step)).length;
   const completedReviewPromptSteps = reviewPromptFlowSteps.filter((step) => resolvedOnboardingSteps.has(step)).length;
   const completedOptionalSteps = ONBOARDING_OPTIONAL_FLOW.filter((step) => resolvedOnboardingSteps.has(step)).length;
-
-  // Transaction form state
-  const [showTxForm, setShowTxForm] = useState(false);
-  const [txType, setTxType] = useState<TransactionType>("deposit");
-  const [txSportsbook, setTxSportsbook] = useState("");
-  const [txAmount, setTxAmount] = useState("");
-  const [txNotes, setTxNotes] = useState("");
-
 
   // Settings form state
   const [kFactor, setKFactor] = useState<string>("");
@@ -70,28 +56,6 @@ export default function SettingsPage() {
     }
     await updateSettings.mutateAsync({ k_factor: value });
     setKFactor("");
-  };
-
-  const handleAddTransaction = async () => {
-    const amount = parseFloat(txAmount);
-    if (!txSportsbook || !Number.isFinite(amount) || amount <= 0) {
-      return;
-    }
-
-    await createTransaction.mutateAsync({
-      sportsbook: txSportsbook,
-      type: txType,
-      amount,
-      notes: txNotes.trim() || undefined,
-    });
-
-    setTxAmount("");
-    setTxNotes("");
-    setShowTxForm(false);
-  };
-
-  const handleDeleteTransaction = async (tx: Transaction) => {
-    await deleteTransaction.mutateAsync(tx.id);
   };
 
   const computedBankroll = (balances || []).reduce((sum, b) => sum + (b.balance || 0), 0);
@@ -160,35 +124,24 @@ export default function SettingsPage() {
               </CardContent>
             </Card>
 
-            {/* Transactions Section Skeleton */}
             <Card>
               <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Skeleton className="h-4 w-4 rounded" />
-                    <Skeleton className="h-5 w-40" />
-                  </div>
-                  <Skeleton className="h-8 w-16" />
-                </div>
+                <h2 className="font-semibold flex items-center gap-2">
+                  <Wallet className="h-4 w-4" />
+                  Bankroll Center
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Track deposits, withdrawals, adjustments, and per-book balances in one drawer.
+                </p>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <Skeleton className="h-4 w-32 mb-2" />
-                  <div className="space-y-2">
-                    {[1, 2, 3].map((i) => (
-                      <div key={i} className="flex items-center justify-between p-2 rounded border">
-                        <div className="flex items-center gap-3">
-                          <Skeleton className="h-4 w-4 rounded-full" />
-                          <div>
-                            <Skeleton className="h-4 w-24 mb-1" />
-                            <Skeleton className="h-3 w-32" />
-                          </div>
-                        </div>
-                        <Skeleton className="h-4 w-16" />
-                      </div>
-                    ))}
-                  </div>
+              <CardContent className="space-y-3">
+                <div className="flex items-center justify-between rounded-lg bg-muted px-3 py-3 text-sm">
+                  <span className="text-muted-foreground">Computed bankroll</span>
+                  <span className="font-mono font-semibold text-foreground">{formatCurrency(computedBankroll)}</span>
                 </div>
+                <Button type="button" className="w-full" onClick={() => openBankrollDrawer()}>
+                  Open Bankroll Center
+                </Button>
               </CardContent>
             </Card>
           </>
@@ -393,167 +346,24 @@ export default function SettingsPage() {
               </CardContent>
             </Card>
 
-            {/* Transactions Section */}
             <Card>
               <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <h2 className="font-semibold flex items-center gap-2">
-                    <Wallet className="h-4 w-4" />
-                    Deposits & Withdrawals
-                  </h2>
-                  <Button
-                    size="sm"
-                    variant={showTxForm ? "secondary" : "default"}
-                    onClick={() => setShowTxForm(!showTxForm)}
-                  >
-                    {showTxForm ? "Cancel" : <><Plus className="h-4 w-4 mr-1" /> Add</>}
-                  </Button>
-                </div>
+                <h2 className="font-semibold flex items-center gap-2">
+                  <Wallet className="h-4 w-4" />
+                  Bankroll Center
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Track deposits, withdrawals, adjustments, and per-book balances in one drawer.
+                </p>
               </CardHeader>
-              <CardContent className="space-y-4">
-                {/* Add Transaction Form */}
-                {showTxForm && (
-                  <div className="p-4 border rounded-lg bg-muted/30 space-y-3">
-                    {/* Type Toggle */}
-                    <div className="flex gap-2">
-                      <Button
-                        variant={txType === "deposit" ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setTxType("deposit")}
-                        className="flex-1"
-                      >
-                        <ArrowDownCircle className="h-4 w-4 mr-1" />
-                        Deposit
-                      </Button>
-                      <Button
-                        variant={txType === "withdrawal" ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setTxType("withdrawal")}
-                        className="flex-1"
-                      >
-                        <ArrowUpCircle className="h-4 w-4 mr-1" />
-                        Withdrawal
-                      </Button>
-                    </div>
-
-                    {/* Sportsbook */}
-                    <div>
-                      <label className="text-sm text-muted-foreground mb-1 block">Sportsbook</label>
-                      <div className="flex flex-wrap gap-2">
-                        {SPORTSBOOKS.map((book) => (
-                          <Button
-                            key={book}
-                            variant={txSportsbook === book ? "default" : "outline"}
-                            size="sm"
-                            onClick={() => setTxSportsbook(book)}
-                          >
-                            {book}
-                          </Button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Amount */}
-                    <div>
-                      <label className="text-sm text-muted-foreground mb-1 block">Amount</label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        placeholder="100.00"
-                        value={txAmount}
-                        onChange={(e) => setTxAmount(e.target.value)}
-                      />
-                    </div>
-
-                    {/* Notes */}
-                    <div>
-                      <label className="text-sm text-muted-foreground mb-1 block">Notes (optional)</label>
-                      <Input
-                        type="text"
-                        placeholder="Initial deposit, promo credit, etc."
-                        value={txNotes}
-                        onChange={(e) => setTxNotes(e.target.value)}
-                      />
-                    </div>
-
-                    {/* Submit */}
-                    <Button
-                      onClick={handleAddTransaction}
-                      disabled={!txSportsbook || !txAmount || createTransaction.isPending}
-                      className="w-full"
-                    >
-                      {createTransaction.isPending ? "Saving..." : `Add ${txType === "deposit" ? "Deposit" : "Withdrawal"}`}
-                    </Button>
-                  </div>
-                )}
-
-                {/* Recent Transactions */}
-                <div>
-                  <h3 className="text-sm font-medium mb-2">Recent Transactions</h3>
-                  {transactions && transactions.length > 0 ? (
-                    <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                      {transactions.slice(0, 20).map((tx) => (
-                        <div
-                          key={tx.id}
-                          className="flex items-center justify-between p-2 rounded border bg-background hover:bg-muted/50"
-                        >
-                          <div className="flex items-center gap-3">
-                            {tx.type === "deposit" ? (
-                              <ArrowDownCircle className="h-4 w-4 text-color-profit-fg" />
-                            ) : (
-                              <ArrowUpCircle className="h-4 w-4 text-color-loss-fg" />
-                            )}
-                            <div>
-                              <p className="text-sm font-medium">{tx.sportsbook}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {new Date(tx.created_at).toLocaleDateString()}
-                                {tx.notes && ` • ${tx.notes}`}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className={cn(
-                              "text-sm font-semibold",
-                              tx.type === "deposit" ? "text-color-profit-fg" : "text-color-loss-fg"
-                            )}>
-                              {tx.type === "deposit" ? "+" : "-"}{formatCurrency(tx.amount)}
-                            </span>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleDeleteTransaction(tx)}
-                              className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground text-center py-4">
-                      No transactions yet. Add a deposit to get started.
-                    </p>
-                  )}
+              <CardContent className="space-y-3">
+                <div className="flex items-center justify-between rounded-lg bg-muted px-3 py-3 text-sm">
+                  <span className="text-muted-foreground">Computed bankroll</span>
+                  <span className="font-mono font-semibold text-foreground">{formatCurrency(computedBankroll)}</span>
                 </div>
-
-                {/* Quick Balance Summary */}
-                {balances && balances.length > 0 && (
-                  <div className="pt-4 border-t">
-                    <h3 className="text-sm font-medium mb-2">Balance Summary</h3>
-                    <div className="grid grid-cols-2 gap-2 text-sm">
-                      {balances.map((b) => (
-                        <div key={b.sportsbook} className="flex justify-between p-2 rounded bg-muted">
-                          <span>{b.sportsbook}</span>
-                          <span className={cn("font-medium", b.balance >= 0 ? "text-color-profit-fg" : "text-color-loss-fg")}>
-                            {formatCurrency(b.balance)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <Button type="button" className="w-full" onClick={() => openBankrollDrawer()}>
+                  Open Bankroll Center
+                </Button>
               </CardContent>
             </Card>
 

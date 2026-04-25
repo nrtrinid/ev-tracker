@@ -7,6 +7,7 @@ import { KellyProvider } from "@/lib/kelly-context";
 import { BettingPlatformProvider } from "@/lib/betting-platform-store";
 import { OnboardingHighlightProvider } from "@/lib/onboarding-highlight";
 import { ThemeProvider } from "@/lib/theme-context";
+import { BankrollProvider } from "@/components/bankroll/BankrollProvider";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -32,7 +33,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
         <ThemeProvider>
           <KellyProvider>
             <OnboardingHighlightProvider>
-              <BettingPlatformProvider>{children}</BettingPlatformProvider>
+              <BankrollProvider>
+                <BettingPlatformProvider>{children}</BettingPlatformProvider>
+              </BankrollProvider>
             </OnboardingHighlightProvider>
           </KellyProvider>
         </ThemeProvider>

@@ -8,7 +8,9 @@ def test_compute_balances_by_sportsbook_handles_transactions_and_bets():
     transactions = [
         {"sportsbook": "DraftKings", "type": "deposit", "amount": 100.0},
         {"sportsbook": "DraftKings", "type": "withdrawal", "amount": 20.0},
+        {"sportsbook": "DraftKings", "type": "adjustment", "amount": 5.0},
         {"sportsbook": "FanDuel", "type": "deposit", "amount": 50.0},
+        {"sportsbook": "FanDuel", "type": "adjustment", "amount": -10.0},
     ]
 
     bets = [
@@ -40,6 +42,7 @@ def test_compute_balances_by_sportsbook_handles_transactions_and_bets():
             "sportsbook": "BetMGM",
             "deposits": 0.0,
             "withdrawals": 0.0,
+            "adjustments": 0.0,
             "net_deposits": 0.0,
             "profit": -7.5,
             "pending": 0.0,
@@ -49,19 +52,21 @@ def test_compute_balances_by_sportsbook_handles_transactions_and_bets():
             "sportsbook": "DraftKings",
             "deposits": 100.0,
             "withdrawals": 20.0,
+            "adjustments": 5.0,
             "net_deposits": 80.0,
             "profit": 0.0,
             "pending": 10.0,
-            "balance": 70.0,
+            "balance": 75.0,
         },
         {
             "sportsbook": "FanDuel",
             "deposits": 50.0,
             "withdrawals": 0.0,
+            "adjustments": -10.0,
             "net_deposits": 50.0,
             "profit": 5.0,
             "pending": 0.0,
-            "balance": 55.0,
+            "balance": 45.0,
         },
     ]
 
@@ -80,7 +85,9 @@ def test_compute_balances_by_sportsbook_fast_handles_pending_and_settled_rows():
     transactions = [
         {"sportsbook": "DraftKings", "type": "deposit", "amount": 100.0},
         {"sportsbook": "DraftKings", "type": "withdrawal", "amount": 20.0},
+        {"sportsbook": "DraftKings", "type": "adjustment", "amount": 5.0},
         {"sportsbook": "FanDuel", "type": "deposit", "amount": 50.0},
+        {"sportsbook": "FanDuel", "type": "adjustment", "amount": -10.0},
     ]
 
     bets = [
@@ -141,6 +148,7 @@ def test_compute_balances_by_sportsbook_fast_handles_pending_and_settled_rows():
             "sportsbook": "BetMGM",
             "deposits": 0.0,
             "withdrawals": 0.0,
+            "adjustments": 0.0,
             "net_deposits": 0.0,
             "profit": -7.5,
             "pending": 0.0,
@@ -150,18 +158,20 @@ def test_compute_balances_by_sportsbook_fast_handles_pending_and_settled_rows():
             "sportsbook": "DraftKings",
             "deposits": 100.0,
             "withdrawals": 20.0,
+            "adjustments": 5.0,
             "net_deposits": 80.0,
             "profit": 0.0,
             "pending": 10.0,
-            "balance": 70.0,
+            "balance": 75.0,
         },
         {
             "sportsbook": "FanDuel",
             "deposits": 50.0,
             "withdrawals": 0.0,
+            "adjustments": -10.0,
             "net_deposits": 50.0,
             "profit": 5.0,
             "pending": 0.0,
-            "balance": 55.0,
+            "balance": 45.0,
         },
     ]

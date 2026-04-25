@@ -19,17 +19,10 @@ import { ChevronRight } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MetricCard, MetricTile } from "@/components/shared/MetricCard";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { useBankrollDrawer } from "@/components/bankroll/BankrollProvider";
 import { getAllBetsForStats, getBalances, getSettings } from "@/lib/api";
 import {
   buildStatsPageModel,
-  type BankrollDetailsBook,
   type StatsChartFilter,
   type StatsChartPoint,
   type VerdictState,
@@ -309,40 +302,6 @@ function ProcessStatRow({
   );
 }
 
-function BankrollBookRow({
-  book,
-}: {
-  book: BankrollDetailsBook;
-}) {
-  const profit = book.balance - book.deposits + book.withdrawals;
-  
-  return (
-    <tr className="border-b border-border/40 last:border-0">
-      <td className="py-2.5 pr-3 text-sm font-medium text-foreground">
-        {book.sportsbook}
-      </td>
-      <td className="py-2.5 px-2 text-right font-mono text-sm tabular-nums text-muted-foreground">
-        {formatCurrency(book.deposits)}
-      </td>
-      <td className="py-2.5 px-2 text-right font-mono text-sm tabular-nums text-muted-foreground">
-        {formatCurrency(book.withdrawals)}
-      </td>
-      <td className={cn(
-        "py-2.5 px-2 text-right font-mono text-sm font-semibold tabular-nums",
-        profit >= 0 ? "text-profit" : "text-loss"
-      )}>
-        {formatSignedCurrency(profit)}
-      </td>
-      <td className="py-2.5 px-2 text-right font-mono text-sm tabular-nums text-muted-foreground">
-        {formatCurrency(book.pending)}
-      </td>
-      <td className="py-2.5 pl-2 text-right font-mono text-sm font-semibold tabular-nums text-foreground">
-        {formatCurrency(book.balance)}
-      </td>
-    </tr>
-  );
-}
-
 // ─── Skeleton ────────────────────────────────────────────────────────────────
 
 function StatsPageSkeleton() {
@@ -400,7 +359,7 @@ function StatsPageSkeleton() {
 function AnalyticsPageContent() {
   const searchParams = useSearchParams();
   const [chartFilter, setChartFilter] = useState<StatsChartFilter>("all");
-  const [bankrollSheetOpen, setBankrollSheetOpen] = useState(false);
+  const { openBankrollDrawer } = useBankrollDrawer();
   const selectedBook = searchParams.get("sportsbook") ?? "all";
   const sourceFilter = parseTrackerSourceFilter(searchParams.get("source"));
 
@@ -534,7 +493,7 @@ function AnalyticsPageContent() {
                 value={model.bankroll === null ? "—" : formatCurrency(model.bankroll)}
                 secondary={formatWeeklyChange(model.sevenDayProfitChange)}
                 valueClassName={model.bankroll !== null && model.bankroll < 0 ? "text-loss" : "text-foreground"}
-                onClick={() => setBankrollSheetOpen(true)}
+                onClick={() => openBankrollDrawer()}
                 ariaLabel="Open bankroll details"
                 dataTestId="summary-card"
                 triggerTestId="bankroll-summary-trigger"
@@ -794,112 +753,6 @@ function AnalyticsPageContent() {
         )}
       </div>
 
-      <Sheet open={bankrollSheetOpen} onOpenChange={setBankrollSheetOpen}>
-        <SheetContent side="bottom" className="pb-6">
-          <SheetHeader className="px-6 pt-5 pb-3">
-            <SheetTitle className="text-base">Bankroll Details</SheetTitle>
-            <SheetDescription className="text-xs">
-              Your current balances and activity across sportsbooks
-            </SheetDescription>
-          </SheetHeader>
-          <div data-testid="bankroll-details-sheet" className="px-6 pb-4 pt-1">
-            {model.bankrollDetails.books.length > 0 ? (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-border">
-                      <th className="pb-2 pr-3 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                        Book
-                      </th>
-                      <th className="pb-2 px-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                        Deposits
-                      </th>
-                      <th className="pb-2 px-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                        Withdrawals
-                      </th>
-                      <th className="pb-2 px-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                        Profit
-                      </th>
-                      <th className="pb-2 px-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                        Pending
-                      </th>
-                      <th className="pb-2 pl-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                        Balance
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {model.bankrollDetails.books.map((book) => (
-                      <BankrollBookRow key={book.sportsbook} book={book} />
-                    ))}
-                    <tr className="border-t-2 border-border">
-                      <td className="pt-3 pr-3 text-sm font-bold text-foreground">
-                        Total
-                      </td>
-                      <td className="pt-3 px-2 text-right font-mono text-sm font-semibold tabular-nums text-foreground">
-                        {formatCurrency(model.bankrollDetails.books.reduce((sum, b) => sum + b.deposits, 0))}
-                      </td>
-                      <td className="pt-3 px-2 text-right font-mono text-sm font-semibold tabular-nums text-foreground">
-                        {formatCurrency(model.bankrollDetails.books.reduce((sum, b) => sum + b.withdrawals, 0))}
-                      </td>
-                      <td className={cn(
-                        "pt-3 px-2 text-right font-mono text-sm font-bold tabular-nums",
-                        (() => {
-                          const totalProfit = model.bankrollDetails.books.reduce((sum, b) => {
-                            const profit = b.balance - b.deposits + b.withdrawals;
-                            return sum + profit;
-                          }, 0);
-                          return totalProfit >= 0 ? "text-profit" : "text-loss";
-                        })()
-                      )}>
-                        {formatSignedCurrency(
-                          model.bankrollDetails.books.reduce((sum, b) => {
-                            const profit = b.balance - b.deposits + b.withdrawals;
-                            return sum + profit;
-                          }, 0)
-                        )}
-                      </td>
-                      <td className="pt-3 px-2 text-right font-mono text-sm font-semibold tabular-nums text-foreground">
-                        {formatCurrency(model.bankrollDetails.books.reduce((sum, b) => sum + b.pending, 0))}
-                      </td>
-                      <td className="pt-3 pl-2 text-right font-mono text-base font-bold tabular-nums text-foreground">
-                        {model.bankrollDetails.total === null ? "—" : formatCurrency(model.bankrollDetails.total)}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="rounded-md border border-dashed border-border/50 bg-muted/10 px-4 py-8 text-center">
-                <p className="text-sm text-muted-foreground">No sportsbook balances yet</p>
-                <p className="mt-1 text-xs text-muted-foreground/70">Add balances in Settings</p>
-              </div>
-            )}
-
-            {model.bankrollDetails.sizingMode ? (
-              <div className="mt-4 rounded-md border border-border/50 bg-muted/10 px-4 py-3">
-                <p className="text-xs font-semibold text-foreground">
-                  Bankroll For Sizing
-                </p>
-                <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
-                  {model.bankrollDetails.sizingMode === "computed"
-                    ? "Kelly sizing uses your computed bankroll from balances above."
-                    : `Kelly sizing uses a manual override of ${formatCurrency(model.bankrollDetails.bankrollOverride ?? 0)}.`}
-                </p>
-              </div>
-            ) : null}
-
-            <div className="mt-4 flex justify-end">
-              <Link
-                href="/settings"
-                className="text-xs font-semibold text-primary transition-colors hover:text-primary/80 underline underline-offset-2"
-              >
-                Manage in Settings →
-              </Link>
-            </div>
-          </div>
-        </SheetContent>
-      </Sheet>
     </main>
   );
 }

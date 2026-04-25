@@ -13,6 +13,7 @@ const hasAuth = !!testEmail && !!testPassword;
 
 const betsApiPattern = /http:\/\/(127\.0\.0\.1|localhost):8000\/bets(?:\?.*)?$/;
 const balancesApiPattern = /http:\/\/(127\.0\.0\.1|localhost):8000\/balances(?:\?.*)?$/;
+const transactionsApiPattern = /http:\/\/(127\.0\.0\.1|localhost):8000\/transactions(?:\?.*)?$/;
 const settingsApiPattern = /http:\/\/(127\.0\.0\.1|localhost):8000\/settings(?:\?.*)?$/;
 
 function makeBet(overrides: Partial<Bet> = {}): Bet {
@@ -77,6 +78,7 @@ function makeBalance(overrides: Partial<Balance> = {}): Balance {
     sportsbook: overrides.sportsbook ?? "DraftKings",
     deposits: overrides.deposits ?? 100,
     withdrawals: overrides.withdrawals ?? 0,
+    adjustments: overrides.adjustments ?? 0,
     net_deposits: overrides.net_deposits ?? 100,
     profit: overrides.profit ?? 15,
     pending: overrides.pending ?? 10,
@@ -390,6 +392,14 @@ test.describe("stats page mobile UI", () => {
       });
     });
 
+    await page.route(transactionsApiPattern, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
+    });
+
     await page.route(settingsApiPattern, async (route) => {
       await route.fulfill({
         status: 200,
@@ -436,8 +446,8 @@ test.describe("stats page mobile UI", () => {
 
     await page.getByTestId("bankroll-summary-trigger").click();
     await expect(page.getByTestId("bankroll-details-sheet")).toBeVisible();
-    await expect(page.getByText("Bankroll Details")).toBeVisible();
+    await expect(page.getByText("Bankroll")).toBeVisible();
     await expect(page.getByText("DraftKings")).toBeVisible();
-    await expect(page.getByText("Bankroll settings")).toBeVisible();
+    await expect(page.getByText("Recent bankroll activity")).toBeVisible();
   });
 });

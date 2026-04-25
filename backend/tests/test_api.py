@@ -213,6 +213,74 @@ def test_list_transactions(auth_client, auth_headers, run_id, tracker):
 
 
 @pytest.mark.integration
+def test_create_adjustment_transaction_updates_balance(auth_client, auth_headers, run_id, tracker):
+    """POST /transactions accepts signed adjustment deltas."""
+    sportsbook = f"Adjust-{run_id}"
+
+    deposit_r = auth_client.post(
+        "/transactions",
+        json={
+            "sportsbook": sportsbook,
+            "type": TransactionType.DEPOSIT.value,
+            "amount": 100,
+            "notes": run_id,
+        },
+        headers=auth_headers,
+    )
+    assert deposit_r.status_code == 201
+    tracker.tx_ids.append(deposit_r.json()["id"])
+
+    adjust_r = auth_client.post(
+        "/transactions",
+        json={
+            "sportsbook": sportsbook,
+            "type": TransactionType.ADJUSTMENT.value,
+            "amount": -15,
+            "notes": run_id,
+        },
+        headers=auth_headers,
+    )
+    assert adjust_r.status_code == 201
+    tracker.tx_ids.append(adjust_r.json()["id"])
+
+    balances_r = auth_client.get("/balances", headers=auth_headers)
+    assert balances_r.status_code == 200
+    assert round(_book_balance(balances_r.json(), sportsbook), 2) == 85.0
+
+
+@pytest.mark.integration
+def test_withdrawal_cannot_make_tracked_balance_negative(auth_client, auth_headers, run_id, tracker):
+    """Manual withdrawals should not silently project a negative tracked balance."""
+    sportsbook = f"OverWithdraw-{run_id}"
+
+    deposit_r = auth_client.post(
+        "/transactions",
+        json={
+            "sportsbook": sportsbook,
+            "type": TransactionType.DEPOSIT.value,
+            "amount": 25,
+            "notes": run_id,
+        },
+        headers=auth_headers,
+    )
+    assert deposit_r.status_code == 201
+    tracker.tx_ids.append(deposit_r.json()["id"])
+
+    withdrawal_r = auth_client.post(
+        "/transactions",
+        json={
+            "sportsbook": sportsbook,
+            "type": TransactionType.WITHDRAWAL.value,
+            "amount": 30,
+            "notes": run_id,
+        },
+        headers=auth_headers,
+    )
+    assert withdrawal_r.status_code == 400
+    assert "negative" in withdrawal_r.json()["detail"].lower()
+
+
+@pytest.mark.integration
 def test_balances_smoke(auth_client, auth_headers):
     """GET /balances returns 200 and a list (structure smoke)."""
     r = auth_client.get("/balances", headers=auth_headers)

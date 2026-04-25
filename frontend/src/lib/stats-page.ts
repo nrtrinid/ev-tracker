@@ -43,6 +43,7 @@ export type BankrollDetailsBook = {
   sportsbook: string;
   deposits: number;
   withdrawals: number;
+  adjustments: number;
   pending: number;
   balance: number;
 };
@@ -332,6 +333,7 @@ export function buildStatsPageModel(input: {
       sportsbook: balance.sportsbook,
       deposits: roundCurrency(balance.deposits),
       withdrawals: roundCurrency(balance.withdrawals),
+      adjustments: roundCurrency(balance.adjustments),
       pending: roundCurrency(balance.pending),
       balance: roundCurrency(balance.balance),
     })),

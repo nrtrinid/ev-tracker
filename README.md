@@ -74,13 +74,13 @@ EV Betting Tracker is a multi-tenant SaaS application for sharp sports bettors. 
 
 ### Dashboard & Analytics
 - Total P&L, EV earned, edge vs. actual
-- Balance tracking per sportsbook
+- Compact Bankroll Center drawer for total bankroll, per-book balances, and logged deposits/withdrawals/adjustments
 - EV per dollar by promo type
 - Internal beta analytics defaults to external tester signal and tracks excluded internal/test activity separately for ops visibility
 
 ### Settings
 - Configure Kelly multiplier (10%, 25%, 50%, full)
-- Set bankroll: use computed (sum of logged balances) or override manually
+- Set bankroll: use computed balances from Bankroll Center or override manually
 - Persisted per user and mirrored locally for fast reloads
 - Theme preference is stored per account and synced across devices
 

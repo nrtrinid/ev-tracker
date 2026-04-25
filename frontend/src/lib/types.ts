@@ -253,11 +253,13 @@ export interface EVCalculation {
 }
 
 // Transaction types
-export type TransactionType = "deposit" | "withdrawal";
+export type TransactionType = "deposit" | "withdrawal" | "adjustment";
 
 export interface Transaction {
   id: string;
   created_at: string;
+  transaction_date: string;
+  updated_at: string;
   sportsbook: string;
   type: TransactionType;
   amount: number;
@@ -269,6 +271,7 @@ export interface TransactionCreate {
   type: TransactionType;
   amount: number;
   notes?: string;
+  transaction_date?: string;
   created_at?: string; // For undo functionality to preserve original timestamp
 }
 
@@ -276,6 +279,7 @@ export interface Balance {
   sportsbook: string;
   deposits: number;
   withdrawals: number;
+  adjustments: number;
   net_deposits: number;
   profit: number;
   pending: number;

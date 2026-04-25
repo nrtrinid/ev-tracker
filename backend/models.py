@@ -319,6 +319,7 @@ class TransactionType(str, Enum):
 
     DEPOSIT = "deposit"
     WITHDRAWAL = "withdrawal"
+    ADJUSTMENT = "adjustment"
 
 
 class TransactionCreate(BaseModel):
@@ -326,8 +327,9 @@ class TransactionCreate(BaseModel):
 
     sportsbook: str
     type: TransactionType
-    amount: float = Field(gt=0)
+    amount: float
     notes: str | None = None
+    transaction_date: datetime | None = None
     created_at: datetime | None = None
 
 
@@ -336,6 +338,8 @@ class TransactionResponse(BaseModel):
 
     id: str
     created_at: datetime
+    transaction_date: datetime
+    updated_at: datetime
     sportsbook: str
     type: TransactionType
     amount: float
@@ -348,6 +352,7 @@ class BalanceResponse(BaseModel):
     sportsbook: str
     deposits: float
     withdrawals: float
+    adjustments: float
     net_deposits: float
     profit: float
     pending: float
@@ -799,6 +804,7 @@ class ResearchOpportunitySummaryResponse(BaseModel):
     by_sportsbook: list[ResearchOpportunityBreakdownItem]
     by_edge_bucket: list[ResearchOpportunityBreakdownItem]
     by_drop_time: list[ResearchOpportunityBreakdownItem] = Field(default_factory=list)
+    by_event_day: list[ResearchOpportunityBreakdownItem] = Field(default_factory=list)
     by_odds_bucket: list[ResearchOpportunityBreakdownItem]
     status_buckets: list[ResearchOpportunityStatusBucket] = Field(default_factory=list)
     recent_opportunities: list[ResearchOpportunityRecentRow]

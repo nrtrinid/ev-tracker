@@ -16,17 +16,31 @@ def compute_balances_by_sportsbook(
     for tx in transactions:
         book = tx["sportsbook"]
         if book not in sportsbook_data:
-            sportsbook_data[book] = {"deposits": 0.0, "withdrawals": 0.0, "profit": 0.0, "pending": 0.0}
+            sportsbook_data[book] = {
+                "deposits": 0.0,
+                "withdrawals": 0.0,
+                "adjustments": 0.0,
+                "profit": 0.0,
+                "pending": 0.0,
+            }
 
         if tx["type"] == "deposit":
             sportsbook_data[book]["deposits"] += float(tx["amount"])
-        else:
+        elif tx["type"] == "withdrawal":
             sportsbook_data[book]["withdrawals"] += float(tx["amount"])
+        elif tx["type"] == "adjustment":
+            sportsbook_data[book]["adjustments"] += float(tx["amount"])
 
     for row in bets:
         book = row["sportsbook"]
         if book not in sportsbook_data:
-            sportsbook_data[book] = {"deposits": 0.0, "withdrawals": 0.0, "profit": 0.0, "pending": 0.0}
+            sportsbook_data[book] = {
+                "deposits": 0.0,
+                "withdrawals": 0.0,
+                "adjustments": 0.0,
+                "profit": 0.0,
+                "pending": 0.0,
+            }
 
         bet = build_bet_response(row, k_factor)
 
@@ -39,13 +53,14 @@ def compute_balances_by_sportsbook(
     balances: list[dict[str, Any]] = []
     for book, data in sorted(sportsbook_data.items()):
         net_deposits = data["deposits"] - data["withdrawals"]
-        balance = net_deposits + data["profit"] - data["pending"]
+        balance = net_deposits + data["adjustments"] + data["profit"] - data["pending"]
 
         balances.append(
             {
                 "sportsbook": book,
                 "deposits": round(data["deposits"], 2),
                 "withdrawals": round(data["withdrawals"], 2),
+                "adjustments": round(data["adjustments"], 2),
                 "net_deposits": round(net_deposits, 2),
                 "profit": round(data["profit"], 2),
                 "pending": round(data["pending"], 2),
@@ -67,19 +82,33 @@ def compute_balances_by_sportsbook_fast(
     for tx in transactions:
         book = tx["sportsbook"]
         if book not in sportsbook_data:
-            sportsbook_data[book] = {"deposits": 0.0, "withdrawals": 0.0, "profit": 0.0, "pending": 0.0}
+            sportsbook_data[book] = {
+                "deposits": 0.0,
+                "withdrawals": 0.0,
+                "adjustments": 0.0,
+                "profit": 0.0,
+                "pending": 0.0,
+            }
 
         if tx["type"] == "deposit":
             sportsbook_data[book]["deposits"] += float(tx["amount"])
-        else:
+        elif tx["type"] == "withdrawal":
             sportsbook_data[book]["withdrawals"] += float(tx["amount"])
+        elif tx["type"] == "adjustment":
+            sportsbook_data[book]["adjustments"] += float(tx["amount"])
 
     for row in bets:
         book = str(row.get("sportsbook") or "")
         if not book:
             continue
         if book not in sportsbook_data:
-            sportsbook_data[book] = {"deposits": 0.0, "withdrawals": 0.0, "profit": 0.0, "pending": 0.0}
+            sportsbook_data[book] = {
+                "deposits": 0.0,
+                "withdrawals": 0.0,
+                "adjustments": 0.0,
+                "profit": 0.0,
+                "pending": 0.0,
+            }
 
         stake = float(row.get("stake") or 0.0)
         promo_type = str(row.get("promo_type") or "standard")
@@ -122,13 +151,14 @@ def compute_balances_by_sportsbook_fast(
     balances: list[dict[str, Any]] = []
     for book, data in sorted(sportsbook_data.items()):
         net_deposits = data["deposits"] - data["withdrawals"]
-        balance = net_deposits + data["profit"] - data["pending"]
+        balance = net_deposits + data["adjustments"] + data["profit"] - data["pending"]
 
         balances.append(
             {
                 "sportsbook": book,
                 "deposits": round(data["deposits"], 2),
                 "withdrawals": round(data["withdrawals"], 2),
+                "adjustments": round(data["adjustments"], 2),
                 "net_deposits": round(net_deposits, 2),
                 "profit": round(data["profit"], 2),
                 "pending": round(data["pending"], 2),

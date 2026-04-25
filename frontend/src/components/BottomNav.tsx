@@ -9,6 +9,7 @@ import { useBackendReadiness } from "@/lib/hooks";
 import { hasUserFacingSyncIssue } from "@/lib/readiness-ui";
 import { useBettingPlatformStore } from "@/lib/betting-platform-store";
 import { ONBOARDING_HIGHLIGHT_TARGETS } from "@/lib/onboarding-guidance";
+import { BankrollPill } from "@/components/bankroll/BankrollPill";
 
 const tabs = [
   { href: "/",        label: "Markets", icon: Grid2X2  },
@@ -56,6 +57,7 @@ export function BottomNav() {
           </Link>
 
           <div className="flex items-center gap-2">
+            <BankrollPill />
             {/* Sync issue badge — semantic tokens, not hardcoded colors */}
             {showStatus && (
               <span

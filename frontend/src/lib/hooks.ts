@@ -567,10 +567,11 @@ export function useEVCalculation(params: {
 
 // ============ Transactions Hooks ============
 
-export function useTransactions(sportsbook?: string) {
+export function useTransactions(sportsbook?: string, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: [...queryKeys.transactions, sportsbook],
     queryFn: () => api.getTransactions(sportsbook),
+    enabled: options?.enabled ?? true,
   });
 }
 
@@ -624,10 +625,11 @@ export function useDeleteTransaction() {
 
 // ============ Balances Hook ============
 
-export function useBalances() {
+export function useBalances(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: queryKeys.balances,
     queryFn: api.getBalances,
+    enabled: options?.enabled ?? true,
   });
 }
 

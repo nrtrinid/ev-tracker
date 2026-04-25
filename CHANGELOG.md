@@ -11,6 +11,10 @@ Version labels use pre-release suffixes until the app is ready for outside users
 
 ### Added
 
+- **Bankroll Center**
+  - Added a compact header bankroll pill that opens a shared mobile-first drawer for total bankroll, per-book balances, and manual bankroll activity.
+  - Added logged deposits, withdrawals, and tracked-balance adjustments to the existing transaction ledger while keeping bet settlement effects in `/balances`.
+  - Added migration `database/migration_024_bankroll_center_transactions.sql` for adjustment transactions, transaction dates, updated timestamps, and balance-activity indexes.
 - **Live bet tracking MVP**
   - Added backend-owned `/bets/live` snapshots for compact Bets-page live status, score, and supported NBA player-prop progress.
   - Added ESPN-backed live provider normalization with shared cache/stale fallback behavior and a provider abstraction for future documented backups.
