@@ -1659,44 +1659,6 @@ def _build_parlay_provider_prefetch_rows(
     return rows
 
 
-def _nba_scoreboard_date_union_prop_bets(
-    prop_bets: list[dict[str, Any]],
-    *,
-    now: datetime | None,
-) -> list[str]:
-    anchor = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    dates: set[str] = set(build_scoreboard_date_window(anchor))
-    for bet in prop_bets:
-        if str(bet.get("clv_sport_key") or "").strip() != NBA_SPORT_KEY:
-            continue
-        bet_dt = _parse_utc_iso(bet.get("commence_time"))
-        dates.update(build_auto_settle_scoreboard_dates(bet_dt, now=now))
-    return sorted(dates)
-
-
-def _nba_scoreboard_date_union_parlays(
-    parlay_bets: list[dict[str, Any]],
-    *,
-    now: datetime,
-) -> list[str]:
-    dates: set[str] = set(build_scoreboard_date_window(now))
-    for bet in parlay_bets:
-        meta = bet.get("selection_meta")
-        if not isinstance(meta, dict):
-            continue
-        for leg in meta.get("legs") or []:
-            if not isinstance(leg, dict):
-                continue
-            if str(leg.get("sport") or "").strip() != NBA_SPORT_KEY:
-                continue
-            if str(leg.get("surface") or "").strip().lower() != "player_props":
-                continue
-            ct = leg.get("commenceTime") or leg.get("commence_time")
-            bet_dt = _parse_utc_iso(str(ct) if ct else None)
-            dates.update(build_auto_settle_scoreboard_dates(bet_dt, now=now))
-    return sorted(dates)
-
-
 def is_standalone_prop_bet(bet: dict[str, Any]) -> bool:
     surface = str(bet.get("surface") or "").strip().lower()
     if surface != "player_props":
@@ -1836,7 +1798,6 @@ async def settle_standalone_props(
 
     return settled, skipped
 
-
 async def settle_parlays(
     db: Any,
     parlay_bets: list[dict[str, Any]],
@@ -1928,18 +1889,3 @@ async def settle_parlays(
         print(f"[Auto-Settler:parlay] summary settled={settled} skipped={skipped} source={source}")
 
     return settled, skipped
-
-
-def collect_sport_keys_from_parlays(parlay_bets: list[dict[str, Any]]) -> set[str]:
-    keys: set[str] = set()
-    for bet in parlay_bets:
-        meta = bet.get("selection_meta")
-        if not isinstance(meta, dict):
-            continue
-        for leg in meta.get("legs") or []:
-            if not isinstance(leg, dict):
-                continue
-            s = str(leg.get("sport") or "").strip()
-            if s:
-                keys.add(s)
-    return keys

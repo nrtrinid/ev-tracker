@@ -343,18 +343,3 @@ def compute_blend_weight(
         return 0.0
     excess = bonus_stake_settled - min_stake
     return excess / (excess + smoothing_stake)
-
-
-def estimate_bonus_retention(
-    theoretical_retention: float,
-    k_user: float,
-    w: float,
-) -> float:
-    """
-    Blend per-bet theoretical retention toward the user's observed k.
-
-    r_eff = (1-w) * r_theory + w * k_user
-
-    Preserves sort order while shrinking extremes toward user average.
-    """
-    return (1.0 - w) * theoretical_retention + w * k_user

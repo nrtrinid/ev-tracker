@@ -120,10 +120,6 @@ for (const entry of TEAM_ALIAS_ENTRIES) {
   }
 }
 
-export function normalizeTeamSearchQuery(value: string): string {
-  return normalizeAliasText(value);
-}
-
 export function expandTeamAliasSearchQuery(rawQuery: string): string {
   const trimmed = rawQuery.trim();
   if (!trimmed) return "";

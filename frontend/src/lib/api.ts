@@ -13,12 +13,10 @@ import type {
   Balance,
   ScanResult,
   BoardResponse,
-  BoardPromosResponse,
   PlayerPropBoardDetail,
   PlayerPropBoardItem,
   PlayerPropBoardPageResponse,
   PlayerPropBoardPickEmCard,
-  ScopedRefreshResponse,
   BackendReadiness,
   OnboardingEventRequest,
   OnboardingState,
@@ -512,20 +510,6 @@ export async function getBoardPlayerPropDetail(params: {
     sportsbook: params.sportsbook,
   });
   return fetchAPI<PlayerPropBoardDetail>(`/api/board/latest/player-props/detail?${query.toString()}`);
-}
-
-export async function getBoardPromos(limit: number = 300): Promise<BoardPromosResponse> {
-  return fetchAPI<BoardPromosResponse>(`/api/board/latest/promos?limit=${encodeURIComponent(String(limit))}`);
-}
-
-/** Trigger a scoped manual refresh for a surface. Rate-limited. Does NOT overwrite board:latest. */
-export async function refreshBoard(
-  scope: ScannerSurface = "player_props",
-): Promise<ScopedRefreshResponse> {
-  return fetchAPI<ScopedRefreshResponse>(
-    `/api/board/refresh?scope=${encodeURIComponent(scope)}`,
-    { method: "POST" },
-  );
 }
 
 // ============ System Status API ============

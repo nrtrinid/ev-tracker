@@ -1130,17 +1130,6 @@ def _resolve_player_context(
     return explicit_team or inferred_team, participant_id
 
 
-def _confidence_label_for_reference_count(reference_count: int) -> str:
-    """Legacy label based solely on book count. Kept for any callers not yet upgraded."""
-    if reference_count >= 4:
-        return "elite"
-    if reference_count >= 3:
-        return "high"
-    if reference_count >= PLAYER_PROP_MIN_SOLID_REFERENCE_BOOKMAKERS:
-        return "solid"
-    return "thin"
-
-
 def _compute_confidence(
     *,
     reference_bookmakers: list[str],
@@ -1279,10 +1268,6 @@ def _american_price_quality(american: float | int | None) -> float | None:
         return american_to_decimal(float(american))
     except Exception:
         return None
-
-
-def _canonical_matchup_key(away_team: str | None, home_team: str | None, *, sport: str | None = None) -> str:
-    return f"{_canonical_team_name(away_team, sport=sport)}|{_canonical_team_name(home_team, sport=sport)}"
 
 
 def _parse_commence_time(value: str | None) -> datetime | None:

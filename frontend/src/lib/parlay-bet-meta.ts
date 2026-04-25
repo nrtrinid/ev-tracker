@@ -138,9 +138,3 @@ export function parseParlayLegsFromBet(bet: Bet): ParlayLegForDisplay[] | null {
 
   return out.length > 0 ? out : null;
 }
-
-export function countParlayLegsForSubtitle(bet: Bet): number | null {
-  const fromMeta = parseParlayLegsFromBet(bet);
-  if (fromMeta) return fromMeta.length;
-  return null;
-}

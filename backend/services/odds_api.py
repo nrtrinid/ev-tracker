@@ -767,70 +767,6 @@ def _extract_spreads_bookmaker_market(bookmakers: list[dict], book_key: str, hom
     return None
 
 
-async def fetch_nba_totals_slate(*, source: str) -> dict:
-    """Broad NBA totals fetch used for daily-board event selection + context."""
-    # Use the same book set as straight-bets scans (Pinnacle + target books).
-    all_books = ",".join([SHARP_BOOK] + list(TARGET_BOOKS.keys()))
-    data, resp = await fetch_odds(
-        "basketball_nba",
-        source=source,
-        markets="totals",
-        regions="us,us2",
-        bookmakers=all_books,
-        endpoint="/sports/basketball_nba/odds?markets=totals",
-    )
-    events = data if isinstance(data, list) else []
-    remaining = resp.headers.get("x-requests-remaining") or resp.headers.get("x-request-remaining")
-
-    games: list[dict] = []
-    for event in events:
-        event_id = str(event.get("id") or "").strip() or None
-        home = str(event.get("home_team") or "").strip()
-        away = str(event.get("away_team") or "").strip()
-        commence = str(event.get("commence_time") or "").strip()
-        if not home or not away or not commence:
-            continue
-
-        offers: list[dict] = []
-        for book_key, book_display in {SHARP_BOOK: "Pinnacle", **TARGET_BOOKS}.items():
-            market = _extract_totals_market(event.get("bookmakers", []), book_key)
-            if not market:
-                continue
-            offers.append(
-                {
-                    "sportsbook": book_display,
-                    "total": market["total"],
-                    "over_odds": market["over_odds"],
-                    "under_odds": market["under_odds"],
-                }
-            )
-
-        if not offers:
-            continue
-
-        games.append(
-            {
-                "event_id": event_id,
-                "sport": "basketball_nba",
-                "event": f"{away} @ {home}",
-                "event_short": build_short_event_label("basketball_nba", away, home),
-                "away_team": away,
-                "away_team_short": canonical_short_name("basketball_nba", away),
-                "home_team": home,
-                "home_team_short": canonical_short_name("basketball_nba", home),
-                "commence_time": commence,
-                "totals_offers": offers,
-            }
-        )
-
-    return {
-        "sport": "basketball_nba",
-        "games": games,
-        "events_fetched": len(events),
-        "api_requests_remaining": remaining,
-    }
-
-
 async def fetch_featured_lines_slate(*, sport: str, source: str) -> dict:
     """Sport-level featured game lines fetch for board context."""
     all_books = ",".join([SHARP_BOOK] + list(TARGET_BOOKS.keys()))
@@ -1971,27 +1907,6 @@ async def run_jit_clv_snatcher(db, *, include_summary: bool = False) -> int | di
         reason_counts=summary["reason_counts"],
     )
     return summary if include_summary else int(summary["close_updated"])
-
-
-async def finalize_recent_clv_closes(db, *, include_summary: bool = False) -> int | dict[str, Any]:
-    from services.clv_tracking import finalize_tracked_clv_closes_from_latest, repair_recent_clv_tracking_identity
-
-    now = datetime.now(timezone.utc)
-    started_at = time.monotonic()
-    identity_backfill = repair_recent_clv_tracking_identity(db, now=now)
-    summary = finalize_tracked_clv_closes_from_latest(db, now=now)
-    summary["duration_ms"] = round((time.monotonic() - started_at) * 1000, 2)
-    summary["identity_backfill"] = identity_backfill
-    _log_event(
-        "clv_finalize.completed",
-        close_updated=summary.get("close_updated"),
-        rescue_eligible_count=summary.get("rescue_eligible_count"),
-        rescue_from_latest_count=summary.get("rescue_from_latest_count"),
-        identity_backfill=identity_backfill,
-        reason_counts=summary.get("reason_counts"),
-        duration_ms=summary.get("duration_ms"),
-    )
-    return summary if include_summary else int(summary.get("close_updated", 0))
 
 
 async def replay_recent_clv_closes(

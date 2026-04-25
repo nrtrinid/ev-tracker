@@ -33,21 +33,6 @@ export function americanToDecimal(american: number): number {
   return 1 + 100 / Math.abs(american);
 }
 
-// Detect if input is American or Decimal odds
-export function detectOddsFormat(value: number): "american" | "decimal" {
-  // American odds are typically >= 100 or <= -100
-  // Decimal odds are typically between 1.01 and ~100
-  if (value >= 100 || value <= -100) {
-    return "american";
-  }
-  if (value > 1 && value < 100) {
-    return "decimal";
-  }
-  // Edge case: small positive numbers could be either
-  // Default to decimal for values like 1.5, 2.0, etc.
-  return "decimal";
-}
-
 // Format relative time (e.g., "2h ago", "3d ago")
 export function formatRelativeTime(dateString: string): string {
   const date = new Date(dateString);
@@ -61,7 +46,7 @@ export function formatRelativeTime(dateString: string): string {
   if (diffMins < 60) return `${diffMins}m ago`;
   if (diffHours < 24) return `${diffHours}h ago`;
   if (diffDays < 7) return `${diffDays}d ago`;
-  
+
   // For older dates, show short date
   return formatShortDate(dateString);
 }
@@ -115,35 +100,17 @@ export function calculateStealthStake(rawStake: number): number {
   return Math.round(safe / 10) * 10;
 }
 
-/**
- * Abbreviate large numbers for compact display.
- * e.g. 1400 → "1.4K", 1_500_000 → "1.5M", 900 → "900"
- */
-export function abbreviateNumber(n: number): string {
-  const abs = Math.abs(n);
-  const sign = n < 0 ? "-" : "";
-  if (abs >= 1_000_000) {
-    const val = abs / 1_000_000;
-    return `${sign}${val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)}M`;
-  }
-  if (abs >= 1_000) {
-    const val = abs / 1_000;
-    return `${sign}${val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)}K`;
-  }
-  return `${sign}${abs % 1 === 0 ? abs.toFixed(0) : abs.toFixed(2)}`;
-}
-
 // Calculate hold (vig) from two American odds
 export function calculateHoldFromOdds(odds1: number, odds2: number): number | null {
   if (odds1 === 0 || odds2 === 0) return null;
   if (Math.abs(odds1) < 100 || Math.abs(odds2) < 100) return null;
-  
+
   const decimal1 = americanToDecimal(odds1);
   const decimal2 = americanToDecimal(odds2);
-  
+
   const impliedProb1 = 1 / decimal1;
   const impliedProb2 = 1 / decimal2;
-  
+
   const hold = (impliedProb1 + impliedProb2) - 1;
   return hold > 0 ? hold : null;
 }
