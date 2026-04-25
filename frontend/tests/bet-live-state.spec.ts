@@ -103,6 +103,170 @@ test.describe("bet live chip state", () => {
     expect(state?.showInCollapsed).toBe(true);
   });
 
+  test("colors live under prop chips red", async () => {
+    const state = buildBetLiveChipState(
+      snapshot({
+        player_stat: {
+          participant_name: "LeBron James",
+          stat_key: "AST",
+          stat_label: "AST",
+          value: 2,
+          line_value: 4,
+          selection_side: "under",
+          progress_ratio: 0.5,
+          match_kind: "exact",
+        },
+      }),
+    );
+
+    const rendered = BetLiveChip({ snapshot: null, state }) as ReactElement;
+
+    expect(state?.tone).toBe("under");
+    expect(rendered.props.className).toContain("text-red-700");
+  });
+
+  test("labels final over prop chips as hit or miss before settlement", async () => {
+    const hitState = buildBetLiveChipState(
+      snapshot({
+        status: "final",
+        event: {
+          provider: "espn",
+          provider_event_id: "401",
+          sport_key: "basketball_nba",
+          status: "final",
+          status_detail: "Final",
+          period_label: null,
+          clock: null,
+          start_time: "2026-04-22T02:00:00Z",
+          last_updated: "2026-04-22T04:35:00Z",
+          away: { name: "Los Angeles Lakers", short_name: "LAL", score: 105, home_away: "away" },
+          home: { name: "Golden State Warriors", short_name: "GSW", score: 99, home_away: "home" },
+        },
+        player_stat: {
+          participant_name: "LeBron James",
+          stat_key: "AST",
+          stat_label: "AST",
+          value: 5,
+          line_value: 4,
+          selection_side: "over",
+          progress_ratio: 1,
+          match_kind: "exact",
+        },
+      }),
+    );
+    const missState = buildBetLiveChipState(
+      snapshot({
+        status: "final",
+        player_stat: {
+          participant_name: "LeBron James",
+          stat_key: "AST",
+          stat_label: "AST",
+          value: 3,
+          line_value: 4,
+          selection_side: "over",
+          progress_ratio: 0.75,
+          match_kind: "exact",
+        },
+      }),
+    );
+    const tiedLineState = buildBetLiveChipState(
+      snapshot({
+        status: "final",
+        player_stat: {
+          participant_name: "LeBron James",
+          stat_key: "AST",
+          stat_label: "AST",
+          value: 4,
+          line_value: 4,
+          selection_side: "over",
+          progress_ratio: 1,
+          match_kind: "exact",
+        },
+      }),
+    );
+    const halfPointMissState = buildBetLiveChipState(
+      snapshot({
+        status: "final",
+        player_stat: {
+          participant_name: "LeBron James",
+          stat_key: "AST",
+          stat_label: "AST",
+          value: 4,
+          line_value: 4.5,
+          selection_side: "over",
+          progress_ratio: 4 / 4.5,
+          match_kind: "exact",
+        },
+      }),
+    );
+
+    expect(hitState?.label).toBe("Hit • 5 / 4 AST");
+    expect(hitState?.tone).toBe("hit");
+    expect(hitState?.outcome).toBe("hit");
+    expect(missState?.label).toBe("Miss • 3 / 4 AST");
+    expect(missState?.tone).toBe("miss");
+    expect(missState?.outcome).toBe("miss");
+    expect(tiedLineState?.label).toBe("Hit • 4 / 4 AST");
+    expect(tiedLineState?.tone).toBe("hit");
+    expect(halfPointMissState?.label).toBe("Miss • 4 / 4.5 AST");
+    expect(halfPointMissState?.tone).toBe("miss");
+  });
+
+  test("labels final under prop chips as hit or miss before settlement", async () => {
+    const hitState = buildBetLiveChipState(
+      snapshot({
+        status: "final",
+        player_stat: {
+          participant_name: "LeBron James",
+          stat_key: "AST",
+          stat_label: "AST",
+          value: 3,
+          line_value: 4,
+          selection_side: "under",
+          progress_ratio: 0.75,
+          match_kind: "exact",
+        },
+      }),
+    );
+    const missState = buildBetLiveChipState(
+      snapshot({
+        status: "final",
+        player_stat: {
+          participant_name: "LeBron James",
+          stat_key: "AST",
+          stat_label: "AST",
+          value: 5,
+          line_value: 4,
+          selection_side: "under",
+          progress_ratio: 1,
+          match_kind: "exact",
+        },
+      }),
+    );
+    const tiedLineState = buildBetLiveChipState(
+      snapshot({
+        status: "final",
+        player_stat: {
+          participant_name: "LeBron James",
+          stat_key: "AST",
+          stat_label: "AST",
+          value: 4,
+          line_value: 4,
+          selection_side: "under",
+          progress_ratio: 1,
+          match_kind: "exact",
+        },
+      }),
+    );
+
+    expect(hitState?.label).toBe("Hit • 3 / 4 AST");
+    expect(hitState?.tone).toBe("hit");
+    expect(missState?.label).toBe("Miss • 5 / 4 AST");
+    expect(missState?.tone).toBe("miss");
+    expect(tiedLineState?.label).toBe("Hit • 4 / 4 AST");
+    expect(tiedLineState?.tone).toBe("hit");
+  });
+
   test("hides unavailable snapshots by default", async () => {
     const state = buildBetLiveChipState(
       snapshot({

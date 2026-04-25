@@ -7,6 +7,9 @@ import { cn } from "@/lib/utils";
 
 const TONE_CLASSES = {
   live: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  under: "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300",
+  hit: "border-emerald-500/35 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300",
+  miss: "border-red-500/35 bg-red-500/12 text-red-700 dark:text-red-300",
   scheduled: "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300",
   final: "border-muted-foreground/20 bg-muted text-muted-foreground",
   stale: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",

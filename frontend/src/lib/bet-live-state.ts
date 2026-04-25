@@ -1,7 +1,8 @@
 import type { BetLiveSnapshot, LiveGameStatus, LivePlayerStatSnapshot } from "@/lib/types";
 
-export type BetLiveChipTone = "live" | "scheduled" | "final" | "stale" | "warning";
+export type BetLiveChipTone = "live" | "under" | "hit" | "miss" | "scheduled" | "final" | "stale" | "warning";
 export type BetLiveChipKind = "prop" | "game" | "exception" | "scheduled";
+export type BetLiveChipOutcome = "hit" | "miss" | null;
 
 export interface BetLiveChipState {
   label: string;
@@ -10,6 +11,7 @@ export interface BetLiveChipState {
   progressRatio: number | null;
   kind: BetLiveChipKind;
   showInCollapsed: boolean;
+  outcome: BetLiveChipOutcome;
 }
 
 const STAT_LABELS: Record<string, string> = {
@@ -52,6 +54,27 @@ function toneForStatus(status: LiveGameStatus, stale: boolean): BetLiveChipTone 
   if (status === "final") return "final";
   if (status === "postponed" || status === "delayed" || status === "cancelled") return "warning";
   return "scheduled";
+}
+
+function toneForPlayerStat(stat: LivePlayerStatSnapshot, status: LiveGameStatus, stale: boolean): BetLiveChipTone {
+  const tone = toneForStatus(status, stale);
+  if (tone === "live" && stat.selection_side?.toLowerCase() === "under") return "under";
+  return tone;
+}
+
+function finalPlayerStatOutcome(stat: LivePlayerStatSnapshot, status: LiveGameStatus): BetLiveChipOutcome {
+  if (status !== "final" || typeof stat.line_value !== "number") return null;
+
+  const selectionSide = stat.selection_side?.toLowerCase();
+  if (selectionSide === "over") return stat.value >= stat.line_value ? "hit" : "miss";
+  if (selectionSide === "under") return stat.value <= stat.line_value ? "hit" : "miss";
+  return null;
+}
+
+function labelForOutcome(outcome: BetLiveChipOutcome): string | null {
+  if (outcome === "hit") return "Hit";
+  if (outcome === "miss") return "Miss";
+  return null;
 }
 
 function formatMatchup(snapshot: BetLiveSnapshot): string | null {
@@ -108,13 +131,17 @@ export function buildBetLiveChipState(snapshot: BetLiveSnapshot | null | undefin
   if (snapshot.player_stat && snapshot.status !== "scheduled") {
     const stat = snapshot.player_stat;
     const progressLabel = formatBetLiveProgressLabel(stat);
+    const outcome = finalPlayerStatOutcome(stat, snapshot.status);
+    const outcomeLabel = labelForOutcome(outcome);
+    const label = outcomeLabel ? `${outcomeLabel} • ${progressLabel}` : progressLabel;
     return {
-      label: progressLabel,
-      title: `${stat.participant_name}: ${progressLabel}`,
-      tone: toneForStatus(snapshot.status, snapshot.provider.stale),
+      label,
+      title: `${stat.participant_name}: ${label}`,
+      tone: outcome ?? toneForPlayerStat(stat, snapshot.status, snapshot.provider.stale),
       progressRatio: stat.progress_ratio,
       kind: "prop",
       showInCollapsed: true,
+      outcome,
     };
   }
 
@@ -135,5 +162,6 @@ export function buildBetLiveChipState(snapshot: BetLiveSnapshot | null | undefin
     progressRatio: null,
     kind,
     showInCollapsed,
+    outcome: null,
   };
 }

@@ -292,8 +292,12 @@ function buildLiveStatusDetail(
   }
 
   const meta: string[] = [];
+  const finishedAt = snapshot.status === "final" ? snapshot.event?.last_updated ?? snapshot.provider.last_updated ?? null : null;
+  if (finishedAt) {
+    meta.push(`Finished ${formatFullDateTime(finishedAt)}`);
+  }
   const updatedAt = snapshot.provider.last_updated ?? snapshot.event?.last_updated ?? null;
-  if (updatedAt) {
+  if (updatedAt && updatedAt !== finishedAt) {
     meta.push(snapshot.provider.stale ? `Stale ${formatRelativeTime(updatedAt)}` : `Updated ${formatRelativeTime(updatedAt)}`);
   }
 
